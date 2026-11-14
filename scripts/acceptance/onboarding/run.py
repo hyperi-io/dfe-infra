@@ -137,8 +137,9 @@ def sign_in(driver: Driver, user: str, password: str) -> None:
     """Log in through the console's own form as a local account."""
     # The console is a single-page app that never goes network-idle, so the
     # form is waited for by its own control rather than by the page settling.
-    driver.page.goto(f"{driver.ui}/login", wait_until="domcontentloaded",
-                     timeout=STEP_TIMEOUT_MS * 2)
+    driver.page.goto(
+        f"{driver.ui}/login", wait_until="domcontentloaded", timeout=STEP_TIMEOUT_MS * 2
+    )
     # A deployment with an identity provider registered opens on the OIDC tab,
     # and the local accounts sit behind the other one.
     local = driver.page.get_by_role("tab", name=LOCAL_LOGIN_TAB, exact=True)
@@ -171,7 +172,9 @@ def first_user_password(issued: str, new_admin_password: str) -> str:
     return new_admin_password or issued
 
 
-def sign_in_as_admin(driver: Driver, user: str, password: str, new_password: str) -> str:
+def sign_in_as_admin(
+    driver: Driver, user: str, password: str, new_password: str
+) -> str:
     """Sign the admin in, completing the forced change a fresh deployment's admin is due.
 
     The admin holds either the password the deploy issued or, once a run has made
@@ -241,13 +244,23 @@ def walk_organisation(driver: Driver, org: str) -> None:
     # the walk moves on rather than asserting a second organisation.
     driver.button("Next").click(timeout=STEP_TIMEOUT_MS)
     driver.record(
-        wizard.ORGANISATION, "done", "an organisation already existed, so the screen was satisfied"
+        wizard.ORGANISATION,
+        "done",
+        "an organisation already existed, so the screen was satisfied",
     )
 
 
-def walk_wizard(driver: Driver, expected: tuple[str, ...], org: str, user: str, password: str,
-                breakglass_password: str, admin_user: str, admin_password: str,
-                new_admin_password: str = "") -> str:
+def walk_wizard(
+    driver: Driver,
+    expected: tuple[str, ...],
+    org: str,
+    user: str,
+    password: str,
+    breakglass_password: str,
+    admin_user: str,
+    admin_password: str,
+    new_admin_password: str = "",
+) -> str:
     """Complete every screen the deployment asks for, in the console's order.
 
     Each screen is completed rather than clicked past: a wizard that can be
@@ -258,7 +271,9 @@ def walk_wizard(driver: Driver, expected: tuple[str, ...], org: str, user: str, 
     Returns:
         The admin's password from here on.
     """
-    admin_password = sign_in_as_admin(driver, admin_user, admin_password, new_admin_password)
+    admin_password = sign_in_as_admin(
+        driver, admin_user, admin_password, new_admin_password
+    )
     driver.page.wait_for_url(SETUP_SCREEN, timeout=STEP_TIMEOUT_MS * 2)
     landed = driver.current_slug()
     driver.record(
@@ -279,7 +294,9 @@ def walk_wizard(driver: Driver, expected: tuple[str, ...], org: str, user: str, 
     if landed == wizard.WELCOME:
         driver.seen.append(wizard.WELCOME)
         driver.button("Next").click(timeout=STEP_TIMEOUT_MS)
-        driver.record(wizard.WELCOME, "done", "the wizard opened on welcome and moved on")
+        driver.record(
+            wizard.WELCOME, "done", "the wizard opened on welcome and moved on"
+        )
         # Welcome's Next goes to the first pending screen, past an organisation that exists.
         driver.page.wait_for_url(
             lambda url: f"/setup/{wizard.WELCOME}" not in url, timeout=STEP_TIMEOUT_MS
@@ -318,7 +335,9 @@ def walk_wizard(driver: Driver, expected: tuple[str, ...], org: str, user: str, 
     # Local accounts are the path every deployment has; an external IdP is the
     # operator's own registration and cannot be driven from here.
     driver.button("Skip for now").click(timeout=STEP_TIMEOUT_MS)
-    driver.record(wizard.LOGIN, "done", "left the identity provider for the operator to register")
+    driver.record(
+        wizard.LOGIN, "done", "left the identity provider for the operator to register"
+    )
 
     driver.page.wait_for_url(f"**/setup/{wizard.FIRST_USER}", timeout=STEP_TIMEOUT_MS)
     driver.seen.append(wizard.FIRST_USER)
@@ -336,7 +355,9 @@ def walk_wizard(driver: Driver, expected: tuple[str, ...], org: str, user: str, 
     driver.record(wizard.FIRST_USER, "done", f"created the first user {user}")
 
     if wizard.RESET_BREAK_GLASS in expected:
-        driver.page.wait_for_url(f"**/setup/{wizard.RESET_BREAK_GLASS}", timeout=STEP_TIMEOUT_MS)
+        driver.page.wait_for_url(
+            f"**/setup/{wizard.RESET_BREAK_GLASS}", timeout=STEP_TIMEOUT_MS
+        )
         driver.seen.append(wizard.RESET_BREAK_GLASS)
         driver.textbox("New Password").fill(breakglass_password)
         driver.button("Reset Password").click(timeout=STEP_TIMEOUT_MS)
@@ -385,7 +406,9 @@ def fill_source_form(driver: Driver, name: str) -> None:
         shared.check(timeout=STEP_TIMEOUT_MS)
 
 
-def check_console(driver: Driver, user: str, password: str, new_password: str = "") -> str:
+def check_console(
+    driver: Driver, user: str, password: str, new_password: str = ""
+) -> str:
     """Log in as the account the wizard made, and use the console once.
 
     ``new_password`` is for the admin, when no first user was made: a deployment
@@ -413,13 +436,17 @@ def check_console(driver: Driver, user: str, password: str, new_password: str = 
             f"the console rendered without {', '.join(missing)}",
         )
         return ""
-    driver.record("navigation", "done", f"the console renders {', '.join(CONSOLE_LANDMARKS)}")
+    driver.record(
+        "navigation", "done", f"the console renders {', '.join(CONSOLE_LANDMARKS)}"
+    )
 
     name = f"onboard{uuid.uuid4().hex[:8]}"
     driver.button("Add Source").first.click(timeout=STEP_TIMEOUT_MS)
     fill_source_form(driver, name)
     driver.button("Add Source").last.click(timeout=STEP_TIMEOUT_MS)
-    driver.page.get_by_text("Source created successfully").wait_for(timeout=STEP_TIMEOUT_MS)
+    driver.page.get_by_text("Source created successfully").wait_for(
+        timeout=STEP_TIMEOUT_MS
+    )
     driver.record("create-source", "done", f"created {name} through the console")
     return name
 
@@ -467,7 +494,9 @@ def run(args: argparse.Namespace) -> int:
     expected = wizard.expected_slugs(steps, wizard.pending_steps(status))
     complete = wizard.setup_complete(status)
     print(f"  engine setup steps: {', '.join(steps) or 'none'}", file=sys.stderr)
-    print(f"  screens this deployment must show: {', '.join(expected)}", file=sys.stderr)
+    print(
+        f"  screens this deployment must show: {', '.join(expected)}", file=sys.stderr
+    )
 
     if complete and not args.console_only:
         print(
@@ -491,12 +520,15 @@ def run(args: argparse.Namespace) -> int:
         # A gateway hostname this machine cannot resolve is mapped inside the
         # browser, so the run reaches the deployment the way a user does.
         browser = play.chromium.launch(
-            channel=args.channel, headless=not args.headed, args=resolver_args(args.resolve)
+            channel=args.channel,
+            headless=not args.headed,
+            args=resolver_args(args.resolve),
         )
 
         def fresh_context():
             return browser.new_context(
-                viewport={"width": 1440, "height": 900}, ignore_https_errors=args.insecure
+                viewport={"width": 1440, "height": 900},
+                ignore_https_errors=args.insecure,
             )
 
         context = fresh_context()
@@ -504,8 +536,15 @@ def run(args: argparse.Namespace) -> int:
         try:
             if not complete:
                 admin_password = walk_wizard(
-                    driver, expected, args.org, args.first_user, first_password, password,
-                    admin_user, password, new_admin_password,
+                    driver,
+                    expected,
+                    args.org,
+                    args.first_user,
+                    first_password,
+                    password,
+                    admin_user,
+                    password,
+                    new_admin_password,
                 )
                 surplus = wizard.unexpected_screens(expected, driver.seen)
                 if surplus:
@@ -524,20 +563,30 @@ def run(args: argparse.Namespace) -> int:
             if made_first_user:
                 created = check_console(driver, args.first_user, first_password)
             else:
-                created = check_console(driver, admin_user, admin_password, new_admin_password)
+                created = check_console(
+                    driver, admin_user, admin_password, new_admin_password
+                )
         except Exception as exc:  # a Playwright timeout IS the finding
-            driver.record("run", "failed", f"{type(exc).__name__}: {str(exc).splitlines()[0]}")
+            driver.record(
+                "run", "failed", f"{type(exc).__name__}: {str(exc).splitlines()[0]}"
+            )
         finally:
             context.close()
             browser.close()
 
     if created:
         # The admin holds the issued password or the one this run changed it to.
-        token = engine_token(args.engine_url, not args.insecure, admin_user, admin_password)
+        token = engine_token(
+            args.engine_url, not args.insecure, admin_user, admin_password
+        )
         if not token and new_admin_password:
-            token = engine_token(args.engine_url, not args.insecure, admin_user, new_admin_password)
+            token = engine_token(
+                args.engine_url, not args.insecure, admin_user, new_admin_password
+            )
         detail = (
-            remove_source(args.engine_url, not args.insecure, token, created, TEARDOWN_DEADLINE)
+            remove_source(
+                args.engine_url, not args.insecure, token, created, TEARDOWN_DEADLINE
+            )
             if token
             else f"could NOT remove {created}: the engine refused the tidy-up login"
         )
@@ -562,24 +611,54 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--ui-url", required=True, help="console base URL")
     parser.add_argument("--engine-url", required=True, help="engine API base URL")
-    parser.add_argument("--org", default="acceptance", help="organisation the wizard creates")
-    parser.add_argument("--first-user", default="operator",
-                        help="the account the wizard creates and the console then uses")
-    parser.add_argument("--admin-user", default="admin",
-                        help="login for --console-only, when no first user is created")
-    parser.add_argument("--access-summary", default="", metavar="FILE",
-                        help="the deploy's own summary, so the run signs in with what its launcher holds")
-    parser.add_argument("--shots-dir", default=".tmp/onboarding",
-                        help="where the per-step screenshots go")
-    parser.add_argument("--channel", default="chrome",
-                        help="browser channel; chrome is the testing browser")
+    parser.add_argument(
+        "--org", default="acceptance", help="organisation the wizard creates"
+    )
+    parser.add_argument(
+        "--first-user",
+        default="operator",
+        help="the account the wizard creates and the console then uses",
+    )
+    parser.add_argument(
+        "--admin-user",
+        default="admin",
+        help="login for --console-only, when no first user is created",
+    )
+    parser.add_argument(
+        "--access-summary",
+        default="",
+        metavar="FILE",
+        help="the deploy's own summary, so the run signs in with what its launcher holds",
+    )
+    parser.add_argument(
+        "--shots-dir",
+        default=".tmp/onboarding",
+        help="where the per-step screenshots go",
+    )
+    parser.add_argument(
+        "--channel",
+        default="chrome",
+        help="browser channel; chrome is the testing browser",
+    )
     parser.add_argument("--headed", action="store_true", help="show the browser")
-    parser.add_argument("--console-only", action="store_true",
-                        help="skip the wizard on a deployment already set up")
-    parser.add_argument("--insecure", action="store_true",
-                        help="accept a certificate this machine does not trust")
-    parser.add_argument("--resolve", action="append", default=[], metavar="HOST:IP",
-                        type=_host_ip, help="resolve HOST to IP inside the browser (repeatable)")
+    parser.add_argument(
+        "--console-only",
+        action="store_true",
+        help="skip the wizard on a deployment already set up",
+    )
+    parser.add_argument(
+        "--insecure",
+        action="store_true",
+        help="accept a certificate this machine does not trust",
+    )
+    parser.add_argument(
+        "--resolve",
+        action="append",
+        default=[],
+        metavar="HOST:IP",
+        type=_host_ip,
+        help="resolve HOST to IP inside the browser (repeatable)",
+    )
     return parser
 
 
@@ -609,7 +688,9 @@ def resolver_args(pairs: list[tuple[str, str]]) -> list[str]:
     """
     if not pairs:
         return []
-    return ["--host-resolver-rules=" + ", ".join(f"MAP {host} {ip}" for host, ip in pairs)]
+    return [
+        "--host-resolver-rules=" + ", ".join(f"MAP {host} {ip}" for host, ip in pairs)
+    ]
 
 
 def _host_ip(value: str) -> tuple[str, str]:

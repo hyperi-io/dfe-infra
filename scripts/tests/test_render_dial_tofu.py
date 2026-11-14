@@ -124,7 +124,9 @@ ALLOWED_CIDRS_LINE = "allowed_cidrs: 198.51.100.10/32, 203.0.113.0/24"
 GHCR_CREDENTIAL = "arn:aws:secretsmanager:us-west-2:000000000000:secret:ecr-pullthroughcache/ghcr-AbCdEf"
 
 
-def dial(*, drop: str = "", replace: tuple[str, str] | None = None) -> dict[str, object]:
+def dial(
+    *, drop: str = "", replace: tuple[str, str] | None = None
+) -> dict[str, object]:
     """Parse the fixture dial, optionally with one line dropped or rewritten."""
     text = DIAL
     if replace:
@@ -163,7 +165,11 @@ def test_the_render_emits_exactly_what_the_root_declares() -> None:
     # resolve_sizing.py images writes these into node-images.auto.tfvars.json, never the dial render.
     images = node_images.tfvars_keys("aws")
     expected = (
-        declared - {"node_pools", "resolved_shapes"} - guarded_run_only - environment_only - images
+        declared
+        - {"node_pools", "resolved_shapes"}
+        - guarded_run_only
+        - environment_only
+        - images
     )
     assert set(render()) == expected
 
@@ -176,11 +182,19 @@ def test_provision_carries_the_account_the_root_asserts() -> None:
     ("replace", "parent"),
     [
         (None, ""),
-        (("  public_zone: dfe.example.com", "  public_zone: dfe.example.com\n  parent_zone_id: Z0PARENT"), "Z0PARENT"),
+        (
+            (
+                "  public_zone: dfe.example.com",
+                "  public_zone: dfe.example.com\n  parent_zone_id: Z0PARENT",
+            ),
+            "Z0PARENT",
+        ),
     ],
     ids=["absent-is-empty", "carried"],
 )
-def test_the_parent_zone_id_reaches_the_root(replace: tuple[str, str] | None, parent: str) -> None:
+def test_the_parent_zone_id_reaches_the_root(
+    replace: tuple[str, str] | None, parent: str
+) -> None:
     assert render(replace=replace)["dns"] == {
         "private_zone": "dfe-example.internal",
         "public_zone": "dfe.example.com",
@@ -191,7 +205,10 @@ def test_the_parent_zone_id_reaches_the_root(replace: tuple[str, str] | None, pa
 def test_comma_separated_scalars_become_lists() -> None:
     """The dial's YAML subset carries no list, so a scalar is split instead."""
     variables = render()
-    assert variables["endpoint"]["allowed_cidrs"] == ["198.51.100.10/32", "203.0.113.0/24"]
+    assert variables["endpoint"]["allowed_cidrs"] == [
+        "198.51.100.10/32",
+        "203.0.113.0/24",
+    ]
 
 
 def test_the_public_endpoint_renders_as_a_bool() -> None:
@@ -220,7 +237,12 @@ def test_az_count_defaults_to_three() -> None:
 
 
 def test_az_count_takes_the_dials_own_value() -> None:
-    assert render(replace=("nat: single", "nat: single\n  az_count: 2"))["network"]["az_count"] == 2
+    assert (
+        render(replace=("nat: single", "nat: single\n  az_count: 2"))["network"][
+            "az_count"
+        ]
+        == 2
+    )
 
 
 def test_an_out_of_range_az_count_is_refused_by_name() -> None:
@@ -233,14 +255,18 @@ def test_subnet_newbits_defaults_to_sixteen_blocks() -> None:
 
 
 def test_subnet_newbits_takes_the_dials_own_value() -> None:
-    network = render(replace=("nat: single", "nat: single\n  subnet_newbits: 6"))["network"]
+    network = render(replace=("nat: single", "nat: single\n  subnet_newbits: 6"))[
+        "network"
+    ]
     assert network == {"nat": "single", "az_count": 3, "subnet_newbits": 6}
 
 
 def test_subnet_newbits_too_small_for_the_zone_count_is_refused_by_name() -> None:
     """Three bits make eight blocks, and six zones need six on each side of the midpoint."""
     with pytest.raises(render_dial.DialError, match=r"network\.subnet_newbits"):
-        render(replace=("nat: single", "nat: single\n  az_count: 6\n  subnet_newbits: 3"))
+        render(
+            replace=("nat: single", "nat: single\n  az_count: 6\n  subnet_newbits: 3")
+        )
 
 
 def test_the_eks_add_ons_are_the_versions_yaml_pins() -> None:
@@ -261,7 +287,10 @@ def test_a_versions_file_with_no_eks_add_ons_renders_an_empty_map(
 ) -> None:
     """The cluster module's preconditions refuse the plan, rather than this render guessing pins."""
     versions = tmp_path / "versions.yaml"
-    versions.write_text('current: "9.9.9"\nstacks:\n  9.9.9:\n    platform:\n      eks: ">= 1.34"\n', encoding="utf-8")
+    versions.write_text(
+        'current: "9.9.9"\nstacks:\n  9.9.9:\n    platform:\n      eks: ">= 1.34"\n',
+        encoding="utf-8",
+    )
     monkeypatch.setattr(render_dial, "VERSIONS_FILE", versions)
     assert render()["eks_addon_versions"] == {}
 
@@ -284,7 +313,10 @@ def test_a_versions_file_with_no_lambda_runtimes_renders_an_empty_map(
 ) -> None:
     """The msk module's validation refuses the plan, rather than this render guessing a runtime."""
     versions = tmp_path / "versions.yaml"
-    versions.write_text('current: "9.9.9"\nstacks:\n  9.9.9:\n    platform:\n      eks: ">= 1.34"\n', encoding="utf-8")
+    versions.write_text(
+        'current: "9.9.9"\nstacks:\n  9.9.9:\n    platform:\n      eks: ">= 1.34"\n',
+        encoding="utf-8",
+    )
     monkeypatch.setattr(render_dial, "VERSIONS_FILE", versions)
     assert render()["lambda_runtimes"] == {}
 
@@ -330,7 +362,9 @@ _AFTER_BOOTSTRAP_JOB = "      service_account: dfe-kafka-bootstrap\n"
 def test_msk_autoscaling_sends_its_sizing_when_the_dial_sets_nothing() -> None:
     """The root declares no default for the ceiling, the capacity or the headroom,
     so the render sends its own documented values; step stays the module's."""
-    assert render()["kafka"]["msk"]["autoscaling"] == render_dial.MSK_AUTOSCALING_DEFAULTS
+    assert (
+        render()["kafka"]["msk"]["autoscaling"] == render_dial.MSK_AUTOSCALING_DEFAULTS
+    )
 
 
 def test_msk_autoscaling_fields_reach_the_msk_block() -> None:
@@ -360,7 +394,9 @@ def test_msk_autoscaling_fields_reach_the_msk_block() -> None:
 
 
 def test_msk_autoscaling_rejects_a_non_numeric_max_brokers() -> None:
-    with pytest.raises(render_dial.DialError, match=r"kafka\.msk\.autoscaling\.max_brokers"):
+    with pytest.raises(
+        render_dial.DialError, match=r"kafka\.msk\.autoscaling\.max_brokers"
+    ):
         render(
             replace=(
                 _AFTER_BOOTSTRAP_JOB,
@@ -372,7 +408,9 @@ def test_msk_autoscaling_rejects_a_non_numeric_max_brokers() -> None:
 
 
 def test_msk_autoscaling_rejects_a_non_numeric_headroom() -> None:
-    with pytest.raises(render_dial.DialError, match=r"kafka\.msk\.autoscaling\.headroom"):
+    with pytest.raises(
+        render_dial.DialError, match=r"kafka\.msk\.autoscaling\.headroom"
+    ):
         render(
             replace=(
                 _AFTER_BOOTSTRAP_JOB,
@@ -449,7 +487,9 @@ def saas_kafka(provider: str, *lines: str, size: int = 16777216) -> dict[str, ob
 def test_a_saas_broker_carries_its_connectivity_to_the_root() -> None:
     """A cloud cycle cannot write ACLs from outside the VPC, so it asks for public."""
     for provider in ("confluent-cloud", "redpanda-cloud"):
-        kafka = saas_kafka(provider, "connectivity: public", "confluent_tier: basic", size=8388608)
+        kafka = saas_kafka(
+            provider, "connectivity: public", "confluent_tier: basic", size=8388608
+        )
         assert kafka["connectivity"] == "public", provider
 
 
@@ -478,7 +518,11 @@ def test_the_confluent_tier_and_environment_reach_the_root() -> None:
 
 def test_a_confluent_dial_with_no_tier_is_sent_freight() -> None:
     """The root declares the tier no default, so the render always names one."""
-    assert saas_kafka("confluent-cloud")["confluent_tier"] == render_dial.CONFLUENT_DEFAULT_TIER == "freight"
+    assert (
+        saas_kafka("confluent-cloud")["confluent_tier"]
+        == render_dial.CONFLUENT_DEFAULT_TIER
+        == "freight"
+    )
 
 
 def test_an_unknown_confluent_tier_is_refused_by_name() -> None:
@@ -489,25 +533,39 @@ def test_an_unknown_confluent_tier_is_refused_by_name() -> None:
 
 def test_a_malformed_confluent_environment_is_refused_by_name() -> None:
     with pytest.raises(render_dial.DialError, match=r"kafka\.confluent_environment_id"):
-        saas_kafka("confluent-cloud", f"confluent_environment_id: {REDPANDA_RESOURCE_GROUP}")
+        saas_kafka(
+            "confluent-cloud", f"confluent_environment_id: {REDPANDA_RESOURCE_GROUP}"
+        )
 
 
 def test_a_confluent_dial_with_no_rest_wait_is_sent_the_documented_one() -> None:
     """Neither the root nor the body defaults the wait, so the render always sends all of it."""
-    assert saas_kafka("confluent-cloud")["confluent_rest_ready"] == render_dial.CONFLUENT_REST_READY_DEFAULTS == {
+    assert (
+        saas_kafka("confluent-cloud")["confluent_rest_ready"]
+        == render_dial.CONFLUENT_REST_READY_DEFAULTS
+        == {
+            "successes": 12,
+            "timeout_seconds": 900,
+            "interval_seconds": 5,
+        }
+    )
+
+
+def test_the_dials_rest_wait_reaches_the_root_field_by_field() -> None:
+    kafka = saas_kafka(
+        "confluent-cloud", "confluent_rest_ready:", "  timeout_seconds: 1200"
+    )
+    assert kafka["confluent_rest_ready"] == {
         "successes": 12,
-        "timeout_seconds": 900,
+        "timeout_seconds": 1200,
         "interval_seconds": 5,
     }
 
 
-def test_the_dials_rest_wait_reaches_the_root_field_by_field() -> None:
-    kafka = saas_kafka("confluent-cloud", "confluent_rest_ready:", "  timeout_seconds: 1200")
-    assert kafka["confluent_rest_ready"] == {"successes": 12, "timeout_seconds": 1200, "interval_seconds": 5}
-
-
 def test_a_rest_wait_that_is_not_a_whole_number_is_refused_by_name() -> None:
-    with pytest.raises(render_dial.DialError, match=r"kafka\.confluent_rest_ready\.successes"):
+    with pytest.raises(
+        render_dial.DialError, match=r"kafka\.confluent_rest_ready\.successes"
+    ):
         saas_kafka("confluent-cloud", "confluent_rest_ready:", "  successes: twelve")
 
 
@@ -523,36 +581,56 @@ def test_basic_refuses_a_message_size_above_its_ceiling() -> None:
 
 
 def test_basic_accepts_a_message_size_at_its_ceiling() -> None:
-    kafka = saas_kafka("confluent-cloud", "connectivity: public", "confluent_tier: basic", size=8388608)
+    kafka = saas_kafka(
+        "confluent-cloud", "connectivity: public", "confluent_tier: basic", size=8388608
+    )
     assert kafka["message_max_bytes"] == 8388608
 
 
 def test_the_larger_confluent_tiers_keep_the_16_mib_chain() -> None:
     assert saas_kafka("confluent-cloud")["message_max_bytes"] == 16777216
     for tier in ("freight", "enterprise"):
-        assert saas_kafka("confluent-cloud", f"confluent_tier: {tier}")["message_max_bytes"] == 16777216
+        assert (
+            saas_kafka("confluent-cloud", f"confluent_tier: {tier}")[
+                "message_max_bytes"
+            ]
+            == 16777216
+        )
 
 
 def test_the_redpanda_resource_group_reaches_the_root() -> None:
     kafka = saas_kafka(
-        "redpanda-cloud", "connectivity: public", f"redpanda_resource_group_id: {REDPANDA_RESOURCE_GROUP}"
+        "redpanda-cloud",
+        "connectivity: public",
+        f"redpanda_resource_group_id: {REDPANDA_RESOURCE_GROUP}",
     )
     assert kafka["redpanda_resource_group_id"] == REDPANDA_RESOURCE_GROUP
 
 
 def test_a_malformed_redpanda_resource_group_is_refused_by_name() -> None:
-    with pytest.raises(render_dial.DialError, match=r"kafka\.redpanda_resource_group_id"):
-        saas_kafka("redpanda-cloud", f"redpanda_resource_group_id: {CONFLUENT_ENVIRONMENT}")
+    with pytest.raises(
+        render_dial.DialError, match=r"kafka\.redpanda_resource_group_id"
+    ):
+        saas_kafka(
+            "redpanda-cloud", f"redpanda_resource_group_id: {CONFLUENT_ENVIRONMENT}"
+        )
 
 
 def test_a_redpanda_dial_with_no_tier_is_sent_serverless() -> None:
     """The body declares the tier no default, so the render always names one."""
-    assert saas_kafka("redpanda-cloud")["redpanda_tier"] == render_dial.REDPANDA_DEFAULT_TIER == "serverless"
+    assert (
+        saas_kafka("redpanda-cloud")["redpanda_tier"]
+        == render_dial.REDPANDA_DEFAULT_TIER
+        == "serverless"
+    )
 
 
 def test_the_redpanda_tier_reaches_the_root() -> None:
     """dedicated reaches the root, whose body then refuses it at plan."""
-    assert saas_kafka("redpanda-cloud", "redpanda_tier: dedicated")["redpanda_tier"] == "dedicated"
+    assert (
+        saas_kafka("redpanda-cloud", "redpanda_tier: dedicated")["redpanda_tier"]
+        == "dedicated"
+    )
 
 
 def test_an_unknown_redpanda_tier_is_refused_by_name() -> None:
@@ -562,15 +640,24 @@ def test_an_unknown_redpanda_tier_is_refused_by_name() -> None:
 
 def test_the_redpanda_tiers_are_the_ones_the_body_validates() -> None:
     """The render's list and the body's validation name the same three products."""
-    body = (REPO_ROOT / "terraform" / "modules" / "managed-kafka" / "redpanda-cloud" / "variables.tf").read_text(
-        encoding="utf-8"
-    )
+    body = (
+        REPO_ROOT
+        / "terraform"
+        / "modules"
+        / "managed-kafka"
+        / "redpanda-cloud"
+        / "variables.tf"
+    ).read_text(encoding="utf-8")
     assert f"contains({json.dumps(list(render_dial.REDPANDA_TIERS))}, var.tier)" in body
 
 
 def test_each_vendors_keys_are_read_for_that_vendor_only() -> None:
     """A Confluent tier left on a Redpanda dial neither caps its size nor reaches the root."""
-    redpanda = saas_kafka("redpanda-cloud", "confluent_tier: basic", f"confluent_environment_id: {CONFLUENT_ENVIRONMENT}")
+    redpanda = saas_kafka(
+        "redpanda-cloud",
+        "confluent_tier: basic",
+        f"confluent_environment_id: {CONFLUENT_ENVIRONMENT}",
+    )
     assert "confluent_tier" not in redpanda
     assert "confluent_environment_id" not in redpanda
     assert "confluent_rest_ready" not in redpanda
@@ -588,11 +675,20 @@ def test_the_basic_ceiling_is_the_one_the_root_and_the_module_refuse_above() -> 
     """Three copies of one vendor limit: the render, the root's validation and the module's check."""
     ceiling = render_dial.CONFLUENT_BASIC_MAX_MESSAGE_BYTES
     root = AWS_VARIABLES.read_text(encoding="utf-8")
-    module = (REPO_ROOT / "terraform" / "modules" / "managed-kafka" / "confluent-cloud" / "main.tf").read_text(
-        encoding="utf-8"
-    )
-    assert re.findall(r"coalesce\(var\.kafka\.message_max_bytes, 0\) > (\d+)", root) == [str(ceiling)]
-    assert re.findall(r"^\s*basic\s*=\s*(\d+)\s*$", module, re.MULTILINE) == [str(ceiling)]
+    module = (
+        REPO_ROOT
+        / "terraform"
+        / "modules"
+        / "managed-kafka"
+        / "confluent-cloud"
+        / "main.tf"
+    ).read_text(encoding="utf-8")
+    assert re.findall(
+        r"coalesce\(var\.kafka\.message_max_bytes, 0\) > (\d+)", root
+    ) == [str(ceiling)]
+    assert re.findall(r"^\s*basic\s*=\s*(\d+)\s*$", module, re.MULTILINE) == [
+        str(ceiling)
+    ]
 
 
 def test_the_kafka_seed_is_keyed_by_the_provider() -> None:
@@ -601,13 +697,18 @@ def test_the_kafka_seed_is_keyed_by_the_provider() -> None:
     MSK takes none: its own AmazonMSK_ secret is the one copy the apps read.
     """
     assert not any(name.startswith("kafka/") for name in render()["seeds"])
-    assert "kafka/strimzi" in render(replace=("provider: msk", "provider: strimzi"))["seeds"]
-    assert "kafka/confluent-cloud" in render(
-        replace=("provider: msk", "provider: confluent-cloud")
-    )["seeds"]
-    assert "kafka/redpanda-cloud" in render(
-        replace=("provider: msk", "provider: redpanda-cloud")
-    )["seeds"]
+    assert (
+        "kafka/strimzi"
+        in render(replace=("provider: msk", "provider: strimzi"))["seeds"]
+    )
+    assert (
+        "kafka/confluent-cloud"
+        in render(replace=("provider: msk", "provider: confluent-cloud"))["seeds"]
+    )
+    assert (
+        "kafka/redpanda-cloud"
+        in render(replace=("provider: msk", "provider: redpanda-cloud"))["seeds"]
+    )
 
 
 def test_only_the_confluent_seed_carries_a_username_field() -> None:
@@ -645,9 +746,12 @@ def test_telemetry_defaults_to_otel_with_a_two_day_retention() -> None:
     without_telemetry = "\n".join(
         line
         for line in DIAL.splitlines()
-        if line.strip() not in ("telemetry:", "aws:", "sink: cloudwatch", "retention_days: 5")
+        if line.strip()
+        not in ("telemetry:", "aws:", "sink: cloudwatch", "retention_days: 5")
     )
-    _, variables = render_dial._tofu_vars(parse_dial(without_telemetry, source="test-dial"))
+    _, variables = render_dial._tofu_vars(
+        parse_dial(without_telemetry, source="test-dial")
+    )
     assert variables["telemetry"] == {
         "sink": "otel",
         "retention_days": 2,
@@ -668,14 +772,23 @@ def test_telemetry_retention_defaults_to_seven_days_under_cloudwatch() -> None:
 
 
 def test_the_forced_retention_takes_the_dials_own_value() -> None:
-    forced = render(replace=("retention_days: 5", "retention_days: 5\n    forced_retention_days: 3"))
+    forced = render(
+        replace=("retention_days: 5", "retention_days: 5\n    forced_retention_days: 3")
+    )
     assert forced["telemetry"]["forced_retention_days"] == 3
 
 
 def test_a_forced_retention_cloudwatch_refuses_is_refused_by_name() -> None:
     """The forced log groups are CloudWatch under either sink, so 2 is never a period they take."""
-    with pytest.raises(render_dial.DialError, match=r"telemetry\.aws\.forced_retention_days"):
-        render(replace=("retention_days: 5", "retention_days: 5\n    forced_retention_days: 2"))
+    with pytest.raises(
+        render_dial.DialError, match=r"telemetry\.aws\.forced_retention_days"
+    ):
+        render(
+            replace=(
+                "retention_days: 5",
+                "retention_days: 5\n    forced_retention_days: 2",
+            )
+        )
 
 
 @pytest.mark.parametrize(
@@ -687,15 +800,29 @@ def test_a_forced_retention_cloudwatch_refuses_is_refused_by_name() -> None:
         pytest.param("", ["audit"], id="empty_takes_audit"),
     ],
 )
-def test_the_dial_names_the_eks_control_plane_streams(value: str, want: list[str]) -> None:
-    rendered = render(replace=("retention_days: 5", f'retention_days: 5\n    eks_log_types: "{value}"'))
+def test_the_dial_names_the_eks_control_plane_streams(
+    value: str, want: list[str]
+) -> None:
+    rendered = render(
+        replace=(
+            "retention_days: 5",
+            f'retention_days: 5\n    eks_log_types: "{value}"',
+        )
+    )
     assert rendered["telemetry"]["eks_log_types"] == want
 
 
-@pytest.mark.parametrize("value", ["audit, audit", "scheduler, kernel", "Audit", "none, audit"])
+@pytest.mark.parametrize(
+    "value", ["audit, audit", "scheduler, kernel", "Audit", "none, audit"]
+)
 def test_an_eks_log_stream_the_api_refuses_is_refused_by_name(value: str) -> None:
     with pytest.raises(render_dial.DialError, match=r"telemetry\.aws\.eks_log_types"):
-        render(replace=("retention_days: 5", f'retention_days: 5\n    eks_log_types: "{value}"'))
+        render(
+            replace=(
+                "retention_days: 5",
+                f'retention_days: 5\n    eks_log_types: "{value}"',
+            )
+        )
 
 
 def test_an_unknown_telemetry_sink_is_refused() -> None:
@@ -708,10 +835,20 @@ def test_no_pull_secret_input_reaches_tofu() -> None:
     bootstrap.sh, so a registry credential never lands in tofu state. The
     registry cache names its upstream credentials by Secrets Manager ARN only."""
     variables = render(
-        replace=("profile: scale", f"profile: scale\nregistry_cache:\n  credentials:\n    ghcr: {GHCR_CREDENTIAL}\n")
+        replace=(
+            "profile: scale",
+            f"profile: scale\nregistry_cache:\n  credentials:\n    ghcr: {GHCR_CREDENTIAL}\n",
+        )
     )
-    assert [key for key in variables if key.startswith("registry") and key != "registry_cache"] == []
-    arns = [upstream["credential_arn"] for upstream in variables["registry_cache"]["upstreams"].values()]
+    assert [
+        key
+        for key in variables
+        if key.startswith("registry") and key != "registry_cache"
+    ] == []
+    arns = [
+        upstream["credential_arn"]
+        for upstream in variables["registry_cache"]["upstreams"].values()
+    ]
     assert all(arn == "" or arn.startswith("arn:") for arn in arns)
 
 
@@ -761,9 +898,14 @@ def test_a_platform_range_floors_at_its_low_side_and_defaults_to_its_top(
     monkeypatch.setattr(render_dial, "VERSIONS_FILE", versions)
     for cloud in ("gcp", "azure"):
         assert render_dial._platform_version(cloud) == "1.34"
-        assert render_dial._kubernetes_version({"kubernetes_version": "1.35"}, cloud) == "1.35"
+        assert (
+            render_dial._kubernetes_version({"kubernetes_version": "1.35"}, cloud)
+            == "1.35"
+        )
         assert render_dial._kubernetes_version({}, cloud) == "1.36"
-        with pytest.raises(render_dial.DialError, match=r"below the platform floor 1\.34"):
+        with pytest.raises(
+            render_dial.DialError, match=r"below the platform floor 1\.34"
+        ):
             render_dial._kubernetes_version({"kubernetes_version": "1.33"}, cloud)
 
 
@@ -796,15 +938,25 @@ def test_a_ceiling_below_the_clouds_own_floor_never_wins(
     ("value", "ceiling"),
     [(">=1.34", None), ("1.34-1.36", "1.36"), ("v1.34-v1.36", "1.36"), ("1.35", None)],
 )
-def test_a_platform_ceiling_is_the_high_side_when_there_is_one(value: str, ceiling: str | None) -> None:
+def test_a_platform_ceiling_is_the_high_side_when_there_is_one(
+    value: str, ceiling: str | None
+) -> None:
     assert render_dial._platform_ceiling(value) == ceiling
 
 
 @pytest.mark.parametrize(
     ("value", "floor"),
-    [(">=1.34", "1.34"), (">= 1.37", "1.37"), ("1.34-1.36", "1.34"), ("v1.34-v1.36", "1.34"), ("1.35", "1.35")],
+    [
+        (">=1.34", "1.34"),
+        (">= 1.37", "1.37"),
+        ("1.34-1.36", "1.34"),
+        ("v1.34-v1.36", "1.34"),
+        ("1.35", "1.35"),
+    ],
 )
-def test_a_platform_floor_is_the_low_side_whatever_the_spelling(value: str, floor: str) -> None:
+def test_a_platform_floor_is_the_low_side_whatever_the_spelling(
+    value: str, floor: str
+) -> None:
     assert render_dial._platform_floor(value) == floor
 
 
@@ -821,7 +973,10 @@ def test_every_platform_floor_agrees_with_the_bootstrap_check() -> None:
     ]
     assert values, "versions.yaml carries no platform floor to compare"
     for value in values:
-        assert render_dial._platform_floor(value) == check_platform.parse_requirement(value)[0], value
+        assert (
+            render_dial._platform_floor(value)
+            == check_platform.parse_requirement(value)[0]
+        ), value
 
 
 def test_the_written_file_is_json_the_root_can_read(tmp_path: Path) -> None:
@@ -885,7 +1040,11 @@ def test_the_forwarder_dial_reaches_the_tofu_variables() -> None:
         "        zone: us-west-2c\n",
     )
     tunnel = render(replace=asked)["edge"]["tunnel"]
-    assert tunnel["address"] == {"mode": "forwarder", "shape_ref": "general", "zone": "us-west-2c"}
+    assert tunnel["address"] == {
+        "mode": "forwarder",
+        "shape_ref": "general",
+        "zone": "us-west-2c",
+    }
     assert tunnel["openvpn"] is False
     assert tunnel["source_ranges"] == ["203.0.113.0/24", "198.51.100.0/24"]
 
@@ -896,7 +1055,9 @@ def test_expected_fail_a_forwarder_instance_type_in_the_dial_is_refused() -> Non
         "profile: scale",
         "profile: scale\nedge:\n  ingest:\n    tunnel:\n      address:\n        instance_type: t4g.small\n",
     )
-    with pytest.raises(render_dial.DialError, match=r"sizing\.overrides\.toolbox\.instance_type"):
+    with pytest.raises(
+        render_dial.DialError, match=r"sizing\.overrides\.toolbox\.instance_type"
+    ):
         render(replace=asked)
 
 
@@ -905,13 +1066,21 @@ def test_the_tunnel_client_range_defaults_to_culverts_own() -> None:
 
 
 def test_the_tunnel_client_range_takes_the_dials_own_value() -> None:
-    asked = ("profile: scale", "profile: scale\nedge:\n  ingest:\n    tunnel:\n      client_cidr: 100.96.0.0/12\n")
+    asked = (
+        "profile: scale",
+        "profile: scale\nedge:\n  ingest:\n    tunnel:\n      client_cidr: 100.96.0.0/12\n",
+    )
     assert render(replace=asked)["edge"]["tunnel"]["client_cidr"] == "100.96.0.0/12"
 
 
 def test_a_tunnel_client_range_that_is_not_a_cidr_is_refused_by_name() -> None:
-    asked = ("profile: scale", "profile: scale\nedge:\n  ingest:\n    tunnel:\n      client_cidr: 100.64.0.1/10\n")
-    with pytest.raises(render_dial.DialError, match=r"edge\.ingest\.tunnel\.client_cidr"):
+    asked = (
+        "profile: scale",
+        "profile: scale\nedge:\n  ingest:\n    tunnel:\n      client_cidr: 100.64.0.1/10\n",
+    )
+    with pytest.raises(
+        render_dial.DialError, match=r"edge\.ingest\.tunnel\.client_cidr"
+    ):
         render(replace=asked)
 
 
@@ -926,10 +1095,15 @@ def test_an_inline_allow_list_loses_its_brackets_like_every_other_dial_list() ->
         "    tunnel:\n"
         "      loadBalancerSourceRanges: [10.0.0.0/8, 192.168.0.0/16]\n",
     )
-    assert render(replace=asked)["edge"]["tunnel"]["source_ranges"] == ["10.0.0.0/8", "192.168.0.0/16"]
+    assert render(replace=asked)["edge"]["tunnel"]["source_ranges"] == [
+        "10.0.0.0/8",
+        "192.168.0.0/16",
+    ]
 
 
-def test_an_empty_inline_allow_list_is_no_allow_list_rather_than_one_bogus_entry() -> None:
+def test_an_empty_inline_allow_list_is_no_allow_list_rather_than_one_bogus_entry() -> (
+    None
+):
     """`[]` left unstripped turns "no allow-list" into an allow-list nothing
     matches, which closes the door instead of opening it."""
     asked = (
@@ -953,11 +1127,20 @@ def test_the_node_ports_default_to_what_the_culvert_chart_pins() -> None:
     assert ports == {"wireguard": 31820, "openvpn": 31194}
 
 
-@pytest.mark.parametrize("asked", [
-    ("profile: scale", "profile: scale\nedge:\n  product:\n    allowed_cidrs: 198.51.100.0/24, 203.0.113.0/24\n"),
-    ("profile: scale", "profile: scale\nui:\n  allowed_cidrs: 198.51.100.0/24\n"),
-], ids=["edge-spelling", "deprecated-ui-spelling"])
-def test_expected_fail_the_gateway_allow_list_never_reaches_the_root(asked: tuple[str, str]) -> None:
+@pytest.mark.parametrize(
+    "asked",
+    [
+        (
+            "profile: scale",
+            "profile: scale\nedge:\n  product:\n    allowed_cidrs: 198.51.100.0/24, 203.0.113.0/24\n",
+        ),
+        ("profile: scale", "profile: scale\nui:\n  allowed_cidrs: 198.51.100.0/24\n"),
+    ],
+    ids=["edge-spelling", "deprecated-ui-spelling"],
+)
+def test_expected_fail_the_gateway_allow_list_never_reaches_the_root(
+    asked: tuple[str, str],
+) -> None:
     """An allow list on the cluster secret beats the deploy repo at every sync, so it goes there by hand."""
     variables = render(replace=asked)
     assert "edge_allowed_cidrs" not in variables
@@ -977,12 +1160,19 @@ def test_the_dials_trusted_proxies_reach_the_root() -> None:
 
 
 def test_a_trusted_proxy_entry_with_no_prefix_is_refused_by_name() -> None:
-    bad = ("profile: scale", "profile: scale\nedge:\n  product:\n    trusted_proxy_cidrs: 192.0.2.1\n")
-    with pytest.raises(render_dial.DialError, match=r"edge\.product\.trusted_proxy_cidrs"):
+    bad = (
+        "profile: scale",
+        "profile: scale\nedge:\n  product:\n    trusted_proxy_cidrs: 192.0.2.1\n",
+    )
+    with pytest.raises(
+        render_dial.DialError, match=r"edge\.product\.trusted_proxy_cidrs"
+    ):
         render(replace=bad)
 
 
-@pytest.mark.parametrize("trusted", ["0.0.0.0/0", "::/0", "192.0.2.0/25, ::/0", "192.0.2.0/25, 0.0.0.0/0"])
+@pytest.mark.parametrize(
+    "trusted", ["0.0.0.0/0", "::/0", "192.0.2.0/25, ::/0", "192.0.2.0/25, 0.0.0.0/0"]
+)
 def test_a_trusted_proxy_range_of_every_address_is_refused(trusted: str) -> None:
     """Every peer is then trusted, so the fence reads a header the client writes."""
     bad = (
@@ -995,7 +1185,9 @@ def test_a_trusted_proxy_range_of_every_address_is_refused(trusted: str) -> None
 
 def test_a_gateway_allow_list_entry_with_no_prefix_is_refused_by_name() -> None:
     """The gateway refuses a bare address, so the dial refuses it before it is pasted."""
-    parsed = render_dial._parse_yaml_subset("edge:\n  product:\n    allowed_cidrs: 198.51.100.10\n")
+    parsed = render_dial._parse_yaml_subset(
+        "edge:\n  product:\n    allowed_cidrs: 198.51.100.10\n"
+    )
     with pytest.raises(render_dial.DialError, match=r"edge\.product\.allowed_cidrs"):
         render_dial._edge_cidrs(parsed, ("edge", "product", "allowed_cidrs"))
 
@@ -1009,19 +1201,30 @@ def test_a_nonsense_address_mode_is_refused_by_name() -> None:
         render(replace=bad)
 
 
-def test_the_registry_cache_is_on_with_the_credential_free_upstreams_when_the_dial_says_nothing() -> None:
+def test_the_registry_cache_is_on_with_the_credential_free_upstreams_when_the_dial_says_nothing() -> (
+    None
+):
     cache = render()["registry_cache"]
     assert cache["enabled"] is True
     assert cache["namespace"] == ""
     assert cache["expiry_days"] == render_dial.REGISTRY_CACHE_EXPIRY_DAYS
     assert sorted(cache["upstreams"]) == ["ecr-public", "k8s", "quay"]
-    assert not any(upstream["requires_credential"] for upstream in cache["upstreams"].values())
-    assert all(upstream["credential_arn"] == "" for upstream in cache["upstreams"].values())
+    assert not any(
+        upstream["requires_credential"] for upstream in cache["upstreams"].values()
+    )
+    assert all(
+        upstream["credential_arn"] == "" for upstream in cache["upstreams"].values()
+    )
 
 
-def test_docker_hub_and_ghcr_are_cached_only_where_the_dial_names_a_credential() -> None:
+def test_docker_hub_and_ghcr_are_cached_only_where_the_dial_names_a_credential() -> (
+    None
+):
     """ECR refuses those two without one, so a dial that names none pulls them directly."""
-    block = ("profile: scale", f"profile: scale\nregistry_cache:\n  credentials:\n    ghcr: {GHCR_CREDENTIAL}\n")
+    block = (
+        "profile: scale",
+        f"profile: scale\nregistry_cache:\n  credentials:\n    ghcr: {GHCR_CREDENTIAL}\n",
+    )
     upstreams = render(replace=block)["registry_cache"]["upstreams"]
     assert sorted(upstreams) == ["ecr-public", "ghcr", "k8s", "quay"]
     assert upstreams["ghcr"] == {
@@ -1033,14 +1236,21 @@ def test_docker_hub_and_ghcr_are_cached_only_where_the_dial_names_a_credential()
 
 
 def test_a_blank_credential_caches_nothing_more() -> None:
-    block = ("profile: scale", "profile: scale\nregistry_cache:\n  credentials:\n    docker-hub: \"\"\n")
-    assert sorted(render(replace=block)["registry_cache"]["upstreams"]) == ["ecr-public", "k8s", "quay"]
+    block = (
+        "profile: scale",
+        'profile: scale\nregistry_cache:\n  credentials:\n    docker-hub: ""\n',
+    )
+    assert sorted(render(replace=block)["registry_cache"]["upstreams"]) == [
+        "ecr-public",
+        "k8s",
+        "quay",
+    ]
 
 
 def test_the_dials_registry_cache_reaches_the_root() -> None:
     block = (
         "profile: scale",
-        "profile: scale\nregistry_cache:\n  enabled: \"true\"\n  namespace: dfe-blue\n"
+        'profile: scale\nregistry_cache:\n  enabled: "true"\n  namespace: dfe-blue\n'
         "  expiry_days: 30\n",
     )
     cache = render(replace=block)["registry_cache"]
@@ -1049,8 +1259,10 @@ def test_the_dials_registry_cache_reaches_the_root() -> None:
     assert cache["expiry_days"] == 30
 
 
-def test_a_dial_that_turns_the_registry_cache_off_renders_it_off_with_its_upstreams() -> None:
-    block = ("profile: scale", "profile: scale\nregistry_cache:\n  enabled: \"false\"\n")
+def test_a_dial_that_turns_the_registry_cache_off_renders_it_off_with_its_upstreams() -> (
+    None
+):
+    block = ("profile: scale", 'profile: scale\nregistry_cache:\n  enabled: "false"\n')
     cache = render(replace=block)["registry_cache"]
     assert cache["enabled"] is False
     assert sorted(cache["upstreams"]) == ["ecr-public", "k8s", "quay"]
@@ -1063,7 +1275,7 @@ def test_the_example_dial_leaves_the_registry_cache_on() -> None:
 
 
 def test_a_registry_cache_flag_that_is_not_a_boolean_is_refused_by_name() -> None:
-    block = ("profile: scale", "profile: scale\nregistry_cache:\n  enabled: \"yes\"\n")
+    block = ("profile: scale", 'profile: scale\nregistry_cache:\n  enabled: "yes"\n')
     with pytest.raises(render_dial.DialError, match=r"registry_cache\.enabled"):
         render(replace=block)
 
@@ -1071,15 +1283,24 @@ def test_a_registry_cache_flag_that_is_not_a_boolean_is_refused_by_name() -> Non
 def test_a_credential_for_an_upstream_that_takes_none_is_refused_by_name() -> None:
     """quay.io needs no credential, and a name the cache does not know is a typo."""
     for name in ("quay", "gitlab"):
-        block = ("profile: scale", f"profile: scale\nregistry_cache:\n  credentials:\n    {name}: arn:aws:example\n")
-        with pytest.raises(render_dial.DialError, match=rf"registry_cache\.credentials names {name}"):
+        block = (
+            "profile: scale",
+            f"profile: scale\nregistry_cache:\n  credentials:\n    {name}: arn:aws:example\n",
+        )
+        with pytest.raises(
+            render_dial.DialError, match=rf"registry_cache\.credentials names {name}"
+        ):
             render(replace=block)
 
 
-def test_a_cloud_other_than_aws_renders_no_registry_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_cloud_other_than_aws_renders_no_registry_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """ECR is the aws body; another cloud's root declares no such variable."""
     (tmp_path / "gcp").mkdir()
     monkeypatch.setattr(render_dial, "TOFU_ROOTS", tmp_path)
-    monkeypatch.setattr(render_dial, "_kubernetes_version", lambda _dial, _cloud: "1.36")
+    monkeypatch.setattr(
+        render_dial, "_kubernetes_version", lambda _dial, _cloud: "1.36"
+    )
     _, variables = render_dial._tofu_vars(dial(replace=("cloud: aws", "cloud: gcp")))
     assert "registry_cache" not in variables

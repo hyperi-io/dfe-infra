@@ -49,7 +49,9 @@ def test_each_declared_value_is_accepted(value: str) -> None:
 
 def test_a_value_outside_the_vocabulary_is_refused_by_name() -> None:
     dial = parse_dial("kafka:\n  controller_pool: dedicated\n", source="test-dial")
-    with pytest.raises(render_dial.DialError, match=r"kafka\.controller_pool must be one of"):
+    with pytest.raises(
+        render_dial.DialError, match=r"kafka\.controller_pool must be one of"
+    ):
         render_dial._controller_pool(dial)
 
 
@@ -57,6 +59,7 @@ def test_the_committed_template_carries_a_declared_value() -> None:
     """The template is what an operator copies, so its own answer has to pass
     the validator every copy of it will be read through."""
     dial = parse_dial(
-        render_dial.DIAL_TEMPLATE.read_text(encoding="utf-8"), source=str(render_dial.DIAL_TEMPLATE)
+        render_dial.DIAL_TEMPLATE.read_text(encoding="utf-8"),
+        source=str(render_dial.DIAL_TEMPLATE),
     )
     assert render_dial._controller_pool(dial) in render_dial.CONTROLLER_POOLS

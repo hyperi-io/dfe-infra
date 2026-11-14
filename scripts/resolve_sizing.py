@@ -217,7 +217,10 @@ SAAS_KAFKA_PROVIDERS = ("confluent-cloud", "redpanda-cloud")
 CHART_DEFAULTS = {
     # kafka.sizing.consumerCeiling -- a classic consumer group assigns at
     # most one consumer per partition, so partitions never go below this.
-    "consumer_ceiling": (10, "helm/charts/kafka/values.yaml#kafka.sizing.consumerCeiling"),
+    "consumer_ceiling": (
+        10,
+        "helm/charts/kafka/values.yaml#kafka.sizing.consumerCeiling",
+    ),
     # kafka.sizing.minPartitionsPerBroker -- 3 brokers give 12, which 3, 6 and
     # 12 brokers all divide evenly.
     "min_partitions_per_broker": (
@@ -233,10 +236,16 @@ CHART_DEFAULTS = {
     ),
     # kafka.retention.usableFraction -- the rest of the PVC is index,
     # snapshot and in-flight segment space.
-    "usable_fraction": (0.85, "helm/charts/kafka/values.yaml#kafka.retention.usableFraction"),
+    "usable_fraction": (
+        0.85,
+        "helm/charts/kafka/values.yaml#kafka.retention.usableFraction",
+    ),
     # kafka.broker.networkMbS -- broker NIC throughput in MB/s, full
     # duplex, and what stops Cruise Control filling the NIC during a rebalance.
-    "broker_network_mb_s": (1250, "helm/charts/kafka/values.yaml#kafka.broker.networkMbS"),
+    "broker_network_mb_s": (
+        1250,
+        "helm/charts/kafka/values.yaml#kafka.broker.networkMbS",
+    ),
     # kafka.storage.size -- the floor a broker PVC never goes
     # below, so a deployment with no estimate still asks for a real volume.
     "kafka_broker_disk_gib": (20, "helm/charts/kafka/values.yaml#kafka.storage.size"),
@@ -253,7 +262,10 @@ CHART_DEFAULTS = {
         2,
         "argocd/values/profile-scale.yaml#replicaCount,keda.minReplicaCount",
     ),
-    "app_vcpu_request": (0.5, "argocd/values/profile-scale.yaml#resources.requests.cpu"),
+    "app_vcpu_request": (
+        0.5,
+        "argocd/values/profile-scale.yaml#resources.requests.cpu",
+    ),
 }
 
 # Use cases whose IO is CONTINUOUS, so a burstable instance size cannot carry
@@ -352,7 +364,11 @@ def _instance_store_policy(entry: dict[str, object]) -> str | None:
     volumes = entry.get("volumes")
     if not isinstance(volumes, dict):
         return None
-    stores = {str(v.get("instance_store", "")) for v in volumes.values() if isinstance(v, dict)}
+    stores = {
+        str(v.get("instance_store", ""))
+        for v in volumes.values()
+        if isinstance(v, dict)
+    }
     return INSTANCE_STORE_POLICY if stores & {"raid0", "required"} else None
 
 
@@ -584,7 +600,9 @@ def _transformed_share(tree: object) -> float | None:
     """sizing.transformed_share, refused outside 0 to 1."""
     share = _dial_number(tree, "sizing", "transformed_share")
     if share is not None and not 0 <= share <= 1:
-        raise ResolveError(f"sizing.transformed_share is a share of ingest, 0 to 1, got {share:g}")
+        raise ResolveError(
+            f"sizing.transformed_share is a share of ingest, 0 to 1, got {share:g}"
+        )
     return share
 
 
@@ -593,10 +611,14 @@ def read_dial(path: Path, cloud: str | None = None, target: str | None = None) -
     if not path.is_file():
         raise ResolveError(f"no deployment dial at {path}")
     tree = _load(path)
-    provision_cloud = _scalar(tree, "target", "provision", "cloud") or _scalar(tree, "k8s", "cloud")
+    provision_cloud = _scalar(tree, "target", "provision", "cloud") or _scalar(
+        tree, "k8s", "cloud"
+    )
     allow = (_scalar(tree, "sizing", "allow_undersized") or "false").lower()
     if allow not in ("true", "false"):
-        raise ResolveError(f"sizing.allow_undersized must be true or false, got {allow!r}")
+        raise ResolveError(
+            f"sizing.allow_undersized must be true or false, got {allow!r}"
+        )
     provider = (_scalar(tree, "kafka", "provider") or "strimzi").lower()
     if provider not in KAFKA_PROVIDERS:
         raise ResolveError(
@@ -628,7 +650,9 @@ def read_dial(path: Path, cloud: str | None = None, target: str | None = None) -
     # SaaS body: confluent-cloud.yaml and redpanda-cloud.yaml carry the dials
     # that govern the BROKER, which is what a re-size actually needs to see
     # when there is no cloud-side shape to report on for it.
-    default_target = kafka_provider if kafka_provider in SAAS_KAFKA_PROVIDERS else resolved_cloud
+    default_target = (
+        kafka_provider if kafka_provider in SAAS_KAFKA_PROVIDERS else resolved_cloud
+    )
     az_count_raw = _dial_number(tree, "network", "az_count")
     az_count = int(az_count_raw) if az_count_raw is not None else 3
     if not 2 <= az_count <= 6:
@@ -699,7 +723,9 @@ def _read_overrides(tree: dict[str, object]) -> dict[str, dict[str, str]]:
                 f"sizing.overrides.{use_case}: not a use case -- one of {', '.join(USE_CASES)}"
             )
         if not isinstance(fields, dict):
-            raise ResolveError(f"sizing.overrides.{use_case}: a map of fields, not a scalar")
+            raise ResolveError(
+                f"sizing.overrides.{use_case}: a map of fields, not a scalar"
+            )
         for name, value in fields.items():
             if name not in known:
                 raise ResolveError(
@@ -739,7 +765,10 @@ def _read_node_pools(tree: dict[str, object]) -> dict[str, dict[str, object]]:
         if not shape_ref:
             raise ResolveError(f"node_pools.{name}.shape_ref is required")
         capacity_type = _scalar(body, "capacity_type") or "ON_DEMAND"
-        pool: dict[str, object] = {"shape_ref": shape_ref, "capacity_type": capacity_type}
+        pool: dict[str, object] = {
+            "shape_ref": shape_ref,
+            "capacity_type": capacity_type,
+        }
         for field_name in _NODE_POOL_FIELDS:
             raw = _scalar(body, field_name)
             if raw is None:
@@ -872,7 +901,9 @@ def size_core(sizing: dict[str, object], dial: Dial) -> Core:
 
     focus = dial.focus
     if _at(sizing, "focus", focus) is None:
-        raise ResolveError(f"sizing.focus {focus!r} is not a level sizing.yaml declares")
+        raise ResolveError(
+            f"sizing.focus {focus!r} is not a level sizing.yaml declares"
+        )
     headroom = take("focus", focus, "headroom")
 
     provider = dial.kafka_provider
@@ -881,14 +912,20 @@ def size_core(sizing: dict[str, object], dial: Dial) -> Core:
     if _at(sizing, "ceilings", provider) is not None:
         provider_ceiling = take("ceilings", provider)
 
-    peak_factor = dial.peak_factor if dial.peak_factor is not None else take("event", "peak_factor")
+    peak_factor = (
+        dial.peak_factor
+        if dial.peak_factor is not None
+        else take("event", "peak_factor")
+    )
     estimated = dial.ingest_gb_per_day is not None
 
     if estimated:
         gb_per_day = float(dial.ingest_gb_per_day)
         binding = min(cap, provider_ceiling) if provider_ceiling is not None else cap
         if gb_per_day > binding:
-            message = str(_at(sizing, "ceilings", "professional_services_message") or "")
+            message = str(
+                _at(sizing, "ceilings", "professional_services_message") or ""
+            )
             named = (
                 provider
                 if provider_ceiling is not None and binding == provider_ceiling
@@ -957,7 +994,8 @@ def size_core(sizing: dict[str, object], dial: Dial) -> Core:
             vcpu_cap = 32
 
         total_broker_vcpu = max(
-            broker_count_multiple * floor_broker_vcpu, math.ceil(required_mb_s / mb_s_per_vcpu)
+            broker_count_multiple * floor_broker_vcpu,
+            math.ceil(required_mb_s / mb_s_per_vcpu),
         )
         brokers = broker_count_multiple
         while math.ceil(total_broker_vcpu / brokers) > vcpu_cap:
@@ -994,7 +1032,8 @@ def size_core(sizing: dict[str, object], dial: Dial) -> Core:
         heap_gb = take("kafka", provider, "heap_gb")
         page_cache_s = take("kafka", provider, "page_cache_seconds")
         broker_ram = max(
-            floor_broker_ram, math.ceil(heap_gb + per_broker_peak_mb_s * page_cache_s / 1024)
+            floor_broker_ram,
+            math.ceil(heap_gb + per_broker_peak_mb_s * page_cache_s / 1024),
         )
     elif provider == "redpanda":
         # Redpanda bypasses the page cache and carries per-replica state instead,
@@ -1004,7 +1043,8 @@ def size_core(sizing: dict[str, object], dial: Dial) -> Core:
         broker_ram = max(
             floor_broker_ram,
             math.ceil(
-                broker_vcpu * ram_per_core + partitions_per_broker * ram_mb_per_replica / 1024
+                broker_vcpu * ram_per_core
+                + partitions_per_broker * ram_mb_per_replica / 1024
             ),
         )
     else:
@@ -1017,7 +1057,9 @@ def size_core(sizing: dict[str, object], dial: Dial) -> Core:
     # them here as well would double the archiver term the moment a
     # deploy-repo overlay ever sets archiverLagH on its own.
     consumer_downtime_hours = take("retention", "assumed_consumer_downtime_hours")
-    archiver_lag_hours = dial.archiver_lag_hours if dial.archiver_lag_hours is not None else 0.0
+    archiver_lag_hours = (
+        dial.archiver_lag_hours if dial.archiver_lag_hours is not None else 0.0
+    )
     retention_hours = consumer_downtime_hours + archiver_lag_hours
     if provider in ("msk-express", *SAAS_KAFKA_PROVIDERS):
         broker_disk_gib = 0
@@ -1027,12 +1069,20 @@ def size_core(sizing: dict[str, object], dial: Dial) -> Core:
         # rewrites a second time, enriched, on <source>_load.
         retained_copies = 1.0
         if dial.transformed_share:
-            retained_copies += dial.transformed_share * take("event", "enrichment_growth_factor")
+            retained_copies += dial.transformed_share * take(
+                "event", "enrichment_growth_factor"
+            )
         # STORAGE IS SIZED FROM THE DAILY VOLUME, not the peak: a retention
         # window of a day or more spans the whole diurnal curve, so peak times
         # retention would count the evening twice. Ingest is what the peak sizes.
         broker_disk_mb = (
-            retention_hours * avg_mb_s * retained_copies * 3600 * rf_disk / brokers / disk_headroom
+            retention_hours
+            * avg_mb_s
+            * retained_copies
+            * 3600
+            * rf_disk
+            / brokers
+            / disk_headroom
         )
         broker_disk_gib = max(
             CHART_DEFAULTS["kafka_broker_disk_gib"][0],
@@ -1130,7 +1180,9 @@ def size_core(sizing: dict[str, object], dial: Dial) -> Core:
     rows_per_core = take("clickhouse", "ingest_rows_per_s_per_core_native")
     parse_factor = take("clickhouse", "jsoneachrow_parse_factor")
     ingest_cores = math.ceil(rows_per_s / rows_per_core) if rows_per_core else 0
-    ch_vcpu = max(floor_ch_vcpu, math.ceil((ingest_cores * (1 + headroom)) / ch_replicas))
+    ch_vcpu = max(
+        floor_ch_vcpu, math.ceil((ingest_cores * (1 + headroom)) / ch_replicas)
+    )
     notes.append(
         f"ClickHouse ingest is sized on the Native rate ({rows_per_core:,.0f} rows/s a core). A "
         f"loader inserting JSONEachRow costs {parse_factor:g}x that, so ingest cores become "
@@ -1145,7 +1197,8 @@ def size_core(sizing: dict[str, object], dial: Dial) -> Core:
 
     ch_headroom = take("clickhouse", "disk_headroom")
     ch_disk_gib = max(
-        CHART_DEFAULTS["clickhouse_disk_gib"][0], math.ceil(compressed_gib / ch_headroom)
+        CHART_DEFAULTS["clickhouse_disk_gib"][0],
+        math.ceil(compressed_gib / ch_headroom),
     )
     nodes["clickhouse"] = Node(
         use_case="clickhouse",
@@ -1284,7 +1337,9 @@ def _whole(use_case: str, what: str, raw: str) -> int:
     try:
         return int(float(raw))
     except ValueError as err:
-        raise ResolveError(f"sizing.overrides.{use_case}.{what}: {raw!r} is not a number") from err
+        raise ResolveError(
+            f"sizing.overrides.{use_case}.{what}: {raw!r} is not a number"
+        ) from err
 
 
 def _apply_node_overrides(core: Core, overrides: dict[str, dict[str, str]]) -> None:
@@ -1385,7 +1440,9 @@ def _aws(args: list[str]) -> object:
     try:
         done = run_aws([*args, "--output", "json"], timeout=600)
     except FileNotFoundError as err:
-        raise ResolveError("the aws CLI is not on PATH -- resolve from fixtures instead") from err
+        raise ResolveError(
+            "the aws CLI is not on PATH -- resolve from fixtures instead"
+        ) from err
     if done.returncode != 0:
         tail = done.stderr.strip().splitlines()[-1:] or ["no stderr"]
         raise ResolveError(f"aws {' '.join(args[:2])} failed: {tail[0]}")
@@ -1430,7 +1487,9 @@ def _instance_from_api(body: dict[str, object]) -> InstanceType | None:
         baseline_throughput_mib_s=float(ebs.get("BaselineThroughputInMBps", 0) or 0),
         maximum_iops=int(ebs.get("MaximumIops", 0) or 0),
         maximum_throughput_mib_s=float(ebs.get("MaximumThroughputInMBps", 0) or 0),
-        instance_store_gb=int(store.get("TotalSizeInGB", 0) or 0) if isinstance(store, dict) else 0,
+        instance_store_gb=int(store.get("TotalSizeInGB", 0) or 0)
+        if isinstance(store, dict)
+        else 0,
     )
 
 
@@ -1504,7 +1563,9 @@ def fetch_live(region: str, az_count: int) -> Catalogue:
                 "InstanceTypeOfferings[].InstanceType",
             ]
         )
-        offerings[az] = {str(name) for name in answer} if isinstance(answer, list) else set()
+        offerings[az] = (
+            {str(name) for name in answer} if isinstance(answer, list) else set()
+        )
 
     prices, processors = _fetch_ec2_prices(region)
     for name, price in prices.items():
@@ -1614,7 +1675,9 @@ def _fetch_msk_prices(region: str) -> tuple[tuple[str, ...], dict[str, float]]:
     for blob in raw.get("PriceList", []) if isinstance(raw, dict) else []:
         product = json.loads(blob) if isinstance(blob, str) else blob
         attributes = product.get("product", {}).get("attributes", {})
-        family = str(attributes.get("computeFamily", "") or attributes.get("instanceType", ""))
+        family = str(
+            attributes.get("computeFamily", "") or attributes.get("instanceType", "")
+        )
         if not family:
             continue
         for term in product.get("terms", {}).get("OnDemand", {}).values():
@@ -1708,14 +1771,18 @@ def write_fixture(catalogue: Catalogue, directory: Path) -> Path:
         "seen": catalogue.seen,
         "unparsed": catalogue.unparsed,
         "types": {name: asdict(body) for name, body in sorted(catalogue.types.items())},
-        "offerings": {az: sorted(names) for az, names in sorted(catalogue.offerings.items())},
+        "offerings": {
+            az: sorted(names) for az, names in sorted(catalogue.offerings.items())
+        },
         "msk_families": list(catalogue.msk_families),
         "msk_prices": dict(sorted(catalogue.msk_prices.items())),
     }
     body = json.dumps(doc, indent=2, sort_keys=False)
     leaked = _scrub_findings(body)
     if leaked:
-        raise ResolveError(f"the capture carries {leaked[0]} -- scrub it before committing")
+        raise ResolveError(
+            f"the capture carries {leaked[0]} -- scrub it before committing"
+        )
     path.write_text(body + "\n", encoding="utf-8")
     return path
 
@@ -1750,7 +1817,9 @@ class Choice:
 
 def _focus_policies(sizing: dict[str, object], focus: str) -> tuple[str, str]:
     """The generation and storage policies this focus level asks for."""
-    generation = str(_at(sizing, "focus", focus, "generation_policy", "value") or "newest")
+    generation = str(
+        _at(sizing, "focus", focus, "generation_policy", "value") or "newest"
+    )
     storage = str(_at(sizing, "focus", focus, "storage_profile", "value") or "baseline")
     return generation, storage
 
@@ -1760,9 +1829,12 @@ def _allocatable_memory_mib(memory_gib: float, core: Core) -> int:
     the kubelet's reserve, the hard eviction threshold and the DaemonSets."""
     capacity = math.floor(memory_gib * 1024 * (1 - core.node_memory_overhead))
     kube_reserved = (
-        KUBE_RESERVED_MEMORY_MIB_PER_POD * core.node_max_pods + KUBE_RESERVED_MEMORY_BASE_MIB
+        KUBE_RESERVED_MEMORY_MIB_PER_POD * core.node_max_pods
+        + KUBE_RESERVED_MEMORY_BASE_MIB
     )
-    return capacity - kube_reserved - EVICTION_HARD_MEMORY_MIB - core.daemonset_memory_mib
+    return (
+        capacity - kube_reserved - EVICTION_HARD_MEMORY_MIB - core.daemonset_memory_mib
+    )
 
 
 def select_shape(
@@ -1800,7 +1872,9 @@ def select_shape(
             price, or too many type names could not be parsed to rank.
     """
     family = str(entry.get("family", ""))
-    modifiers = tuple(m for m in str(entry.get("modifiers", "")).split(",") if m.strip())
+    modifiers = tuple(
+        m for m in str(entry.get("modifiers", "")).split(",") if m.strip()
+    )
     policy = str(entry.get("generation_policy", "newest"))
     pin = str(entry.get("generation_pin", "")).strip()
     price_policy = str(entry.get("price_policy", "newest"))
@@ -1817,7 +1891,11 @@ def select_shape(
 
     # The floor size sets the minimum shape whatever the demand says, so a
     # tyre-kick deploy still gets a broker that runs the canonical profile.
-    floor = [t for t in catalogue.types.values() if t.family == family and t.size == floor_size]
+    floor = [
+        t
+        for t in catalogue.types.values()
+        if t.family == family and t.size == floor_size
+    ]
     floor_vcpu = min((t.vcpu for t in floor), default=0)
     floor_memory = min((t.memory_gib for t in floor), default=0.0)
 
@@ -1854,14 +1932,18 @@ def select_shape(
     generations = sorted({t.generation for t in candidates}, reverse=True)
     if policy == "pinned":
         if not pin:
-            raise ResolveError(f"{use_case}: generation_policy pinned with no generation_pin")
+            raise ResolveError(
+                f"{use_case}: generation_policy pinned with no generation_pin"
+            )
         generations = [g for g in generations if g == int(pin)]
     elif policy == "newest-with-modifiers":
         floor_generation = int(pin) if pin else 0
         generations = [g for g in generations if g >= floor_generation] or generations
     elif policy == "newest" and focus_generation.startswith("newest-within"):
         price_policy = "newest-within"
-        step_max = focus_generation.split(":", 1)[1] if ":" in focus_generation else step_max
+        step_max = (
+            focus_generation.split(":", 1)[1] if ":" in focus_generation else step_max
+        )
 
     if not generations:
         raise ResolveError(f"{use_case}: generation policy {policy} left no candidate")
@@ -1869,7 +1951,9 @@ def select_shape(
     # One size across the generations, so a price step compares like with like.
     def smallest_at(generation: int) -> InstanceType | None:
         at_generation = [t for t in candidates if t.generation == generation]
-        return min(at_generation, key=lambda t: (t.vcpu, t.memory_gib, t.name), default=None)
+        return min(
+            at_generation, key=lambda t: (t.vcpu, t.memory_gib, t.name), default=None
+        )
 
     ladder = [t for t in (smallest_at(g) for g in generations) if t is not None]
     unpriced = [t.name for t in ladder if t.price_usd_hour is None]
@@ -1883,7 +1967,9 @@ def select_shape(
     if price_policy == "newest-within" and len(ladder) > 1 and step_max:
         step = float(step_max)
         older = ladder[1]
-        rise = (chosen.price_usd_hour - older.price_usd_hour) / older.price_usd_hour * 100
+        rise = (
+            (chosen.price_usd_hour - older.price_usd_hour) / older.price_usd_hour * 100
+        )
         if rise > step:
             notes.append(
                 f"{use_case}: {chosen.name} is {rise:.1f}% dearer than {older.name}, above the "
@@ -1910,7 +1996,9 @@ def select_shape(
     passed_over = [
         t
         for t in sized
-        if t.name.split(".", 1)[0] == chosen_prefix and t.vcpu < chosen.vcpu and not leaves_room(t)
+        if t.name.split(".", 1)[0] == chosen_prefix
+        and t.vcpu < chosen.vcpu
+        and not leaves_room(t)
     ]
     if core is not None and passed_over:
         tight = max(passed_over, key=lambda t: (t.vcpu, t.memory_gib, t.name))
@@ -1933,7 +2021,10 @@ def select_shape(
         and t.vcpu >= chosen.vcpu
         and t.memory_gib >= chosen.memory_gib
         and _volumes_fit(
-            _resolve_volumes(entry, demand, t, root_volume_demand_mib_s, root_volume_demand_iops), t
+            _resolve_volumes(
+                entry, demand, t, root_volume_demand_mib_s, root_volume_demand_iops
+            ),
+            t,
         )
     ]
 
@@ -1966,7 +2057,9 @@ MSK_EXPRESS_TYPE = re.compile(
 )
 
 
-def _msk_ladders(family: str, catalogue: Catalogue) -> dict[int, list[tuple[int, str, float]]]:
+def _msk_ladders(
+    family: str, catalogue: Catalogue
+) -> dict[int, list[tuple[int, str, float]]]:
     """Each Express generation of `family` the Pricing API prices, as (vCPU, size, price) smallest first.
 
     A size counts when EC2 also describes the same-named Graviton type, which is where
@@ -2029,7 +2122,9 @@ def select_msk_shape(
     fit: list[tuple[int, str, float]] = []
     for generation in generations:
         ladder = ladders[generation]
-        floor_vcpu = next((vcpu for vcpu, size, _ in ladder if size == floor_size), ladder[0][0])
+        floor_vcpu = next(
+            (vcpu for vcpu, size, _ in ladder if size == floor_size), ladder[0][0]
+        )
         want = max(demand.vcpu, floor_vcpu)
         fit = [rung for rung in ladder if rung[0] >= want]
         if fit:
@@ -2067,7 +2162,10 @@ def select_msk_shape(
 
 
 def _apply_shape_overrides(
-    choice: Choice, overrides: dict[str, dict[str, str]], core: Core, catalogue: Catalogue
+    choice: Choice,
+    overrides: dict[str, dict[str, str]],
+    core: Core,
+    catalogue: Catalogue,
 ) -> None:
     """Replace the resolved type, IOPS or throughput with the deployer's answer.
 
@@ -2114,14 +2212,18 @@ def _apply_shape_overrides(
         for name, volume in choice.volumes.items():
             if volume.get("type") != "gp3" or name != "data":
                 continue
-            core.overridden.append(Override(choice.use_case, what, str(volume.get(key)), raw))
+            core.overridden.append(
+                Override(choice.use_case, what, str(volume.get(key)), raw)
+            )
             applied = _whole(choice.use_case, what, raw)
             volume[key] = applied
             # They asked for it: an override above what the workload was going
             # to demand anyway RAISES the demand to match, so A3's baseline
             # check and A7's own-ceiling check both see what the deployer
             # actually wants provisioned, not what size_core quietly derived.
-            volume[demand_key] = max(float(volume.get(demand_key, 0) or 0), float(applied))
+            volume[demand_key] = max(
+                float(volume.get(demand_key, 0) or 0), float(applied)
+            )
 
 
 def _size_up_to_carry_the_volumes(
@@ -2145,7 +2247,11 @@ def _size_up_to_carry_the_volumes(
     once, so it plays no part in this step-up; see _resolve_volumes and A7.
     """
     ladder = sorted(
-        (t for t in candidates if t.generation == chosen.generation and t.vcpu >= chosen.vcpu),
+        (
+            t
+            for t in candidates
+            if t.generation == chosen.generation and t.vcpu >= chosen.vcpu
+        ),
         key=lambda t: (t.vcpu, t.memory_gib, t.name),
     )
     volumes = _resolve_volumes(
@@ -2170,7 +2276,9 @@ def _size_up_to_carry_the_volumes(
     return chosen, volumes
 
 
-def _volumes_fit(volumes: dict[str, dict[str, object]], candidate: InstanceType) -> bool:
+def _volumes_fit(
+    volumes: dict[str, dict[str, object]], candidate: InstanceType
+) -> bool:
     """Whether the instance's sustained baseline carries the node's DEMANDED IO.
 
     Sums `demand_iops` / `demand_throughput_mib_s`, never the provisioned
@@ -2180,7 +2288,9 @@ def _volumes_fit(volumes: dict[str, dict[str, object]], candidate: InstanceType)
     asked for. See _resolve_volumes for where a volume's demand comes from.
     """
     total_iops = sum(
-        int(v.get("demand_iops", 0) or 0) for v in volumes.values() if v.get("type") == "gp3"
+        int(v.get("demand_iops", 0) or 0)
+        for v in volumes.values()
+        if v.get("type") == "gp3"
     )
     total_throughput = sum(
         float(v.get("demand_throughput_mib_s", 0) or 0)
@@ -2195,7 +2305,9 @@ def _volumes_fit(volumes: dict[str, dict[str, object]], candidate: InstanceType)
     )
 
 
-def _cross_check_generation(use_case: str, chosen: InstanceType, notes: list[str]) -> None:
+def _cross_check_generation(
+    use_case: str, chosen: InstanceType, notes: list[str]
+) -> None:
     """Check the parsed generation against the Pricing API's physicalProcessor.
 
     EC2's ProcessorInfo carries no generation, so the name is what ranks and this
@@ -2210,7 +2322,9 @@ def _cross_check_generation(use_case: str, chosen: InstanceType, notes: list[str
         )
         return
     if int(match["generation"]) < 1:
-        notes.append(f"{use_case}: {chosen.name} reports an implausible Graviton generation")
+        notes.append(
+            f"{use_case}: {chosen.name} reports an implausible Graviton generation"
+        )
 
 
 def _resolve_volumes(
@@ -2265,7 +2379,9 @@ def _resolve_volumes(
                 # the read rather than copy a GB number under a GiB name. A
                 # 950 GB device becomes 884Gi, which is the device's real GiB
                 # capacity -- see build_values' clickhouse.objectStore.cacheSize.
-                "size_gib": int(chosen.instance_store_gb * BYTES_PER_GB / BYTES_PER_GIB),
+                "size_gib": int(
+                    chosen.instance_store_gb * BYTES_PER_GB / BYTES_PER_GIB
+                ),
                 "source": "instance-provided",
             }
             continue
@@ -2287,7 +2403,9 @@ def _resolve_volumes(
             "iops": iops,
             "throughput_mib_s": throughput,
             "demand_iops": int(demand.iops) if name == "data" else 0,
-            "demand_throughput_mib_s": float(demand.throughput_mib_s) if name == "data" else 0.0,
+            "demand_throughput_mib_s": float(demand.throughput_mib_s)
+            if name == "data"
+            else 0.0,
             "source": formula,
         }
     _derive_baseline_throughput(volumes, out, chosen)
@@ -2298,7 +2416,9 @@ def _resolve_volumes(
         # provisioned, never above it, so A7 can never fire on the floor
         # itself.
         if volume.get("type") == "gp3" and name != "data":
-            volume["demand_iops"] = min(root_volume_demand_iops, int(volume.get("iops", 0) or 0))
+            volume["demand_iops"] = min(
+                root_volume_demand_iops, int(volume.get("iops", 0) or 0)
+            )
             volume["demand_throughput_mib_s"] = min(
                 root_volume_demand_mib_s, float(volume.get("throughput_mib_s", 0) or 0)
             )
@@ -2306,7 +2426,9 @@ def _resolve_volumes(
 
 
 def _derive_baseline_throughput(
-    profiles: dict[str, object], built: dict[str, dict[str, object]], chosen: InstanceType
+    profiles: dict[str, object],
+    built: dict[str, dict[str, object]],
+    chosen: InstanceType,
 ) -> None:
     """Give every `instance-baseline` volume what the instance has left to give.
 
@@ -2319,7 +2441,8 @@ def _derive_baseline_throughput(
         float(volume.get("throughput_mib_s", 0) or 0)
         for name, volume in built.items()
         if volume.get("type") == "gp3"
-        and str((profiles.get(name) or {}).get("throughput_policy", "")) != "instance-baseline"
+        and str((profiles.get(name) or {}).get("throughput_policy", ""))
+        != "instance-baseline"
     )
     spare = max(0.0, chosen.baseline_throughput_mib_s - claimed)
     for name, volume in built.items():
@@ -2332,7 +2455,8 @@ def _derive_baseline_throughput(
         # provisioned IOPS, so spare instance bandwidth it cannot reach is not
         # bandwidth this volume has.
         ceiling = min(
-            GP3_MAX_THROUGHPUT_MIB_S, GP3_MIB_S_PER_IOPS * int(volume.get("iops", 0) or 0)
+            GP3_MAX_THROUGHPUT_MIB_S,
+            GP3_MIB_S_PER_IOPS * int(volume.get("iops", 0) or 0),
         )
         volume["throughput_mib_s"] = float(
             max(GP3_MIN_THROUGHPUT_MIB_S, min(math.floor(spare), ceiling))
@@ -2355,7 +2479,9 @@ class Finding:
     fatal: bool
 
 
-def _gp3_price_per_gib_month(shapes: dict[str, object], cloud: str, region: str) -> float:
+def _gp3_price_per_gib_month(
+    shapes: dict[str, object], cloud: str, region: str
+) -> float:
     """The gp3 USD/GiB-month for one region, from compute-shapes.yaml.
 
     There is no describe-price API for EBS the way there is for EC2 and MSK, so
@@ -2363,7 +2489,9 @@ def _gp3_price_per_gib_month(shapes: dict[str, object], cloud: str, region: str)
     refuses a region the file does not name rather than silently costing the
     deployment at another region's rate.
     """
-    price = _at(shapes, "clouds", cloud, "storage_pricing", region, "gp3_usd_per_gib_month")
+    price = _at(
+        shapes, "clouds", cloud, "storage_pricing", region, "gp3_usd_per_gib_month"
+    )
     if price is None:
         raise ResolveError(
             f"compute-shapes.yaml has no clouds.{cloud}.storage_pricing.{region} -- add "
@@ -2498,7 +2626,9 @@ def assert_caps(
         )
 
     declared = str(entry.get("sustained", "")).strip().lower()
-    is_sustained = declared == "true" if declared else choice.use_case in SUSTAINED_USE_CASES
+    is_sustained = (
+        declared == "true" if declared else choice.use_case in SUSTAINED_USE_CASES
+    )
     if is_sustained and choice.maximum_iops > choice.baseline_iops > 0:
         smallest = _smallest_sustained(catalogue, choice)
         findings.append(
@@ -2515,7 +2645,9 @@ def assert_caps(
         )
 
     storage_gib = sum(
-        int(v.get("size_gib", 0) or 0) for v in choice.volumes.values() if v.get("type") == "gp3"
+        int(v.get("size_gib", 0) or 0)
+        for v in choice.volumes.values()
+        if v.get("type") == "gp3"
     )
     monthly = (
         choice.price_usd_hour * HOURS_PER_MONTH + storage_gib * gp3_usd_per_gib_month
@@ -2567,7 +2699,9 @@ def assert_caps(
     return findings
 
 
-def assert_schedulable(choice: Choice, demand: Node | None, core: Core) -> list[Finding]:
+def assert_schedulable(
+    choice: Choice, demand: Node | None, core: Core
+) -> list[Finding]:
     """A8: the sized memory fits what the chosen node leaves a pod.
 
     select_shape already sizes past a node too small, so this fires on a
@@ -2596,7 +2730,9 @@ def _smallest_sustained(catalogue: Catalogue, choice: Choice) -> str | None:
     same = [
         t
         for t in catalogue.types.values()
-        if t.name.startswith(f"{family}.") and t.baseline_iops and t.baseline_iops >= t.maximum_iops
+        if t.name.startswith(f"{family}.")
+        and t.baseline_iops
+        and t.baseline_iops >= t.maximum_iops
     ]
     if not same:
         return None
@@ -2608,7 +2744,9 @@ def _smallest_sustained(catalogue: Catalogue, choice: Choice) -> str | None:
 # ---------------------------------------------------------------------------
 
 
-def _storage_class(choice: Choice, name: str, volume: dict[str, object]) -> dict[str, object]:
+def _storage_class(
+    choice: Choice, name: str, volume: dict[str, object]
+) -> dict[str, object]:
     """The StorageClass parameters for one volume -- A6's three rules, applied."""
     return {
         "name": f"dfe-{choice.use_case}-{name}",
@@ -2661,7 +2799,9 @@ def merge_resolved(
     if path.is_file():
         existing = json.loads(path.read_text(encoding="utf-8"))
     out: dict[str, object] = {
-        key: _without_price(value) for key, value in existing.items() if not key.startswith("_")
+        key: _without_price(value)
+        for key, value in existing.items()
+        if not key.startswith("_")
     }
     for use_case, choice in choices.items():
         out[use_case] = {
@@ -2715,7 +2855,9 @@ def _root_volume(choice: Choice) -> dict[str, object] | None:
     return {"type": str(root["type"]), "size_gib": int(root["size_gib"])}
 
 
-def _resolved_shape(choice: Choice, entry: dict[str, object] | None = None) -> dict[str, object]:
+def _resolved_shape(
+    choice: Choice, entry: dict[str, object] | None = None
+) -> dict[str, object]:
     """One resolved_shapes entry: types best-first, arch, root volume and instance-store policy."""
     shape: dict[str, object] = {
         "instance_types": [choice.instance_type, *choice.fallbacks],
@@ -2773,7 +2915,9 @@ def build_tfvars(
     shaped = {**choices, **(standalone or {})}
     resolved_shapes: dict[str, object] = {}
     for use_case, choice in shaped.items():
-        entry = _at(cloud_entry, "use_cases", use_case) if cloud_entry is not None else None
+        entry = (
+            _at(cloud_entry, "use_cases", use_case) if cloud_entry is not None else None
+        )
         shape = _resolved_shape(choice, entry if isinstance(entry, dict) else None)
         if use_case in COUNTED_SHAPES:
             shape["count"] = choice.count
@@ -2903,7 +3047,9 @@ def _drift_hold(window: MaintenanceWindow) -> dict[str, object]:
     }
 
 
-def _disruption_budgets(use_case: str, disruption: Disruption) -> list[dict[str, object]]:
+def _disruption_budgets(
+    use_case: str, disruption: Disruption
+) -> list[dict[str, object]]:
     """One pool's Karpenter disruption budgets, per reason, then the drift hold a window adds.
 
     Args:
@@ -2951,7 +3097,9 @@ def _dedupe(items: list[str]) -> list[str]:
     return out
 
 
-def _karpenter_families(use_case: str, choice: Choice, entry: dict[str, object]) -> dict[str, int]:
+def _karpenter_families(
+    use_case: str, choice: Choice, entry: dict[str, object]
+) -> dict[str, int]:
     """The instance families a Karpenter pool admits, chosen family first, each with its generation.
 
     Karpenter launches the cheapest offering its requirements allow, so every
@@ -2967,7 +3115,9 @@ def _karpenter_families(use_case: str, choice: Choice, entry: dict[str, object])
             fail-safe select_shape applies to a name it cannot parse, rather
             than emitting a pool Karpenter's own render guard refuses.
     """
-    ladder = _dedupe([name.split(".", 1)[0] for name in (choice.instance_type, *choice.fallbacks)])
+    ladder = _dedupe(
+        [name.split(".", 1)[0] for name in (choice.instance_type, *choice.fallbacks)]
+    )
     generation_of: dict[str, int] = {}
     for family in ladder:
         match = _GENERATION_DIGIT.search(family)
@@ -2982,11 +3132,15 @@ def _karpenter_families(use_case: str, choice: Choice, entry: dict[str, object])
         return {ladder[0]: generation_of[ladder[0]]}
     compared = sorted(set(generation_of.values()), reverse=True)[: int(window)]
     return {
-        family: generation for family, generation in generation_of.items() if generation in compared
+        family: generation
+        for family, generation in generation_of.items()
+        if generation in compared
     }
 
 
-def _karpenter_node_class(entry: dict[str, object], choice: Choice) -> dict[str, object]:
+def _karpenter_node_class(
+    entry: dict[str, object], choice: Choice
+) -> dict[str, object]:
     """This pool's own EC2NodeClass override -- its resolved root volume, and
     RAID0 where the shape's own volume profile asks for one.
 
@@ -3130,7 +3284,9 @@ def _schedulable_cpu_request(vcpu: int, choice: Choice | None, core: Core) -> st
     """
     if choice is None or not choice.vcpu:
         return str(vcpu)
-    schedulable_m = choice.vcpu * 1000 - _kube_reserved_cpu_m(choice.vcpu) - core.daemonset_cpu_m
+    schedulable_m = (
+        choice.vcpu * 1000 - _kube_reserved_cpu_m(choice.vcpu) - core.daemonset_cpu_m
+    )
     if vcpu * 1000 <= schedulable_m:
         return str(vcpu)
     return f"{schedulable_m}m"
@@ -3167,7 +3323,10 @@ def clickhouse_storage(values: dict[str, object]) -> dict[str, object]:
 # Keys the data-chart base leaves out. The storage keys are fixed at the first sync
 # and ride the cluster secret. The message size is one chain with the apps, which
 # never read the base.
-DATA_CHART_EXCLUDED = {"clickhouse": ("objectStore", "storageModel"), "kafka": ("messageMaxBytes",)}
+DATA_CHART_EXCLUDED = {
+    "clickhouse": ("objectStore", "storageModel"),
+    "kafka": ("messageMaxBytes",),
+}
 
 
 def data_chart_values(values: dict[str, object]) -> dict[str, object]:
@@ -3271,11 +3430,16 @@ def build_values(
             "resources": {
                 "requests": {
                     "cpu": _schedulable_cpu_request(
-                        controller.vcpu, choices.get("kraft-controller") if choices else None, core
+                        controller.vcpu,
+                        choices.get("kraft-controller") if choices else None,
+                        core,
                     ),
                     "memory": f"{controller.ram_gib}Gi",
                 },
-                "limits": {"cpu": str(controller.vcpu * 2), "memory": f"{controller.ram_gib}Gi"},
+                "limits": {
+                    "cpu": str(controller.vcpu * 2),
+                    "memory": f"{controller.ram_gib}Gi",
+                },
             },
             "storage": {"size": f"{controller.disk_gib}Gi"},
         }
@@ -3289,12 +3453,17 @@ def build_values(
                 "cpu": _schedulable_cpu_request(clickhouse.vcpu, ch_choice, core),
                 "memory": f"{clickhouse.ram_gib}Gi",
             },
-            "limits": {"cpu": str(clickhouse.vcpu), "memory": f"{clickhouse.ram_gib}Gi"},
+            "limits": {
+                "cpu": str(clickhouse.vcpu),
+                "memory": f"{clickhouse.ram_gib}Gi",
+            },
         }
         ch["storage"] = {"size": f"{clickhouse.disk_gib}Gi"}
         # The same ratio the RAM above was sized with, so the server's own limit
         # and the container's cannot drift apart.
-        ch["serverProfile"] = {"maxServerMemoryUsageToRamRatio": core.clickhouse_memory_ratio}
+        ch["serverProfile"] = {
+            "maxServerMemoryUsageToRamRatio": core.clickhouse_memory_ratio
+        }
         # An r9gd-class AWS shape resolves a "cache" volume from
         # compute-shapes.yaml's clickhouse.volumes.cache (nvme-instance-store):
         # its local NVMe is what the chart's cache.volume: instance-store dial
@@ -3319,7 +3488,9 @@ def build_values(
             # populated cloud emits. See docs/deployment/storage.md.
             # RAID0 puts containerd's images and the kubelet's own directory on
             # the same NVMe, which kubelet evicts from at 10% free.
-            cache_gib = math.floor(int(cache["size_gib"]) * core.instance_store_cache_share)
+            cache_gib = math.floor(
+                int(cache["size_gib"]) * core.instance_store_cache_share
+            )
             ch["objectStore"] = {
                 "cache": {"volume": "instance-store"},
                 "cacheSize": f"{cache_gib}Gi",
@@ -3464,7 +3635,9 @@ def find_locked_changes(
         new_value = str(resolved_locked[name])
         if old_value != new_value:
             changes.append(
-                LockedChange(field=name, old=old_value, new=new_value, reason=str(reason))
+                LockedChange(
+                    field=name, old=old_value, new=new_value, reason=str(reason)
+                )
             )
     return changes
 
@@ -3771,7 +3944,9 @@ def _resolve_standalone(
             raise ResolveError(f"{dial.cloud} has no {use_case} shape entry")
         source = str(entry.get("source", ""))
         if source != "ec2":
-            notes.append(f"{use_case} resolves against {source}, not an API this resolver reads")
+            notes.append(
+                f"{use_case} resolves against {source}, not an API this resolver reads"
+            )
             continue
         demand = Node(use_case, 1, 0, 0, 0, 0, 0, "one instance, launched on demand")
         choice = select_shape(
@@ -3832,13 +4007,17 @@ def run_resolve(args: argparse.Namespace) -> int:
         focus_generation, _storage_profile = _focus_policies(sizing, core.focus)
         wanted = list(CORE_USE_CASES)
         if dial.kafka_provider == "msk-express":
-            wanted = [u for u in wanted if u not in ("kafka-broker", "kraft-controller")]
+            wanted = [
+                u for u in wanted if u not in ("kafka-broker", "kraft-controller")
+            ]
             wanted.append("msk-broker")
         elif dial.kafka_provider in SAAS_KAFKA_PROVIDERS:
             # No EC2 instance to select for a vendor-managed body -- neither
             # kafka-broker nor msk-broker (that name is MSK's own namespace)
             # -- so no broker node pool is emitted at all.
-            wanted = [u for u in wanted if u not in ("kafka-broker", "kraft-controller")]
+            wanted = [
+                u for u in wanted if u not in ("kafka-broker", "kraft-controller")
+            ]
         if dial.controller_pool != "separate":
             # A combined quorum runs on the brokers, so a controller pool would
             # be a node group and a Karpenter pool no pod can land on.
@@ -3889,13 +4068,17 @@ def run_resolve(args: argparse.Namespace) -> int:
             _apply_shape_overrides(choice, dial.overrides, core, catalogue)
             choices[use_case] = choice
             if source == "ec2":
-                findings.extend(assert_schedulable(choice, core.nodes.get(use_case), core))
+                findings.extend(
+                    assert_schedulable(choice, core.nodes.get(use_case), core)
+                )
             findings.extend(
                 assert_caps(
                     choice,
                     entry,
                     catalogue,
-                    dial.spend_warn_usd_month if dial.spend_warn_usd_month is not None else 0.0,
+                    dial.spend_warn_usd_month
+                    if dial.spend_warn_usd_month is not None
+                    else 0.0,
                     core.focus,
                     gp3_usd_per_gib_month=gp3_price,
                 )
@@ -3940,7 +4123,9 @@ def run_resolve(args: argparse.Namespace) -> int:
         resolved_dir = out / "shapes" / "resolved"
         resolved_dir.mkdir(parents=True, exist_ok=True)
         resolved_path = resolved_dir / f"{dial.cloud}-{catalogue.region}.json"
-        merged = merge_resolved(resolved_path, {**choices, **standalone}, catalogue, dial.cloud)
+        merged = merge_resolved(
+            resolved_path, {**choices, **standalone}, catalogue, dial.cloud
+        )
         resolved_path.write_text(json.dumps(merged, indent=2) + "\n", encoding="utf-8")
         written.append(resolved_path)
 
@@ -3954,7 +4139,10 @@ def run_resolve(args: argparse.Namespace) -> int:
         # of which tier was resolved.
         tfvars_path = out / "sizing.auto.tfvars.json"
         tfvars_path.write_text(
-            json.dumps(build_tfvars(core, choices, dial, standalone, cloud_entry), indent=2) + "\n",
+            json.dumps(
+                build_tfvars(core, choices, dial, standalone, cloud_entry), indent=2
+            )
+            + "\n",
             encoding="utf-8",
         )
         written.append(tfvars_path)
@@ -3980,7 +4168,9 @@ def run_resolve(args: argparse.Namespace) -> int:
         "## Every key here exists in the chart it names; the resolver emits no key it invented.",
         "",
     ]
-    values_path.write_text("\n".join([*header, *_yaml_block(values)]) + "\n", encoding="utf-8")
+    values_path.write_text(
+        "\n".join([*header, *_yaml_block(values)]) + "\n", encoding="utf-8"
+    )
     written.append(values_path)
 
     pools = values.get("pools")
@@ -4021,7 +4211,9 @@ def run_resolve(args: argparse.Namespace) -> int:
             "## layer2-data reads this under the deploy repo's infra/ overlays, which win over it.",
             "",
         ]
-        base_path.write_text("\n".join([*base_header, *_yaml_block(base)]) + "\n", encoding="utf-8")
+        base_path.write_text(
+            "\n".join([*base_header, *_yaml_block(base)]) + "\n", encoding="utf-8"
+        )
         written.append(base_path)
     else:
         base_path.unlink(missing_ok=True)
@@ -4039,7 +4231,8 @@ def run_resolve(args: argparse.Namespace) -> int:
         "",
     ]
     resolved_yaml_path.write_text(
-        "\n".join([*resolved_yaml_header, *_yaml_block(resolved_doc)]) + "\n", encoding="utf-8"
+        "\n".join([*resolved_yaml_header, *_yaml_block(resolved_doc)]) + "\n",
+        encoding="utf-8",
     )
     written.append(resolved_yaml_path)
 
@@ -4060,7 +4253,8 @@ def run_resolve(args: argparse.Namespace) -> int:
         print(f"resolve_sizing: wrote {path}", file=sys.stderr)
     for finding in findings:
         print(
-            f"resolve_sizing: {finding.rule} {finding.use_case}: {finding.message}", file=sys.stderr
+            f"resolve_sizing: {finding.rule} {finding.use_case}: {finding.message}",
+            file=sys.stderr,
         )
     # --migrate (already printed MIGRATING above, and reported here as a
     # normal finding if it also happens to be fatal) accepts the LOCKED DIFF,
@@ -4135,7 +4329,9 @@ def run_images(args: argparse.Namespace) -> int:
     region = _scalar(tree, "target", "provision", "region")
     account = _scalar(tree, "target", "provision", "account")
     if region is None or account is None:
-        raise ResolveError("target.provision needs a region and an account to resolve node images")
+        raise ResolveError(
+            "target.provision needs a region and an account to resolve node images"
+        )
     arch = _scalar(_load(args.shapes), "clouds", cloud, "arch")
     if arch is None:
         raise ResolveError(f"compute-shapes.yaml declares no clouds.{cloud}.arch")
@@ -4158,7 +4354,11 @@ def run_images(args: argparse.Namespace) -> int:
     except node_images.GatePolicyError as err:
         raise ResolveError(str(err)) from err
     target = node_images.Target(cloud, region, account, kubernetes_version, arch)
-    read = node_images.fixture_reader(args.fixtures) if args.fixtures else node_images.live_reader()
+    read = (
+        node_images.fixture_reader(args.fixtures)
+        if args.fixtures
+        else node_images.live_reader()
+    )
     sizing_dir = out / "sizing"
     previous_path = args.previous or sizing_dir / node_images.RECORD_NAME
     previous = node_images.read_record(previous_path)
@@ -4181,7 +4381,9 @@ def run_images(args: argparse.Namespace) -> int:
         keys=keys,
     )
     tfvars_keys = node_images.tfvars_keys(cloud)
-    tfvars = {key: value for key, value in resolution.values.items() if key in tfvars_keys}
+    tfvars = {
+        key: value for key, value in resolution.values.items() if key in tfvars_keys
+    }
     # A pin empties the file whatever --only names, or an earlier key would still beat terraform.tfvars.
     scope = None if pinned or keys is None else keys & tfvars_keys
     written = [node_images.write_tfvars(out, tfvars, keys=scope)]
@@ -4198,7 +4400,9 @@ def run_images(args: argparse.Namespace) -> int:
             alias = node_images.read_record(sizing_dir / node_images.RECORD_NAME).get(
                 "karpenter_ami_alias", {}
             )
-            overlay = node_images.write_node_pools_values(sizing_dir, alias.get("value"))
+            overlay = node_images.write_node_pools_values(
+                sizing_dir, alias.get("value")
+            )
             if overlay is not None:
                 written.append(overlay)
     for key, value in sorted(resolution.values.items()):
@@ -4223,14 +4427,22 @@ def build_parser() -> argparse.ArgumentParser:
 
     resolve = sub.add_parser("resolve", help="resolve a dial into the five artefacts")
     resolve.add_argument("--dial", type=Path, required=True, help="the deployment dial")
-    resolve.add_argument("--sizing", type=Path, default=SIZING_FILE, help="sizing.yaml to read")
+    resolve.add_argument(
+        "--sizing", type=Path, default=SIZING_FILE, help="sizing.yaml to read"
+    )
     resolve.add_argument(
         "--shapes", type=Path, default=SHAPES_FILE, help="compute-shapes.yaml to read"
     )
-    resolve.add_argument("--cloud", default=None, help="override the dial's target.provision.cloud")
-    resolve.add_argument("--target", default=None, help="override the target overlay key")
+    resolve.add_argument(
+        "--cloud", default=None, help="override the dial's target.provision.cloud"
+    )
+    resolve.add_argument(
+        "--target", default=None, help="override the target overlay key"
+    )
     resolve.add_argument("--region", default=None, help="override the dial's region")
-    resolve.add_argument("--live", action="store_true", help="resolve against the live cloud API")
+    resolve.add_argument(
+        "--live", action="store_true", help="resolve against the live cloud API"
+    )
     resolve.add_argument(
         "--fixtures", type=Path, default=None, help="resolve against captured answers"
     )
@@ -4254,11 +4466,14 @@ def build_parser() -> argparse.ArgumentParser:
         "capture", help="capture the live API answers into a fixtures directory"
     )
     capture.add_argument("--region", default="us-west-2", help="the region to capture")
-    capture.add_argument("--fixtures", type=Path, required=True, help="the fixtures directory")
+    capture.add_argument(
+        "--fixtures", type=Path, required=True, help="the fixtures directory"
+    )
     capture.set_defaults(func=run_capture)
 
     images = sub.add_parser(
-        "images", help="resolve each node image, the newest that clears the release gates"
+        "images",
+        help="resolve each node image, the newest that clears the release gates",
     )
     images.add_argument("--dial", type=Path, required=True, help="the deployment dial")
     images.add_argument(
@@ -4271,7 +4486,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="where node-images.auto.tfvars.json is written (default: the cloud's tofu root)",
     )
     images.add_argument(
-        "--fixtures", type=Path, default=None, help="answer from recorded provider responses"
+        "--fixtures",
+        type=Path,
+        default=None,
+        help="answer from recorded provider responses",
     )
     images.add_argument(
         "--only",

@@ -24,7 +24,9 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SCRIPTS = REPO_ROOT / "docs-site" / "scripts"
 sys.path.insert(0, str(SCRIPTS))
-spec = importlib.util.spec_from_file_location("docs_agent_layer", SCRIPTS / "agent_layer.py")
+spec = importlib.util.spec_from_file_location(
+    "docs_agent_layer", SCRIPTS / "agent_layer.py"
+)
 agent_layer = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(agent_layer)
 
@@ -35,7 +37,9 @@ PAGES = {
     page.source: page
     for page in (
         agent_layer.Page("Svc", "content/9.9.9/svc/index.md", "/v/9.9.9/svc/"),
-        agent_layer.Page("Arch", "content/9.9.9/svc/architecture.md", "/v/9.9.9/svc/architecture/"),
+        agent_layer.Page(
+            "Arch", "content/9.9.9/svc/architecture.md", "/v/9.9.9/svc/architecture/"
+        ),
         agent_layer.Page("Ops", "content/9.9.9/svc/ops/README.md", "/v/9.9.9/svc/ops/"),
         agent_layer.Page("Home", "content/9.9.9/README.md", "/v/9.9.9/overview/"),
     )
@@ -59,7 +63,10 @@ def test_a_copy_is_named_after_its_route(permalink: str, expected: str) -> None:
 @pytest.mark.parametrize(
     ("resolved", "expected"),
     [
-        ("svc/img/flow.png", "https://raw.githubusercontent.com/o/svc/v1.0.0/docs/img/flow.png"),
+        (
+            "svc/img/flow.png",
+            "https://raw.githubusercontent.com/o/svc/v1.0.0/docs/img/flow.png",
+        ),
         ("svc/config.yaml", "https://github.com/o/svc/blob/v1.0.0/docs/config.yaml"),
         ("ui/hd/x.json", "https://github.com/o/hd/blob/v2.0.0/docs/x.json"),
         ("quickstart/notes.txt", None),
@@ -80,7 +87,10 @@ def test_a_non_page_file_points_at_its_member_on_github(
         ("[a](index.md#top)", "[a](/v/9.9.9/svc.md#top)"),
         ("[a](../README.md)", "[a](/v/9.9.9/overview.md)"),
         ("[a](<ops/README.md>)", "[a](</v/9.9.9/svc/ops.md>)"),
-        ("[a](img/x.png)", "[a](https://raw.githubusercontent.com/o/svc/v1.0.0/docs/img/x.png)"),
+        (
+            "[a](img/x.png)",
+            "[a](https://raw.githubusercontent.com/o/svc/v1.0.0/docs/img/x.png)",
+        ),
         ("[a](https://example.com/x.md)", "[a](https://example.com/x.md)"),
         ("[a](#local)", "[a](#local)"),
         ("[a](../../outside.md)", "[a](../../outside.md)"),
@@ -108,7 +118,11 @@ def test_api_pages_are_left_to_the_spec(tmp_path: Path) -> None:
     content = _manifest(
         tmp_path,
         [
-            {"title": "B", "source": "content/9.9.9/svc/b.md", "permalink": "/v/9.9.9/svc/b/"},
+            {
+                "title": "B",
+                "source": "content/9.9.9/svc/b.md",
+                "permalink": "/v/9.9.9/svc/b/",
+            },
             {
                 "title": "A",
                 "source": "content/9.9.9/svc/api/x.mdx",
@@ -141,7 +155,9 @@ def test_a_page_from_outside_the_published_tree_stops_the_build(
 def test_a_link_to_a_missing_copy_is_reported(tmp_path: Path) -> None:
     root = tmp_path / "v" / "9.9.9"
     root.mkdir(parents=True)
-    (root / "a.md").write_text("[ok](/v/9.9.9/b.md) [gone](/v/9.9.9/c.md#x)\n", encoding="utf-8")
+    (root / "a.md").write_text(
+        "[ok](/v/9.9.9/b.md) [gone](/v/9.9.9/c.md#x)\n", encoding="utf-8"
+    )
     (root / "b.md").write_text("# B\n", encoding="utf-8")
     assert agent_layer.dead_links(root, tmp_path) == ["v/9.9.9/a.md: /v/9.9.9/c.md"]
 
@@ -150,8 +166,16 @@ def test_a_link_to_a_missing_copy_is_reported(tmp_path: Path) -> None:
     ("index", "files", "expected"),
     [
         ("- [D](https://x/v/9.9.9/q/docker.md)\n", {"q/docker.md": "run make up"}, []),
-        ("", {"q/docker.md": "run make up"}, ["Docker: q/docker.md is not in llms.txt"]),
-        ("- [D](https://x/v/9.9.9/q/docker.md)\n", {}, ["Docker: q/docker.md was not built"]),
+        (
+            "",
+            {"q/docker.md": "run make up"},
+            ["Docker: q/docker.md is not in llms.txt"],
+        ),
+        (
+            "- [D](https://x/v/9.9.9/q/docker.md)\n",
+            {},
+            ["Docker: q/docker.md was not built"],
+        ),
         (
             "- [D](https://x/v/9.9.9/q/docker.md)\n",
             {"q/docker.md": "nothing here"},
@@ -178,7 +202,9 @@ def test_the_real_task_file_parses() -> None:
 
 # --- search metadata -----------------------------------------------------------------
 
-meta_spec = importlib.util.spec_from_file_location("docs_page_meta", SCRIPTS / "page_meta.py")
+meta_spec = importlib.util.spec_from_file_location(
+    "docs_page_meta", SCRIPTS / "page_meta.py"
+)
 page_meta = importlib.util.module_from_spec(meta_spec)
 meta_spec.loader.exec_module(page_meta)
 LONG = "word " * 50
@@ -220,7 +246,9 @@ LONG = "word " * 50
         (LONG, ("word " * 31).strip() + "..."),
     ],
 )
-def test_a_description_is_the_first_real_paragraph_cut_at_a_word(body: str, expected: str) -> None:
+def test_a_description_is_the_first_real_paragraph_cut_at_a_word(
+    body: str, expected: str
+) -> None:
     script = "process.stdout.write(require(process.argv[1]).describe(process.argv[2]))"
     done = subprocess.run(
         ["node", "-e", script, str(REPO_ROOT / "docs-site" / "description.js"), body],
@@ -244,7 +272,11 @@ def test_every_page_gets_an_article_and_the_landing_the_product(tmp_path: Path) 
                 "permalink": "/v/9.9.9/overview",
                 "description": "DFE </script>",
             },
-            {"title": "Ops", "source": "content/9.9.9/ops.md", "permalink": "/v/9.9.9/ops/"},
+            {
+                "title": "Ops",
+                "source": "content/9.9.9/ops.md",
+                "permalink": "/v/9.9.9/ops/",
+            },
         ],
     )
     build = tmp_path / "build"
@@ -256,8 +288,14 @@ def test_every_page_gets_an_article_and_the_landing_the_product(tmp_path: Path) 
         )
     entry = {"name": "9.9.9", "base_url": "/v/9.9.9/"}
     site = {"url": "https://docs.example"}
-    assert page_meta.add_structured_data(entry, site, content=content, build_dir=build) == 2
-    assert page_meta.add_structured_data(entry, site, content=content, build_dir=build) == 0
+    assert (
+        page_meta.add_structured_data(entry, site, content=content, build_dir=build)
+        == 2
+    )
+    assert (
+        page_meta.add_structured_data(entry, site, content=content, build_dir=build)
+        == 0
+    )
     home = (build / "v/9.9.9/overview/index.html").read_text(encoding="utf-8")
     ops = (build / "v/9.9.9/ops/index.html").read_text(encoding="utf-8")
     assert home.count("application/ld+json") == 3
@@ -290,10 +328,13 @@ def test_the_root_files_name_only_listed_builds_with_a_sitemap(tmp_path: Path) -
     assert "ai-train" not in robots
 
 
-def test_a_not_found_page_drops_its_canonical_and_asks_for_noindex(tmp_path: Path) -> None:
+def test_a_not_found_page_drops_its_canonical_and_asks_for_noindex(
+    tmp_path: Path,
+) -> None:
     html = tmp_path / "404.html"
     html.write_text(
-        '<head><link data-rh="true" rel="canonical" href="/x/404.html/"></head>', encoding="utf-8"
+        '<head><link data-rh="true" rel="canonical" href="/x/404.html/"></head>',
+        encoding="utf-8",
     )
     page_meta.mark_not_found(html)
     page_meta.mark_not_found(html)

@@ -237,7 +237,9 @@ EXIT_OK = 0
 EXIT_ERROR = 1
 EXIT_BRIDGE_GAP = 3
 
-RATE_LIMIT_JQ = "{remaining: .resources.core.remaining, limit: .resources.core.limit} | tojson"
+RATE_LIMIT_JQ = (
+    "{remaining: .resources.core.remaining, limit: .resources.core.limit} | tojson"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -367,8 +369,10 @@ def _tools(value: object, cli: str | None) -> frozenset[str]:
         raise _fail("tools", value, "a map of tool to true or false")
     unknown = chosen - set(sweep.TOOLS)
     if unknown:
-        raise FleetError(f"unknown tool(s) {', '.join(sorted(unknown))}; "
-                         f"known: {', '.join(sweep.TOOLS)}")
+        raise FleetError(
+            f"unknown tool(s) {', '.join(sorted(unknown))}; "
+            f"known: {', '.join(sweep.TOOLS)}"
+        )
     if not chosen:
         raise FleetError("no tools are enabled, so there is nothing to sweep")
     return frozenset(chosen)
@@ -404,7 +408,9 @@ def effective(settings: dict, args: argparse.Namespace) -> Options:
     org = _text(picked, "org")
     bots = _names(settings.get("bot_logins"), "bot_logins")
     if not bots:
-        raise _fail("bot_logins", settings.get("bot_logins"), "a non-empty list of logins")
+        raise _fail(
+            "bot_logins", settings.get("bot_logins"), "a non-empty list of logins"
+        )
     backlog = _section(settings, "backlog")
     labels = _section(settings, "labels")
     slack = _section(settings, "slack")
@@ -434,10 +440,14 @@ def effective(settings: dict, args: argparse.Namespace) -> Options:
         suite_dir=_path(_text(picked, "suite_dir")),
         stack=_text(picked, "stack"),
         topics=_names(settings.get("member_topics"), "member_topics"),
-        include=_names(args.include if args.include is not None else settings.get("include"),
-                       "include"),
-        exclude=_names(args.exclude if args.exclude is not None else settings.get("exclude"),
-                       "exclude"),
+        include=_names(
+            args.include if args.include is not None else settings.get("include"),
+            "include",
+        ),
+        exclude=_names(
+            args.exclude if args.exclude is not None else settings.get("exclude"),
+            "exclude",
+        ),
         derive_suite=_flag(settings.get("derive_suite", True), "derive_suite"),
         output=output,
         project_limit=_count(backlog.get("project_limit"), "backlog.project_limit"),
@@ -451,7 +461,9 @@ def effective(settings: dict, args: argparse.Namespace) -> Options:
             args.slack_title if args.slack_title is not None else slack.get("title")
         ),
         slack_zone=_slack_zone(
-            args.slack_timezone if args.slack_timezone is not None else slack.get("timezone")
+            args.slack_timezone
+            if args.slack_timezone is not None
+            else slack.get("timezone")
         ),
         gh_timeout=_count(settings.get("gh_timeout_seconds"), "gh_timeout_seconds"),
         config=config,
@@ -627,7 +639,9 @@ def run(args: argparse.Namespace, load: Loader = load_settings) -> int:
             options.org, options.project_limit, timeout=options.gh_timeout
         )
         if projects.error:
-            warning(f"backlog projects not readable, so every backlog is: {projects.error}")
+            warning(
+                f"backlog projects not readable, so every backlog is: {projects.error}"
+            )
         elif len(projects.numbers) >= options.project_limit:
             warning(
                 f"listed {len(projects.numbers)} projects, the backlog.project_limit; a repo "
@@ -636,7 +650,9 @@ def run(args: argparse.Namespace, load: Loader = load_settings) -> int:
     labels = None
     if "issues" in options.config.tools:
         labels = sweep.read_issue_labels(
-            options.labels_command, options.labels_blocker, timeout=options.labels_timeout
+            options.labels_command,
+            options.labels_blocker,
+            timeout=options.labels_timeout,
         )
         if labels.error:
             warning(
@@ -659,7 +675,9 @@ def run(args: argparse.Namespace, load: Loader = load_settings) -> int:
         try:
             alerts = sweep.bridge_alerts(options.org, api)
         except sweep.GhError as exc:
-            raise FleetError(f"cannot read the org alert lists for --check-bridge: {exc}") from exc
+            raise FleetError(
+                f"cannot read the org alert lists for --check-bridge: {exc}"
+            ) from exc
         missing, outside = sweep.bridge_gap(alerts, results)
         bridge = sweep.bridge_section(missing, len(alerts) - len(outside))
         gap = bool(missing)
@@ -710,11 +728,19 @@ def build_parser() -> argparse.ArgumentParser:
             "  env DFE_SWEEP__TOOLS__ISSUES=false uv run --script scripts/dfe-sweep\n"
         ),
     )
-    parser.add_argument("--format", choices=FORMATS, help="report format (setting: format)")
-    parser.add_argument("--org", help="owner for unqualified names and the org alert lists")
-    parser.add_argument("--stack", help="latest, current, or a stack key in versions.yaml")
+    parser.add_argument(
+        "--format", choices=FORMATS, help="report format (setting: format)"
+    )
+    parser.add_argument(
+        "--org", help="owner for unqualified names and the org alert lists"
+    )
+    parser.add_argument(
+        "--stack", help="latest, current, or a stack key in versions.yaml"
+    )
     parser.add_argument("--versions-file", help="versions.yaml to read membership from")
-    parser.add_argument("--suite-dir", help="checkout holding suite.yaml and scripts/dfe-stack")
+    parser.add_argument(
+        "--suite-dir", help="checkout holding suite.yaml and scripts/dfe-stack"
+    )
     parser.add_argument(
         "--include",
         action="append",

@@ -91,9 +91,11 @@ def _fill_estate_fields(text: str) -> str:
     """What a thin caller (or an operator by hand) fills in after the wizard --
     deployment.example.yaml ships these blank on purpose, so a test proving
     `render_dial.py --tofu` accepts the dial supplies them the same way."""
-    text = text.replace('repo_url: ""', 'repo_url: "https://example.invalid/deploy.git"')
+    text = text.replace(
+        'repo_url: ""', 'repo_url: "https://example.invalid/deploy.git"'
+    )
     text = text.replace('bucket: ""', 'bucket: "dfe-test-state-bucket"')
-    text = text.replace("region: \"\"\n", "region: us-west-2\n", 1)  # state.region only
+    text = text.replace('region: ""\n', "region: us-west-2\n", 1)  # state.region only
     return text
 
 
@@ -103,7 +105,9 @@ def _fill_estate_fields(text: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def test_onprem_strimzi_answers_produce_a_dial_render_dial_accepts(tmp_path: Path) -> None:
+def test_onprem_strimzi_answers_produce_a_dial_render_dial_accepts(
+    tmp_path: Path,
+) -> None:
     io = wiz.WizardIO(answers=dict(ONPREM_ANSWERS))
     answers = wiz.run_wizard(io)
     text = wiz.build_dial_text(answers)
@@ -114,8 +118,16 @@ def test_onprem_strimzi_answers_produce_a_dial_render_dial_accepts(tmp_path: Pat
     env_path = tmp_path / "bootstrap.env"
 
     result = subprocess.run(
-        [sys.executable, str(SCRIPTS / "render_dial.py"), "--dial", str(dial_path), "--out", str(env_path)],
-        capture_output=True, text=True,
+        [
+            sys.executable,
+            str(SCRIPTS / "render_dial.py"),
+            "--dial",
+            str(dial_path),
+            "--out",
+            str(env_path),
+        ],
+        capture_output=True,
+        text=True,
     )
 
     assert result.returncode == 0, result.stderr
@@ -132,19 +144,34 @@ def test_the_wizards_otel_block_renders_off_with_no_deprecation(tmp_path: Path) 
         dial_path = tmp_path / "deployment.yaml"
         dial_path.write_text(text, encoding="utf-8")
         result = subprocess.run(
-            [sys.executable, str(SCRIPTS / "render_dial.py"), "--dial", str(dial_path),
-             "--out", str(tmp_path / "bootstrap.env")],
-            capture_output=True, text=True,
+            [
+                sys.executable,
+                str(SCRIPTS / "render_dial.py"),
+                "--dial",
+                str(dial_path),
+                "--out",
+                str(tmp_path / "bootstrap.env"),
+            ],
+            capture_output=True,
+            text=True,
         )
         target = answers["target"]
         assert result.returncode == 0, (target, result.stderr)
         assert "render_dial: deprecated" not in result.stderr, (target, result.stderr)
-        assert "(edge.ingest.otel.enabled): off" in result.stderr, (target, result.stderr)
+        assert "(edge.ingest.otel.enabled): off" in result.stderr, (
+            target,
+            result.stderr,
+        )
 
 
-@pytest.mark.parametrize(("answers", "door"), [(ONPREM_ANSWERS, "gateway"), (AWS_MSK_ANSWERS, "loadbalancer")],
-                         ids=["onprem", "aws"])
-def test_the_wizard_writes_the_ingest_door_its_target_defaults_to(answers: dict, door: str, tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("answers", "door"),
+    [(ONPREM_ANSWERS, "gateway"), (AWS_MSK_ANSWERS, "loadbalancer")],
+    ids=["onprem", "aws"],
+)
+def test_the_wizard_writes_the_ingest_door_its_target_defaults_to(
+    answers: dict, door: str, tmp_path: Path
+) -> None:
     """The cloud overlays decide the same doors, so the dial must not report another."""
     text = wiz.build_dial_text(wiz.run_wizard(wiz.WizardIO(answers=dict(answers))))
     assert "      mode: vpn" not in text, text
@@ -152,15 +179,27 @@ def test_the_wizard_writes_the_ingest_door_its_target_defaults_to(answers: dict,
     dial_path = tmp_path / "deployment.yaml"
     dial_path.write_text(text, encoding="utf-8")
     result = subprocess.run(
-        [sys.executable, str(SCRIPTS / "render_dial.py"), "--dial", str(dial_path),
-         "--out", str(tmp_path / "bootstrap.env")],
-        capture_output=True, text=True,
+        [
+            sys.executable,
+            str(SCRIPTS / "render_dial.py"),
+            "--dial",
+            str(dial_path),
+            "--out",
+            str(tmp_path / "bootstrap.env"),
+        ],
+        capture_output=True,
+        text=True,
     )
     assert result.returncode == 0, result.stderr
-    assert f"(edge.groups.ingest, pasted as exposure.groups.ingest): {door}" in result.stderr, result.stderr
+    assert (
+        f"(edge.groups.ingest, pasted as exposure.groups.ingest): {door}"
+        in result.stderr
+    ), result.stderr
 
 
-def test_aws_msk_answers_produce_a_tofu_dial_once_estate_fields_are_filled(tmp_path: Path) -> None:
+def test_aws_msk_answers_produce_a_tofu_dial_once_estate_fields_are_filled(
+    tmp_path: Path,
+) -> None:
     io = wiz.WizardIO(answers=dict(AWS_MSK_ANSWERS, parent_zone_id="Z0PARENT"))
     answers = wiz.run_wizard(io)
     text = wiz.build_dial_text(answers)
@@ -172,18 +211,34 @@ def test_aws_msk_answers_produce_a_tofu_dial_once_estate_fields_are_filled(tmp_p
     # Before estate fields are supplied, the renderer refuses by NAME on the
     # one field the wizard deliberately leaves blank -- never a surprise.
     refused = subprocess.run(
-        [sys.executable, str(SCRIPTS / "render_dial.py"), "--dial", str(dial_path), "--tofu",
-         "--out", str(tfvars_path)],
-        capture_output=True, text=True,
+        [
+            sys.executable,
+            str(SCRIPTS / "render_dial.py"),
+            "--dial",
+            str(dial_path),
+            "--tofu",
+            "--out",
+            str(tfvars_path),
+        ],
+        capture_output=True,
+        text=True,
     )
     assert refused.returncode == 1
     assert "k8s.repo_url" in refused.stderr
 
     dial_path.write_text(_fill_estate_fields(text), encoding="utf-8")
     accepted = subprocess.run(
-        [sys.executable, str(SCRIPTS / "render_dial.py"), "--dial", str(dial_path), "--tofu",
-         "--out", str(tfvars_path)],
-        capture_output=True, text=True,
+        [
+            sys.executable,
+            str(SCRIPTS / "render_dial.py"),
+            "--dial",
+            str(dial_path),
+            "--tofu",
+            "--out",
+            str(tfvars_path),
+        ],
+        capture_output=True,
+        text=True,
     )
     assert accepted.returncode == 0, accepted.stderr
     tfvars = json.loads(tfvars_path.read_text(encoding="utf-8"))
@@ -274,7 +329,9 @@ def test_invalid_kafka_provider_is_reasked_interactively() -> None:
     # this test proves.
     responses = iter(["bogus-provider", "strimzi", ""])
     messages: list[str] = []
-    io = wiz.WizardIO(read_line=lambda _prompt: next(responses), write_out=messages.append)
+    io = wiz.WizardIO(
+        read_line=lambda _prompt: next(responses), write_out=messages.append
+    )
 
     wiz.step_kafka(io, answers)
 
@@ -318,7 +375,9 @@ def test_a_managed_broker_is_never_asked_where_its_quorum_runs() -> None:
 
 
 def test_an_invalid_quorum_refuses_immediately_through_answers() -> None:
-    io = wiz.WizardIO(answers={"kafka_provider": "strimzi", "controller_pool": "dedicated"})
+    io = wiz.WizardIO(
+        answers={"kafka_provider": "strimzi", "controller_pool": "dedicated"}
+    )
     answers = wiz.Answers(target="on-prem")
 
     with pytest.raises(wiz.InitError, match="dedicated"):
@@ -345,15 +404,23 @@ def test_telemetry_sink_uses_render_dial_validator() -> None:
 
 
 def test_a_trusted_proxy_range_of_every_address_is_refused_through_answers() -> None:
-    answers = {"ui_allowed_cidrs": "198.51.100.0/24", "ui_trusted_proxy_cidrs": "192.0.2.0/25, ::/0",
-               "ui_dfe_ui": "n", "public_zone": ""}
+    answers = {
+        "ui_allowed_cidrs": "198.51.100.0/24",
+        "ui_trusted_proxy_cidrs": "192.0.2.0/25, ::/0",
+        "ui_dfe_ui": "n",
+        "public_zone": "",
+    }
     with pytest.raises(wiz.InitError, match="trusts every address"):
         wiz.step_public_uis(wiz.WizardIO(answers=answers), wiz.Answers())
 
 
 def test_a_cdn_range_is_accepted_through_answers() -> None:
-    answers = {"ui_allowed_cidrs": "198.51.100.0/24", "ui_trusted_proxy_cidrs": "192.0.2.0/25",
-               "ui_dfe_ui": "n", "public_zone": ""}
+    answers = {
+        "ui_allowed_cidrs": "198.51.100.0/24",
+        "ui_trusted_proxy_cidrs": "192.0.2.0/25",
+        "ui_dfe_ui": "n",
+        "public_zone": "",
+    }
     collected = wiz.Answers()
     wiz.step_public_uis(wiz.WizardIO(answers=answers), collected)
     assert collected.ui_trusted_proxy_cidrs == "192.0.2.0/25"
@@ -367,7 +434,9 @@ def test_ingest_gb_per_day_uses_resolve_sizing_validator() -> None:
 
 
 def test_ingest_gb_per_day_blank_means_no_estimate() -> None:
-    io = wiz.WizardIO(answers={"profile": "single", "focus": "economy", "ingest_gb_per_day": ""})
+    io = wiz.WizardIO(
+        answers={"profile": "single", "focus": "economy", "ingest_gb_per_day": ""}
+    )
     answers = wiz.Answers()
     wiz.step_tier(io, answers)
     assert answers.ingest_gb_per_day == ""
@@ -462,7 +531,9 @@ def test_clickhouse_storage_model_refuses_an_unknown_value() -> None:
         wiz.step_clickhouse_storage(io, answers)
 
 
-def test_clickhouse_storage_model_reaches_what_resolve_sizing_parses(tmp_path: Path) -> None:
+def test_clickhouse_storage_model_reaches_what_resolve_sizing_parses(
+    tmp_path: Path,
+) -> None:
     """The written dial is not just compared as text -- resolve_sizing.py's own
     reader has to come back with the same answer the wizard collected."""
     answers = wiz.Answers(target="on-prem", clickhouse_storage_model="local")
@@ -487,7 +558,9 @@ def _pinned(text: str) -> str | None:
 
 def test_the_dial_pins_the_current_stack() -> None:
     answers = wiz.run_wizard(wiz.WizardIO(answers=dict(ONPREM_ANSWERS)))
-    current = propagate.current_stack(propagate.VERSIONS_FILE.read_text(encoding="utf-8"))
+    current = propagate.current_stack(
+        propagate.VERSIONS_FILE.read_text(encoding="utf-8")
+    )
     assert _pinned(wiz.build_dial_text(answers)) == current
 
 
@@ -496,7 +569,9 @@ def test_the_pin_moves_with_the_current_pointer(
 ) -> None:
     """A literal that happens to equal today's `current` still fails here."""
     versions = tmp_path / "versions.yaml"
-    versions.write_text('current: "9.9.9"\nstacks:\n  9.9.9:\n    maturity: rc\n', encoding="utf-8")
+    versions.write_text(
+        'current: "9.9.9"\nstacks:\n  9.9.9:\n    maturity: rc\n', encoding="utf-8"
+    )
     monkeypatch.setattr(wiz.render_dial, "VERSIONS_FILE", versions)
     assert _pinned(wiz.build_dial_text(wiz.Answers())) == "9.9.9"
 
@@ -532,11 +607,19 @@ def test_no_stack_to_pin_refuses_and_writes_nothing(
 # ---------------------------------------------------------------------------
 
 
-def test_run_resolve_skips_non_scale_tiers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_run_resolve_skips_non_scale_tiers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     dial = tmp_path / "deployment.yaml"
-    dial.write_text(wiz.build_dial_text(wiz.Answers(profile="single")), encoding="utf-8")
+    dial.write_text(
+        wiz.build_dial_text(wiz.Answers(profile="single")), encoding="utf-8"
+    )
     calls: list[list[str]] = []
-    monkeypatch.setattr(wiz, "_run", lambda cmd, **_kw: calls.append(cmd) or subprocess.CompletedProcess(cmd, 0))
+    monkeypatch.setattr(
+        wiz,
+        "_run",
+        lambda cmd, **_kw: calls.append(cmd) or subprocess.CompletedProcess(cmd, 0),
+    )
 
     rc = wiz.run_resolve(dial, fixtures=FIXTURES, live=False, out_dir=tmp_path)
 
@@ -545,18 +628,23 @@ def test_run_resolve_skips_non_scale_tiers(tmp_path: Path, monkeypatch: pytest.M
 
 
 def test_run_resolve_prints_the_report_even_on_a_fatal_finding(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
 ) -> None:
     dial = tmp_path / "deployment.yaml"
     dial.write_text(wiz.build_dial_text(wiz.Answers(profile="scale")), encoding="utf-8")
     report_dir = tmp_path / "sizing"
     report_dir.mkdir()
     (report_dir / "scale.report.md").write_text(
-        "| **total compute** | | | | | | **M** |\n", encoding="utf-8",
+        "| **total compute** | | | | | | **M** |\n",
+        encoding="utf-8",
     )
 
     def fake_run(cmd: list[str], **_kw: object) -> subprocess.CompletedProcess:
-        return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="resolve_sizing: A4 fatal\n")
+        return subprocess.CompletedProcess(
+            cmd, 1, stdout="", stderr="resolve_sizing: A4 fatal\n"
+        )
 
     monkeypatch.setattr(wiz, "_run", fake_run)
 
@@ -579,8 +667,13 @@ def _answers_as_file(answers: dict[str, str]) -> str:
 
 def _args(**overrides: object) -> argparse.Namespace:
     base: dict[str, object] = {
-        "out": str(wiz.DEFAULT_DIAL_OUT), "force": False, "answers": None, "dry_run": False,
-        "fixtures": None, "live": False, "sizing_out": None,
+        "out": str(wiz.DEFAULT_DIAL_OUT),
+        "force": False,
+        "answers": None,
+        "dry_run": False,
+        "fixtures": None,
+        "live": False,
+        "sizing_out": None,
     }
     base.update(overrides)
     return argparse.Namespace(**base)

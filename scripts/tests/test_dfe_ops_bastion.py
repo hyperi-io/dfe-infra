@@ -83,7 +83,9 @@ def test_set_toolbox_field_sets_ttl_minutes() -> None:
     assert '  ttl_minutes: "45"' in updated
 
 
-def test_set_toolbox_field_does_not_touch_a_same_named_field_outside_the_block() -> None:
+def test_set_toolbox_field_does_not_touch_a_same_named_field_outside_the_block() -> (
+    None
+):
     dial = DIAL_WITH_TOOLBOX + '\nother:\n  enabled: "false"\n'
     updated = bastion._set_toolbox_field(dial, "enabled", "true")
     lines = updated.splitlines()
@@ -98,13 +100,17 @@ def test_set_toolbox_field_addresses_the_top_level_toggle_not_the_nested_one() -
     toggle -- matching on the bare key edited it and left the real one alone."""
     updated = bastion._set_toolbox_field(DIAL_WITH_TOOLBOX, "enabled", "true")
     assert '  enabled: "true"' in updated.splitlines()
-    assert "    enabled: false" in updated.splitlines(), "toolbox.pod.enabled must survive verbatim"
+    assert "    enabled: false" in updated.splitlines(), (
+        "toolbox.pod.enabled must survive verbatim"
+    )
 
 
 def test_set_toolbox_field_reaches_the_nested_key_by_its_dotted_path() -> None:
     updated = bastion._set_toolbox_field(DIAL_WITH_TOOLBOX, "pod.enabled", "true")
     assert '    enabled: "true"' in updated.splitlines()
-    assert '  enabled: "false"' in updated.splitlines(), "the bastion toggle must survive verbatim"
+    assert '  enabled: "false"' in updated.splitlines(), (
+        "the bastion toggle must survive verbatim"
+    )
 
 
 def test_set_toolbox_field_refuses_a_path_the_block_does_not_carry() -> None:
@@ -112,7 +118,9 @@ def test_set_toolbox_field_refuses_a_path_the_block_does_not_carry() -> None:
         bastion._set_toolbox_field(DIAL_WITH_TOOLBOX, "aws.enabled", "true")
 
 
-def test_up_and_down_both_address_the_top_level_toggle(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_up_and_down_both_address_the_top_level_toggle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The live cycle hit this in BOTH directions, so both are pinned here."""
     dial = tmp_path / "deployment.yaml"
     for enabled in (True, False):
@@ -126,7 +134,9 @@ def test_up_and_down_both_address_the_top_level_toggle(tmp_path: Path, monkeypat
 
 def test_set_toolbox_field_refuses_a_dial_with_no_toolbox_block() -> None:
     with pytest.raises(bastion.BastionError, match=r"toolbox\.enabled"):
-        bastion._set_toolbox_field("substrate: k8s\nkafka:\n  provider: strimzi\n", "enabled", "true")
+        bastion._set_toolbox_field(
+            "substrate: k8s\nkafka:\n  provider: strimzi\n", "enabled", "true"
+        )
 
 
 def test_set_toolbox_field_refuses_an_unknown_field() -> None:
@@ -148,14 +158,20 @@ def _isolated_admin_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
 
 def _ok(stdout_obj: object = None) -> subprocess.CompletedProcess:
     stdout = json.dumps(stdout_obj) if stdout_obj is not None else ""
-    return subprocess.CompletedProcess(args=["aws"], returncode=0, stdout=stdout, stderr="")
+    return subprocess.CompletedProcess(
+        args=["aws"], returncode=0, stdout=stdout, stderr=""
+    )
 
 
 def _fail() -> subprocess.CompletedProcess:
-    return subprocess.CompletedProcess(args=["aws"], returncode=1, stdout="", stderr="boom")
+    return subprocess.CompletedProcess(
+        args=["aws"], returncode=1, stdout="", stderr="boom"
+    )
 
 
-def _mock_aws(monkeypatch: pytest.MonkeyPatch, *responses: subprocess.CompletedProcess) -> list[list[str]]:
+def _mock_aws(
+    monkeypatch: pytest.MonkeyPatch, *responses: subprocess.CompletedProcess
+) -> list[list[str]]:
     """Replace aws_cli.run_aws with one that returns `responses` in call order
     and records each call's argv."""
     queue = list(responses)
@@ -169,7 +185,9 @@ def _mock_aws(monkeypatch: pytest.MonkeyPatch, *responses: subprocess.CompletedP
     return calls
 
 
-def _mock_run(monkeypatch: pytest.MonkeyPatch, *responses: subprocess.CompletedProcess) -> list[list[str]]:
+def _mock_run(
+    monkeypatch: pytest.MonkeyPatch, *responses: subprocess.CompletedProcess
+) -> list[list[str]]:
     """Replace this module's own tofu/render_dial subprocess boundary."""
     queue = list(responses)
     calls: list[list[str]] = []
@@ -204,7 +222,9 @@ TOOLBOX_OUTPUTS = {
 }
 
 
-def _mock_outputs(monkeypatch: pytest.MonkeyPatch, outputs: dict[str, object] = TOOLBOX_OUTPUTS) -> None:
+def _mock_outputs(
+    monkeypatch: pytest.MonkeyPatch, outputs: dict[str, object] = TOOLBOX_OUTPUTS
+) -> None:
     monkeypatch.setattr(bastion, "_tofu_outputs", lambda: outputs)
 
 
@@ -213,7 +233,9 @@ def _mock_outputs(monkeypatch: pytest.MonkeyPatch, outputs: dict[str, object] = 
 # ---------------------------------------------------------------------------
 
 
-def _dial_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, text: str = DIAL_WITH_TOOLBOX) -> Path:
+def _dial_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, text: str = DIAL_WITH_TOOLBOX
+) -> Path:
     dial = tmp_path / "deployment.yaml"
     dial.write_text(text, encoding="utf-8")
     monkeypatch.setattr(bastion, "DIAL", dial)
@@ -224,8 +246,13 @@ def _args(**overrides: object) -> bastion.argparse.Namespace:
     import argparse
 
     base: dict[str, object] = {
-        "ttl": None, "wait_timeout": 1.0, "target": None, "local_port": None,
-        "namespace": "dfe", "peer": None, "port": 22,
+        "ttl": None,
+        "wait_timeout": 1.0,
+        "target": None,
+        "local_port": None,
+        "namespace": "dfe",
+        "peer": None,
+        "port": 22,
     }
     base.update(overrides)
     return argparse.Namespace(**base)
@@ -259,11 +286,20 @@ class FakeCulvert:
     it reads the changed state rather than a fixture that never moves.
     """
 
-    def __init__(self, *, tunnel_address: str = "198.51.100.7", handshake: str = "1789000000",
-                 pod_ip: str = "10.20.30.40", wg_network: str = "100.64.2.0/24",
-                 admin_cidr: str = "") -> None:
+    def __init__(
+        self,
+        *,
+        tunnel_address: str = "198.51.100.7",
+        handshake: str = "1789000000",
+        pod_ip: str = "10.20.30.40",
+        wg_network: str = "100.64.2.0/24",
+        admin_cidr: str = "",
+    ) -> None:
         self.tunnel_address = tunnel_address
-        self.allocations = {"hub-appliance-1": "100.64.2.2", bastion.ADMIN_PEER_NAME: "100.64.2.5"}
+        self.allocations = {
+            "hub-appliance-1": "100.64.2.2",
+            bastion.ADMIN_PEER_NAME: "100.64.2.5",
+        }
         self.allowed = {APPLIANCE_KEY: "100.64.2.2/32", ADMIN_KEY: "100.64.2.5/32"}
         self.handshakes = {APPLIANCE_KEY: handshake, ADMIN_KEY: handshake}
         self.pod_ip = pod_ip
@@ -279,7 +315,11 @@ class FakeCulvert:
         return "".join(f"{key}\t{value}\n" for key, value in rows.items())
 
     def _pod(self) -> dict[str, object]:
-        env = [{"name": bastion.WG_NETWORK_ENV, "value": self.wg_network}] if self.wg_network else []
+        env = (
+            [{"name": bastion.WG_NETWORK_ENV, "value": self.wg_network}]
+            if self.wg_network
+            else []
+        )
         if self.admin_cidr:
             env.append({"name": bastion.ADMIN_CIDR_ENV, "value": self.admin_cidr})
         return {
@@ -294,9 +334,13 @@ class FakeCulvert:
         if "pods" in args:
             return _text("dfe-culvert-7d9f")
         if "annotate" in args:
-            written = next(arg for arg in args if arg.startswith(bastion.ADMIN_CIDR_ANNOTATION))
+            written = next(
+                arg for arg in args if arg.startswith(bastion.ADMIN_CIDR_ANNOTATION)
+            )
             if self.annotation_sticks:
-                self.admin_cidr = "" if written.endswith("-") else written.split("=", 1)[1]
+                self.admin_cidr = (
+                    "" if written.endswith("-") else written.split("=", 1)[1]
+                )
             return _text("")
         if bastion.CLUSTER_SECRET in args:
             return _text(self.tunnel_address)
@@ -319,10 +363,14 @@ class FakeCulvert:
 
 
 def _text(stdout: str) -> subprocess.CompletedProcess:
-    return subprocess.CompletedProcess(args=["kubectl"], returncode=0, stdout=stdout, stderr="")
+    return subprocess.CompletedProcess(
+        args=["kubectl"], returncode=0, stdout=stdout, stderr=""
+    )
 
 
-def _mock_kubectl(monkeypatch: pytest.MonkeyPatch, hub: FakeCulvert | None = None) -> FakeCulvert:
+def _mock_kubectl(
+    monkeypatch: pytest.MonkeyPatch, hub: FakeCulvert | None = None
+) -> FakeCulvert:
     hub = hub or FakeCulvert()
     monkeypatch.setattr(bastion, "_kubectl", hub)
     return hub
@@ -376,8 +424,9 @@ def test_peers_never_reads_the_file_carrying_the_servers_private_key(
     assert not any("wg0.conf" in " ".join(call) for call in hub.calls)
 
 
-def test_peers_reports_a_peer_that_has_never_handshaken(monkeypatch: pytest.MonkeyPatch,
-                                                        capsys: pytest.CaptureFixture) -> None:
+def test_peers_reports_a_peer_that_has_never_handshaken(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
     hub = FakeCulvert()
     hub.handshakes[APPLIANCE_KEY] = "0"
     _mock_kubectl(monkeypatch, hub)
@@ -429,7 +478,9 @@ def test_join_mints_the_private_key_on_the_instance_and_ships_only_the_public_ha
     hub = _mock_kubectl(monkeypatch)
     _mock_admin_state(tmp_path, monkeypatch)
     _mock_outputs(monkeypatch)
-    aws_calls = _mock_aws(monkeypatch, *_ssm(ADMIN_KEY, "", f"{ADMIN_KEY}\t1789000000\n"))
+    aws_calls = _mock_aws(
+        monkeypatch, *_ssm(ADMIN_KEY, "", f"{ADMIN_KEY}\t1789000000\n")
+    )
 
     assert bastion.cmd_bastion_join(_args()) == 0
 
@@ -594,8 +645,14 @@ def test_covers_reads_a_range_rather_than_matching_text() -> None:
 def _joined_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     state = _mock_admin_state(tmp_path, monkeypatch)
     state.write_text(
-        json.dumps({"name": bastion.ADMIN_PEER_NAME, "namespace": "dfe",
-                    "ttl_minutes": 60, "expires_at": 1789003600}),
+        json.dumps(
+            {
+                "name": bastion.ADMIN_PEER_NAME,
+                "namespace": "dfe",
+                "ttl_minutes": 60,
+                "expires_at": 1789003600,
+            }
+        ),
         encoding="utf-8",
     )
     return state
@@ -604,12 +661,19 @@ def _joined_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def test_down_revokes_the_admin_peer_before_the_destroy(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
 ) -> None:
-    _dial_file(tmp_path, monkeypatch, text=DIAL_WITH_TOOLBOX.replace('enabled: "false"', 'enabled: "true"'))
+    _dial_file(
+        tmp_path,
+        monkeypatch,
+        text=DIAL_WITH_TOOLBOX.replace('enabled: "false"', 'enabled: "true"'),
+    )
     state = _joined_state(tmp_path, monkeypatch)
     hub = _mock_kubectl(monkeypatch)
     monkeypatch.setattr(bastion, "_tofu_outputs", lambda: TOOLBOX_OUTPUTS)
-    _mock_run(monkeypatch, subprocess.CompletedProcess(args=["render"], returncode=0),
-              subprocess.CompletedProcess(args=["tofu"], returncode=0))
+    _mock_run(
+        monkeypatch,
+        subprocess.CompletedProcess(args=["render"], returncode=0),
+        subprocess.CompletedProcess(args=["tofu"], returncode=0),
+    )
     _mock_aws(monkeypatch, _ok(["terminated"]), _ok({"Sessions": []}), _ok([]), _ok([]))
 
     rc = bastion.cmd_bastion_down(_args())
@@ -629,14 +693,21 @@ def test_down_reports_non_zero_when_the_peer_survives_revocation(
 ) -> None:
     """A peer left on the hub is a credential nobody tracks, and the instance is
     still terminated -- it is what bills, and it holds the private key."""
-    _dial_file(tmp_path, monkeypatch, text=DIAL_WITH_TOOLBOX.replace('enabled: "false"', 'enabled: "true"'))
+    _dial_file(
+        tmp_path,
+        monkeypatch,
+        text=DIAL_WITH_TOOLBOX.replace('enabled: "false"', 'enabled: "true"'),
+    )
     state = _joined_state(tmp_path, monkeypatch)
     hub = FakeCulvert()
     hub.revoke_sticks = False
     _mock_kubectl(monkeypatch, hub)
     monkeypatch.setattr(bastion, "_tofu_outputs", lambda: TOOLBOX_OUTPUTS)
-    _mock_run(monkeypatch, subprocess.CompletedProcess(args=["render"], returncode=0),
-              subprocess.CompletedProcess(args=["tofu"], returncode=0))
+    _mock_run(
+        monkeypatch,
+        subprocess.CompletedProcess(args=["render"], returncode=0),
+        subprocess.CompletedProcess(args=["tofu"], returncode=0),
+    )
     _mock_aws(monkeypatch, _ok(["terminated"]), _ok({"Sessions": []}), _ok([]), _ok([]))
 
     rc = bastion.cmd_bastion_down(_args())
@@ -652,12 +723,19 @@ def test_down_with_no_admin_peer_touches_the_cluster_at_all(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
 ) -> None:
     """Nothing joined means nothing to revoke, and no kubectl call at all."""
-    _dial_file(tmp_path, monkeypatch, text=DIAL_WITH_TOOLBOX.replace('enabled: "false"', 'enabled: "true"'))
+    _dial_file(
+        tmp_path,
+        monkeypatch,
+        text=DIAL_WITH_TOOLBOX.replace('enabled: "false"', 'enabled: "true"'),
+    )
     _mock_admin_state(tmp_path, monkeypatch)
     hub = _mock_kubectl(monkeypatch)
     monkeypatch.setattr(bastion, "_tofu_outputs", lambda: TOOLBOX_OUTPUTS)
-    _mock_run(monkeypatch, subprocess.CompletedProcess(args=["render"], returncode=0),
-              subprocess.CompletedProcess(args=["tofu"], returncode=0))
+    _mock_run(
+        monkeypatch,
+        subprocess.CompletedProcess(args=["render"], returncode=0),
+        subprocess.CompletedProcess(args=["tofu"], returncode=0),
+    )
     _mock_aws(monkeypatch, _ok(["terminated"]), _ok({"Sessions": []}), _ok([]), _ok([]))
 
     assert bastion.cmd_bastion_down(_args()) == 0
@@ -731,7 +809,9 @@ def test_up_applies_nothing_when_the_ami_resolve_cannot_read_the_dial(
     assert "no AMI was resolved and nothing was applied" in capsys.readouterr().err
 
 
-def _recorded_resolve(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, pin: str) -> Path:
+def _recorded_resolve(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, pin: str
+) -> Path:
     """A dial and an aws root holding an earlier resolve's file, with `_run` answering from recorded SSM."""
     dial = tmp_path / "deployment.yaml"
     dial.write_text(
@@ -743,11 +823,16 @@ def _recorded_resolve(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, pin: s
     root.mkdir()
     path = root / "node-images.auto.tfvars.json"
     path.write_text(
-        json.dumps({
-            "forwarder_ami_id": "ami-11111111111111111",
-            "instance_ami_id": "ami-00000000000000000",
-            "node_image": {"family": "AL2023_ARM_64_STANDARD", "version": "1.36.1-20260901"},
-        }),
+        json.dumps(
+            {
+                "forwarder_ami_id": "ami-11111111111111111",
+                "instance_ami_id": "ami-00000000000000000",
+                "node_image": {
+                    "family": "AL2023_ARM_64_STANDARD",
+                    "version": "1.36.1-20260901",
+                },
+            }
+        ),
         encoding="utf-8",
     )
     monkeypatch.setattr(bastion, "DIAL", dial)
@@ -757,7 +842,9 @@ def _recorded_resolve(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, pin: s
     # The day the recorded answers were captured, so the release-age cooldown reads them the same every run.
     captured = "2026-10-24T00:00:00Z"
 
-    def run_with_recorded_answers(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess:
+    def run_with_recorded_answers(
+        cmd: list[str], **kwargs: object
+    ) -> subprocess.CompletedProcess:
         argv = [*cmd, "--fixtures", str(fixtures), "--now", captured]
         return subprocess.run(argv, check=False, **kwargs)  # type: ignore[call-overload]
 
@@ -765,7 +852,9 @@ def _recorded_resolve(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, pin: s
     return path
 
 
-def test_up_resolves_the_ami_into_the_root_tofu_loads(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_up_resolves_the_ami_into_the_root_tofu_loads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The real subcommand: the toolbox AMI moves, the node release and the forwarder's AMI stay."""
     path = _recorded_resolve(tmp_path, monkeypatch, pin="false")
 
@@ -773,7 +862,10 @@ def test_up_resolves_the_ami_into_the_root_tofu_loads(tmp_path: Path, monkeypatc
     assert json.loads(path.read_text(encoding="utf-8")) == {
         "forwarder_ami_id": "ami-11111111111111111",
         "instance_ami_id": "ami-0957e38de3db270cc",
-        "node_image": {"family": "AL2023_ARM_64_STANDARD", "version": "1.36.1-20260901"},
+        "node_image": {
+            "family": "AL2023_ARM_64_STANDARD",
+            "version": "1.36.1-20260901",
+        },
     }
 
 
@@ -814,15 +906,20 @@ def test_up_targets_the_toolbox_module_and_nothing_else(
 # ---------------------------------------------------------------------------
 
 ADMIN_CIDR = "10.42.1.37/32"
-REACH_BACK_OUTPUTS = {**TOOLBOX_OUTPUTS, bastion.ADMIN_CIDR_OUTPUT: {"value": ADMIN_CIDR}}
+REACH_BACK_OUTPUTS = {
+    **TOOLBOX_OUTPUTS,
+    bastion.ADMIN_CIDR_OUTPUT: {"value": ADMIN_CIDR},
+}
 
 
 def _annotations_written(hub: FakeCulvert) -> list[str]:
     """Every annotation argument `up`/`down` put on the cluster secret."""
     return [
         arg
-        for call in hub.calls if "annotate" in call
-        for arg in call if arg.startswith(bastion.ADMIN_CIDR_ANNOTATION)
+        for call in hub.calls
+        if "annotate" in call
+        for arg in call
+        if arg.startswith(bastion.ADMIN_CIDR_ANNOTATION)
     ]
 
 
@@ -843,11 +940,15 @@ def test_up_admits_the_instances_own_slash_32_and_nothing_wider(
     hub = _mock_kubectl(monkeypatch)
 
     assert bastion.cmd_bastion_up(_args()) == 0
-    assert _annotations_written(hub) == [f"{bastion.ADMIN_CIDR_ANNOTATION}={ADMIN_CIDR}"]
+    assert _annotations_written(hub) == [
+        f"{bastion.ADMIN_CIDR_ANNOTATION}={ADMIN_CIDR}"
+    ]
     assert ADMIN_CIDR.endswith("/32")
     # The cluster secret, not the Application: an ApplicationSet controller
     # reconciles a generated Application back to its own template.
-    assert any(bastion.CLUSTER_SECRET in call for call in hub.calls if "annotate" in call)
+    assert any(
+        bastion.CLUSTER_SECRET in call for call in hub.calls if "annotate" in call
+    )
 
 
 def test_up_waits_until_culvert_itself_carries_the_range(
@@ -916,7 +1017,11 @@ def test_down_removes_the_range_before_the_destroy(
 ) -> None:
     """The address goes back to the subnet the moment the instance terminates,
     so the range naming it comes off first."""
-    _dial_file(tmp_path, monkeypatch, text=DIAL_WITH_TOOLBOX.replace('enabled: "false"', 'enabled: "true"'))
+    _dial_file(
+        tmp_path,
+        monkeypatch,
+        text=DIAL_WITH_TOOLBOX.replace('enabled: "false"', 'enabled: "true"'),
+    )
     monkeypatch.setattr(bastion, "_tofu_outputs", lambda: REACH_BACK_OUTPUTS)
     hub = _mock_kubectl(monkeypatch, FakeCulvert(admin_cidr=ADMIN_CIDR))
     tofu_calls = _mock_run(
@@ -936,7 +1041,11 @@ def test_down_removes_the_range_before_the_destroy(
 def test_down_reports_non_zero_when_the_range_survives(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
 ) -> None:
-    _dial_file(tmp_path, monkeypatch, text=DIAL_WITH_TOOLBOX.replace('enabled: "false"', 'enabled: "true"'))
+    _dial_file(
+        tmp_path,
+        monkeypatch,
+        text=DIAL_WITH_TOOLBOX.replace('enabled: "false"', 'enabled: "true"'),
+    )
     monkeypatch.setattr(bastion, "_tofu_outputs", lambda: REACH_BACK_OUTPUTS)
     hub = FakeCulvert(admin_cidr=ADMIN_CIDR)
     hub.annotation_sticks = False
@@ -972,7 +1081,9 @@ def test_the_hole_is_skipped_rather_than_failed_where_no_tunnel_runs(
     assert "no tunnel is deployed" in capsys.readouterr().err
 
 
-def test_up_with_ttl_overrides_ttl_minutes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_up_with_ttl_overrides_ttl_minutes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     dial = _dial_file(tmp_path, monkeypatch)
     _mock_run(
         monkeypatch,
@@ -994,7 +1105,9 @@ def test_up_with_ttl_overrides_ttl_minutes(tmp_path: Path, monkeypatch: pytest.M
     assert '  enabled: "true"' in text
 
 
-def test_up_fails_when_tofu_apply_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_up_fails_when_tofu_apply_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     _dial_file(tmp_path, monkeypatch)
     _mock_run(
         monkeypatch,
@@ -1027,8 +1140,12 @@ def test_up_fails_when_the_instance_never_goes_online(
     assert bastion.cmd_bastion_up(_args(wait_timeout=10.0)) == 1
 
 
-def test_up_refuses_a_dial_with_no_toolbox_block(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    _dial_file(tmp_path, monkeypatch, text="substrate: k8s\nkafka:\n  provider: strimzi\n")
+def test_up_refuses_a_dial_with_no_toolbox_block(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _dial_file(
+        tmp_path, monkeypatch, text="substrate: k8s\nkafka:\n  provider: strimzi\n"
+    )
     assert bastion.cmd_bastion_up(_args()) == 1
 
 
@@ -1037,7 +1154,9 @@ def test_up_refuses_a_dial_with_no_toolbox_block(tmp_path: Path, monkeypatch: py
 # ---------------------------------------------------------------------------
 
 
-def test_shell_invokes_start_session_with_the_shell_document(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_shell_invokes_start_session_with_the_shell_document(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     _mock_outputs(monkeypatch)
     calls: list[list[str]] = []
     monkeypatch.setattr(bastion, "_run_interactive", lambda cmd: calls.append(cmd) or 0)
@@ -1046,9 +1165,13 @@ def test_shell_invokes_start_session_with_the_shell_document(monkeypatch: pytest
 
     assert rc == 0
     assert calls[0] == [
-        "aws", "ssm", "start-session",
-        "--target", "i-0123456789abcdef0",
-        "--document-name", "dfe-test-toolbox-shell",
+        "aws",
+        "ssm",
+        "start-session",
+        "--target",
+        "i-0123456789abcdef0",
+        "--document-name",
+        "dfe-test-toolbox-shell",
     ]
 
 
@@ -1073,14 +1196,21 @@ def test_forward_invokes_start_session_with_the_named_targets_document(
 
     assert rc == 0
     assert calls[0] == [
-        "aws", "ssm", "start-session",
-        "--target", "i-0123456789abcdef0",
-        "--document-name", "dfe-test-toolbox-forward-kafka",
-        "--parameters", "localPortNumber=19096",
+        "aws",
+        "ssm",
+        "start-session",
+        "--target",
+        "i-0123456789abcdef0",
+        "--document-name",
+        "dfe-test-toolbox-forward-kafka",
+        "--parameters",
+        "localPortNumber=19096",
     ]
 
 
-def test_forward_refuses_an_unknown_target(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture) -> None:
+def test_forward_refuses_an_unknown_target(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
     _mock_outputs(monkeypatch)
     rc = bastion.cmd_bastion_forward(_args(target="not-a-real-target", local_port=8080))
     assert rc == 1
@@ -1117,7 +1247,9 @@ def test_forward_to_eks_api_writes_a_0600_kubeconfig_with_no_insecure_skip_tls_v
     assert "dfe-test" in content
 
 
-def test_forward_to_kafka_writes_no_kubeconfig(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_forward_to_kafka_writes_no_kubeconfig(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     _mock_outputs(monkeypatch)
     monkeypatch.setattr(bastion, "_run_interactive", lambda cmd: 0)
     scratch = tmp_path / "toolbox-eks-api.kubeconfig"
@@ -1174,7 +1306,11 @@ def test_down_flips_enabled_destroys_and_proves_clean_teardown(
 def test_down_fails_when_the_targeted_destroy_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _dial_file(tmp_path, monkeypatch, text=DIAL_WITH_TOOLBOX.replace('enabled: "false"', 'enabled: "true"'))
+    _dial_file(
+        tmp_path,
+        monkeypatch,
+        text=DIAL_WITH_TOOLBOX.replace('enabled: "false"', 'enabled: "true"'),
+    )
     monkeypatch.setattr(bastion, "_tofu_outputs", lambda: TOOLBOX_OUTPUTS)
     _mock_run(
         monkeypatch,
@@ -1188,7 +1324,11 @@ def test_down_fails_when_the_targeted_destroy_fails(
 def test_down_reports_non_zero_when_a_volume_survives(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _dial_file(tmp_path, monkeypatch, text=DIAL_WITH_TOOLBOX.replace('enabled: "false"', 'enabled: "true"'))
+    _dial_file(
+        tmp_path,
+        monkeypatch,
+        text=DIAL_WITH_TOOLBOX.replace('enabled: "false"', 'enabled: "true"'),
+    )
     monkeypatch.setattr(bastion, "_tofu_outputs", lambda: TOOLBOX_OUTPUTS)
     _mock_run(
         monkeypatch,
@@ -1209,7 +1349,11 @@ def test_down_reports_non_zero_when_a_volume_survives(
 def test_down_reports_non_zero_when_the_instance_has_not_terminated(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _dial_file(tmp_path, monkeypatch, text=DIAL_WITH_TOOLBOX.replace('enabled: "false"', 'enabled: "true"'))
+    _dial_file(
+        tmp_path,
+        monkeypatch,
+        text=DIAL_WITH_TOOLBOX.replace('enabled: "false"', 'enabled: "true"'),
+    )
     monkeypatch.setattr(bastion, "_tofu_outputs", lambda: TOOLBOX_OUTPUTS)
     _mock_run(
         monkeypatch,
@@ -1227,8 +1371,14 @@ def test_down_reports_non_zero_when_the_instance_has_not_terminated(
     assert bastion.cmd_bastion_down(_args()) == 1
 
 
-def test_down_reports_non_zero_on_an_active_session(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    _dial_file(tmp_path, monkeypatch, text=DIAL_WITH_TOOLBOX.replace('enabled: "false"', 'enabled: "true"'))
+def test_down_reports_non_zero_on_an_active_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _dial_file(
+        tmp_path,
+        monkeypatch,
+        text=DIAL_WITH_TOOLBOX.replace('enabled: "false"', 'enabled: "true"'),
+    )
     monkeypatch.setattr(bastion, "_tofu_outputs", lambda: TOOLBOX_OUTPUTS)
     _mock_run(
         monkeypatch,
@@ -1249,7 +1399,11 @@ def test_down_reports_non_zero_on_an_active_session(tmp_path: Path, monkeypatch:
 def test_down_removes_the_scratch_kubeconfig_if_present(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _dial_file(tmp_path, monkeypatch, text=DIAL_WITH_TOOLBOX.replace('enabled: "false"', 'enabled: "true"'))
+    _dial_file(
+        tmp_path,
+        monkeypatch,
+        text=DIAL_WITH_TOOLBOX.replace('enabled: "false"', 'enabled: "true"'),
+    )
     monkeypatch.setattr(bastion, "_tofu_outputs", lambda: TOOLBOX_OUTPUTS)
     _mock_run(
         monkeypatch,
@@ -1267,7 +1421,9 @@ def test_down_removes_the_scratch_kubeconfig_if_present(
     assert not scratch.exists()
 
 
-def test_down_with_no_prior_instance_reports_clean(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_down_with_no_prior_instance_reports_clean(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """bastion down on a toolbox that was never brought up: nothing to prove
     wrong, and the two instance-scoped checks are never even queried."""
     _dial_file(tmp_path, monkeypatch)
@@ -1325,8 +1481,14 @@ def test_status_reports_an_admin_peer_past_its_deadline(
     _mock_outputs(monkeypatch)
     state = _mock_admin_state(tmp_path, monkeypatch)
     state.write_text(
-        json.dumps({"name": bastion.ADMIN_PEER_NAME, "namespace": "dfe",
-                    "ttl_minutes": 60, "expires_at": 1}),
+        json.dumps(
+            {
+                "name": bastion.ADMIN_PEER_NAME,
+                "namespace": "dfe",
+                "ttl_minutes": 60,
+                "expires_at": 1,
+            }
+        ),
         encoding="utf-8",
     )
     _mock_aws(

@@ -155,7 +155,9 @@ REAL_CHECK_UPGRADE_PATH = u.check_upgrade_path
 @pytest.fixture(autouse=True)
 def _every_path_verified(monkeypatch: pytest.MonkeyPatch) -> None:
     """The fixture stacks are not in the repo's versions.yaml, so the path check passes unless a test restores it."""
-    monkeypatch.setattr(u, "check_upgrade_path", lambda *_a, **_k: (True, "verified (stubbed)"))
+    monkeypatch.setattr(
+        u, "check_upgrade_path", lambda *_a, **_k: (True, "verified (stubbed)")
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -173,8 +175,12 @@ def _no_real_cluster(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(u, "_run", guarded)
 
 
-def _proc(returncode: int = 0, stdout: str = "", stderr: str = "") -> subprocess.CompletedProcess:
-    return subprocess.CompletedProcess(args=["x"], returncode=returncode, stdout=stdout, stderr=stderr)
+def _proc(
+    returncode: int = 0, stdout: str = "", stderr: str = ""
+) -> subprocess.CompletedProcess:
+    return subprocess.CompletedProcess(
+        args=["x"], returncode=returncode, stdout=stdout, stderr=stderr
+    )
 
 
 class _Calls(list[list[str]]):
@@ -185,7 +191,9 @@ class _Calls(list[list[str]]):
         self.stdin: list[object] = []
 
 
-def _mock_run(monkeypatch: pytest.MonkeyPatch, *responses: subprocess.CompletedProcess) -> _Calls:
+def _mock_run(
+    monkeypatch: pytest.MonkeyPatch, *responses: subprocess.CompletedProcess
+) -> _Calls:
     """Replace this module's own subprocess boundary with one that returns
     `responses` in call order and records each call's argv and stdin."""
     queue = list(responses)
@@ -207,7 +215,12 @@ def _mock_run(monkeypatch: pytest.MonkeyPatch, *responses: subprocess.CompletedP
 
 def test_load_steps_unquotes_and_orders(order_path: Path) -> None:
     steps = u.load_steps(order_path)
-    assert [s.stage for s in steps] == ["10-bootstrap", "20-operators", "30-services", "30-services"]
+    assert [s.stage for s in steps] == [
+        "10-bootstrap",
+        "20-operators",
+        "30-services",
+        "30-services",
+    ]
     assert steps[0].key == "bootstrap.cert-manager"
     assert steps[0].stage == "10-bootstrap"  # no stray quotes
     assert steps[1].key == "operators.strimzi-kafka-operator"
@@ -266,12 +279,20 @@ def test_flatten_stack_only_upgrade_sections(versions_path: Path) -> None:
 @pytest.mark.parametrize(
     ("pins", "want"),
     [
-        ({"chart-digests": {"hyperdx": "sha256:a"}}, {"chart-digests.dfe-hyperdx": "sha256:a"}),
-        ({"chart-digests": {"dfe-hyperdx": "sha256:b"}}, {"chart-digests.dfe-hyperdx": "sha256:b"}),
+        (
+            {"chart-digests": {"hyperdx": "sha256:a"}},
+            {"chart-digests.dfe-hyperdx": "sha256:a"},
+        ),
+        (
+            {"chart-digests": {"dfe-hyperdx": "sha256:b"}},
+            {"chart-digests.dfe-hyperdx": "sha256:b"},
+        ),
         ({"services": {"hyperdx": "2.41.0"}}, {"services.hyperdx": "2.41.0"}),
     ],
 )
-def test_a_published_stacks_old_chart_key_reads_as_the_new_one(pins: dict, want: dict) -> None:
+def test_a_published_stacks_old_chart_key_reads_as_the_new_one(
+    pins: dict, want: dict
+) -> None:
     """upgrade-order.yaml names chart-digests.dfe-hyperdx, which a stack before 2.2.2-rc.2 keys hyperdx."""
     assert u.flatten_stack(pins) == want
 
@@ -285,14 +306,20 @@ def test_read_deploy_pin_no_pins_file(tmp_path: Path) -> None:
         u.read_deploy_pin(tmp_path)
 
 
-STACK_VERSION_JSONPATH = "jsonpath={.metadata.annotations.dfe\\.hyperi\\.io/stack_version}"
+STACK_VERSION_JSONPATH = (
+    "jsonpath={.metadata.annotations.dfe\\.hyperi\\.io/stack_version}"
+)
 
 
-def test_read_stack_version_reads_only_that_annotation(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_read_stack_version_reads_only_that_annotation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     calls = _mock_run(monkeypatch, _proc(0, stdout="2.2.0\n"))
     assert u.read_stack_version("kc", "argocd") == "2.2.0"
     assert calls[0][-2:] == ["-o", STACK_VERSION_JSONPATH]
-    assert ["secret", "dfe-cluster"] == calls[0][calls[0].index("get") + 1 : calls[0].index("get") + 3]
+    assert ["secret", "dfe-cluster"] == calls[0][
+        calls[0].index("get") + 1 : calls[0].index("get") + 3
+    ]
     assert calls[0][calls[0].index("-n") + 1] == "argocd"
 
 
@@ -300,7 +327,9 @@ def test_from_stack_without_pins_yaml_is_the_cluster_secrets_stack(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     _mock_run(monkeypatch, _proc(0, stdout="2.2.0\n"))
-    stack, note = u.read_from_stack(tmp_path, None, kubeconfig="kc", argocd_namespace="argocd")
+    stack, note = u.read_from_stack(
+        tmp_path, None, kubeconfig="kc", argocd_namespace="argocd"
+    )
     assert stack == "2.2.0"
     # The value came out of a Secret, so the note never repeats it. resolve_stack's key is what prints.
     assert note == (
@@ -309,11 +338,19 @@ def test_from_stack_without_pins_yaml_is_the_cluster_secrets_stack(
     )
 
 
-def test_from_stack_reads_no_cluster_when_pins_yaml_or_from_names_it(deploy: Path, tmp_path: Path) -> None:
+def test_from_stack_reads_no_cluster_when_pins_yaml_or_from_names_it(
+    deploy: Path, tmp_path: Path
+) -> None:
     # The autouse guard fails any kubectl call, so reaching the cluster here fails the test.
-    assert u.read_from_stack(deploy, None, kubeconfig="kc", argocd_namespace="argocd") == ("1.0.0", "")
-    assert u.read_from_stack(deploy, "0.9.0", kubeconfig="kc", argocd_namespace="argocd") == ("0.9.0", "")
-    assert u.read_from_stack(tmp_path, "0.9.0", kubeconfig="kc", argocd_namespace="argocd") == ("0.9.0", "")
+    assert u.read_from_stack(
+        deploy, None, kubeconfig="kc", argocd_namespace="argocd"
+    ) == ("1.0.0", "")
+    assert u.read_from_stack(
+        deploy, "0.9.0", kubeconfig="kc", argocd_namespace="argocd"
+    ) == ("0.9.0", "")
+    assert u.read_from_stack(
+        tmp_path, "0.9.0", kubeconfig="kc", argocd_namespace="argocd"
+    ) == ("0.9.0", "")
 
 
 def test_from_stack_still_refuses_a_pins_yaml_apply_cannot_bump(tmp_path: Path) -> None:
@@ -334,9 +371,18 @@ def test_from_stack_refuses_with_neither_pins_yaml_nor_a_stack_annotation(
     )
 
 
-def test_from_stack_names_a_cluster_secret_it_could_not_read(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    _mock_run(monkeypatch, _proc(1, stderr='Error from server (NotFound): secrets "dfe-cluster" not found'))
-    unreadable = re.escape("cannot read dfe.hyperi.io/stack_version on secret/dfe-cluster in argocd: Error from server")
+def test_from_stack_names_a_cluster_secret_it_could_not_read(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _mock_run(
+        monkeypatch,
+        _proc(
+            1, stderr='Error from server (NotFound): secrets "dfe-cluster" not found'
+        ),
+    )
+    unreadable = re.escape(
+        "cannot read dfe.hyperi.io/stack_version on secret/dfe-cluster in argocd: Error from server"
+    )
     with pytest.raises(u.UpgradeError, match=unreadable):
         u.read_from_stack(tmp_path, None, kubeconfig="kc", argocd_namespace="argocd")
 
@@ -346,7 +392,9 @@ def test_from_stack_names_a_cluster_secret_it_could_not_read(monkeypatch: pytest
 # ---------------------------------------------------------------------------
 
 
-def test_plan_moves_two_key_move_with_before_hook(order_path: Path, versions_path: Path) -> None:
+def test_plan_moves_two_key_move_with_before_hook(
+    order_path: Path, versions_path: Path
+) -> None:
     steps = u.load_steps(order_path)
     root = u.load_versions_root(versions_path)
     _, from_pins = u.resolve_stack(root, "1.0.0")
@@ -356,7 +404,10 @@ def test_plan_moves_two_key_move_with_before_hook(order_path: Path, versions_pat
     # Exactly two keys move between 1.0.0 and 1.1.0: cert-manager (no note)
     # and strimzi-kafka-operator (carries the before hook). kafka-version and
     # clickhouse-version are unchanged between these two stacks.
-    assert [m.step.key for m in moves] == ["bootstrap.cert-manager", "operators.strimzi-kafka-operator"]
+    assert [m.step.key for m in moves] == [
+        "bootstrap.cert-manager",
+        "operators.strimzi-kafka-operator",
+    ]
     assert moves[0].old == "v1.0.0"
     assert moves[0].new == "v1.1.0"
     assert moves[1].step.before
@@ -367,7 +418,9 @@ def test_plan_moves_two_key_move_with_before_hook(order_path: Path, versions_pat
     assert "2. operators.strimzi-kafka-operator: 0.51.0 -> 1.2.0" in rendered
     assert "before:   kafka.strimzi.io stored-version conversion" in rendered
     # stage headers present, in upgrade-order.yaml order
-    assert rendered.index("## stage 10-bootstrap") < rendered.index("## stage 20-operators")
+    assert rendered.index("## stage 10-bootstrap") < rendered.index(
+        "## stage 20-operators"
+    )
 
 
 def test_render_plan_no_moves() -> None:
@@ -376,7 +429,12 @@ def test_render_plan_no_moves() -> None:
 
 
 def test_render_plan_shows_scope_for_disambiguation() -> None:
-    step = u.Step(stage="30-services", order="10", key="services.clickhouse-version", scope="keeper")
+    step = u.Step(
+        stage="30-services",
+        order="10",
+        key="services.clickhouse-version",
+        scope="keeper",
+    )
     move = u.Move(step=step, old="a", new="b")
     rendered = u.render_plan([move], from_stack="x", to_stack="y")
     assert "services.clickhouse-version (keeper): a -> b" in rendered
@@ -419,7 +477,9 @@ stacks:
 UNDEPLOYED_DIGESTS = {"dfe-toolbox-base"}
 
 
-def _hyperdx_stacks(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, text: str = HYPERDX_VERSIONS_YAML) -> None:
+def _hyperdx_stacks(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, text: str = HYPERDX_VERSIONS_YAML
+) -> None:
     """The fixture stacks against the repo's own upgrade-order.yaml."""
     versions = tmp_path / "versions.yaml"
     versions.write_text(text, encoding="utf-8")
@@ -428,7 +488,10 @@ def _hyperdx_stacks(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, text: str =
 
 
 def test_a_stack_moving_only_dfe_hyperdx_yields_a_plan_stage(
-    monkeypatch: pytest.MonkeyPatch, deploy: Path, tmp_path: Path, capsys: pytest.CaptureFixture
+    monkeypatch: pytest.MonkeyPatch,
+    deploy: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture,
 ) -> None:
     _hyperdx_stacks(monkeypatch, tmp_path)
 
@@ -444,7 +507,10 @@ def test_a_stack_moving_only_dfe_hyperdx_yields_a_plan_stage(
 
 
 def test_apply_walks_a_dfe_hyperdx_move_as_a_stage(
-    monkeypatch: pytest.MonkeyPatch, deploy: Path, tmp_path: Path, capsys: pytest.CaptureFixture
+    monkeypatch: pytest.MonkeyPatch,
+    deploy: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture,
 ) -> None:
     _hyperdx_stacks(monkeypatch, tmp_path)
 
@@ -457,9 +523,15 @@ def test_apply_walks_a_dfe_hyperdx_move_as_a_stage(
     assert "chore(upgrade): 2.0.0 stage 1 -- content.dfe-hyperdx" in err
 
 
-def test_a_digest_moving_under_an_unchanged_tag_still_moves_its_step(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    republished = HYPERDX_VERSIONS_YAML.replace('dfe-hyperdx: "v0.3.3"', 'dfe-hyperdx: "v0.3.2"')
-    republished = republished.replace('dfe-hyperdx: "sha256:h2"', 'dfe-hyperdx: "sha256:h1"')
+def test_a_digest_moving_under_an_unchanged_tag_still_moves_its_step(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    republished = HYPERDX_VERSIONS_YAML.replace(
+        'dfe-hyperdx: "v0.3.3"', 'dfe-hyperdx: "v0.3.2"'
+    )
+    republished = republished.replace(
+        'dfe-hyperdx: "sha256:h2"', 'dfe-hyperdx: "sha256:h1"'
+    )
     _hyperdx_stacks(monkeypatch, tmp_path, republished)
     root = u.load_versions_root()
     _, old = u.resolve_stack(root, "1.0.0")
@@ -467,8 +539,14 @@ def test_a_digest_moving_under_an_unchanged_tag_still_moves_its_step(monkeypatch
 
     (move,) = u.plan_moves(u.load_steps(), u.flatten_stack(old), u.flatten_stack(new))
 
-    assert (move.step.key, move.old, move.new) == ("content.dfe-hyperdx", "v0.3.2", "v0.3.2")
-    assert move.pins == (("chart", "chart-digests.dfe-hyperdx", "sha256:ch1", "sha256:ch2"),)
+    assert (move.step.key, move.old, move.new) == (
+        "content.dfe-hyperdx",
+        "v0.3.2",
+        "v0.3.2",
+    )
+    assert move.pins == (
+        ("chart", "chart-digests.dfe-hyperdx", "sha256:ch1", "sha256:ch2"),
+    )
 
 
 def test_every_dfe_component_the_current_stack_pins_moves_with_a_step() -> None:
@@ -480,15 +558,34 @@ def test_every_dfe_component_the_current_stack_pins_moves_with_a_step() -> None:
     images = {step.image for step in steps if step.image}
     charts = {step.chart for step in steps if step.chart}
 
-    assert sorted(f"apps.{name}" for name in stack["apps"] if f"apps.{name}" not in keys) == []
+    assert (
+        sorted(f"apps.{name}" for name in stack["apps"] if f"apps.{name}" not in keys)
+        == []
+    )
     deployed = set(stack["digests"]) - UNDEPLOYED_DIGESTS
-    assert sorted(f"digests.{name}" for name in deployed if f"digests.{name}" not in images) == []
-    assert sorted(f"chart-digests.{name}" for name in stack["chart-digests"] if f"chart-digests.{name}" not in charts) == []
+    assert (
+        sorted(
+            f"digests.{name}" for name in deployed if f"digests.{name}" not in images
+        )
+        == []
+    )
+    assert (
+        sorted(
+            f"chart-digests.{name}"
+            for name in stack["chart-digests"]
+            if f"chart-digests.{name}" not in charts
+        )
+        == []
+    )
     # A digest a step names must be a pin the stack carries, or the step watches nothing.
     flat = u.flatten_stack(stack)
     assert sorted(pin for pin in images | charts if pin not in flat) == []
     # The step key carries the component's own tag: digests.X goes with apps.X or content.X.
-    assert [s.key for s in steps if s.image and s.key.split(".", 1)[1] != s.image.split(".", 1)[1]] == []
+    assert [
+        s.key
+        for s in steps
+        if s.image and s.key.split(".", 1)[1] != s.image.split(".", 1)[1]
+    ] == []
 
 
 def test_dfe_hyperdx_moves_after_the_engine_whose_jwks_it_verifies_against() -> None:
@@ -513,7 +610,9 @@ def test_set_pin_stack_idempotent_when_already_at_target() -> None:
     assert updated == PINS_YAML
 
 
-@pytest.mark.parametrize("target", ["2.0.0", "1.0.0"], ids=["bumped", "already at target"])
+@pytest.mark.parametrize(
+    "target", ["2.0.0", "1.0.0"], ids=["bumped", "already at target"]
+)
 def test_set_pin_stack_keeps_the_comment_on_the_dfe_infra_line(target: str) -> None:
     text = PINS_YAML.replace('"1.0.0"', '"1.0.0"      # charts, appsets, defaults', 1)
     updated = u.set_pin_stack(text, target)
@@ -533,7 +632,9 @@ def test_bump_pin_file_writes_and_reports_change(deploy: Path) -> None:
     assert changed_again is False
 
 
-def test_bump_pin_file_writes_dfe_deploys_shape_where_there_is_none(tmp_path: Path) -> None:
+def test_bump_pin_file_writes_dfe_deploys_shape_where_there_is_none(
+    tmp_path: Path,
+) -> None:
     assert u.bump_pin_file(tmp_path, "2.2.1", channel="release") is True
     written = (tmp_path / "pins.yaml").read_text(encoding="utf-8")
     assert u.read_deploy_pin(tmp_path) == "2.2.1"
@@ -543,12 +644,18 @@ def test_bump_pin_file_writes_dfe_deploys_shape_where_there_is_none(tmp_path: Pa
     assert written.isascii()
     # The next upgrade edits the written file in place, like any other pins.yaml.
     assert u.bump_pin_file(tmp_path, "2.2.2", channel="release") is True
-    assert (tmp_path / "pins.yaml").read_text(encoding="utf-8") == written.replace('"2.2.1"', '"2.2.2"')
+    assert (tmp_path / "pins.yaml").read_text(encoding="utf-8") == written.replace(
+        '"2.2.1"', '"2.2.2"'
+    )
 
 
-def test_bump_pin_file_names_no_channel_for_a_stack_with_no_maturity(tmp_path: Path) -> None:
+def test_bump_pin_file_names_no_channel_for_a_stack_with_no_maturity(
+    tmp_path: Path,
+) -> None:
     u.bump_pin_file(tmp_path, "2.2.1")
-    tree = u.yaml_subset.parse((tmp_path / "pins.yaml").read_text(encoding="utf-8"), source="pins.yaml")
+    tree = u.yaml_subset.parse(
+        (tmp_path / "pins.yaml").read_text(encoding="utf-8"), source="pins.yaml"
+    )
     assert tree == {"base": {"dfe-infra": "2.2.1"}}
 
 
@@ -558,7 +665,12 @@ def test_bump_pin_file_names_no_channel_for_a_stack_with_no_maturity(tmp_path: P
 
 
 def test_run_compat_check_ok(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls = _mock_run(monkeypatch, _proc(0, stdout="ok     rule-a: x = y\n\ncompat-check 2.0.0: 1 rule(s) checked"))
+    calls = _mock_run(
+        monkeypatch,
+        _proc(
+            0, stdout="ok     rule-a: x = y\n\ncompat-check 2.0.0: 1 rule(s) checked"
+        ),
+    )
     ok, output = u.run_compat_check("2.0.0")
     assert ok is True
     assert "rule-a" in output
@@ -582,7 +694,10 @@ def test_run_compat_check_fail(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_check_locked_sizing_skips_when_no_previous_file(tmp_path: Path) -> None:
     ok, detail, blocked = u.check_locked_sizing(
-        tmp_path / "deployment.yaml", tmp_path / "missing-resolved.yaml", fixtures=None, live=False
+        tmp_path / "deployment.yaml",
+        tmp_path / "missing-resolved.yaml",
+        fixtures=None,
+        live=False,
     )
     assert ok is True
     assert blocked is False
@@ -592,21 +707,31 @@ def test_check_locked_sizing_skips_when_no_previous_file(tmp_path: Path) -> None
 def test_check_locked_sizing_skips_when_no_fixtures_or_live(tmp_path: Path) -> None:
     previous = tmp_path / "resolved.yaml"
     previous.write_text("locked: {}\n", encoding="utf-8")
-    ok, detail, blocked = u.check_locked_sizing(tmp_path / "deployment.yaml", previous, fixtures=None, live=False)
+    ok, detail, blocked = u.check_locked_sizing(
+        tmp_path / "deployment.yaml", previous, fixtures=None, live=False
+    )
     assert ok is True
     assert blocked is False
     assert "neither --fixtures nor --live" in detail
 
 
-def test_check_locked_sizing_reports_locked_change(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_check_locked_sizing_reports_locked_change(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     previous = tmp_path / "resolved.yaml"
     previous.write_text("locked: {}\n", encoding="utf-8")
     _mock_run(
         monkeypatch,
-        _proc(3, stdout="resolve_sizing: LOCKED partition_count: 12 -> 24 (immutable after create)\n"),
+        _proc(
+            3,
+            stdout="resolve_sizing: LOCKED partition_count: 12 -> 24 (immutable after create)\n",
+        ),
     )
     ok, detail, blocked = u.check_locked_sizing(
-        tmp_path / "deployment.yaml", previous, fixtures=tmp_path / "fixtures", live=False
+        tmp_path / "deployment.yaml",
+        previous,
+        fixtures=tmp_path / "fixtures",
+        live=False,
     )
     assert ok is True  # a refusal is not a resolver failure
     assert blocked is True
@@ -614,24 +739,34 @@ def test_check_locked_sizing_reports_locked_change(monkeypatch: pytest.MonkeyPat
     assert "--migrate required" in detail
 
 
-def test_check_locked_sizing_ok_no_locked_change(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_check_locked_sizing_ok_no_locked_change(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     previous = tmp_path / "resolved.yaml"
     previous.write_text("locked: {}\n", encoding="utf-8")
     _mock_run(monkeypatch, _proc(0, stdout="sizing resolved cleanly"))
     ok, detail, blocked = u.check_locked_sizing(
-        tmp_path / "deployment.yaml", previous, fixtures=tmp_path / "fixtures", live=False
+        tmp_path / "deployment.yaml",
+        previous,
+        fixtures=tmp_path / "fixtures",
+        live=False,
     )
     assert ok is True
     assert blocked is False
     assert "sizing resolved cleanly" in detail
 
 
-def test_check_locked_sizing_resolver_failure(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_check_locked_sizing_resolver_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     previous = tmp_path / "resolved.yaml"
     previous.write_text("locked: {}\n", encoding="utf-8")
     _mock_run(monkeypatch, _proc(1, stderr="bad dial\n"))
     ok, detail, blocked = u.check_locked_sizing(
-        tmp_path / "deployment.yaml", previous, fixtures=tmp_path / "fixtures", live=False
+        tmp_path / "deployment.yaml",
+        previous,
+        fixtures=tmp_path / "fixtures",
+        live=False,
     )
     assert ok is False
     assert blocked is True
@@ -671,7 +806,9 @@ def _fake_resolver(monkeypatch: pytest.MonkeyPatch, returncode: int) -> list[lis
     def fake_run(cmd: list[str], **_kwargs: object) -> subprocess.CompletedProcess:
         calls.append(cmd)
         _write_resolver_output(cmd)
-        return _proc(returncode, stderr="resolve_sizing: MIGRATING partition_count: 12 -> 24\n")
+        return _proc(
+            returncode, stderr="resolve_sizing: MIGRATING partition_count: 12 -> 24\n"
+        )
 
     monkeypatch.setattr(u, "_run", fake_run)
     return calls
@@ -687,16 +824,26 @@ def committed_sizing(deploy: Path) -> Path:
 
 
 def test_check_locked_sizing_refresh_copies_only_sizing_into_the_deploy(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, deploy: Path, committed_sizing: Path
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    deploy: Path,
+    committed_sizing: Path,
 ) -> None:
     calls = _fake_resolver(monkeypatch, 0)
     ok, detail, blocked = u.check_locked_sizing(
-        tmp_path / "deployment.yaml", committed_sizing, fixtures=tmp_path / "fixtures",
-        live=False, migrate=True, refresh=deploy,
+        tmp_path / "deployment.yaml",
+        committed_sizing,
+        fixtures=tmp_path / "fixtures",
+        live=False,
+        migrate=True,
+        refresh=deploy,
     )
     assert ok is True
     assert blocked is False
-    assert committed_sizing.read_text(encoding="utf-8") == RESOLVER_OUTPUT["sizing/resolved.yaml"]
+    assert (
+        committed_sizing.read_text(encoding="utf-8")
+        == RESOLVER_OUTPUT["sizing/resolved.yaml"]
+    )
     assert (deploy / "sizing" / "scale.values.yaml").is_file()
     assert (deploy / "sizing" / "scale.report.md").is_file()
     # The OpenTofu inputs and the shape answer stay out of the deploy repo.
@@ -708,11 +855,17 @@ def test_check_locked_sizing_refresh_copies_only_sizing_into_the_deploy(
 
 
 def test_check_locked_sizing_without_refresh_leaves_the_deploy_untouched(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, deploy: Path, committed_sizing: Path
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    deploy: Path,
+    committed_sizing: Path,
 ) -> None:
     _fake_resolver(monkeypatch, 0)
     ok, detail, _blocked = u.check_locked_sizing(
-        tmp_path / "deployment.yaml", committed_sizing, fixtures=tmp_path / "fixtures", live=False
+        tmp_path / "deployment.yaml",
+        committed_sizing,
+        fixtures=tmp_path / "fixtures",
+        live=False,
     )
     assert ok is True
     assert committed_sizing.read_text(encoding="utf-8") == PREVIOUS_RESOLVED
@@ -721,12 +874,19 @@ def test_check_locked_sizing_without_refresh_leaves_the_deploy_untouched(
 
 
 def test_check_locked_sizing_refresh_copies_nothing_when_the_resolver_fails(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, deploy: Path, committed_sizing: Path
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    deploy: Path,
+    committed_sizing: Path,
 ) -> None:
     _fake_resolver(monkeypatch, 1)
     ok, _detail, blocked = u.check_locked_sizing(
-        tmp_path / "deployment.yaml", committed_sizing, fixtures=tmp_path / "fixtures",
-        live=False, migrate=True, refresh=deploy,
+        tmp_path / "deployment.yaml",
+        committed_sizing,
+        fixtures=tmp_path / "fixtures",
+        live=False,
+        migrate=True,
+        refresh=deploy,
     )
     assert ok is False
     assert blocked is True
@@ -754,7 +914,9 @@ def test_check_deploy_clean_fail(monkeypatch: pytest.MonkeyPatch, deploy: Path) 
 
 
 def test_check_cluster_reachable_pass(monkeypatch: pytest.MonkeyPatch) -> None:
-    _mock_run(monkeypatch, _proc(0, stdout="Client Version: v1.31.0\nServer Version: v1.31.0"))
+    _mock_run(
+        monkeypatch, _proc(0, stdout="Client Version: v1.31.0\nServer Version: v1.31.0")
+    )
     ok, detail = u.check_cluster_reachable("kc")
     assert ok is True
     assert "Server Version" in detail
@@ -770,8 +932,20 @@ def test_check_cluster_reachable_fail(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_check_argo_apps_all_healthy(monkeypatch: pytest.MonkeyPatch) -> None:
     doc = {
         "items": [
-            {"metadata": {"name": "a"}, "status": {"sync": {"status": "Synced"}, "health": {"status": "Healthy"}}},
-            {"metadata": {"name": "b"}, "status": {"sync": {"status": "Synced"}, "health": {"status": "Healthy"}}},
+            {
+                "metadata": {"name": "a"},
+                "status": {
+                    "sync": {"status": "Synced"},
+                    "health": {"status": "Healthy"},
+                },
+            },
+            {
+                "metadata": {"name": "b"},
+                "status": {
+                    "sync": {"status": "Synced"},
+                    "health": {"status": "Healthy"},
+                },
+            },
         ]
     }
     import json
@@ -787,7 +961,13 @@ def test_check_argo_apps_some_unhealthy(monkeypatch: pytest.MonkeyPatch) -> None
 
     doc = {
         "items": [
-            {"metadata": {"name": "a"}, "status": {"sync": {"status": "OutOfSync"}, "health": {"status": "Progressing"}}},
+            {
+                "metadata": {"name": "a"},
+                "status": {
+                    "sync": {"status": "OutOfSync"},
+                    "health": {"status": "Progressing"},
+                },
+            },
         ]
     }
     _mock_run(monkeypatch, _proc(0, stdout=json.dumps(doc)))
@@ -808,7 +988,14 @@ def test_check_no_kafka_rebalance_pass(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_check_no_kafka_rebalance_fail(monkeypatch: pytest.MonkeyPatch) -> None:
     import json
 
-    doc = {"items": [{"metadata": {"name": "rb1"}, "status": {"conditions": [{"type": "Rebalancing"}]}}]}
+    doc = {
+        "items": [
+            {
+                "metadata": {"name": "rb1"},
+                "status": {"conditions": [{"type": "Rebalancing"}]},
+            }
+        ]
+    }
     _mock_run(monkeypatch, _proc(0, stdout=json.dumps(doc)))
     ok, detail = u.check_no_kafka_rebalance("kc")
     assert ok is False
@@ -819,7 +1006,9 @@ CH_PASSWORD = "s3cr3t-Value"
 
 
 def _ch_pods(*names: str) -> subprocess.CompletedProcess:
-    return _proc(0, stdout=json.dumps({"items": [{"metadata": {"name": n}} for n in names]}))
+    return _proc(
+        0, stdout=json.dumps({"items": [{"metadata": {"name": n}} for n in names]})
+    )
 
 
 def _ch_password(value: str = CH_PASSWORD) -> subprocess.CompletedProcess:
@@ -839,13 +1028,24 @@ def test_check_clickhouse_merges_queries_every_server_pod_with_the_resolved_cred
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
 ) -> None:
     calls = _mock_run(
-        monkeypatch, _ch_pods("ch-0-0", "ch-0-1", "ch-0-2"), _ch_password(), _proc(0, stdout="1\n"),
-        _proc(0, stdout="0\n"), _proc(0, stdout="0\n"), _proc(0, stdout="0\n"),
+        monkeypatch,
+        _ch_pods("ch-0-0", "ch-0-1", "ch-0-2"),
+        _ch_password(),
+        _proc(0, stdout="1\n"),
+        _proc(0, stdout="0\n"),
+        _proc(0, stdout="0\n"),
+        _proc(0, stdout="0\n"),
     )
     ok, detail = u.check_clickhouse_merges("kc")
-    assert (ok, detail) == (True, "no merge running longer than 300s on 3 ClickHouse pod(s)")
+    assert (ok, detail) == (
+        True,
+        "no merge running longer than 300s on 3 ClickHouse pod(s)",
+    )
     secret = calls[1]
-    assert secret[secret.index("get") + 1 : secret.index("get") + 3] == ["secret", "clickhouse-admin-password"]
+    assert secret[secret.index("get") + 1 : secret.index("get") + 3] == [
+        "secret",
+        "clickhouse-admin-password",
+    ]
     assert secret[-1] == "jsonpath={.data.password}"
     queries = calls[3:]
     assert [c[c.index("exec") + 2] for c in queries] == ["ch-0-0", "ch-0-1", "ch-0-2"]
@@ -866,14 +1066,26 @@ LOCK_QUORUM = _proc(0, stdout="version: 2\nparts count: 1\nall\tall_77_77_1\n")
     ("replies", "ok", "detail"),
     [
         (
-            [LOCK_TABLE, LOCK_QUORUM, _proc(0, stdout="0\n"), _proc(0, stdout="0\n"), _proc(0, stdout="0\n")],
+            [
+                LOCK_TABLE,
+                LOCK_QUORUM,
+                _proc(0, stdout="0\n"),
+                _proc(0, stdout="0\n"),
+                _proc(0, stdout="0\n"),
+            ],
             False,
             "schema_lock's quorum names a part no replica holds (dfe), so no engine can take the schema lease. "
             f"With no engine holding it, run once on one replica: {u.schema_lock_remedy.schema_lock_drop('dfe')} "
             "-- then start an engine at v1.22.85 or later, which recreates the table at boot (docs/deployment/upgrades.md)",
         ),
         (
-            [LOCK_TABLE, LOCK_QUORUM, _proc(0, stdout="0\n"), _proc(0, stdout="1\n"), _proc(0, stdout="0\n")],
+            [
+                LOCK_TABLE,
+                LOCK_QUORUM,
+                _proc(0, stdout="0\n"),
+                _proc(0, stdout="1\n"),
+                _proc(0, stdout="0\n"),
+            ],
             True,
             "every schema_lock quorum part is held by a replica (1 table(s), 3 pod(s))",
         ),
@@ -884,44 +1096,78 @@ LOCK_QUORUM = _proc(0, stdout="version: 2\nparts count: 1\nall\tall_77_77_1\n")
             "every schema_lock quorum part is held by a replica (1 table(s), 3 pod(s))",
         ),
         (
-            [_proc(0, stdout="dfe\t/clickhouse/tables/u1/0\t4\n"), LOCK_QUORUM,
-             _proc(0, stdout="0\n"), _proc(0, stdout="0\n"), _proc(0, stdout="0\n")],
+            [
+                _proc(0, stdout="dfe\t/clickhouse/tables/u1/0\t4\n"),
+                LOCK_QUORUM,
+                _proc(0, stdout="0\n"),
+                _proc(0, stdout="0\n"),
+                _proc(0, stdout="0\n"),
+            ],
             True,
             "quorum part missing on every replica read, not all were: dfe (3 of 4 replicas read)",
         ),
         (
-            [LOCK_TABLE, LOCK_QUORUM, _proc(0, stdout="0\n"), _proc(1, stderr="Code: 210. Connection refused")],
+            [
+                LOCK_TABLE,
+                LOCK_QUORUM,
+                _proc(0, stdout="0\n"),
+                _proc(1, stderr="Code: 210. Connection refused"),
+            ],
             False,
             "ch-0-1: Code: 210. Connection refused",
         ),
     ],
-    ids=["quorum-part-lost", "one-replica-lagging", "no-lock-table", "no-quorum-state", "not-every-replica-read", "pod-error"],
+    ids=[
+        "quorum-part-lost",
+        "one-replica-lagging",
+        "no-lock-table",
+        "no-quorum-state",
+        "not-every-replica-read",
+        "pod-error",
+    ],
 )
 def test_check_schema_lock_quorum_fails_only_when_every_replica_lost_the_quorum_part(
     monkeypatch: pytest.MonkeyPatch, replies: list, ok: bool, detail: str
 ) -> None:
     calls = _mock_run(
-        monkeypatch, _ch_pods("ch-0-0", "ch-0-1", "ch-0-2"), _ch_password(), _proc(0, stdout="1\n"), *replies
+        monkeypatch,
+        _ch_pods("ch-0-0", "ch-0-1", "ch-0-2"),
+        _ch_password(),
+        _proc(0, stdout="1\n"),
+        *replies,
     )
     assert u.check_schema_lock_quorum("kc") == (ok, detail)
     assert _no_argv_carries(calls, CH_PASSWORD)
 
 
-def test_a_merged_quorum_part_still_counts_as_held(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_merged_quorum_part_still_counts_as_held(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     calls = _mock_run(
-        monkeypatch, _ch_pods("ch-0-0"), _ch_password(), _proc(0, stdout="1\n"),
-        _proc(0, stdout="dfe\t/clickhouse/tables/u1/0\t1\n"), LOCK_QUORUM, _proc(0, stdout="1\n"),
+        monkeypatch,
+        _ch_pods("ch-0-0"),
+        _ch_password(),
+        _proc(0, stdout="1\n"),
+        _proc(0, stdout="dfe\t/clickhouse/tables/u1/0\t1\n"),
+        LOCK_QUORUM,
+        _proc(0, stdout="1\n"),
     )
     assert u.check_schema_lock_quorum("kc")[0] is True
     query = calls[-1][calls[-1].index("-q") + 1]
-    assert "partition_id = 'all' AND min_block_number <= 77 AND max_block_number >= 77" in query
+    assert (
+        "partition_id = 'all' AND min_block_number <= 77 AND max_block_number >= 77"
+        in query
+    )
 
 
 @pytest.mark.parametrize(
     ("value", "parts"),
     [
         ("version: 2\nparts count: 1\nall\tall_77_77_1\n", [("all", 77, 77)]),
-        ("version: 2\nparts count: 2\n202611\t202611_3_9_2_14\nx_y\tx_y_5_5_0\n", [("202611", 3, 9), ("x_y", 5, 5)]),
+        (
+            "version: 2\nparts count: 2\n202611\t202611_3_9_2_14\nx_y\tx_y_5_5_0\n",
+            [("202611", 3, 9), ("x_y", 5, 5)],
+        ),
         ("version: 2\nparts count: 0\n", []),
         ("", []),
     ],
@@ -935,37 +1181,67 @@ def test_preflight_and_apply_take_the_clickhouse_credentials_flag() -> None:
     parser = argparse.ArgumentParser()
     u.add_upgrade_subparser(parser.add_subparsers())
     for verb in ("preflight", "apply"):
-        args = parser.parse_args(["upgrade", verb, "--deploy", "d", "--clickhouse-credentials", "ch-admin"])
+        args = parser.parse_args(
+            ["upgrade", verb, "--deploy", "d", "--clickhouse-credentials", "ch-admin"]
+        )
         assert args.clickhouse_credentials == "ch-admin"
-        assert parser.parse_args(["upgrade", verb, "--deploy", "d"]).clickhouse_credentials == "clickhouse-admin-password"
+        assert (
+            parser.parse_args(["upgrade", verb, "--deploy", "d"]).clickhouse_credentials
+            == "clickhouse-admin-password"
+        )
 
 
 def test_check_clickhouse_merges_refuses_when_one_pod_of_several_is_merging(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _mock_run(
-        monkeypatch, _ch_pods("ch-0-0", "ch-0-1", "ch-0-2"), _ch_password(), _proc(0, stdout="1\n"),
-        _proc(0, stdout="0\n"), _proc(0, stdout="2\n"), _proc(0, stdout="0\n"),
+        monkeypatch,
+        _ch_pods("ch-0-0", "ch-0-1", "ch-0-2"),
+        _ch_password(),
+        _proc(0, stdout="1\n"),
+        _proc(0, stdout="0\n"),
+        _proc(0, stdout="2\n"),
+        _proc(0, stdout="0\n"),
     )
     ok, detail = u.check_clickhouse_merges("kc", threshold_seconds=300)
     assert ok is False
-    assert detail == "1 of 3 ClickHouse pod(s) carry a merge running longer than 300s: ch-0-1 (2)"
+    assert (
+        detail
+        == "1 of 3 ClickHouse pod(s) carry a merge running longer than 300s: ch-0-1 (2)"
+    )
 
 
-def test_check_clickhouse_merges_refuses_a_pod_that_does_not_answer(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_check_clickhouse_merges_refuses_a_pod_that_does_not_answer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     _mock_run(
-        monkeypatch, _ch_pods("ch-0-0", "ch-0-1"), _ch_password(), _proc(0, stdout="1\n"),
-        _proc(0, stdout="0\n"), _proc(1, stderr='error: unable to upgrade connection: container not found ("x")'),
+        monkeypatch,
+        _ch_pods("ch-0-0", "ch-0-1"),
+        _ch_password(),
+        _proc(0, stdout="1\n"),
+        _proc(0, stdout="0\n"),
+        _proc(
+            1, stderr='error: unable to upgrade connection: container not found ("x")'
+        ),
     )
     ok, detail = u.check_clickhouse_merges("kc")
     assert ok is False
-    assert detail == 'ch-0-1: error: unable to upgrade connection: container not found ("x")'
+    assert (
+        detail
+        == 'ch-0-1: error: unable to upgrade connection: container not found ("x")'
+    )
 
 
-def test_check_clickhouse_merges_falls_back_to_the_admin_user(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_check_clickhouse_merges_falls_back_to_the_admin_user(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     calls = _mock_run(
-        monkeypatch, _ch_pods("ch-0"), _ch_password(), _proc(1, stderr="Code: 516. Authentication failed"),
-        _proc(0, stdout="1\n"), _proc(0, stdout="0\n"),
+        monkeypatch,
+        _ch_pods("ch-0"),
+        _ch_password(),
+        _proc(1, stderr="Code: 516. Authentication failed"),
+        _proc(0, stdout="1\n"),
+        _proc(0, stdout="0\n"),
     )
     assert u.check_clickhouse_merges("kc")[0] is True
     assert _ch_auth(calls[-1]) == ["--user", "admin"]
@@ -977,10 +1253,16 @@ def test_check_clickhouse_merges_without_the_secret_tries_default_with_no_passwo
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls = _mock_run(
-        monkeypatch, _ch_pods("ch-0"), _proc(1, stderr='secrets "clickhouse-admin-password" not found'),
-        _proc(0, stdout="1\n"), _proc(0, stdout="0\n"),
+        monkeypatch,
+        _ch_pods("ch-0"),
+        _proc(1, stderr='secrets "clickhouse-admin-password" not found'),
+        _proc(0, stdout="1\n"),
+        _proc(0, stdout="0\n"),
     )
-    assert u.check_clickhouse_merges("kc", credentials="clickhouse-admin-password")[0] is True
+    assert (
+        u.check_clickhouse_merges("kc", credentials="clickhouse-admin-password")[0]
+        is True
+    )
     assert _ch_auth(calls[2]) == []
     assert _ch_auth(calls[3]) == []
     # Empty, never None: an exec -i given no stdin would read the caller's terminal.
@@ -991,7 +1273,10 @@ def test_check_clickhouse_merges_refuses_when_no_credential_answers_and_never_ec
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _mock_run(
-        monkeypatch, _ch_pods("ch-0"), _ch_password(), *[_proc(1, stderr="Code: 516") for _ in range(3)],
+        monkeypatch,
+        _ch_pods("ch-0"),
+        _ch_password(),
+        *[_proc(1, stderr="Code: 516") for _ in range(3)],
     )
     ok, detail = u.check_clickhouse_merges("kc")
     assert ok is False
@@ -1002,8 +1287,15 @@ def test_check_clickhouse_merges_refuses_when_no_credential_answers_and_never_ec
     assert CH_PASSWORD not in detail
 
 
-def test_check_clickhouse_merges_names_an_unreadable_secret(monkeypatch: pytest.MonkeyPatch) -> None:
-    _mock_run(monkeypatch, _ch_pods("ch-0"), _proc(1, stderr="Error from server (Forbidden): nope"), _proc(1))
+def test_check_clickhouse_merges_names_an_unreadable_secret(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _mock_run(
+        monkeypatch,
+        _ch_pods("ch-0"),
+        _proc(1, stderr="Error from server (Forbidden): nope"),
+        _proc(1),
+    )
     ok, detail = u.check_clickhouse_merges("kc")
     assert ok is False
     assert detail == (
@@ -1012,7 +1304,9 @@ def test_check_clickhouse_merges_names_an_unreadable_secret(monkeypatch: pytest.
     )
 
 
-def test_check_clickhouse_merges_names_a_secret_with_no_password(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_check_clickhouse_merges_names_a_secret_with_no_password(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A missing `password` key reads back empty with exit 0, so it is said, not passed over."""
     _mock_run(monkeypatch, _ch_pods("ch-0"), _proc(0, stdout=""), _proc(1))
     ok, detail = u.check_clickhouse_merges("kc")
@@ -1033,24 +1327,31 @@ def test_check_clickhouse_merges_no_pod(monkeypatch: pytest.MonkeyPatch) -> None
 
 
 PROFILES = sorted(
-    path.stem.removeprefix("profile-") for path in (REPO_ROOT / "argocd" / "values").glob("profile-*.yaml")
+    path.stem.removeprefix("profile-")
+    for path in (REPO_ROOT / "argocd" / "values").glob("profile-*.yaml")
 )
 
 
 def _selects(selector: str, labels: dict[str, str]) -> bool:
     """Whether a kubectl label selector matches `labels`, every requirement ANDed."""
     for requirement in re.split(r",(?![^(]*\))", selector):
-        if found := re.fullmatch(r"\s*([\w./-]+)\s+(in|notin)\s+\(([^)]*)\)\s*", requirement):
+        if found := re.fullmatch(
+            r"\s*([\w./-]+)\s+(in|notin)\s+\(([^)]*)\)\s*", requirement
+        ):
             key, op, values = found.groups()
             member = labels.get(key) in {v.strip() for v in values.split(",")}
             if member != (op == "in"):
                 return False
-        elif found := re.fullmatch(r"\s*([\w./-]+)\s*(==|=|!=)\s*([\w./-]*)\s*", requirement):
+        elif found := re.fullmatch(
+            r"\s*([\w./-]+)\s*(==|=|!=)\s*([\w./-]*)\s*", requirement
+        ):
             key, op, value = found.groups()
             if (labels.get(key) == value) != (op != "!="):
                 return False
         else:
-            raise AssertionError(f"selector requirement this test does not model: {requirement!r}")
+            raise AssertionError(
+                f"selector requirement this test does not model: {requirement!r}"
+            )
     return True
 
 
@@ -1063,7 +1364,9 @@ def _clickhouse_pods(profile: str) -> tuple[list[dict[str, str]], list[dict[str,
         kind, spec = doc.get("kind"), doc.get("spec") or {}
         name = (doc.get("metadata") or {}).get("name", "")
         if kind == "ClickHouseCluster":
-            servers.append({**(spec.get("labels") or {}), **ch_server_labels(name, 0, 0)})
+            servers.append(
+                {**(spec.get("labels") or {}), **ch_server_labels(name, 0, 0)}
+            )
         elif kind == "KeeperCluster":
             others.append({**(spec.get("labels") or {}), **ch_keeper_labels(name, 0)})
         elif kind == "StatefulSet":
@@ -1074,7 +1377,9 @@ def _clickhouse_pods(profile: str) -> tuple[list[dict[str, str]], list[dict[str,
 
 
 @pytest.mark.parametrize("profile", PROFILES)
-def test_default_clickhouse_selector_finds_the_server_on_every_profile(profile: str) -> None:
+def test_default_clickhouse_selector_finds_the_server_on_every_profile(
+    profile: str,
+) -> None:
     servers, others = _clickhouse_pods(profile)
     assert servers, f"profile-{profile} renders no ClickHouse server"
     for labels in servers:
@@ -1091,7 +1396,9 @@ def test_the_selector_model_reads_both_requirement_forms() -> None:
     assert _selects("app!=a", {"app": "b"})
 
 
-def test_check_strimzi_conversion_no_crds_installed(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_check_strimzi_conversion_no_crds_installed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     _mock_run(monkeypatch, *[_proc(1, stderr="NotFound") for _ in u.STRIMZI_CRDS])
     ok, detail = u.check_strimzi_conversion("kc")
     assert ok is True
@@ -1111,7 +1418,9 @@ def test_check_strimzi_conversion_all_v1(monkeypatch: pytest.MonkeyPatch) -> Non
 def test_check_strimzi_conversion_stale(monkeypatch: pytest.MonkeyPatch) -> None:
     import json
 
-    responses = [_proc(0, stdout=json.dumps({"status": {"storedVersions": ["v1beta2", "v1"]}}))]
+    responses = [
+        _proc(0, stdout=json.dumps({"status": {"storedVersions": ["v1beta2", "v1"]}}))
+    ]
     responses += [_proc(1, stderr="NotFound") for _ in u.STRIMZI_CRDS[1:]]
     _mock_run(monkeypatch, *responses)
     ok, detail = u.check_strimzi_conversion("kc")
@@ -1126,17 +1435,24 @@ def test_check_node_capacity_absent_file_is_clean_skip(tmp_path: Path) -> None:
     assert "nothing to check" in detail
 
 
-def test_check_node_capacity_delegates_to_script(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_check_node_capacity_delegates_to_script(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     nodes_file = tmp_path / "scale.nodes.json"
     nodes_file.write_text("{}", encoding="utf-8")
-    calls = _mock_run(monkeypatch, _proc(0, stdout="check_node_capacity: the cluster carries the sized demand"))
+    calls = _mock_run(
+        monkeypatch,
+        _proc(0, stdout="check_node_capacity: the cluster carries the sized demand"),
+    )
     ok, detail = u.check_node_capacity("kc", nodes_file)
     assert ok is True
     assert "carries the sized demand" in detail
     assert str(u.CHECK_NODE_CAPACITY) in calls[0]
 
 
-def test_check_node_capacity_fail(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_check_node_capacity_fail(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     nodes_file = tmp_path / "scale.nodes.json"
     nodes_file.write_text("{}", encoding="utf-8")
     _mock_run(monkeypatch, _proc(1, stderr="check_node_capacity: REFUSED"))
@@ -1146,14 +1462,25 @@ def test_check_node_capacity_fail(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
 
 
 def test_check_backup_marker_not_required_when_no_one_way_step(deploy: Path) -> None:
-    step = u.Step(stage="s", order="o", key="services.clickhouse-version", rollback="within the same LTS line only")
+    step = u.Step(
+        stage="s",
+        order="o",
+        key="services.clickhouse-version",
+        rollback="within the same LTS line only",
+    )
     ok, detail = u.check_backup_marker(deploy, [u.Move(step=step, old="a", new="b")])
     assert ok is True
     assert "no one-way step" in detail
 
 
 def test_check_backup_marker_required_and_missing(deploy: Path) -> None:
-    step = u.Step(stage="s", order="o", key="services.kafka-version", finalise="one way", rollback="none")
+    step = u.Step(
+        stage="s",
+        order="o",
+        key="services.kafka-version",
+        finalise="one way",
+        rollback="none",
+    )
     ok, detail = u.check_backup_marker(deploy, [u.Move(step=step, old="a", new="b")])
     assert ok is False
     assert "services.kafka-version" in detail
@@ -1163,7 +1490,13 @@ def test_check_backup_marker_required_and_present(deploy: Path) -> None:
     marker = deploy / u.DEFAULT_BACKUP_MARKER
     marker.parent.mkdir(parents=True, exist_ok=True)
     marker.write_text("ok\n", encoding="utf-8")
-    step = u.Step(stage="s", order="o", key="services.kafka-version", finalise="one way", rollback="none")
+    step = u.Step(
+        stage="s",
+        order="o",
+        key="services.kafka-version",
+        finalise="one way",
+        rollback="none",
+    )
     ok, detail = u.check_backup_marker(deploy, [u.Move(step=step, old="a", new="b")])
     assert ok is True
     assert "backup marker present" in detail
@@ -1183,18 +1516,35 @@ class _Args:
 
 def _plan_args(**overrides: object) -> _Args:
     """The plan _Args shape every test shares, with per-test overrides."""
-    base = dict(dial=None, fixtures=None, live=False, kubeconfig=None, argocd_namespace="argocd", out=None, cloud=None)
+    base = dict(
+        dial=None,
+        fixtures=None,
+        live=False,
+        kubeconfig=None,
+        argocd_namespace="argocd",
+        out=None,
+        cloud=None,
+    )
     base.update(overrides)
     return _Args(**base)
 
 
 def test_cmd_upgrade_plan_writes_file_and_reports_compat_check(
-    monkeypatch: pytest.MonkeyPatch, deploy: Path, order_path: Path, versions_path: Path,
-    capsys: pytest.CaptureFixture, plan_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    deploy: Path,
+    order_path: Path,
+    versions_path: Path,
+    capsys: pytest.CaptureFixture,
+    plan_dir: Path,
 ) -> None:
     monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
     monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
-    _mock_run(monkeypatch, _proc(0, stdout="ok     rule-a: x = y\n\ncompat-check 1.1.0: 1 rule(s) checked"))
+    _mock_run(
+        monkeypatch,
+        _proc(
+            0, stdout="ok     rule-a: x = y\n\ncompat-check 1.1.0: 1 rule(s) checked"
+        ),
+    )
 
     args = _plan_args(deploy=str(deploy), to="1.1.0")
     rc = u.cmd_upgrade_plan(args)
@@ -1207,12 +1557,18 @@ def test_cmd_upgrade_plan_writes_file_and_reports_compat_check(
     assert "skipped: no --dial given" in out
     written = plan_dir / "1.0.0-to-1.1.0.md"
     assert written.is_file()
-    assert "before:   kafka.strimzi.io stored-version conversion" in written.read_text(encoding="utf-8")
+    assert "before:   kafka.strimzi.io stored-version conversion" in written.read_text(
+        encoding="utf-8"
+    )
     assert not (deploy / "upgrades").exists()
 
 
 def test_a_plan_leaves_the_deploy_repo_clean_for_preflight(
-    monkeypatch: pytest.MonkeyPatch, real_git_deploy: Path, order_path: Path, versions_path: Path, plan_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    real_git_deploy: Path,
+    order_path: Path,
+    versions_path: Path,
+    plan_dir: Path,
 ) -> None:
     """plan wrote into <deploy>/upgrades/, and preflight then refused the untracked file it left."""
     monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
@@ -1220,27 +1576,40 @@ def test_a_plan_leaves_the_deploy_repo_clean_for_preflight(
     monkeypatch.setattr(u, "run_compat_check", lambda *_a, **_k: (True, "ok"))
     assert u.check_deploy_clean(real_git_deploy) == (True, "working tree clean")
 
-    assert u.cmd_upgrade_plan(_plan_args(deploy=str(real_git_deploy), to="1.1.0")) == u.EXIT_OK
+    assert (
+        u.cmd_upgrade_plan(_plan_args(deploy=str(real_git_deploy), to="1.1.0"))
+        == u.EXIT_OK
+    )
 
     assert (plan_dir / "1.0.0-to-1.1.0.md").is_file()
     assert u.check_deploy_clean(real_git_deploy) == (True, "working tree clean")
 
 
 def test_plan_out_names_the_file(
-    monkeypatch: pytest.MonkeyPatch, deploy: Path, order_path: Path, versions_path: Path, tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    deploy: Path,
+    order_path: Path,
+    versions_path: Path,
+    tmp_path: Path,
     plan_dir: Path,
 ) -> None:
     monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
     monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
     monkeypatch.setattr(u, "run_compat_check", lambda *_a, **_k: (True, "ok"))
     out = tmp_path / "elsewhere" / "plan.md"
-    assert u.cmd_upgrade_plan(_plan_args(deploy=str(deploy), to="1.1.0", out=str(out))) == u.EXIT_OK
+    assert (
+        u.cmd_upgrade_plan(_plan_args(deploy=str(deploy), to="1.1.0", out=str(out)))
+        == u.EXIT_OK
+    )
     assert out.read_text(encoding="utf-8").startswith("# Upgrade plan: 1.0.0 -> 1.1.0")
     assert not plan_dir.exists()
 
     parser = argparse.ArgumentParser()
     u.add_upgrade_subparser(parser.add_subparsers())
-    assert parser.parse_args(["upgrade", "plan", "--deploy", "d", "--out", "p.md"]).out == "p.md"
+    assert (
+        parser.parse_args(["upgrade", "plan", "--deploy", "d", "--out", "p.md"]).out
+        == "p.md"
+    )
     assert parser.parse_args(["upgrade", "plan", "--deploy", "d"]).out is None
 
 
@@ -1267,16 +1636,28 @@ def test_cmd_upgrade_plan_bad_stack_is_preflight_failure(
 
 
 def test_cmd_upgrade_plan_without_pins_yaml_plans_from_the_cluster_secrets_stack(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, order_path: Path, versions_path: Path,
-    capsys: pytest.CaptureFixture, plan_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    order_path: Path,
+    versions_path: Path,
+    capsys: pytest.CaptureFixture,
+    plan_dir: Path,
 ) -> None:
     monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
     monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
     bundled = tmp_path / "bundled"
     bundled.mkdir()
-    calls = _mock_run(monkeypatch, _proc(0, stdout="1.0.0"), _proc(0, stdout="compat-check 1.1.0: 0 rule(s) checked"))
+    calls = _mock_run(
+        monkeypatch,
+        _proc(0, stdout="1.0.0"),
+        _proc(0, stdout="compat-check 1.1.0: 0 rule(s) checked"),
+    )
 
-    rc = u.cmd_upgrade_plan(_plan_args(deploy=str(bundled), to="1.1.0", kubeconfig="kc", argocd_namespace="cd"))
+    rc = u.cmd_upgrade_plan(
+        _plan_args(
+            deploy=str(bundled), to="1.1.0", kubeconfig="kc", argocd_namespace="cd"
+        )
+    )
 
     out = capsys.readouterr().out
     assert rc == u.EXIT_OK, out
@@ -1287,13 +1668,19 @@ def test_cmd_upgrade_plan_without_pins_yaml_plans_from_the_cluster_secrets_stack
         "# Upgrade plan: 1.0.0 -> 1.1.0\n\nFROM is secret/dfe-cluster's dfe.hyperi.io/stack_version"
     )
     written = (plan_dir / "1.0.0-to-1.1.0.md").read_text(encoding="utf-8")
-    assert "the deploy repo carries no pins.yaml, so apply writes one at its first stage" in written
+    assert (
+        "the deploy repo carries no pins.yaml, so apply writes one at its first stage"
+        in written
+    )
     assert "1. bootstrap.cert-manager: v1.0.0 -> v1.1.0" in written
     assert list(bundled.iterdir()) == []
 
 
 def test_cmd_upgrade_plan_without_pins_yaml_or_a_stack_annotation_is_preflight_failure(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, order_path: Path, versions_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    order_path: Path,
+    versions_path: Path,
     capsys: pytest.CaptureFixture,
 ) -> None:
     monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
@@ -1309,19 +1696,38 @@ def test_cmd_upgrade_plan_without_pins_yaml_or_a_stack_annotation_is_preflight_f
 def test_the_plan_verb_takes_the_cluster_secret_flags() -> None:
     parser = argparse.ArgumentParser()
     u.add_upgrade_subparser(parser.add_subparsers())
-    args = parser.parse_args(["upgrade", "plan", "--deploy", "d", "--kubeconfig", "kc", "--argocd-namespace", "cd"])
+    args = parser.parse_args(
+        [
+            "upgrade",
+            "plan",
+            "--deploy",
+            "d",
+            "--kubeconfig",
+            "kc",
+            "--argocd-namespace",
+            "cd",
+        ]
+    )
     assert (args.kubeconfig, args.argocd_namespace) == ("kc", "cd")
-    assert parser.parse_args(["upgrade", "plan", "--deploy", "d"]).argocd_namespace == "argocd"
+    assert (
+        parser.parse_args(["upgrade", "plan", "--deploy", "d"]).argocd_namespace
+        == "argocd"
+    )
 
 
 def test_cmd_upgrade_preflight_without_pins_yaml_says_where_from_came_from(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, order_path: Path, versions_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    order_path: Path,
+    versions_path: Path,
     capsys: pytest.CaptureFixture,
 ) -> None:
     monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
     monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
     monkeypatch.setattr(u, "read_stack_version", lambda *_a, **_k: "1.0.0")
-    monkeypatch.setattr(u, "run_preflight", lambda *_a, **_k: [("cluster reachable", True, "ok")])
+    monkeypatch.setattr(
+        u, "run_preflight", lambda *_a, **_k: [("cluster reachable", True, "ok")]
+    )
     rc = u.cmd_upgrade_preflight(_apply_args(deploy=str(tmp_path), to="1.1.0"))
     out = capsys.readouterr().out
     assert rc == u.EXIT_OK
@@ -1334,22 +1740,43 @@ def test_cmd_upgrade_preflight_without_pins_yaml_says_where_from_came_from(
 
 
 def test_cmd_upgrade_apply_dry_run_prints_ordered_commands_and_touches_nothing(
-    monkeypatch: pytest.MonkeyPatch, deploy: Path, order_path: Path, versions_path: Path, capsys: pytest.CaptureFixture
+    monkeypatch: pytest.MonkeyPatch,
+    deploy: Path,
+    order_path: Path,
+    versions_path: Path,
+    capsys: pytest.CaptureFixture,
 ) -> None:
     monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
     monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
     # Only compat-check runs in a dry-run (preflight is skipped); one call.
-    calls = _mock_run(monkeypatch, _proc(0, stdout="compat-check 2.0.0: 0 rule(s) checked"))
+    calls = _mock_run(
+        monkeypatch, _proc(0, stdout="compat-check 2.0.0: 0 rule(s) checked")
+    )
 
     before_pins = (deploy / "pins.yaml").read_text(encoding="utf-8")
     args = _Args(
-        deploy=str(deploy), to="2.0.0", dial=None, fixtures=None, live=False,
-        kubeconfig=None, argocd_namespace="argocd", clickhouse_namespace="clickhouse",
-        clickhouse_selector=u.DEFAULT_CLICKHOUSE_SELECTOR, clickhouse_merge_threshold=300.0,
+        deploy=str(deploy),
+        to="2.0.0",
+        dial=None,
+        fixtures=None,
+        live=False,
+        kubeconfig=None,
+        argocd_namespace="argocd",
+        clickhouse_namespace="clickhouse",
+        clickhouse_selector=u.DEFAULT_CLICKHOUSE_SELECTOR,
+        clickhouse_merge_threshold=300.0,
         clickhouse_credentials=u.DEFAULT_CLICKHOUSE_CREDENTIALS,
-        nodes_file=None, backup_marker=u.DEFAULT_BACKUP_MARKER,
-        yes=False, push=False, timeout=900, dry_run=True, finalise=False, stop_before=None,
-        from_stack=None, target_revision=None, namespace=None,
+        nodes_file=None,
+        backup_marker=u.DEFAULT_BACKUP_MARKER,
+        yes=False,
+        push=False,
+        timeout=900,
+        dry_run=True,
+        finalise=False,
+        stop_before=None,
+        from_stack=None,
+        target_revision=None,
+        namespace=None,
     )
     rc = u.cmd_upgrade_apply(args)
     assert rc == u.EXIT_OK
@@ -1378,18 +1805,37 @@ def test_cmd_upgrade_apply_dry_run_prints_ordered_commands_and_touches_nothing(
 
 
 def test_cmd_upgrade_apply_nothing_to_apply(
-    monkeypatch: pytest.MonkeyPatch, deploy: Path, order_path: Path, versions_path: Path, capsys: pytest.CaptureFixture
+    monkeypatch: pytest.MonkeyPatch,
+    deploy: Path,
+    order_path: Path,
+    versions_path: Path,
+    capsys: pytest.CaptureFixture,
 ) -> None:
     monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
     monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
     args = _Args(
-        deploy=str(deploy), to="1.0.0", dial=None, fixtures=None, live=False,
-        kubeconfig=None, argocd_namespace="argocd", clickhouse_namespace="clickhouse",
-        clickhouse_selector=u.DEFAULT_CLICKHOUSE_SELECTOR, clickhouse_merge_threshold=300.0,
+        deploy=str(deploy),
+        to="1.0.0",
+        dial=None,
+        fixtures=None,
+        live=False,
+        kubeconfig=None,
+        argocd_namespace="argocd",
+        clickhouse_namespace="clickhouse",
+        clickhouse_selector=u.DEFAULT_CLICKHOUSE_SELECTOR,
+        clickhouse_merge_threshold=300.0,
         clickhouse_credentials=u.DEFAULT_CLICKHOUSE_CREDENTIALS,
-        nodes_file=None, backup_marker=u.DEFAULT_BACKUP_MARKER,
-        yes=False, push=False, timeout=900, dry_run=True, finalise=False, stop_before=None,
-        from_stack=None, target_revision=None, namespace=None,
+        nodes_file=None,
+        backup_marker=u.DEFAULT_BACKUP_MARKER,
+        yes=False,
+        push=False,
+        timeout=900,
+        dry_run=True,
+        finalise=False,
+        stop_before=None,
+        from_stack=None,
+        target_revision=None,
+        namespace=None,
     )
     rc = u.cmd_upgrade_apply(args)
     assert rc == u.EXIT_OK
@@ -1397,19 +1843,38 @@ def test_cmd_upgrade_apply_nothing_to_apply(
 
 
 def test_cmd_upgrade_apply_refuses_when_compat_check_fails(
-    monkeypatch: pytest.MonkeyPatch, deploy: Path, order_path: Path, versions_path: Path, capsys: pytest.CaptureFixture
+    monkeypatch: pytest.MonkeyPatch,
+    deploy: Path,
+    order_path: Path,
+    versions_path: Path,
+    capsys: pytest.CaptureFixture,
 ) -> None:
     monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
     monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
     _mock_run(monkeypatch, _proc(1, stdout="FAIL   rule-a: x violates >=2\n"))
     args = _Args(
-        deploy=str(deploy), to="2.0.0", dial=None, fixtures=None, live=False,
-        kubeconfig=None, argocd_namespace="argocd", clickhouse_namespace="clickhouse",
-        clickhouse_selector=u.DEFAULT_CLICKHOUSE_SELECTOR, clickhouse_merge_threshold=300.0,
+        deploy=str(deploy),
+        to="2.0.0",
+        dial=None,
+        fixtures=None,
+        live=False,
+        kubeconfig=None,
+        argocd_namespace="argocd",
+        clickhouse_namespace="clickhouse",
+        clickhouse_selector=u.DEFAULT_CLICKHOUSE_SELECTOR,
+        clickhouse_merge_threshold=300.0,
         clickhouse_credentials=u.DEFAULT_CLICKHOUSE_CREDENTIALS,
-        nodes_file=None, backup_marker=u.DEFAULT_BACKUP_MARKER,
-        yes=False, push=False, timeout=900, dry_run=True, finalise=False, stop_before=None,
-        from_stack=None, target_revision=None, namespace=None,
+        nodes_file=None,
+        backup_marker=u.DEFAULT_BACKUP_MARKER,
+        yes=False,
+        push=False,
+        timeout=900,
+        dry_run=True,
+        finalise=False,
+        stop_before=None,
+        from_stack=None,
+        target_revision=None,
+        namespace=None,
     )
     rc = u.cmd_upgrade_apply(args)
     assert rc == u.EXIT_BLOCKED
@@ -1419,25 +1884,47 @@ def test_cmd_upgrade_apply_refuses_when_compat_check_fails(
 def _apply_args(**overrides: object) -> _Args:
     """The apply _Args shape every dry-run test shares, with per-test overrides."""
     base = dict(
-        dial=None, fixtures=None, live=False,
-        kubeconfig=None, argocd_namespace="argocd", clickhouse_namespace="clickhouse",
-        clickhouse_selector=u.DEFAULT_CLICKHOUSE_SELECTOR, clickhouse_merge_threshold=300.0,
+        dial=None,
+        fixtures=None,
+        live=False,
+        kubeconfig=None,
+        argocd_namespace="argocd",
+        clickhouse_namespace="clickhouse",
+        clickhouse_selector=u.DEFAULT_CLICKHOUSE_SELECTOR,
+        clickhouse_merge_threshold=300.0,
         clickhouse_credentials=u.DEFAULT_CLICKHOUSE_CREDENTIALS,
-        nodes_file=None, backup_marker=u.DEFAULT_BACKUP_MARKER,
-        yes=False, push=False, timeout=900, dry_run=True, finalise=False, stop_before=None,
-        from_stack=None, target_revision=None, namespace=None, cloud=None, allow_unverified_path=False,
+        nodes_file=None,
+        backup_marker=u.DEFAULT_BACKUP_MARKER,
+        yes=False,
+        push=False,
+        timeout=900,
+        dry_run=True,
+        finalise=False,
+        stop_before=None,
+        from_stack=None,
+        target_revision=None,
+        namespace=None,
+        cloud=None,
+        allow_unverified_path=False,
     )
     base.update(overrides)
     return _Args(**base)
 
 
 def test_cmd_upgrade_apply_dry_run_without_pins_yaml_writes_it_at_the_first_stage_only(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, order_path: Path, versions_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    order_path: Path,
+    versions_path: Path,
     capsys: pytest.CaptureFixture,
 ) -> None:
     monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
     monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
-    calls = _mock_run(monkeypatch, _proc(0, stdout="1.0.0"), _proc(0, stdout="compat-check 1.1.0: 0 rule(s) checked"))
+    calls = _mock_run(
+        monkeypatch,
+        _proc(0, stdout="1.0.0"),
+        _proc(0, stdout="compat-check 1.1.0: 0 rule(s) checked"),
+    )
     bundled = tmp_path / "bundled"
     bundled.mkdir()
 
@@ -1446,22 +1933,34 @@ def test_cmd_upgrade_apply_dry_run_without_pins_yaml_writes_it_at_the_first_stag
     err = capsys.readouterr().err
     assert rc == u.EXIT_OK, err
     assert err.startswith("FROM is secret/dfe-cluster's dfe.hyperi.io/stack_version")
-    assert err.index('[dry-run] write pins.yaml with base.dfe-infra = "1.1.0"') < err.index("stage 2/2: 20-operators")
+    assert err.index(
+        '[dry-run] write pins.yaml with base.dfe-infra = "1.1.0"'
+    ) < err.index("stage 2/2: 20-operators")
     assert err.count("[dry-run] write pins.yaml") == 1
-    assert '[dry-run] set pins.yaml base.dfe-infra = "1.1.0"' in err[err.index("stage 2/2: 20-operators") :]
+    assert (
+        '[dry-run] set pins.yaml base.dfe-infra = "1.1.0"'
+        in err[err.index("stage 2/2: 20-operators") :]
+    )
     assert calls[0][-1] == STACK_VERSION_JSONPATH
     assert len(calls) == 2
     assert list(bundled.iterdir()) == []
 
 
 def test_cmd_upgrade_apply_from_without_pins_yaml_reads_no_cluster(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, order_path: Path, versions_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    order_path: Path,
+    versions_path: Path,
     capsys: pytest.CaptureFixture,
 ) -> None:
     monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
     monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
-    calls = _mock_run(monkeypatch, _proc(0, stdout="compat-check 1.1.0: 0 rule(s) checked"))
-    rc = u.cmd_upgrade_apply(_apply_args(deploy=str(tmp_path), to="1.1.0", from_stack="1.0.0"))
+    calls = _mock_run(
+        monkeypatch, _proc(0, stdout="compat-check 1.1.0: 0 rule(s) checked")
+    )
+    rc = u.cmd_upgrade_apply(
+        _apply_args(deploy=str(tmp_path), to="1.1.0", from_stack="1.0.0")
+    )
     err = capsys.readouterr().err
     assert rc == u.EXIT_OK, err
     assert "FROM is" not in err
@@ -1475,7 +1974,11 @@ def test_cmd_upgrade_apply_from_without_pins_yaml_reads_no_cluster(
 
 
 def test_cmd_upgrade_apply_dry_run_finalise_prints_finalise_line_not_pending(
-    monkeypatch: pytest.MonkeyPatch, deploy: Path, order_path: Path, versions_path: Path, capsys: pytest.CaptureFixture
+    monkeypatch: pytest.MonkeyPatch,
+    deploy: Path,
+    order_path: Path,
+    versions_path: Path,
+    capsys: pytest.CaptureFixture,
 ) -> None:
     monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
     monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
@@ -1485,12 +1988,19 @@ def test_cmd_upgrade_apply_dry_run_finalise_prints_finalise_line_not_pending(
     rc = u.cmd_upgrade_apply(args)
     assert rc == u.EXIT_OK
     err = capsys.readouterr().err
-    assert "[dry-run] finalise services.kafka-version: metadata.version bump after a soak; one way" in err
+    assert (
+        "[dry-run] finalise services.kafka-version: metadata.version bump after a soak; one way"
+        in err
+    )
     assert "finalise pending (manual, after a soak)" not in err
 
 
 def test_cmd_upgrade_apply_dry_run_without_finalise_still_prints_pending(
-    monkeypatch: pytest.MonkeyPatch, deploy: Path, order_path: Path, versions_path: Path, capsys: pytest.CaptureFixture
+    monkeypatch: pytest.MonkeyPatch,
+    deploy: Path,
+    order_path: Path,
+    versions_path: Path,
+    capsys: pytest.CaptureFixture,
 ) -> None:
     monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
     monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
@@ -1504,11 +2014,17 @@ def test_cmd_upgrade_apply_dry_run_without_finalise_still_prints_pending(
 
 
 def test_cmd_upgrade_apply_stop_before_stops_short(
-    monkeypatch: pytest.MonkeyPatch, deploy: Path, order_path: Path, versions_path: Path, capsys: pytest.CaptureFixture
+    monkeypatch: pytest.MonkeyPatch,
+    deploy: Path,
+    order_path: Path,
+    versions_path: Path,
+    capsys: pytest.CaptureFixture,
 ) -> None:
     monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
     monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
-    calls = _mock_run(monkeypatch, _proc(0, stdout="compat-check 2.0.0: 0 rule(s) checked"))
+    calls = _mock_run(
+        monkeypatch, _proc(0, stdout="compat-check 2.0.0: 0 rule(s) checked")
+    )
 
     args = _apply_args(deploy=str(deploy), to="2.0.0", stop_before="30-services")
     rc = u.cmd_upgrade_apply(args)
@@ -1523,7 +2039,11 @@ def test_cmd_upgrade_apply_stop_before_stops_short(
 
 
 def test_cmd_upgrade_apply_stop_before_unknown_stage_refuses(
-    monkeypatch: pytest.MonkeyPatch, deploy: Path, order_path: Path, versions_path: Path, capsys: pytest.CaptureFixture
+    monkeypatch: pytest.MonkeyPatch,
+    deploy: Path,
+    order_path: Path,
+    versions_path: Path,
+    capsys: pytest.CaptureFixture,
 ) -> None:
     monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
     monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
@@ -1552,7 +2072,9 @@ def test_cmd_upgrade_apply_dial_commits_the_refreshed_sizing(
     monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
     monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
     monkeypatch.setattr(u, "run_preflight", lambda *_args, **_kwargs: [])
-    monkeypatch.setattr(u, "wait_for_argo", lambda *_args, **_kwargs: (True, "converged"))
+    monkeypatch.setattr(
+        u, "wait_for_argo", lambda *_args, **_kwargs: (True, "converged")
+    )
     _bootstrap_runs(monkeypatch, "v1.1.0")
     calls: list[list[str]] = []
     staged: dict[str, str] = {}
@@ -1569,8 +2091,13 @@ def test_cmd_upgrade_apply_dial_commits_the_refreshed_sizing(
     # 1.0.0 -> 1.1.0 reaches 10-bootstrap then 20-operators; stopping before the
     # second keeps the run to one stage with no before-hook to satisfy.
     args = _apply_args(
-        deploy=str(deploy), to="1.1.0", dial=str(tmp_path / "deployment.yaml"),
-        fixtures=str(tmp_path / "fixtures"), yes=True, dry_run=False, stop_before="20-operators",
+        deploy=str(deploy),
+        to="1.1.0",
+        dial=str(tmp_path / "deployment.yaml"),
+        fixtures=str(tmp_path / "fixtures"),
+        yes=True,
+        dry_run=False,
+        stop_before="20-operators",
         namespace="dfe",
     )
     rc = u.cmd_upgrade_apply(args)
@@ -1593,10 +2120,14 @@ def test_cmd_upgrade_apply_dry_run_dial_names_where_the_sizing_lands(
 ) -> None:
     monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
     monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
-    calls = _mock_run(monkeypatch, _proc(0, stdout="compat-check 1.1.0: 0 rule(s) checked"))
+    calls = _mock_run(
+        monkeypatch, _proc(0, stdout="compat-check 1.1.0: 0 rule(s) checked")
+    )
 
     args = _apply_args(
-        deploy=str(deploy), to="1.1.0", dial=str(tmp_path / "deployment.yaml"),
+        deploy=str(deploy),
+        to="1.1.0",
+        dial=str(tmp_path / "deployment.yaml"),
         fixtures=str(tmp_path / "fixtures"),
     )
     rc = u.cmd_upgrade_apply(args)
@@ -1616,15 +2147,23 @@ def test_cmd_upgrade_apply_dry_run_dial_names_where_the_sizing_lands(
 def _rollback_args(**overrides: object) -> _Args:
     """The rollback _Args shape every test shares, with per-test overrides."""
     base = dict(
-        kubeconfig=None, push=False, dry_run=True, argocd_namespace="argocd",
-        skip_cluster_check=True, target_revision=None,
+        kubeconfig=None,
+        push=False,
+        dry_run=True,
+        argocd_namespace="argocd",
+        skip_cluster_check=True,
+        target_revision=None,
     )
     base.update(overrides)
     return _Args(**base)
 
 
 def test_cmd_upgrade_rollback_allowed_before_finalise_marker(
-    monkeypatch: pytest.MonkeyPatch, deploy: Path, order_path: Path, versions_path: Path, capsys: pytest.CaptureFixture
+    monkeypatch: pytest.MonkeyPatch,
+    deploy: Path,
+    order_path: Path,
+    versions_path: Path,
+    capsys: pytest.CaptureFixture,
 ) -> None:
     monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
     monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
@@ -1644,7 +2183,11 @@ def test_cmd_upgrade_rollback_allowed_before_finalise_marker(
 
 
 def test_cmd_upgrade_rollback_refused_once_finalise_marker_exists(
-    monkeypatch: pytest.MonkeyPatch, deploy: Path, order_path: Path, versions_path: Path, capsys: pytest.CaptureFixture
+    monkeypatch: pytest.MonkeyPatch,
+    deploy: Path,
+    order_path: Path,
+    versions_path: Path,
+    capsys: pytest.CaptureFixture,
 ) -> None:
     monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
     monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
@@ -1652,7 +2195,13 @@ def test_cmd_upgrade_rollback_refused_once_finalise_marker_exists(
     # The forward apply (1.0.0 -> 2.0.0) already ran --finalise for the kafka
     # step: its marker exists, so rollback must refuse by name -- the whole
     # point of keying the refusal on the marker rather than the pin diff.
-    u.write_finalise_marker(deploy, "1.0.0", "2.0.0", "services.kafka-version", timestamp="2026-09-11T00:00:00+00:00")
+    u.write_finalise_marker(
+        deploy,
+        "1.0.0",
+        "2.0.0",
+        "services.kafka-version",
+        timestamp="2026-09-11T00:00:00+00:00",
+    )
 
     args = _rollback_args(deploy=str(deploy), to="1.0.0")
     rc = u.cmd_upgrade_rollback(args)
@@ -1664,7 +2213,11 @@ def test_cmd_upgrade_rollback_refused_once_finalise_marker_exists(
 
 
 def test_cmd_upgrade_rollback_allows_a_reversible_step(
-    monkeypatch: pytest.MonkeyPatch, deploy: Path, order_path: Path, versions_path: Path, capsys: pytest.CaptureFixture
+    monkeypatch: pytest.MonkeyPatch,
+    deploy: Path,
+    order_path: Path,
+    versions_path: Path,
+    capsys: pytest.CaptureFixture,
 ) -> None:
     monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
     monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
@@ -1680,7 +2233,11 @@ def test_cmd_upgrade_rollback_allows_a_reversible_step(
 
 
 def test_cmd_upgrade_rollback_unconditional_one_way_step_still_refused(
-    monkeypatch: pytest.MonkeyPatch, deploy: Path, versions_path: Path, tmp_path: Path, capsys: pytest.CaptureFixture
+    monkeypatch: pytest.MonkeyPatch,
+    deploy: Path,
+    versions_path: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture,
 ) -> None:
     """A step with `rollback: none` and NO `finalise` note has no soak to wait
     out at all -- it stays refused unconditionally, marker or not."""
@@ -1718,7 +2275,11 @@ def test_read_finalised_keys_empty_when_no_upgrades_dir(deploy: Path) -> None:
 
 def test_write_finalise_marker_then_read_back(deploy: Path) -> None:
     path = u.write_finalise_marker(
-        deploy, "1.0.0", "2.0.0", "services.kafka-version", timestamp="2026-09-11T00:00:00+00:00"
+        deploy,
+        "1.0.0",
+        "2.0.0",
+        "services.kafka-version",
+        timestamp="2026-09-11T00:00:00+00:00",
     )
     assert path == deploy / "upgrades" / "1.0.0-to-2.0.0.finalised"
     assert path.is_file()
@@ -1735,28 +2296,44 @@ def test_write_finalise_marker_defaults_a_real_timestamp(deploy: Path) -> None:
 
 
 def test_write_finalise_marker_updates_in_place_no_duplicate(deploy: Path) -> None:
-    u.write_finalise_marker(deploy, "1.0.0", "2.0.0", "services.kafka-version", timestamp="t1")
-    path = u.write_finalise_marker(deploy, "1.0.0", "2.0.0", "services.kafka-version", timestamp="t2")
+    u.write_finalise_marker(
+        deploy, "1.0.0", "2.0.0", "services.kafka-version", timestamp="t1"
+    )
+    path = u.write_finalise_marker(
+        deploy, "1.0.0", "2.0.0", "services.kafka-version", timestamp="t2"
+    )
     lines = [ln for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()]
     assert lines == ["services.kafka-version t2"]
 
 
 def test_write_finalise_marker_keeps_sibling_keys(deploy: Path) -> None:
-    u.write_finalise_marker(deploy, "1.0.0", "2.0.0", "services.kafka-version", timestamp="t1")
-    u.write_finalise_marker(deploy, "1.0.0", "2.0.0", "operators.strimzi-kafka-operator", timestamp="t2")
+    u.write_finalise_marker(
+        deploy, "1.0.0", "2.0.0", "services.kafka-version", timestamp="t1"
+    )
+    u.write_finalise_marker(
+        deploy, "1.0.0", "2.0.0", "operators.strimzi-kafka-operator", timestamp="t2"
+    )
     finalised = u.read_finalised_keys(deploy)
-    assert finalised == {"services.kafka-version": "t1", "operators.strimzi-kafka-operator": "t2"}
+    assert finalised == {
+        "services.kafka-version": "t1",
+        "operators.strimzi-kafka-operator": "t2",
+    }
 
 
 KAFKA_STEP = u.Step(
-    stage="30-services", order="10", key="services.kafka-version",
-    finalise="metadata.version bump after a soak; one way", rollback="none",
+    stage="30-services",
+    order="10",
+    key="services.kafka-version",
+    finalise="metadata.version bump after a soak; one way",
+    rollback="none",
 )
 KAFKA_MOVE = u.Move(step=KAFKA_STEP, old="4.2.0", new="4.3.1")
 
 
 def test_run_finalise_hook_confirmed_writes_marker(deploy: Path) -> None:
-    ran, detail = u.run_finalise_hook(deploy, KAFKA_MOVE, from_name="1.0.0", to_name="2.0.0", assume_yes=True)
+    ran, detail = u.run_finalise_hook(
+        deploy, KAFKA_MOVE, from_name="1.0.0", to_name="2.0.0", assume_yes=True
+    )
     assert ran is True
     assert "marker written" in detail
     assert "not held" in detail  # no infra/kafka.yaml, so there was no hold to drop
@@ -1765,9 +2342,13 @@ def test_run_finalise_hook_confirmed_writes_marker(deploy: Path) -> None:
     assert datetime.fromisoformat(finalised["services.kafka-version"])
 
 
-def test_run_finalise_hook_declined_writes_no_marker(monkeypatch: pytest.MonkeyPatch, deploy: Path) -> None:
+def test_run_finalise_hook_declined_writes_no_marker(
+    monkeypatch: pytest.MonkeyPatch, deploy: Path
+) -> None:
     monkeypatch.setattr("builtins.input", lambda *_a: "n")
-    ran, detail = u.run_finalise_hook(deploy, KAFKA_MOVE, from_name="1.0.0", to_name="2.0.0", assume_yes=False)
+    ran, detail = u.run_finalise_hook(
+        deploy, KAFKA_MOVE, from_name="1.0.0", to_name="2.0.0", assume_yes=False
+    )
     assert ran is False
     assert "declined" in detail
     assert u.read_finalised_keys(deploy) == {}
@@ -1776,7 +2357,10 @@ def test_run_finalise_hook_declined_writes_no_marker(monkeypatch: pytest.MonkeyP
 def _kafka_list(*statuses: dict) -> subprocess.CompletedProcess:
     """`kubectl get kafkas -A -o json` carrying one Kafka CR per status dict."""
     items = [
-        {"metadata": {"name": f"dfe-kafka-{i}", "namespace": "strimzi"}, "status": status}
+        {
+            "metadata": {"name": f"dfe-kafka-{i}", "namespace": "strimzi"},
+            "status": status,
+        }
         for i, status in enumerate(statuses)
     ]
     return _proc(0, stdout=json.dumps({"items": items}))
@@ -1793,42 +2377,59 @@ def test_check_rollback_metadata_refuses_a_metadata_version_above_the_target(
     assert "strimzi/dfe-kafka-0 (kafkaMetadataVersion 4.3-IV0)" in detail
 
 
-def test_check_rollback_metadata_passes_a_held_metadata_version(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_check_rollback_metadata_passes_a_held_metadata_version(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     _mock_run(monkeypatch, _kafka_list({"kafkaMetadataVersion": "4.2-IV1"}))
     ok, detail = u.check_rollback_metadata("kc", "4.2.0")
     assert ok is True
     assert "Kafka 4.2.0 runs" in detail
 
 
-def test_check_rollback_metadata_refuses_a_cr_with_no_metadata_version(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_check_rollback_metadata_refuses_a_cr_with_no_metadata_version(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     _mock_run(monkeypatch, _kafka_list({"kafkaVersion": "4.3.1"}))
     ok, detail = u.check_rollback_metadata("kc", "4.2.0")
     assert ok is False
     assert "unset" in detail
 
 
-def test_check_rollback_metadata_refuses_an_unreachable_cluster(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_check_rollback_metadata_refuses_an_unreachable_cluster(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     _mock_run(monkeypatch, _proc(1, stderr="Unable to connect to the server\n"))
     ok, detail = u.check_rollback_metadata("kc", "4.2.0")
     assert ok is False
     assert "cannot list Kafka CRs" in detail
 
 
-def test_check_rollback_metadata_passes_with_no_strimzi_broker(monkeypatch: pytest.MonkeyPatch) -> None:
-    _mock_run(monkeypatch, _proc(1, stderr='error: the server doesn\'t have a resource type "kafkas"'))
+def test_check_rollback_metadata_passes_with_no_strimzi_broker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _mock_run(
+        monkeypatch,
+        _proc(1, stderr='error: the server doesn\'t have a resource type "kafkas"'),
+    )
     ok, detail = u.check_rollback_metadata("kc", "4.2.0")
     assert ok is True
     assert "no Kafka CRD" in detail
 
 
-def test_check_rollback_metadata_reads_every_namespace(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_check_rollback_metadata_reads_every_namespace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     calls = _mock_run(monkeypatch, _kafka_list({"kafkaMetadataVersion": "4.2-IV1"}))
     u.check_rollback_metadata("kc", "4.2.0")
     assert "-A" in calls[0]
 
 
 def test_cmd_upgrade_rollback_refuses_without_a_marker_when_the_metadata_moved(
-    monkeypatch: pytest.MonkeyPatch, deploy: Path, order_path: Path, versions_path: Path, capsys: pytest.CaptureFixture
+    monkeypatch: pytest.MonkeyPatch,
+    deploy: Path,
+    order_path: Path,
+    versions_path: Path,
+    capsys: pytest.CaptureFixture,
 ) -> None:
     monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
     monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
@@ -1836,7 +2437,9 @@ def test_cmd_upgrade_rollback_refuses_without_a_marker_when_the_metadata_moved(
     # No marker and no opt-in flag: the live read is the default.
     calls = _mock_run(monkeypatch, _kafka_list({"kafkaMetadataVersion": "4.3-IV0"}))
 
-    args = _rollback_args(deploy=str(deploy), to="1.0.0", kubeconfig="kc", skip_cluster_check=False)
+    args = _rollback_args(
+        deploy=str(deploy), to="1.0.0", kubeconfig="kc", skip_cluster_check=False
+    )
     rc = u.cmd_upgrade_rollback(args)
     assert rc == u.EXIT_BLOCKED
     err = capsys.readouterr().err
@@ -1847,14 +2450,24 @@ def test_cmd_upgrade_rollback_refuses_without_a_marker_when_the_metadata_moved(
 
 
 def test_cmd_upgrade_rollback_passes_a_held_metadata_version_and_names_the_retarget(
-    monkeypatch: pytest.MonkeyPatch, deploy: Path, order_path: Path, versions_path: Path, capsys: pytest.CaptureFixture
+    monkeypatch: pytest.MonkeyPatch,
+    deploy: Path,
+    order_path: Path,
+    versions_path: Path,
+    capsys: pytest.CaptureFixture,
 ) -> None:
     monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
     monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
     u.bump_pin_file(deploy, "2.0.0")
-    _mock_run(monkeypatch, _kafka_list({"kafkaMetadataVersion": "4.2-IV1"}), _proc(0, stdout="2.0.0"))
+    _mock_run(
+        monkeypatch,
+        _kafka_list({"kafkaMetadataVersion": "4.2-IV1"}),
+        _proc(0, stdout="2.0.0"),
+    )
 
-    args = _rollback_args(deploy=str(deploy), to="1.0.0", kubeconfig="kc", skip_cluster_check=False)
+    args = _rollback_args(
+        deploy=str(deploy), to="1.0.0", kubeconfig="kc", skip_cluster_check=False
+    )
     rc = u.cmd_upgrade_rollback(args)
     assert rc == u.EXIT_OK
     out = capsys.readouterr().out
@@ -1865,14 +2478,28 @@ def test_cmd_upgrade_rollback_passes_a_held_metadata_version_and_names_the_retar
 
 
 def test_cmd_upgrade_rollback_retarget_needs_push(
-    monkeypatch: pytest.MonkeyPatch, deploy: Path, order_path: Path, versions_path: Path, capsys: pytest.CaptureFixture
+    monkeypatch: pytest.MonkeyPatch,
+    deploy: Path,
+    order_path: Path,
+    versions_path: Path,
+    capsys: pytest.CaptureFixture,
 ) -> None:
     monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
     monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
     u.bump_pin_file(deploy, "2.0.0")
-    _mock_run(monkeypatch, _kafka_list({"kafkaMetadataVersion": "4.2-IV1"}), _proc(0, stdout="2.0.0"))
+    _mock_run(
+        monkeypatch,
+        _kafka_list({"kafkaMetadataVersion": "4.2-IV1"}),
+        _proc(0, stdout="2.0.0"),
+    )
 
-    args = _rollback_args(deploy=str(deploy), to="1.0.0", kubeconfig="kc", skip_cluster_check=False, dry_run=False)
+    args = _rollback_args(
+        deploy=str(deploy),
+        to="1.0.0",
+        kubeconfig="kc",
+        skip_cluster_check=False,
+        dry_run=False,
+    )
     rc = u.cmd_upgrade_rollback(args)
     assert rc == u.EXIT_BLOCKED
     assert "needs --push" in capsys.readouterr().err
@@ -1880,14 +2507,20 @@ def test_cmd_upgrade_rollback_retarget_needs_push(
 
 
 def test_cmd_upgrade_rollback_skip_cluster_check_reads_nothing(
-    monkeypatch: pytest.MonkeyPatch, deploy: Path, order_path: Path, versions_path: Path, capsys: pytest.CaptureFixture
+    monkeypatch: pytest.MonkeyPatch,
+    deploy: Path,
+    order_path: Path,
+    versions_path: Path,
+    capsys: pytest.CaptureFixture,
 ) -> None:
     monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
     monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
     u.bump_pin_file(deploy, "2.0.0")
     calls = _mock_run(monkeypatch)
 
-    rc = u.cmd_upgrade_rollback(_rollback_args(deploy=str(deploy), to="1.0.0", kubeconfig="kc"))
+    rc = u.cmd_upgrade_rollback(
+        _rollback_args(deploy=str(deploy), to="1.0.0", kubeconfig="kc")
+    )
     assert rc == u.EXIT_OK
     assert calls == []
     assert "only the pin moves" in capsys.readouterr().err
@@ -1898,11 +2531,43 @@ def test_cmd_upgrade_rollback_skip_cluster_check_reads_nothing(
 # ---------------------------------------------------------------------------
 
 
-def test_wait_for_argo_converges_before_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_wait_for_argo_converges_before_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     import json
 
-    not_healthy = _proc(0, stdout=json.dumps({"items": [{"metadata": {"name": "a"}, "status": {"sync": {"status": "OutOfSync"}, "health": {"status": "Progressing"}}}]}))
-    healthy = _proc(0, stdout=json.dumps({"items": [{"metadata": {"name": "a"}, "status": {"sync": {"status": "Synced"}, "health": {"status": "Healthy"}}}]}))
+    not_healthy = _proc(
+        0,
+        stdout=json.dumps(
+            {
+                "items": [
+                    {
+                        "metadata": {"name": "a"},
+                        "status": {
+                            "sync": {"status": "OutOfSync"},
+                            "health": {"status": "Progressing"},
+                        },
+                    }
+                ]
+            }
+        ),
+    )
+    healthy = _proc(
+        0,
+        stdout=json.dumps(
+            {
+                "items": [
+                    {
+                        "metadata": {"name": "a"},
+                        "status": {
+                            "sync": {"status": "Synced"},
+                            "health": {"status": "Healthy"},
+                        },
+                    }
+                ]
+            }
+        ),
+    )
     _mock_run(monkeypatch, not_healthy, healthy)
 
     clock = {"t": 0.0}
@@ -1913,7 +2578,11 @@ def test_wait_for_argo_converges_before_timeout(monkeypatch: pytest.MonkeyPatch)
         clock["t"] += seconds
 
     ok, detail = u.wait_for_argo(
-        "kc", argocd_namespace="argocd", timeout=120, sleep=fake_sleep, now=lambda: clock["t"]
+        "kc",
+        argocd_namespace="argocd",
+        timeout=120,
+        sleep=fake_sleep,
+        now=lambda: clock["t"],
     )
     assert ok is True
     assert "Synced and Healthy" in detail
@@ -1923,15 +2592,48 @@ def test_wait_for_argo_converges_before_timeout(monkeypatch: pytest.MonkeyPatch)
 def test_wait_for_argo_times_out(monkeypatch: pytest.MonkeyPatch) -> None:
     import json
 
-    stuck = _proc(0, stdout=json.dumps({"items": [{"metadata": {"name": "a"}, "status": {"sync": {"status": "OutOfSync"}, "health": {"status": "Progressing"}}}]}))
-    _mock_run(monkeypatch, stuck, stuck, stuck, stuck, stuck, stuck, stuck, stuck, stuck, stuck)
+    stuck = _proc(
+        0,
+        stdout=json.dumps(
+            {
+                "items": [
+                    {
+                        "metadata": {"name": "a"},
+                        "status": {
+                            "sync": {"status": "OutOfSync"},
+                            "health": {"status": "Progressing"},
+                        },
+                    }
+                ]
+            }
+        ),
+    )
+    _mock_run(
+        monkeypatch,
+        stuck,
+        stuck,
+        stuck,
+        stuck,
+        stuck,
+        stuck,
+        stuck,
+        stuck,
+        stuck,
+        stuck,
+    )
 
     clock = {"t": 0.0}
 
     def fake_sleep(seconds: float) -> None:
         clock["t"] += seconds
 
-    ok, detail = u.wait_for_argo("kc", argocd_namespace="argocd", timeout=15, sleep=fake_sleep, now=lambda: clock["t"])
+    ok, detail = u.wait_for_argo(
+        "kc",
+        argocd_namespace="argocd",
+        timeout=15,
+        sleep=fake_sleep,
+        now=lambda: clock["t"],
+    )
     assert ok is False
     assert "still not converged" in detail
 
@@ -1985,9 +2687,14 @@ def _statefulset(
         "metadata": {"name": name, "generation": 2},
         "spec": {
             "replicas": replicas,
-            "updateStrategy": strategy or {"type": "RollingUpdate", "rollingUpdate": {"partition": 0}},
+            "updateStrategy": strategy
+            or {"type": "RollingUpdate", "rollingUpdate": {"partition": 0}},
         },
-        "status": {"observedGeneration": observed, "updatedReplicas": updated, "availableReplicas": available},
+        "status": {
+            "observedGeneration": observed,
+            "updatedReplicas": updated,
+            "availableReplicas": available,
+        },
     }
 
 
@@ -2001,7 +2708,12 @@ def _statefulset(
         (_deployment(total=2), "1 old replica(s) still running"),
         (_deployment(available=0), "0 of 1 updated replicas available"),
         (
-            _deployment(available=0, conditions=[{"type": "Progressing", "reason": "ProgressDeadlineExceeded"}]),
+            _deployment(
+                available=0,
+                conditions=[
+                    {"type": "Progressing", "reason": "ProgressDeadlineExceeded"}
+                ],
+            ),
             "past its progress deadline",
         ),
         (_statefulset(), ""),
@@ -2010,28 +2722,52 @@ def _statefulset(
         (_statefulset(replicas=3, updated=3, available=2), "2 of 3 replicas available"),
         (
             _statefulset(
-                replicas=3, updated=1, available=3,
+                replicas=3,
+                updated=1,
+                available=3,
                 strategy={"type": "RollingUpdate", "rollingUpdate": {"partition": 2}},
             ),
             "",
         ),
-        (_statefulset(replicas=3, updated=0, available=3, strategy={"type": "OnDelete"}), ""),
+        (
+            _statefulset(
+                replicas=3, updated=0, available=3, strategy={"type": "OnDelete"}
+            ),
+            "",
+        ),
     ],
     ids=[
-        "deployment-finished", "deployment-scaled-to-zero", "deployment-generation-unobserved",
-        "deployment-not-updated", "deployment-old-replica-left", "deployment-new-pod-unavailable",
-        "deployment-past-deadline", "statefulset-finished", "statefulset-generation-unobserved",
-        "statefulset-not-updated", "statefulset-unavailable", "statefulset-partition-reached",
+        "deployment-finished",
+        "deployment-scaled-to-zero",
+        "deployment-generation-unobserved",
+        "deployment-not-updated",
+        "deployment-old-replica-left",
+        "deployment-new-pod-unavailable",
+        "deployment-past-deadline",
+        "statefulset-finished",
+        "statefulset-generation-unobserved",
+        "statefulset-not-updated",
+        "statefulset-unavailable",
+        "statefulset-partition-reached",
         "statefulset-on-delete",
     ],
 )
-def test_rollout_pending_reads_what_kubectl_rollout_status_waits_on(item: dict, why: str) -> None:
+def test_rollout_pending_reads_what_kubectl_rollout_status_waits_on(
+    item: dict, why: str
+) -> None:
     assert u.rollout_pending(item) == why
 
 
-def test_check_rollouts_names_each_rollout_still_running(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_check_rollouts_names_each_rollout_still_running(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # The shape apply reported as settled: a surge pod Pending beside the old one, and a new pod not yet up.
-    items = [_deployment(total=2), _deployment("dfe-hyperdx", available=0), _deployment("dfe-ui"), _statefulset()]
+    items = [
+        _deployment(total=2),
+        _deployment("dfe-hyperdx", available=0),
+        _deployment("dfe-ui"),
+        _statefulset(),
+    ]
     calls = _mock_run(monkeypatch, _proc(0, stdout=json.dumps({"items": items})))
 
     ok, detail = u.check_rollouts("kc", "dfe-from-the-secret")
@@ -2042,19 +2778,36 @@ def test_check_rollouts_names_each_rollout_still_running(monkeypatch: pytest.Mon
         "deployment/dfe-hyperdx (0 of 1 updated replicas available)"
     )
     assert calls[0][:7] == [
-        "kubectl", "--kubeconfig", "kc", "-n", "dfe-from-the-secret", "get", "deployments.apps,statefulsets.apps",
+        "kubectl",
+        "--kubeconfig",
+        "kc",
+        "-n",
+        "dfe-from-the-secret",
+        "get",
+        "deployments.apps,statefulsets.apps",
     ]
 
 
-def test_check_rollouts_passes_once_every_rollout_has_finished(monkeypatch: pytest.MonkeyPatch) -> None:
-    _mock_run(monkeypatch, _proc(0, stdout=json.dumps({"items": [_deployment(), _statefulset()]})))
-    assert u.check_rollouts(None, "dfe-from-the-secret") == (True, "2 rollout(s) finished")
+def test_check_rollouts_passes_once_every_rollout_has_finished(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _mock_run(
+        monkeypatch,
+        _proc(0, stdout=json.dumps({"items": [_deployment(), _statefulset()]})),
+    )
+    assert u.check_rollouts(None, "dfe-from-the-secret") == (
+        True,
+        "2 rollout(s) finished",
+    )
 
 
 @pytest.mark.parametrize(
     ("response", "detail"),
     [
-        (_proc(0, stdout=json.dumps({"items": []})), "no Deployment or StatefulSet in the DFE namespace"),
+        (
+            _proc(0, stdout=json.dumps({"items": []})),
+            "no Deployment or StatefulSet in the DFE namespace",
+        ),
         (
             _proc(1, stderr="Unable to connect to the server"),
             "cannot list Deployments and StatefulSets in the DFE namespace: Unable",
@@ -2073,9 +2826,22 @@ def test_check_rollouts_fails_what_it_cannot_show_settled(
     assert "dfe-from-the-secret" not in why
 
 
-ONE_HEALTHY_APP = _proc(0, stdout=json.dumps({"items": [
-    {"metadata": {"name": "a"}, "status": {"sync": {"status": "Synced"}, "health": {"status": "Healthy"}}}
-]}))
+ONE_HEALTHY_APP = _proc(
+    0,
+    stdout=json.dumps(
+        {
+            "items": [
+                {
+                    "metadata": {"name": "a"},
+                    "status": {
+                        "sync": {"status": "Synced"},
+                        "health": {"status": "Healthy"},
+                    },
+                }
+            ]
+        }
+    ),
+)
 
 
 def _clock() -> tuple[dict, list[float], Callable[[float], None]]:
@@ -2089,14 +2855,21 @@ def _clock() -> tuple[dict, list[float], Callable[[float], None]]:
     return clock, sleeps, fake_sleep
 
 
-def test_wait_for_argo_waits_on_the_rollouts_after_argo_reads_healthy(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_wait_for_argo_waits_on_the_rollouts_after_argo_reads_healthy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     rolling = _proc(0, stdout=json.dumps({"items": [_deployment(available=0)]}))
     rolled = _proc(0, stdout=json.dumps({"items": [_deployment()]}))
     _mock_run(monkeypatch, ONE_HEALTHY_APP, rolling, ONE_HEALTHY_APP, rolled)
     clock, sleeps, fake_sleep = _clock()
 
     ok, detail = u.wait_for_argo(
-        "kc", argocd_namespace="argocd", timeout=120, rollout_namespace="dfe", sleep=fake_sleep, now=lambda: clock["t"]
+        "kc",
+        argocd_namespace="argocd",
+        timeout=120,
+        rollout_namespace="dfe",
+        sleep=fake_sleep,
+        now=lambda: clock["t"],
     )
 
     assert ok is True
@@ -2104,13 +2877,20 @@ def test_wait_for_argo_waits_on_the_rollouts_after_argo_reads_healthy(monkeypatc
     assert len(sleeps) == 1
 
 
-def test_wait_for_argo_times_out_naming_the_rollout_that_did_not_finish(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_wait_for_argo_times_out_naming_the_rollout_that_did_not_finish(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     rolling = _proc(0, stdout=json.dumps({"items": [_deployment(available=0)]}))
     _mock_run(monkeypatch, *[ONE_HEALTHY_APP, rolling] * 10)
     clock, _sleeps, fake_sleep = _clock()
 
     ok, detail = u.wait_for_argo(
-        "kc", argocd_namespace="argocd", timeout=15, rollout_namespace="dfe", sleep=fake_sleep, now=lambda: clock["t"]
+        "kc",
+        argocd_namespace="argocd",
+        timeout=15,
+        rollout_namespace="dfe",
+        sleep=fake_sleep,
+        now=lambda: clock["t"],
     )
 
     assert ok is False
@@ -2120,10 +2900,14 @@ def test_wait_for_argo_times_out_naming_the_rollout_that_did_not_finish(monkeypa
     )
 
 
-DFE_NAMESPACE_JSONPATH = "jsonpath={.metadata.annotations.dfe\\.hyperi\\.io/dfe_namespace}"
+DFE_NAMESPACE_JSONPATH = (
+    "jsonpath={.metadata.annotations.dfe\\.hyperi\\.io/dfe_namespace}"
+)
 
 
-def test_read_dfe_namespace_reads_only_that_annotation(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_read_dfe_namespace_reads_only_that_annotation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     calls = _mock_run(monkeypatch, _proc(0, stdout="dfe-apps\n"))
     assert u.read_dfe_namespace("kc", "cd") == "dfe-apps"
     assert calls[0][-2:] == ["-o", DFE_NAMESPACE_JSONPATH]
@@ -2136,7 +2920,9 @@ def test_read_dfe_namespace_reads_only_that_annotation(monkeypatch: pytest.Monke
 # ---------------------------------------------------------------------------
 
 
-def _kafka_cr(operator_version: str | None, *, name: str = "dfe-kafka", ready: bool = True) -> dict:
+def _kafka_cr(
+    operator_version: str | None, *, name: str = "dfe-kafka", ready: bool = True
+) -> dict:
     """One Kafka CR as kubectl prints it -- Ready by default, because Ready is
     exactly what stays True and stale while the operator version lags."""
     status: dict[str, object] = {
@@ -2152,7 +2938,9 @@ def test_check_kafka_operator_version_refuses_a_ready_cr_still_on_the_old_versio
 ) -> None:
     import json
 
-    _mock_run(monkeypatch, _proc(0, stdout=json.dumps({"items": [_kafka_cr("0.51.0")]})))
+    _mock_run(
+        monkeypatch, _proc(0, stdout=json.dumps({"items": [_kafka_cr("0.51.0")]}))
+    )
     ok, detail = u.check_kafka_operator_version("kc", "1.2.0")
     assert ok is False
     assert "operatorLastSuccessfulVersion 0.51.0" in detail
@@ -2193,8 +2981,13 @@ def test_check_kafka_operator_version_reads_every_namespace_by_default(
     assert "-n" not in calls[0]
 
 
-def test_check_kafka_operator_version_no_crd_is_a_clean_skip(monkeypatch: pytest.MonkeyPatch) -> None:
-    _mock_run(monkeypatch, _proc(1, stderr='the server doesn\'t have a resource type "kafkas"'))
+def test_check_kafka_operator_version_no_crd_is_a_clean_skip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _mock_run(
+        monkeypatch,
+        _proc(1, stderr='the server doesn\'t have a resource type "kafkas"'),
+    )
     ok, detail = u.check_kafka_operator_version("kc", "1.2.0")
     assert ok is True
     assert "no Kafka CRD" in detail
@@ -2245,11 +3038,15 @@ def test_wait_for_kafka_operator_version_returns_once_the_field_moves(
 
 
 def test_strimzi_conversion_tool_names_the_version_it_is_given() -> None:
-    assert u.strimzi_conversion_tool("0.51.0") == "strimzi-v1-api-conversion-0.51.0.tar.gz"
+    assert (
+        u.strimzi_conversion_tool("0.51.0") == "strimzi-v1-api-conversion-0.51.0.tar.gz"
+    )
 
 
 def test_conversion_tool_line_names_the_from_version_and_refuses_the_target() -> None:
-    step = u.Step(stage="20-operators", order="10", key=u.STRIMZI_OPERATOR_KEY, before="convert")
+    step = u.Step(
+        stage="20-operators", order="10", key=u.STRIMZI_OPERATOR_KEY, before="convert"
+    )
     line = u.conversion_tool_line(u.Move(step=step, old="0.51.0", new="1.2.0"))
     assert "strimzi-v1-api-conversion-0.51.0.tar.gz" in line
     assert "strimzi-v1-api-conversion-1.2.0.tar.gz" not in line
@@ -2263,15 +3060,23 @@ def test_check_strimzi_conversion_before_carries_both_the_verdict_and_the_tool(
 
     doc = json.dumps({"status": {"storedVersions": ["v1"]}})
     _mock_run(monkeypatch, *[_proc(0, stdout=doc) for _ in u.STRIMZI_CRDS])
-    step = u.Step(stage="20-operators", order="10", key=u.STRIMZI_OPERATOR_KEY, before="convert")
-    ok, detail = u.check_strimzi_conversion_before("kc", u.Move(step=step, old="0.51.0", new="1.2.0"))
+    step = u.Step(
+        stage="20-operators", order="10", key=u.STRIMZI_OPERATOR_KEY, before="convert"
+    )
+    ok, detail = u.check_strimzi_conversion_before(
+        "kc", u.Move(step=step, old="0.51.0", new="1.2.0")
+    )
     assert ok is True
     assert "store v1 only" in detail
     assert "strimzi-v1-api-conversion-0.51.0.tar.gz" in detail
 
 
 def test_cmd_upgrade_apply_dry_run_names_the_from_version_tool_and_the_operator_wait(
-    monkeypatch: pytest.MonkeyPatch, deploy: Path, order_path: Path, versions_path: Path, capsys: pytest.CaptureFixture
+    monkeypatch: pytest.MonkeyPatch,
+    deploy: Path,
+    order_path: Path,
+    versions_path: Path,
+    capsys: pytest.CaptureFixture,
 ) -> None:
     monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
     monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
@@ -2284,7 +3089,9 @@ def test_cmd_upgrade_apply_dry_run_names_the_from_version_tool_and_the_operator_
     # The fixture moves the operator 0.51.0 -> 1.2.0, so the tool is the FROM one.
     assert "strimzi-v1-api-conversion-0.51.0.tar.gz" in err
     assert "strimzi-v1-api-conversion-1.2.0.tar.gz" not in err
-    assert "wait for every Kafka CR to report operatorLastSuccessfulVersion 1.2.0" in err
+    assert (
+        "wait for every Kafka CR to report operatorLastSuccessfulVersion 1.2.0" in err
+    )
     # Stage 2 is the operators stage; stages 1 and 3 move no operator pin, so
     # the extra wait must not be emitted for them.
     assert err.count("operatorLastSuccessfulVersion") == 1
@@ -2356,7 +3163,9 @@ def _bootstrap_runs(monkeypatch: pytest.MonkeyPatch, version: str) -> list[str]:
     """Every bootstrap release reads as running chart `version`; returns the releases asked about."""
     asked: list[str] = []
 
-    def read(_kubeconfig: object, release: u.helm_releases.HelmRelease) -> tuple[str, str]:
+    def read(
+        _kubeconfig: object, release: u.helm_releases.HelmRelease
+    ) -> tuple[str, str]:
         asked.append(release.release)
         return version, ""
 
@@ -2376,7 +3185,9 @@ def _stub_cluster_facing_calls(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_cmd_upgrade_apply_stage_two_commits_nothing_new(
-    monkeypatch: pytest.MonkeyPatch, real_git_deploy: Path, capsys: pytest.CaptureFixture
+    monkeypatch: pytest.MonkeyPatch,
+    real_git_deploy: Path,
+    capsys: pytest.CaptureFixture,
 ) -> None:
     """Stage 1 bumps the pin to the final target; stage 2's `git add` stages
     nothing (same pin, unchanged sizing/upgrades), so `git commit` must be
@@ -2389,18 +3200,25 @@ def test_cmd_upgrade_apply_stage_two_commits_nothing_new(
     monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
     _stub_cluster_facing_calls(monkeypatch)
 
-    args = _apply_args(deploy=str(real_git_deploy), to="2.0.0", yes=True, dry_run=False, push=False)
+    args = _apply_args(
+        deploy=str(real_git_deploy), to="2.0.0", yes=True, dry_run=False, push=False
+    )
     rc = u.cmd_upgrade_apply(args)
 
     err = capsys.readouterr().err
     assert rc == u.EXIT_OK, err
     assert "dfe-ops upgrade apply OK: 1.0.0 -> 2.0.0 (2 stage(s))" in err
-    assert "[DONE] bootstrap.cert-manager runs v1.1.0 (deployment/cert-manager helm.sh/chart)" in err
+    assert (
+        "[DONE] bootstrap.cert-manager runs v1.1.0 (deployment/cert-manager helm.sh/chart)"
+        in err
+    )
     assert "stage 2 (20-second) changed nothing" in err
     log = u._git(real_git_deploy, "log", "--oneline").stdout
     assert "stage 1 -- bootstrap.cert-manager" in log
     assert "stage 2 -- services.clickhouse-version" not in log
-    assert (real_git_deploy / "pins.yaml").read_text(encoding="utf-8") == PINS_YAML.replace("1.0.0", "2.0.0")
+    assert (real_git_deploy / "pins.yaml").read_text(
+        encoding="utf-8"
+    ) == PINS_YAML.replace("1.0.0", "2.0.0")
 
 
 # The engine as it sat while Argo read every Application Healthy: its new pod Pending beside the old one.
@@ -2416,7 +3234,11 @@ def _argo_healthy_while(
     git runs for real; any other kubectl or helm call fails the test. Returns the
     namespaces each rollout read named."""
     monkeypatch.setattr(u, "wait_for_argo", REAL_WAIT_FOR_ARGO)
-    monkeypatch.setattr(u, "check_argo_apps", lambda *_a, **_k: (True, "28 Application(s) Synced and Healthy"))
+    monkeypatch.setattr(
+        u,
+        "check_argo_apps",
+        lambda *_a, **_k: (True, "28 Application(s) Synced and Healthy"),
+    )
     monkeypatch.setattr(u, "_SYNC_POLL_INTERVAL", 0.0)
     queue = list(listings)
     read: list[str] = []
@@ -2436,13 +3258,19 @@ def _argo_healthy_while(
 
 
 def test_apply_reports_ok_only_once_every_rollout_has_finished(
-    monkeypatch: pytest.MonkeyPatch, real_git_deploy: Path, capsys: pytest.CaptureFixture
+    monkeypatch: pytest.MonkeyPatch,
+    real_git_deploy: Path,
+    capsys: pytest.CaptureFixture,
 ) -> None:
     """apply printed OK over a Deployment Argo called Healthy and kubectl still showed rolling."""
     _two_stage(monkeypatch, real_git_deploy)
-    read = _argo_healthy_while(monkeypatch, [ENGINE_ROLLING, ENGINE_ROLLING, ENGINE_ROLLED])
+    read = _argo_healthy_while(
+        monkeypatch, [ENGINE_ROLLING, ENGINE_ROLLING, ENGINE_ROLLED]
+    )
 
-    rc = u.cmd_upgrade_apply(_apply_args(deploy=str(real_git_deploy), to="2.0.0", yes=True, dry_run=False))
+    rc = u.cmd_upgrade_apply(
+        _apply_args(deploy=str(real_git_deploy), to="2.0.0", yes=True, dry_run=False)
+    )
 
     err = capsys.readouterr().err
     assert rc == u.EXIT_OK, err
@@ -2453,14 +3281,22 @@ def test_apply_reports_ok_only_once_every_rollout_has_finished(
 
 
 def test_apply_fails_naming_a_rollout_that_does_not_finish_within_the_timeout(
-    monkeypatch: pytest.MonkeyPatch, real_git_deploy: Path, capsys: pytest.CaptureFixture
+    monkeypatch: pytest.MonkeyPatch,
+    real_git_deploy: Path,
+    capsys: pytest.CaptureFixture,
 ) -> None:
     _two_stage(monkeypatch, real_git_deploy)
     _argo_healthy_while(monkeypatch, [ENGINE_ROLLING])
 
-    rc = u.cmd_upgrade_apply(_apply_args(
-        deploy=str(real_git_deploy), to="2.0.0", yes=True, dry_run=False, timeout=0.05,
-    ))
+    rc = u.cmd_upgrade_apply(
+        _apply_args(
+            deploy=str(real_git_deploy),
+            to="2.0.0",
+            yes=True,
+            dry_run=False,
+            timeout=0.05,
+        )
+    )
 
     err = capsys.readouterr().err
     assert rc == u.EXIT_BLOCKED, err
@@ -2473,7 +3309,9 @@ def test_apply_fails_naming_a_rollout_that_does_not_finish_within_the_timeout(
 
 
 def test_apply_waits_on_the_namespace_the_cluster_secret_names(
-    monkeypatch: pytest.MonkeyPatch, real_git_deploy: Path, capsys: pytest.CaptureFixture
+    monkeypatch: pytest.MonkeyPatch,
+    real_git_deploy: Path,
+    capsys: pytest.CaptureFixture,
 ) -> None:
     _two_stage(monkeypatch, real_git_deploy)
     asked: list[tuple[object, str]] = []
@@ -2485,15 +3323,24 @@ def test_apply_waits_on_the_namespace_the_cluster_secret_names(
     monkeypatch.setattr(u, "read_dfe_namespace", read_namespace)
     waits: list[str] = []
 
-    def wait(*_a: object, rollout_namespace: str = "", **_k: object) -> tuple[bool, str]:
+    def wait(
+        *_a: object, rollout_namespace: str = "", **_k: object
+    ) -> tuple[bool, str]:
         waits.append(rollout_namespace)
         return True, "ok"
 
     monkeypatch.setattr(u, "wait_for_argo", wait)
 
-    rc = u.cmd_upgrade_apply(_apply_args(
-        deploy=str(real_git_deploy), to="2.0.0", yes=True, dry_run=False, kubeconfig="kc", argocd_namespace="cd",
-    ))
+    rc = u.cmd_upgrade_apply(
+        _apply_args(
+            deploy=str(real_git_deploy),
+            to="2.0.0",
+            yes=True,
+            dry_run=False,
+            kubeconfig="kc",
+            argocd_namespace="cd",
+        )
+    )
 
     err = capsys.readouterr().err
     assert rc == u.EXIT_OK, err
@@ -2508,31 +3355,45 @@ def test_apply_waits_on_the_namespace_the_cluster_secret_names(
 
 
 def test_namespace_names_the_rollouts_without_reading_the_cluster_secret(
-    monkeypatch: pytest.MonkeyPatch, real_git_deploy: Path, capsys: pytest.CaptureFixture
+    monkeypatch: pytest.MonkeyPatch,
+    real_git_deploy: Path,
+    capsys: pytest.CaptureFixture,
 ) -> None:
     _two_stage(monkeypatch, real_git_deploy)
 
     def unread(*_a: object) -> str:
-        raise AssertionError("--namespace names the namespace; the cluster secret is not read for it")
+        raise AssertionError(
+            "--namespace names the namespace; the cluster secret is not read for it"
+        )
 
     monkeypatch.setattr(u, "read_dfe_namespace", unread)
     read = _argo_healthy_while(monkeypatch, [ENGINE_ROLLED])
 
-    rc = u.cmd_upgrade_apply(_apply_args(
-        deploy=str(real_git_deploy), to="2.0.0", yes=True, dry_run=False, namespace="dfe-named",
-    ))
+    rc = u.cmd_upgrade_apply(
+        _apply_args(
+            deploy=str(real_git_deploy),
+            to="2.0.0",
+            yes=True,
+            dry_run=False,
+            namespace="dfe-named",
+        )
+    )
 
     assert rc == u.EXIT_OK, capsys.readouterr().err
     assert read == ["dfe-named", "dfe-named"]
 
 
 def test_apply_refuses_before_anything_moves_when_no_namespace_is_known(
-    monkeypatch: pytest.MonkeyPatch, real_git_deploy: Path, capsys: pytest.CaptureFixture
+    monkeypatch: pytest.MonkeyPatch,
+    real_git_deploy: Path,
+    capsys: pytest.CaptureFixture,
 ) -> None:
     _two_stage(monkeypatch, real_git_deploy)
     monkeypatch.setattr(u, "read_dfe_namespace", lambda *_a: "")
 
-    rc = u.cmd_upgrade_apply(_apply_args(deploy=str(real_git_deploy), to="2.0.0", yes=True, dry_run=False))
+    rc = u.cmd_upgrade_apply(
+        _apply_args(deploy=str(real_git_deploy), to="2.0.0", yes=True, dry_run=False)
+    )
 
     err = capsys.readouterr().err
     assert rc == u.EXIT_BLOCKED, err
@@ -2545,7 +3406,11 @@ def test_apply_refuses_before_anything_moves_when_no_namespace_is_known(
 
 
 def test_a_dry_run_names_the_rollouts_each_wait_waits_on(
-    monkeypatch: pytest.MonkeyPatch, deploy: Path, order_path: Path, versions_path: Path, capsys: pytest.CaptureFixture
+    monkeypatch: pytest.MonkeyPatch,
+    deploy: Path,
+    order_path: Path,
+    versions_path: Path,
+    capsys: pytest.CaptureFixture,
 ) -> None:
     monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
     monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
@@ -2553,14 +3418,22 @@ def test_a_dry_run_names_the_rollouts_each_wait_waits_on(
 
     assert u.cmd_upgrade_apply(_apply_args(deploy=str(deploy), to="2.0.0")) == u.EXIT_OK
     unnamed = capsys.readouterr().err
-    assert u.cmd_upgrade_apply(_apply_args(deploy=str(deploy), to="2.0.0", namespace="dfe-named")) == u.EXIT_OK
+    assert (
+        u.cmd_upgrade_apply(
+            _apply_args(deploy=str(deploy), to="2.0.0", namespace="dfe-named")
+        )
+        == u.EXIT_OK
+    )
     named = capsys.readouterr().err
 
     # One wait per stage, all three before the cluster secret has been read.
-    assert unnamed.count(
-        "wait for Argo Applications in argocd, then every Deployment and StatefulSet in the namespace "
-        "secret/dfe-cluster's dfe.hyperi.io/dfe_namespace names to finish rolling out (timeout 900s)"
-    ) == 3
+    assert (
+        unnamed.count(
+            "wait for Argo Applications in argocd, then every Deployment and StatefulSet in the namespace "
+            "secret/dfe-cluster's dfe.hyperi.io/dfe_namespace names to finish rolling out (timeout 900s)"
+        )
+        == 3
+    )
     assert (
         "wait for Argo Applications to leave 1.0.0, each reconciled after the retarget, then every Deployment "
         "and StatefulSet in dfe-named to finish rolling out (timeout 900s)"
@@ -2576,12 +3449,17 @@ def pushed_real_git_deploy(real_git_deploy: Path, tmp_path: Path) -> Path:
     """real_git_deploy with a bare local remote as its upstream, so `git push` and `@{upstream}` are real."""
     remote = tmp_path / "real-remote.git"
     assert u._run(["git", "init", "-q", "--bare", str(remote)]).returncode == 0
-    for args in (["remote", "add", "origin", str(remote)], ["push", "-q", "-u", "origin", "HEAD"]):
+    for args in (
+        ["remote", "add", "origin", str(remote)],
+        ["push", "-q", "-u", "origin", "HEAD"],
+    ):
         assert u._git(real_git_deploy, *args).returncode == 0, args
     return real_git_deploy
 
 
-def _argo_comparing_after_the_push(monkeypatch: pytest.MonkeyPatch, *, stale_reads: int | None) -> dict[str, int]:
+def _argo_comparing_after_the_push(
+    monkeypatch: pytest.MonkeyPatch, *, stale_reads: int | None
+) -> dict[str, int]:
     """Argo reads the one Application Synced and Healthy throughout, but stamps `reconciledAt` as it would.
 
     The real wait and the real Application read run, and so does git. Until the deploy repo is pushed the
@@ -2601,8 +3479,14 @@ def _argo_comparing_after_the_push(monkeypatch: pytest.MonkeyPatch, *, stale_rea
         if cmd[:1] == ["kubectl"] and listed == ["applications.argoproj.io"]:
             seen["reads"] += 1
             seen["reads_after_push"] += 1 if seen["pushes"] else 0
-            compared = stale_reads is not None and seen["reads_after_push"] > stale_reads
-            stamp = (datetime.now(UTC) + timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ") if compared else OLD_RECONCILE
+            compared = (
+                stale_reads is not None and seen["reads_after_push"] > stale_reads
+            )
+            stamp = (
+                (datetime.now(UTC) + timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+                if compared
+                else OLD_RECONCILE
+            )
             return _apps(_reconciled_app("kafka-dfe", stamp))
         if cmd[:1] == ["kubectl"] and "deployments.apps,statefulsets.apps" in cmd:
             return _proc(0, stdout=ENGINE_ROLLED)
@@ -2615,13 +3499,23 @@ def _argo_comparing_after_the_push(monkeypatch: pytest.MonkeyPatch, *, stale_rea
 
 
 def test_apply_does_not_trust_a_healthy_app_argo_has_not_compared_since_the_push(
-    monkeypatch: pytest.MonkeyPatch, pushed_real_git_deploy: Path, capsys: pytest.CaptureFixture
+    monkeypatch: pytest.MonkeyPatch,
+    pushed_real_git_deploy: Path,
+    capsys: pytest.CaptureFixture,
 ) -> None:
     """Both waits passed on the Synced and Healthy Argo reported from before the pushed commit."""
     _two_stage(monkeypatch, pushed_real_git_deploy)
     seen = _argo_comparing_after_the_push(monkeypatch, stale_reads=2)
 
-    rc = u.cmd_upgrade_apply(_apply_args(deploy=str(pushed_real_git_deploy), to="2.0.0", yes=True, dry_run=False, push=True))
+    rc = u.cmd_upgrade_apply(
+        _apply_args(
+            deploy=str(pushed_real_git_deploy),
+            to="2.0.0",
+            yes=True,
+            dry_run=False,
+            push=True,
+        )
+    )
 
     err = capsys.readouterr().err
     assert rc == u.EXIT_OK, err
@@ -2629,34 +3523,57 @@ def test_apply_does_not_trust_a_healthy_app_argo_has_not_compared_since_the_push
     # Stage 2 pushed nothing new, so it asked Argo for nothing and read once.
     assert seen["pushes"] == 2
     assert seen["reads"] == 4
-    assert err.count("1 Application(s) Synced and Healthy, each reconciled since this change; 2 rollout(s) finished") == 1
+    assert (
+        err.count(
+            "1 Application(s) Synced and Healthy, each reconciled since this change; 2 rollout(s) finished"
+        )
+        == 1
+    )
     assert err.count("1 Application(s) Synced and Healthy; 2 rollout(s) finished") == 1
 
 
 def test_apply_fails_naming_the_app_argo_never_compared_against_the_push(
-    monkeypatch: pytest.MonkeyPatch, pushed_real_git_deploy: Path, capsys: pytest.CaptureFixture
+    monkeypatch: pytest.MonkeyPatch,
+    pushed_real_git_deploy: Path,
+    capsys: pytest.CaptureFixture,
 ) -> None:
     _two_stage(monkeypatch, pushed_real_git_deploy)
     _argo_comparing_after_the_push(monkeypatch, stale_reads=None)
 
-    rc = u.cmd_upgrade_apply(_apply_args(
-        deploy=str(pushed_real_git_deploy), to="2.0.0", yes=True, dry_run=False, push=True, timeout=0.05,
-    ))
+    rc = u.cmd_upgrade_apply(
+        _apply_args(
+            deploy=str(pushed_real_git_deploy),
+            to="2.0.0",
+            yes=True,
+            dry_run=False,
+            push=True,
+            timeout=0.05,
+        )
+    )
 
     err = capsys.readouterr().err
     assert rc == u.EXIT_BLOCKED, err
-    assert f"1 app(s) not Synced/Healthy: kafka-dfe (last reconciled {OLD_RECONCILE}, before this change)" in err
+    assert (
+        f"1 app(s) not Synced/Healthy: kafka-dfe (last reconciled {OLD_RECONCILE}, before this change)"
+        in err
+    )
     assert "FAILED at stage 1: Argo and the rollouts did not settle" in err
     assert "apply OK" not in err
 
 
 def test_apply_without_push_asks_for_no_reconcile_because_argo_has_nothing_new(
-    monkeypatch: pytest.MonkeyPatch, pushed_real_git_deploy: Path, capsys: pytest.CaptureFixture
+    monkeypatch: pytest.MonkeyPatch,
+    pushed_real_git_deploy: Path,
+    capsys: pytest.CaptureFixture,
 ) -> None:
     _two_stage(monkeypatch, pushed_real_git_deploy)
     seen = _argo_comparing_after_the_push(monkeypatch, stale_reads=None)
 
-    rc = u.cmd_upgrade_apply(_apply_args(deploy=str(pushed_real_git_deploy), to="2.0.0", yes=True, dry_run=False))
+    rc = u.cmd_upgrade_apply(
+        _apply_args(
+            deploy=str(pushed_real_git_deploy), to="2.0.0", yes=True, dry_run=False
+        )
+    )
 
     err = capsys.readouterr().err
     assert rc == u.EXIT_OK, err
@@ -2665,18 +3582,34 @@ def test_apply_without_push_asks_for_no_reconcile_because_argo_has_nothing_new(
 
 
 def test_apply_pushes_a_commit_an_earlier_run_left_and_waits_on_the_reconcile(
-    monkeypatch: pytest.MonkeyPatch, pushed_real_git_deploy: Path, capsys: pytest.CaptureFixture
+    monkeypatch: pytest.MonkeyPatch,
+    pushed_real_git_deploy: Path,
+    capsys: pytest.CaptureFixture,
 ) -> None:
     """A rerun commits nothing new, but its push still carries the earlier run's commit."""
     _two_stage(monkeypatch, pushed_real_git_deploy)
     _argo_comparing_after_the_push(monkeypatch, stale_reads=None)
-    assert u.cmd_upgrade_apply(_apply_args(deploy=str(pushed_real_git_deploy), to="2.0.0", yes=True, dry_run=False)) == u.EXIT_OK
+    assert (
+        u.cmd_upgrade_apply(
+            _apply_args(
+                deploy=str(pushed_real_git_deploy), to="2.0.0", yes=True, dry_run=False
+            )
+        )
+        == u.EXIT_OK
+    )
     capsys.readouterr()
 
-    rc = u.cmd_upgrade_apply(_apply_args(
-        deploy=str(pushed_real_git_deploy), to="2.0.0", from_stack="1.0.0", yes=True, dry_run=False, push=True,
-        timeout=0.05,
-    ))
+    rc = u.cmd_upgrade_apply(
+        _apply_args(
+            deploy=str(pushed_real_git_deploy),
+            to="2.0.0",
+            from_stack="1.0.0",
+            yes=True,
+            dry_run=False,
+            push=True,
+            timeout=0.05,
+        )
+    )
 
     err = capsys.readouterr().err
     assert rc == u.EXIT_BLOCKED, err
@@ -2685,38 +3618,71 @@ def test_apply_pushes_a_commit_an_earlier_run_left_and_waits_on_the_reconcile(
 
 
 def test_a_bare_rerun_after_an_unpushed_stage_replays_from_the_upstream_pin(
-    monkeypatch: pytest.MonkeyPatch, pushed_real_git_deploy: Path, capsys: pytest.CaptureFixture
+    monkeypatch: pytest.MonkeyPatch,
+    pushed_real_git_deploy: Path,
+    capsys: pytest.CaptureFixture,
 ) -> None:
     """Argo reads the remote, so a pin committed but never pushed has not moved the deployment."""
     _two_stage(monkeypatch, pushed_real_git_deploy)
     seen = _argo_comparing_after_the_push(monkeypatch, stale_reads=0)
-    assert u.cmd_upgrade_apply(_apply_args(deploy=str(pushed_real_git_deploy), to="2.0.0", yes=True, dry_run=False)) == u.EXIT_OK
+    assert (
+        u.cmd_upgrade_apply(
+            _apply_args(
+                deploy=str(pushed_real_git_deploy), to="2.0.0", yes=True, dry_run=False
+            )
+        )
+        == u.EXIT_OK
+    )
     capsys.readouterr()
 
-    rc = u.cmd_upgrade_apply(_apply_args(deploy=str(pushed_real_git_deploy), to="2.0.0", yes=True, dry_run=False, push=True))
+    rc = u.cmd_upgrade_apply(
+        _apply_args(
+            deploy=str(pushed_real_git_deploy),
+            to="2.0.0",
+            yes=True,
+            dry_run=False,
+            push=True,
+        )
+    )
 
     out, err = capsys.readouterr()
     assert rc == u.EXIT_OK, err
     assert "already matches" not in out
-    assert "FROM is 1.0.0, the upstream pins.yaml: a local commit pins 2.0.0 and is not pushed yet" in err
+    assert (
+        "FROM is 1.0.0, the upstream pins.yaml: a local commit pins 2.0.0 and is not pushed yet"
+        in err
+    )
     assert seen["pushes"] == 2
     assert not u._unpushed(pushed_real_git_deploy)
 
 
 def test_a_rejected_push_fails_the_stage_with_gits_reason(
-    monkeypatch: pytest.MonkeyPatch, pushed_real_git_deploy: Path, tmp_path: Path, capsys: pytest.CaptureFixture
+    monkeypatch: pytest.MonkeyPatch,
+    pushed_real_git_deploy: Path,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture,
 ) -> None:
     """The remote moved since the checkout last fetched, which the last line of git's output never says."""
     _two_stage(monkeypatch, pushed_real_git_deploy)
     _argo_comparing_after_the_push(monkeypatch, stale_reads=0)
-    remote = u._git(pushed_real_git_deploy, "remote", "get-url", "origin").stdout.strip()
+    remote = u._git(
+        pushed_real_git_deploy, "remote", "get-url", "origin"
+    ).stdout.strip()
     elsewhere = tmp_path / "elsewhere"
     assert u._run(["git", "clone", "-q", remote, str(elsewhere)]).returncode == 0
     (elsewhere / "console-edit.yaml").write_text("x: 1\n", encoding="utf-8")
     for args in (["add", "-A"], ["commit", "-q", "-m", "console edit"], ["push", "-q"]):
         assert u._git(elsewhere, *args).returncode == 0, args
 
-    rc = u.cmd_upgrade_apply(_apply_args(deploy=str(pushed_real_git_deploy), to="2.0.0", yes=True, dry_run=False, push=True))
+    rc = u.cmd_upgrade_apply(
+        _apply_args(
+            deploy=str(pushed_real_git_deploy),
+            to="2.0.0",
+            yes=True,
+            dry_run=False,
+            push=True,
+        )
+    )
 
     err = capsys.readouterr().err
     assert rc == u.EXIT_BLOCKED, err
@@ -2731,53 +3697,104 @@ HYPERDX_OVERLAY = "# Enables hyperdx.\ndeploy:\n  service: hyperdx\n  instance: 
 @pytest.mark.parametrize(
     ("name", "service", "charts", "renamed"),
     [
-        ("hyperdx-default-values.yaml", "hyperdx", {"dfe-hyperdx": DFE_HYPERDX_DIGEST}, True),
-        ("hyperdx-edge-values.yaml", "hyperdx", {"dfe-hyperdx": DFE_HYPERDX_DIGEST}, True),
+        (
+            "hyperdx-default-values.yaml",
+            "hyperdx",
+            {"dfe-hyperdx": DFE_HYPERDX_DIGEST},
+            True,
+        ),
+        (
+            "hyperdx-edge-values.yaml",
+            "hyperdx",
+            {"dfe-hyperdx": DFE_HYPERDX_DIGEST},
+            True,
+        ),
         # TO still renders the old name, or predates the new one.
-        ("hyperdx-default-values.yaml", "hyperdx", {"dfe-hyperdx": DFE_HYPERDX_DIGEST, "hyperdx": DFE_HYPERDX_DIGEST}, False),
-        ("hyperdx-default-values.yaml", "hyperdx", {"hyperdx": DFE_HYPERDX_DIGEST}, False),
+        (
+            "hyperdx-default-values.yaml",
+            "hyperdx",
+            {"dfe-hyperdx": DFE_HYPERDX_DIGEST, "hyperdx": DFE_HYPERDX_DIGEST},
+            False,
+        ),
+        (
+            "hyperdx-default-values.yaml",
+            "hyperdx",
+            {"hyperdx": DFE_HYPERDX_DIGEST},
+            False,
+        ),
         ("hyperdx-default-values.yaml", "hyperdx", {}, False),
         # The file names another service, or is already renamed.
-        ("hyperdx-default-values.yaml", "dfe-ui", {"dfe-hyperdx": DFE_HYPERDX_DIGEST}, False),
-        ("dfe-hyperdx-default-values.yaml", "dfe-hyperdx", {"dfe-hyperdx": DFE_HYPERDX_DIGEST}, False),
+        (
+            "hyperdx-default-values.yaml",
+            "dfe-ui",
+            {"dfe-hyperdx": DFE_HYPERDX_DIGEST},
+            False,
+        ),
+        (
+            "dfe-hyperdx-default-values.yaml",
+            "dfe-hyperdx",
+            {"dfe-hyperdx": DFE_HYPERDX_DIGEST},
+            False,
+        ),
     ],
 )
 def test_pending_renames_names_only_an_overlay_the_to_stack_no_longer_renders(
     deploy: Path, name: str, service: str, charts: dict[str, str], renamed: bool
 ) -> None:
     (deploy / "values").mkdir()
-    (deploy / "values" / name).write_text(HYPERDX_OVERLAY.replace("service: hyperdx", f"service: {service}"), encoding="utf-8")
+    (deploy / "values" / name).write_text(
+        HYPERDX_OVERLAY.replace("service: hyperdx", f"service: {service}"),
+        encoding="utf-8",
+    )
 
     found = u.pending_renames(deploy, {"chart-digests": charts})
 
     if renamed:
         new = "dfe-" + name
-        assert found == [(deploy / "values" / name, deploy / "values" / new, "dfe-hyperdx")]
+        assert found == [
+            (deploy / "values" / name, deploy / "values" / new, "dfe-hyperdx")
+        ]
     else:
         assert found == []
 
 
-def test_a_rename_moves_the_overlay_and_sets_only_its_deploy_service(real_git_deploy: Path) -> None:
+def test_a_rename_moves_the_overlay_and_sets_only_its_deploy_service(
+    real_git_deploy: Path,
+) -> None:
     values = real_git_deploy / "values"
     values.mkdir()
-    (values / "hyperdx-default-values.yaml").write_text(HYPERDX_OVERLAY, encoding="utf-8")
+    (values / "hyperdx-default-values.yaml").write_text(
+        HYPERDX_OVERLAY, encoding="utf-8"
+    )
     for args in (["add", "-A"], ["commit", "-q", "-m", "seed"]):
         assert u._git(real_git_deploy, *args).returncode == 0, args
 
-    ok, detail = u._rename_services(real_git_deploy, u.pending_renames(real_git_deploy, {"chart-digests": {"dfe-hyperdx": DFE_HYPERDX_DIGEST}}))
+    ok, detail = u._rename_services(
+        real_git_deploy,
+        u.pending_renames(
+            real_git_deploy, {"chart-digests": {"dfe-hyperdx": DFE_HYPERDX_DIGEST}}
+        ),
+    )
 
     assert ok, detail
     assert detail == "hyperdx-default-values.yaml -> dfe-hyperdx-default-values.yaml"
     assert not (values / "hyperdx-default-values.yaml").exists()
     moved = (values / "dfe-hyperdx-default-values.yaml").read_text(encoding="utf-8")
-    assert moved == HYPERDX_OVERLAY.replace("deploy:\n  service: hyperdx", "deploy:\n  service: dfe-hyperdx")
+    assert moved == HYPERDX_OVERLAY.replace(
+        "deploy:\n  service: hyperdx", "deploy:\n  service: dfe-hyperdx"
+    )
     assert u._git(real_git_deploy, "status", "--porcelain").stdout.startswith("R")
 
 
 @pytest.mark.parametrize(
     ("text", "want"),
     [
-        (HYPERDX_OVERLAY, HYPERDX_OVERLAY.replace("deploy:\n  service: hyperdx", "deploy:\n  service: dfe-hyperdx")),
+        (
+            HYPERDX_OVERLAY,
+            HYPERDX_OVERLAY.replace(
+                "deploy:\n  service: hyperdx", "deploy:\n  service: dfe-hyperdx"
+            ),
+        ),
         # A comment or blank line inside the block, and a later block's own service key.
         (
             "deploy:\n  # seeded\n\n  instance: a\n  service: hyperdx\nother:\n  service: hyperdx\n",
@@ -2785,54 +3802,94 @@ def test_a_rename_moves_the_overlay_and_sets_only_its_deploy_service(real_git_de
         ),
         # No deploy block, or a service key only outside it: nothing moves.
         ("other:\n  service: hyperdx\n", "other:\n  service: hyperdx\n"),
-        ("service: hyperdx\ndeploy:\n  instance: a\n", "service: hyperdx\ndeploy:\n  instance: a\n"),
+        (
+            "service: hyperdx\ndeploy:\n  instance: a\n",
+            "service: hyperdx\ndeploy:\n  instance: a\n",
+        ),
         # The input CodeQL timed the old regex on: many tab-only lines after deploy:.
         ("deploy:\n" + "\t\t\n" * 5000, "deploy:\n" + "\t\t\n" * 5000),
     ],
 )
-def test_set_deploy_service_touches_only_the_deploy_blocks_service(text: str, want: str) -> None:
+def test_set_deploy_service_touches_only_the_deploy_blocks_service(
+    text: str, want: str
+) -> None:
     assert u._set_deploy_service(text, "dfe-hyperdx") == want
 
 
 def test_apply_pushes_the_rename_with_the_chart_stage(
-    monkeypatch: pytest.MonkeyPatch, pushed_real_git_deploy: Path, capsys: pytest.CaptureFixture
+    monkeypatch: pytest.MonkeyPatch,
+    pushed_real_git_deploy: Path,
+    capsys: pytest.CaptureFixture,
 ) -> None:
     """The renamed overlay reaches the remote in the chart stage, before any retarget reads it."""
     _two_stage(monkeypatch, pushed_real_git_deploy)
     versions_path = pushed_real_git_deploy.parent / "versions.yaml"
     versions_path.write_text(
-        TWO_STAGE_VERSIONS_YAML + f'    chart-digests:\n      dfe-hyperdx: "{DFE_HYPERDX_DIGEST}"\n', encoding="utf-8"
+        TWO_STAGE_VERSIONS_YAML
+        + f'    chart-digests:\n      dfe-hyperdx: "{DFE_HYPERDX_DIGEST}"\n',
+        encoding="utf-8",
     )
     _argo_comparing_after_the_push(monkeypatch, stale_reads=0)
     values = pushed_real_git_deploy / "values"
     values.mkdir()
-    (values / "hyperdx-default-values.yaml").write_text(HYPERDX_OVERLAY, encoding="utf-8")
+    (values / "hyperdx-default-values.yaml").write_text(
+        HYPERDX_OVERLAY, encoding="utf-8"
+    )
     for args in (["add", "-A"], ["commit", "-q", "-m", "seed"], ["push", "-q"]):
         assert u._git(pushed_real_git_deploy, *args).returncode == 0, args
 
-    rc = u.cmd_upgrade_apply(_apply_args(deploy=str(pushed_real_git_deploy), to="2.0.0", yes=True, dry_run=False, push=True))
+    rc = u.cmd_upgrade_apply(
+        _apply_args(
+            deploy=str(pushed_real_git_deploy),
+            to="2.0.0",
+            yes=True,
+            dry_run=False,
+            push=True,
+        )
+    )
 
     err = capsys.readouterr().err
     assert rc == u.EXIT_OK, err
-    assert "rename: hyperdx-default-values.yaml -> dfe-hyperdx-default-values.yaml -- committed and pushed" in err
-    pushed = u._git(pushed_real_git_deploy, "show", "@{upstream}:values/dfe-hyperdx-default-values.yaml")
+    assert (
+        "rename: hyperdx-default-values.yaml -> dfe-hyperdx-default-values.yaml -- committed and pushed"
+        in err
+    )
+    pushed = u._git(
+        pushed_real_git_deploy,
+        "show",
+        "@{upstream}:values/dfe-hyperdx-default-values.yaml",
+    )
     assert pushed.returncode == 0, pushed.stderr
     assert "deploy:\n  service: dfe-hyperdx\n" in pushed.stdout
 
 
 def test_a_pushing_dry_run_names_the_reconcile_each_wait_asks_for(
-    monkeypatch: pytest.MonkeyPatch, deploy: Path, order_path: Path, versions_path: Path, capsys: pytest.CaptureFixture
+    monkeypatch: pytest.MonkeyPatch,
+    deploy: Path,
+    order_path: Path,
+    versions_path: Path,
+    capsys: pytest.CaptureFixture,
 ) -> None:
     monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
     monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
     monkeypatch.setattr(u, "run_compat_check", lambda *_a, **_k: (True, "ok"))
 
-    assert u.cmd_upgrade_apply(_apply_args(deploy=str(deploy), to="2.0.0", namespace="dfe-named", push=True)) == u.EXIT_OK
+    assert (
+        u.cmd_upgrade_apply(
+            _apply_args(
+                deploy=str(deploy), to="2.0.0", namespace="dfe-named", push=True
+            )
+        )
+        == u.EXIT_OK
+    )
 
-    assert capsys.readouterr().err.count(
-        "wait for Argo Applications in argocd, each reconciled after any change it pushes, then every "
-        "Deployment and StatefulSet in dfe-named to finish rolling out (timeout 900s)"
-    ) == 3
+    assert (
+        capsys.readouterr().err.count(
+            "wait for Argo Applications in argocd, each reconciled after any change it pushes, then every "
+            "Deployment and StatefulSet in dfe-named to finish rolling out (timeout 900s)"
+        )
+        == 3
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -2849,12 +3906,12 @@ DOMAIN = "single.dfe.test"
 # Every value bootstrap.sh's [6/7] install sets, its login values piped in on stdin, and the
 # domain read off the cluster secret as the command runs.
 ARGOCD_UPGRADE = (
-    "DFE_DOMAIN=\"$(kubectl -n argocd get secret dfe-cluster -o "
-    "'jsonpath={.metadata.annotations.dfe\\.hyperi\\.io/domain}')\" && test -n \"$DFE_DOMAIN\" && "
-    f"python3 {shlex.quote(str(BOOTSTRAP_DIR / 'argocd_login.py'))} values --domain \"$DFE_DOMAIN\" | "
+    'DFE_DOMAIN="$(kubectl -n argocd get secret dfe-cluster -o '
+    '\'jsonpath={.metadata.annotations.dfe\\.hyperi\\.io/domain}\')" && test -n "$DFE_DOMAIN" && '
+    f'python3 {shlex.quote(str(BOOTSTRAP_DIR / "argocd_login.py"))} values --domain "$DFE_DOMAIN" | '
     "helm -n argocd upgrade argocd argo-cd --repo https://argoproj.github.io/argo-helm --version 10.10.0 "
     "--reset-values --set redis.enabled=false --set externalRedis.host=valkey.argocd.svc.cluster.local "
-    "--set externalRedis.port=6379 --set-string global.domain=argocd.\"$DFE_DOMAIN\" "
+    '--set externalRedis.port=6379 --set-string global.domain=argocd."$DFE_DOMAIN" '
     "--set-string 'configs.params.server\\.insecure=true' "
     "--set-string 'configs.params.reposerver\\.disable\\.git\\.modules=true' "
     "--set-string 'configs.cm.timeout\\.reconciliation=300s' "
@@ -2865,7 +3922,10 @@ ARGOCD_UPGRADE = (
 )
 ARGO_STEP = u.Step(stage="10-bootstrap", order="30", key="bootstrap.argocd")
 # The user-supplied values bootstrap.sh's step [6/7] installs Argo with.
-BOOTSTRAP_ARGO_VALUES = {"redis": {"enabled": False}, "externalRedis": {"host": "valkey.argocd.svc.cluster.local"}}
+BOOTSTRAP_ARGO_VALUES = {
+    "redis": {"enabled": False},
+    "externalRedis": {"host": "valkey.argocd.svc.cluster.local"},
+}
 ARGO_RELEASES = [{"name": "argocd", "namespace": "argocd", "chart": "argo-cd-10.9.6"}]
 
 
@@ -2880,7 +3940,9 @@ def _two_stage(monkeypatch: pytest.MonkeyPatch, deploy: Path) -> None:
 
 
 # Both stacks pin cert-manager v1.1.0, so the plan moves ClickHouse alone.
-HELD_BOOTSTRAP_VERSIONS_YAML = TWO_STAGE_VERSIONS_YAML.replace('cert-manager: "v1.0.0"', 'cert-manager: "v1.1.0"')
+HELD_BOOTSTRAP_VERSIONS_YAML = TWO_STAGE_VERSIONS_YAML.replace(
+    'cert-manager: "v1.0.0"', 'cert-manager: "v1.1.0"'
+)
 
 
 def _held_bootstrap(monkeypatch: pytest.MonkeyPatch, deploy: Path) -> None:
@@ -2890,15 +3952,23 @@ def _held_bootstrap(monkeypatch: pytest.MonkeyPatch, deploy: Path) -> None:
 
 
 def test_a_bootstrap_pin_an_earlier_upgrade_left_uninstalled_still_blocks_ok(
-    monkeypatch: pytest.MonkeyPatch, real_git_deploy: Path, capsys: pytest.CaptureFixture
+    monkeypatch: pytest.MonkeyPatch,
+    real_git_deploy: Path,
+    capsys: pytest.CaptureFixture,
 ) -> None:
     """A later plan moving no bootstrap pin reported OK over an Argo CD still on the previous stack's chart."""
     _held_bootstrap(monkeypatch, real_git_deploy)
     asked = _bootstrap_runs(monkeypatch, "v1.0.0")
 
-    rc = u.cmd_upgrade_apply(_apply_args(
-        deploy=str(real_git_deploy), to="2.0.0", yes=True, dry_run=False, kubeconfig="kc",
-    ))
+    rc = u.cmd_upgrade_apply(
+        _apply_args(
+            deploy=str(real_git_deploy),
+            to="2.0.0",
+            yes=True,
+            dry_run=False,
+            kubeconfig="kc",
+        )
+    )
 
     err = capsys.readouterr().err
     assert rc == u.EXIT_BLOCKED, err
@@ -2914,12 +3984,16 @@ def test_a_bootstrap_pin_an_earlier_upgrade_left_uninstalled_still_blocks_ok(
 
 
 def test_a_bootstrap_pin_the_plan_does_not_move_and_the_cluster_runs_is_done(
-    monkeypatch: pytest.MonkeyPatch, real_git_deploy: Path, capsys: pytest.CaptureFixture
+    monkeypatch: pytest.MonkeyPatch,
+    real_git_deploy: Path,
+    capsys: pytest.CaptureFixture,
 ) -> None:
     _held_bootstrap(monkeypatch, real_git_deploy)
     _bootstrap_runs(monkeypatch, "v1.1.0")
 
-    rc = u.cmd_upgrade_apply(_apply_args(deploy=str(real_git_deploy), to="2.0.0", yes=True, dry_run=False))
+    rc = u.cmd_upgrade_apply(
+        _apply_args(deploy=str(real_git_deploy), to="2.0.0", yes=True, dry_run=False)
+    )
 
     err = capsys.readouterr().err
     assert rc == u.EXIT_OK, err
@@ -2928,7 +4002,9 @@ def test_a_bootstrap_pin_the_plan_does_not_move_and_the_cluster_runs_is_done(
 
 
 def test_a_dry_run_names_the_read_of_a_bootstrap_pin_the_plan_does_not_move(
-    monkeypatch: pytest.MonkeyPatch, real_git_deploy: Path, capsys: pytest.CaptureFixture
+    monkeypatch: pytest.MonkeyPatch,
+    real_git_deploy: Path,
+    capsys: pytest.CaptureFixture,
 ) -> None:
     _held_bootstrap(monkeypatch, real_git_deploy)
     asked = _bootstrap_runs(monkeypatch, "v1.0.0")
@@ -2945,17 +4021,23 @@ def test_a_dry_run_names_the_read_of_a_bootstrap_pin_the_plan_does_not_move(
 
 
 def test_a_bootstrap_pin_the_target_stack_lacks_is_not_read(
-    monkeypatch: pytest.MonkeyPatch, real_git_deploy: Path, capsys: pytest.CaptureFixture
+    monkeypatch: pytest.MonkeyPatch,
+    real_git_deploy: Path,
+    capsys: pytest.CaptureFixture,
 ) -> None:
     _two_stage(monkeypatch, real_git_deploy)
     versions_path = real_git_deploy.parent / "versions.yaml"
     unpinned = TWO_STAGE_VERSIONS_YAML
     for version in ("v1.0.0", "v1.1.0"):
-        unpinned = unpinned.replace(f'    bootstrap:\n      cert-manager: "{version}"\n', "")
+        unpinned = unpinned.replace(
+            f'    bootstrap:\n      cert-manager: "{version}"\n', ""
+        )
     versions_path.write_text(unpinned, encoding="utf-8")
     asked = _bootstrap_runs(monkeypatch, "v1.0.0")
 
-    rc = u.cmd_upgrade_apply(_apply_args(deploy=str(real_git_deploy), to="2.0.0", yes=True, dry_run=False))
+    rc = u.cmd_upgrade_apply(
+        _apply_args(deploy=str(real_git_deploy), to="2.0.0", yes=True, dry_run=False)
+    )
 
     err = capsys.readouterr().err
     assert rc == u.EXIT_OK, err
@@ -2964,15 +4046,23 @@ def test_a_bootstrap_pin_the_target_stack_lacks_is_not_read(
 
 
 def test_a_bootstrap_pin_the_cluster_does_not_run_ends_not_complete_with_the_command(
-    monkeypatch: pytest.MonkeyPatch, real_git_deploy: Path, capsys: pytest.CaptureFixture
+    monkeypatch: pytest.MonkeyPatch,
+    real_git_deploy: Path,
+    capsys: pytest.CaptureFixture,
 ) -> None:
     """Argo CD stayed on its old chart while apply reported the bootstrap stage done and the run OK."""
     _two_stage(monkeypatch, real_git_deploy)
     asked = _bootstrap_runs(monkeypatch, "v1.0.0")
 
-    rc = u.cmd_upgrade_apply(_apply_args(
-        deploy=str(real_git_deploy), to="2.0.0", yes=True, dry_run=False, kubeconfig="kc",
-    ))
+    rc = u.cmd_upgrade_apply(
+        _apply_args(
+            deploy=str(real_git_deploy),
+            to="2.0.0",
+            yes=True,
+            dry_run=False,
+            kubeconfig="kc",
+        )
+    )
 
     err = capsys.readouterr().err
     assert rc == u.EXIT_BLOCKED, err
@@ -2983,21 +4073,32 @@ def test_a_bootstrap_pin_the_cluster_does_not_run_ends_not_complete_with_the_com
     ) in err
     # The walk carries on past it: the later stage still runs.
     assert "stage 2/2: 20-second" in err
-    assert "NOT complete -- bootstrap.cert-manager not shown running the pinned chart" in err
+    assert (
+        "NOT complete -- bootstrap.cert-manager not shown running the pinned chart"
+        in err
+    )
     assert "re-run this apply with --from 1.0.0" in err
     assert "apply OK" not in err
     assert u.read_deploy_pin(real_git_deploy) == "2.0.0"
 
 
 def test_a_stop_before_after_a_pending_bootstrap_pin_is_not_ok_either(
-    monkeypatch: pytest.MonkeyPatch, real_git_deploy: Path, capsys: pytest.CaptureFixture
+    monkeypatch: pytest.MonkeyPatch,
+    real_git_deploy: Path,
+    capsys: pytest.CaptureFixture,
 ) -> None:
     _two_stage(monkeypatch, real_git_deploy)
     _bootstrap_runs(monkeypatch, "v1.0.0")
 
-    rc = u.cmd_upgrade_apply(_apply_args(
-        deploy=str(real_git_deploy), to="2.0.0", yes=True, dry_run=False, stop_before="20-second",
-    ))
+    rc = u.cmd_upgrade_apply(
+        _apply_args(
+            deploy=str(real_git_deploy),
+            to="2.0.0",
+            yes=True,
+            dry_run=False,
+            stop_before="20-second",
+        )
+    )
 
     err = capsys.readouterr().err
     assert rc == u.EXIT_BLOCKED, err
@@ -3006,19 +4107,35 @@ def test_a_stop_before_after_a_pending_bootstrap_pin_is_not_ok_either(
 
 
 def test_the_resumed_apply_confirms_a_bootstrap_pin_once_it_runs(
-    monkeypatch: pytest.MonkeyPatch, real_git_deploy: Path, capsys: pytest.CaptureFixture
+    monkeypatch: pytest.MonkeyPatch,
+    real_git_deploy: Path,
+    capsys: pytest.CaptureFixture,
 ) -> None:
     _two_stage(monkeypatch, real_git_deploy)
     _bootstrap_runs(monkeypatch, "v1.0.0")
-    assert u.cmd_upgrade_apply(_apply_args(
-        deploy=str(real_git_deploy), to="2.0.0", yes=True, dry_run=False,
-    )) == u.EXIT_BLOCKED
+    assert (
+        u.cmd_upgrade_apply(
+            _apply_args(
+                deploy=str(real_git_deploy),
+                to="2.0.0",
+                yes=True,
+                dry_run=False,
+            )
+        )
+        == u.EXIT_BLOCKED
+    )
     capsys.readouterr()
 
     _bootstrap_runs(monkeypatch, "v1.1.0")
-    rc = u.cmd_upgrade_apply(_apply_args(
-        deploy=str(real_git_deploy), to="2.0.0", from_stack="1.0.0", yes=True, dry_run=False,
-    ))
+    rc = u.cmd_upgrade_apply(
+        _apply_args(
+            deploy=str(real_git_deploy),
+            to="2.0.0",
+            from_stack="1.0.0",
+            yes=True,
+            dry_run=False,
+        )
+    )
 
     err = capsys.readouterr().err
     assert rc == u.EXIT_OK, err
@@ -3026,70 +4143,128 @@ def test_the_resumed_apply_confirms_a_bootstrap_pin_once_it_runs(
     assert "dfe-ops upgrade apply OK: 1.0.0 -> 2.0.0" in err
 
 
-def test_read_bootstrap_chart_reads_the_chart_label(monkeypatch: pytest.MonkeyPatch) -> None:
-    doc = {"metadata": {"labels": {"helm.sh/chart": "argo-cd-10.9.6", "app.kubernetes.io/version": "v3.5.3"}}}
+def test_read_bootstrap_chart_reads_the_chart_label(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    doc = {
+        "metadata": {
+            "labels": {
+                "helm.sh/chart": "argo-cd-10.9.6",
+                "app.kubernetes.io/version": "v3.5.3",
+            }
+        }
+    }
     calls = _mock_run(monkeypatch, _proc(0, stdout=json.dumps(doc)))
 
-    assert u.read_bootstrap_chart("kc", u.BOOTSTRAP_RELEASES["bootstrap.argocd"]) == ("10.9.6", "")
+    assert u.read_bootstrap_chart("kc", u.BOOTSTRAP_RELEASES["bootstrap.argocd"]) == (
+        "10.9.6",
+        "",
+    )
     assert calls[0][:3] == ["kubectl", "--kubeconfig", "kc"]
     assert calls[0][3:8] == ["-n", "argocd", "get", "deployment", "argocd-server"]
 
 
 @pytest.mark.parametrize(
     "labels",
-    [{}, {"app.kubernetes.io/managed-by": "Helm"}, {"helm.sh/chart": "cert-manager-v1.21.2"}],
+    [
+        {},
+        {"app.kubernetes.io/managed-by": "Helm"},
+        {"helm.sh/chart": "cert-manager-v1.21.2"},
+    ],
 )
 def test_a_deployment_without_this_charts_label_reads_as_adopted(
     monkeypatch: pytest.MonkeyPatch, labels: dict[str, str]
 ) -> None:
-    _mock_run(monkeypatch, _proc(0, stdout=json.dumps({"metadata": {"labels": labels}})))
-    running, why = u.read_bootstrap_chart(None, u.BOOTSTRAP_RELEASES["bootstrap.argocd"])
+    _mock_run(
+        monkeypatch, _proc(0, stdout=json.dumps({"metadata": {"labels": labels}}))
+    )
+    running, why = u.read_bootstrap_chart(
+        None, u.BOOTSTRAP_RELEASES["bootstrap.argocd"]
+    )
     assert running == ""
     assert "carries no helm.sh/chart label for argo-cd" in why
     assert "adopted" in why
 
 
-def test_an_unreadable_deployment_is_pending_with_the_reason_and_the_command(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_an_unreadable_deployment_is_pending_with_the_reason_and_the_command(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.delenv("DFE_VALKEY_SERVICE", raising=False)
     monkeypatch.setattr(u, "argocd_installed_by_bootstrap", lambda _kc: (True, "ours"))
-    _mock_run(monkeypatch, _proc(1, stderr='Error from server (NotFound): deployments.apps "argocd-server" not found'))
-    state, detail = u.check_bootstrap_move(None, u.Move(step=ARGO_STEP, old="10.9.6", new="10.10.0"))
+    _mock_run(
+        monkeypatch,
+        _proc(
+            1,
+            stderr='Error from server (NotFound): deployments.apps "argocd-server" not found',
+        ),
+    )
+    state, detail = u.check_bootstrap_move(
+        None, u.Move(step=ARGO_STEP, old="10.9.6", new="10.10.0")
+    )
     assert state == u.BOOTSTRAP_PENDING
-    assert "cannot read deployment/argocd-server in argocd: Error from server (NotFound)" in detail
+    assert (
+        "cannot read deployment/argocd-server in argocd: Error from server (NotFound)"
+        in detail
+    )
     assert detail.endswith(f"Run: {ARGOCD_UPGRADE}")
 
 
 def test_a_bootstrap_pin_with_no_known_release_points_at_bootstrap_sh() -> None:
     step = u.Step(stage="10-bootstrap", order="40", key="bootstrap.metallb")
-    state, detail = u.check_bootstrap_move(None, u.Move(step=step, old="0.15.0", new="0.16.1"))
+    state, detail = u.check_bootstrap_move(
+        None, u.Move(step=step, old="0.15.0", new="0.16.1")
+    )
     assert state == u.BOOTSTRAP_PENDING
     assert "re-run bootstrap/bootstrap.sh with DFE_STACK_VERSION" in detail
 
 
-def test_bootstraps_own_argo_is_recognised_the_way_bootstrap_sh_recognises_it(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_bootstraps_own_argo_is_recognised_the_way_bootstrap_sh_recognises_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.delenv("DFE_VALKEY_SERVICE", raising=False)
     calls = _mock_run(
-        monkeypatch, _proc(0, stdout=json.dumps(ARGO_RELEASES)), _proc(0, stdout=json.dumps(BOOTSTRAP_ARGO_VALUES))
+        monkeypatch,
+        _proc(0, stdout=json.dumps(ARGO_RELEASES)),
+        _proc(0, stdout=json.dumps(BOOTSTRAP_ARGO_VALUES)),
     )
     ours, why = u.argocd_installed_by_bootstrap("kc")
     assert ours is True, why
     assert calls[0] == [
-        "helm", "list", "--namespace", "argocd", "--filter", "^argocd$", "-o", "json", "--kubeconfig", "kc",
+        "helm",
+        "list",
+        "--namespace",
+        "argocd",
+        "--filter",
+        "^argocd$",
+        "-o",
+        "json",
+        "--kubeconfig",
+        "kc",
     ]
     assert calls[1][:4] == ["helm", "get", "values", "argocd"]
 
 
-def test_a_stock_argo_install_reads_adopted_and_gets_no_command(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_stock_argo_install_reads_adopted_and_gets_no_command(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A host's `helm install argocd argo/argo-cd` carries the same release, chart and label."""
-    calls = _mock_run(monkeypatch, _proc(0, stdout=json.dumps(ARGO_RELEASES)), _proc(0, stdout="null"))
-    state, detail = u.check_bootstrap_move("kc", u.Move(step=ARGO_STEP, old="10.9.6", new="10.10.0"))
+    calls = _mock_run(
+        monkeypatch, _proc(0, stdout=json.dumps(ARGO_RELEASES)), _proc(0, stdout="null")
+    )
+    state, detail = u.check_bootstrap_move(
+        "kc", u.Move(step=ARGO_STEP, old="10.9.6", new="10.10.0")
+    )
     assert state == u.BOOTSTRAP_ADOPTED
-    assert detail.endswith("so this bootstrap did not install it, so its owner upgrades it")
+    assert detail.endswith(
+        "so this bootstrap did not install it, so its owner upgrades it"
+    )
     assert "helm --kubeconfig" not in detail
     assert [c[0] for c in calls] == ["helm", "helm"]  # no kubectl read of the version
 
 
-def test_an_argo_helm_cannot_read_is_pending_with_the_reason(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_an_argo_helm_cannot_read_is_pending_with_the_reason(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.delenv("DFE_VALKEY_SERVICE", raising=False)
     monkeypatch.setattr(u, "read_bootstrap_chart", lambda *_a: ("10.9.6", ""))
 
@@ -3097,7 +4272,9 @@ def test_an_argo_helm_cannot_read_is_pending_with_the_reason(monkeypatch: pytest
         raise FileNotFoundError("helm")
 
     monkeypatch.setattr(u, "_run", no_helm)
-    state, detail = u.check_bootstrap_move(None, u.Move(step=ARGO_STEP, old="10.9.6", new="10.10.0"))
+    state, detail = u.check_bootstrap_move(
+        None, u.Move(step=ARGO_STEP, old="10.9.6", new="10.10.0")
+    )
     assert state == u.BOOTSTRAP_PENDING
     assert (
         "the cluster runs 10.9.6. Run (cannot list helm releases in argocd: helm is not on PATH), "
@@ -3108,14 +4285,21 @@ def test_an_argo_helm_cannot_read_is_pending_with_the_reason(monkeypatch: pytest
 def test_an_argo_on_the_pin_is_done(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(u, "argocd_installed_by_bootstrap", lambda _kc: (True, "ours"))
     monkeypatch.setattr(u, "read_bootstrap_chart", lambda *_a: ("10.10.0", ""))
-    state, detail = u.check_bootstrap_move(None, u.Move(step=ARGO_STEP, old="10.9.6", new="10.10.0"))
-    assert (state, detail) == (u.BOOTSTRAP_DONE, "bootstrap.argocd runs 10.10.0 (deployment/argocd-server helm.sh/chart)")
+    state, detail = u.check_bootstrap_move(
+        None, u.Move(step=ARGO_STEP, old="10.9.6", new="10.10.0")
+    )
+    assert (state, detail) == (
+        u.BOOTSTRAP_DONE,
+        "bootstrap.argocd runs 10.10.0 (deployment/argocd-server helm.sh/chart)",
+    )
 
 
 def test_every_bootstrap_release_matches_the_install_bootstrap_sh_runs() -> None:
     """The printed upgrade must name the release, chart, repository and namespace bootstrap.sh installed."""
     script = (REPO_ROOT / "bootstrap" / "bootstrap.sh").read_text(encoding="utf-8")
-    steps = {step.key for step in u.load_steps() if step.key.startswith(u.BOOTSTRAP_PREFIX)}
+    steps = {
+        step.key for step in u.load_steps() if step.key.startswith(u.BOOTSTRAP_PREFIX)
+    }
     assert steps == set(u.BOOTSTRAP_RELEASES)
     for key, release in u.BOOTSTRAP_RELEASES.items():
         install = re.search(
@@ -3124,8 +4308,14 @@ def test_every_bootstrap_release_matches_the_install_bootstrap_sh_runs() -> None
             script,
         )
         assert install, key
-        assert re.search(rf"helm repo add {re.escape(install.group(1))} {re.escape(release.repo)} ", script), key
-        assert re.search(r"--timeout (\S+)", script[install.end():]).group(1) == release.timeout, key
+        assert re.search(
+            rf"helm repo add {re.escape(install.group(1))} {re.escape(release.repo)} ",
+            script,
+        ), key
+        assert (
+            re.search(r"--timeout (\S+)", script[install.end() :]).group(1)
+            == release.timeout
+        ), key
         # The deployment bootstrap.sh's own detect-or-install gate reads.
         gate = rf"dfe_should_install \S+ \S+ {re.escape(release.namespace)} {re.escape(release.deployment)}\b"
         assert re.search(gate, script), key
@@ -3142,10 +4332,14 @@ SPLICE = '${DFE_RELEASE_VALUES[@]+"${DFE_RELEASE_VALUES[@]}"}'
 def _install(release: u.helm_releases.HelmRelease) -> tuple[str, str]:
     """(the dfe_release_values call bootstrap.sh makes for `release`, the helm install it feeds)."""
     script = BOOTSTRAP_SH.read_text(encoding="utf-8")
-    start = re.search(rf"helm upgrade --install {re.escape(release.release)} ", script).start()
-    install = script[start:script.index("--timeout", start)]
+    start = re.search(
+        rf"helm upgrade --install {re.escape(release.release)} ", script
+    ).start()
+    install = script[start : script.index("--timeout", start)]
     calls = list(re.finditer(r"(?m)^\s*(dfe_release_values .+)$", script[:start]))
-    assert calls, f"bootstrap.sh calls dfe_release_values before no install of {release.release}"
+    assert calls, (
+        f"bootstrap.sh calls dfe_release_values before no install of {release.release}"
+    )
     return calls[-1].group(1).strip(), install
 
 
@@ -3153,12 +4347,27 @@ def _bootstrap_values(release: u.helm_releases.HelmRelease) -> list[str]:
     """The values bootstrap.sh's own install of `release` passes helm: its helper, run on its call line."""
     lines = BOOTSTRAP_SH.read_text(encoding="utf-8").splitlines()
     call, _install_text = _install(release)
-    script = "\n".join([
-        "set -euo pipefail", *function_lines(lines, "dfe_release_values"), call, f'printf "%s\\n" {SPLICE}',
-    ])
-    env = {**os.environ, "SCRIPT_DIR": str(BOOTSTRAP_DIR), "DFE_DOMAIN": DOMAIN, "VALKEY_SVC": "valkey"}
+    script = "\n".join(
+        [
+            "set -euo pipefail",
+            *function_lines(lines, "dfe_release_values"),
+            call,
+            f'printf "%s\\n" {SPLICE}',
+        ]
+    )
+    env = {
+        **os.environ,
+        "SCRIPT_DIR": str(BOOTSTRAP_DIR),
+        "DFE_DOMAIN": DOMAIN,
+        "VALKEY_SVC": "valkey",
+    }
     out = subprocess.run(
-        ["bash", "-c", script], env=env, capture_output=True, text=True, encoding="utf-8", errors="replace",
+        ["bash", "-c", script],
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
         check=False,
     )
     assert out.returncode == 0, out.stderr
@@ -3195,40 +4404,61 @@ def test_the_printed_upgrade_sets_exactly_what_bootstrap_sh_installs_with(
     assert "--reuse-values" not in printed
 
 
-def test_the_cert_manager_upgrade_is_the_one_the_stack_note_and_bootstrap_sh_agree_on() -> None:
-    printed = u.bootstrap_upgrade_command(u.BOOTSTRAP_RELEASES["bootstrap.cert-manager"], "v1.21.2", None)
+def test_the_cert_manager_upgrade_is_the_one_the_stack_note_and_bootstrap_sh_agree_on() -> (
+    None
+):
+    printed = u.bootstrap_upgrade_command(
+        u.BOOTSTRAP_RELEASES["bootstrap.cert-manager"], "v1.21.2", None
+    )
     assert printed == (
         "helm -n cert-manager upgrade cert-manager cert-manager --repo https://charts.jetstack.io --version v1.21.2 "
         "--reset-values --set crds.enabled=true --set config.enableGatewayAPI=true --wait --timeout 5m"
     )
 
 
-def test_the_argo_upgrade_pipes_in_the_login_bootstrap_sh_feeds_its_install(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_argo_upgrade_pipes_in_the_login_bootstrap_sh_feeds_its_install(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.delenv("DFE_VALKEY_SERVICE", raising=False)
-    printed = u.bootstrap_upgrade_command(u.BOOTSTRAP_RELEASES["bootstrap.argocd"], "10.10.0", None)
+    printed = u.bootstrap_upgrade_command(
+        u.BOOTSTRAP_RELEASES["bootstrap.argocd"], "10.10.0", None
+    )
     assert printed == ARGOCD_UPGRADE
     script = BOOTSTRAP_SH.read_text(encoding="utf-8")
-    assert 'python3 "${SCRIPT_DIR}/argocd_login.py" values --domain "${DFE_DOMAIN}"' in script
+    assert (
+        'python3 "${SCRIPT_DIR}/argocd_login.py" values --domain "${DFE_DOMAIN}"'
+        in script
+    )
     assert re.search(r'--wait --timeout 10m <<<"\$\{ARGOCD_LOGIN_VALUES\}"', script)
 
 
-def test_the_argo_upgrade_follows_a_renamed_cache_service(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_argo_upgrade_follows_a_renamed_cache_service(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("DFE_VALKEY_SERVICE", "cache")
-    printed = u.bootstrap_upgrade_command(u.BOOTSTRAP_RELEASES["bootstrap.argocd"], "10.10.0", None)
+    printed = u.bootstrap_upgrade_command(
+        u.BOOTSTRAP_RELEASES["bootstrap.argocd"], "10.10.0", None
+    )
     assert "externalRedis.host=cache.argocd.svc.cluster.local" in _printed_helm(printed)
 
 
-def test_the_argo_upgrade_reads_the_domain_off_the_cluster_secret_it_was_told(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_argo_upgrade_reads_the_domain_off_the_cluster_secret_it_was_told(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A value read from a Secret is never printed, so the command reads the domain itself."""
-    printed = u.bootstrap_upgrade_command(u.BOOTSTRAP_RELEASES["bootstrap.argocd"], "10.10.0", "kc", "cd")
+    printed = u.bootstrap_upgrade_command(
+        u.BOOTSTRAP_RELEASES["bootstrap.argocd"], "10.10.0", "kc", "cd"
+    )
     assert printed.startswith(
-        "DFE_DOMAIN=\"$(kubectl --kubeconfig kc -n cd get secret dfe-cluster -o "
-        "'jsonpath={.metadata.annotations.dfe\\.hyperi\\.io/domain}')\" && test -n \"$DFE_DOMAIN\" && "
+        'DFE_DOMAIN="$(kubectl --kubeconfig kc -n cd get secret dfe-cluster -o '
+        '\'jsonpath={.metadata.annotations.dfe\\.hyperi\\.io/domain}\')" && test -n "$DFE_DOMAIN" && '
     )
 
 
 def test_an_upgrade_no_value_of_which_names_the_domain_reads_none() -> None:
-    printed = u.bootstrap_upgrade_command(u.BOOTSTRAP_RELEASES["bootstrap.cert-manager"], "v1.1.0", "kc")
+    printed = u.bootstrap_upgrade_command(
+        u.BOOTSTRAP_RELEASES["bootstrap.cert-manager"], "v1.1.0", "kc"
+    )
     assert printed == CERT_MANAGER_UPGRADE
 
 
@@ -3245,7 +4475,9 @@ with open(os.environ["FAKE_LOG"], "w", encoding="utf-8") as log:
 """
 
 
-def _run_printed(tmp_path: Path, printed: str, domain: str) -> tuple[subprocess.CompletedProcess, dict | None]:
+def _run_printed(
+    tmp_path: Path, printed: str, domain: str
+) -> tuple[subprocess.CompletedProcess, dict | None]:
     """The printed command, run under bash with a kubectl naming `domain` and a helm that records its call."""
     bindir = tmp_path / "bin"
     bindir.mkdir()
@@ -3253,10 +4485,19 @@ def _run_printed(tmp_path: Path, printed: str, domain: str) -> tuple[subprocess.
         (bindir / name).write_text(body, encoding="utf-8", newline="\n")
         (bindir / name).chmod(0o755)
     log = tmp_path / "helm.json"
-    env = {**os.environ, "PATH": f"{bindir}{os.pathsep}{os.environ['PATH']}", "FAKE_DOMAIN": domain,
-           "FAKE_LOG": str(log)}
+    env = {
+        **os.environ,
+        "PATH": f"{bindir}{os.pathsep}{os.environ['PATH']}",
+        "FAKE_DOMAIN": domain,
+        "FAKE_LOG": str(log),
+    }
     out = subprocess.run(
-        ["bash", "-c", printed], env=env, capture_output=True, text=True, encoding="utf-8", errors="replace",
+        ["bash", "-c", printed],
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
         check=False,
     )
     return out, json.loads(log.read_text(encoding="utf-8")) if log.is_file() else None
@@ -3267,16 +4508,24 @@ def test_the_printed_argo_upgrade_runs_and_hands_helm_what_bootstrap_sh_installs
 ) -> None:
     monkeypatch.delenv("DFE_VALKEY_SERVICE", raising=False)
     release = u.BOOTSTRAP_RELEASES["bootstrap.argocd"]
-    out, helm = _run_printed(tmp_path, u.bootstrap_upgrade_command(release, "10.10.0", None), DOMAIN)
+    out, helm = _run_printed(
+        tmp_path, u.bootstrap_upgrade_command(release, "10.10.0", None), DOMAIN
+    )
 
     assert out.returncode == 0, out.stderr
     argv = helm["argv"]
-    assert argv[argv.index("--reset-values") + 1 : argv.index("--wait")] == _bootstrap_values(release)
+    assert argv[
+        argv.index("--reset-values") + 1 : argv.index("--wait")
+    ] == _bootstrap_values(release)
     assert json.loads(helm["stdin"]) == argocd_login.helm_values(None)
 
 
-def test_the_printed_argo_upgrade_stops_before_helm_when_the_secret_names_no_domain(tmp_path: Path) -> None:
-    printed = u.bootstrap_upgrade_command(u.BOOTSTRAP_RELEASES["bootstrap.argocd"], "10.10.0", None)
+def test_the_printed_argo_upgrade_stops_before_helm_when_the_secret_names_no_domain(
+    tmp_path: Path,
+) -> None:
+    printed = u.bootstrap_upgrade_command(
+        u.BOOTSTRAP_RELEASES["bootstrap.argocd"], "10.10.0", None
+    )
     out, helm = _run_printed(tmp_path, printed, "")
     assert out.returncode != 0
     assert helm is None
@@ -3291,8 +4540,12 @@ def _set_values(helm: list[str]) -> dict:
         path, raw = pair.split("=", 1)
         value: object = raw
         if flag == "--set":
-            value = {"true": True, "false": False}.get(raw, int(raw) if raw.isdigit() else raw)
-        *parents, leaf = [part.replace("\\.", ".") for part in re.split(r"(?<!\\)\.", path)]
+            value = {"true": True, "false": False}.get(
+                raw, int(raw) if raw.isdigit() else raw
+            )
+        *parents, leaf = [
+            part.replace("\\.", ".") for part in re.split(r"(?<!\\)\.", path)
+        ]
         node = values
         for part in parents:
             node = node.setdefault(part, {})
@@ -3303,7 +4556,11 @@ def _set_values(helm: list[str]) -> dict:
 def _merged(base: dict, over: dict) -> dict:
     out = dict(base)
     for key, value in over.items():
-        out[key] = _merged(out[key], value) if isinstance(value, dict) and isinstance(out.get(key), dict) else value
+        out[key] = (
+            _merged(out[key], value)
+            if isinstance(value, dict) and isinstance(out.get(key), dict)
+            else value
+        )
     return out
 
 
@@ -3326,20 +4583,30 @@ BOOTSTRAP_ARGO_RELEASE_VALUES = {
 }
 
 
-def test_the_argo_upgrade_carries_every_value_a_bootstrap_install_holds(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_argo_upgrade_carries_every_value_a_bootstrap_install_holds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """--reset-values drops whatever the command does not set again, so it must set all of it."""
     monkeypatch.delenv("DFE_VALKEY_SERVICE", raising=False)
-    printed = u.bootstrap_upgrade_command(u.BOOTSTRAP_RELEASES["bootstrap.argocd"], "10.10.0", None)
+    printed = u.bootstrap_upgrade_command(
+        u.BOOTSTRAP_RELEASES["bootstrap.argocd"], "10.10.0", None
+    )
     sets = _set_values(_printed_helm(printed))
-    assert _merged(sets, argocd_login.helm_values(None)) == BOOTSTRAP_ARGO_RELEASE_VALUES
+    assert (
+        _merged(sets, argocd_login.helm_values(None)) == BOOTSTRAP_ARGO_RELEASE_VALUES
+    )
 
 
-def test_a_pending_argo_names_the_cluster_secret_in_the_argo_namespace(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_pending_argo_names_the_cluster_secret_in_the_argo_namespace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(u, "argocd_installed_by_bootstrap", lambda _kc: (True, "ours"))
     monkeypatch.setattr(u, "read_bootstrap_chart", lambda *_a: ("10.9.6", ""))
-    state, detail = u.check_bootstrap_move(None, u.Move(step=ARGO_STEP, old="10.9.6", new="10.10.0"), "cd")
+    state, detail = u.check_bootstrap_move(
+        None, u.Move(step=ARGO_STEP, old="10.9.6", new="10.10.0"), "cd"
+    )
     assert state == u.BOOTSTRAP_PENDING
-    assert "Run: DFE_DOMAIN=\"$(kubectl -n cd get secret dfe-cluster -o " in detail
+    assert 'Run: DFE_DOMAIN="$(kubectl -n cd get secret dfe-cluster -o ' in detail
 
 
 # ---------------------------------------------------------------------------
@@ -3370,12 +4637,19 @@ def test_strimzi_crds_is_the_conversion_tool_set() -> None:
 def _crd_responses(stale: str, stored: list[str]) -> list[subprocess.CompletedProcess]:
     """One `kubectl get crd` answer per STRIMZI_CRDS entry, all v1 except `stale`."""
     return [
-        _proc(0, stdout=json.dumps({"status": {"storedVersions": stored if crd == stale else ["v1"]}}))
+        _proc(
+            0,
+            stdout=json.dumps(
+                {"status": {"storedVersions": stored if crd == stale else ["v1"]}}
+            ),
+        )
         for crd in u.STRIMZI_CRDS
     ]
 
 
-@pytest.mark.parametrize("stale", ["kafkarebalances.kafka.strimzi.io", "strimzipodsets.core.strimzi.io"])
+@pytest.mark.parametrize(
+    "stale", ["kafkarebalances.kafka.strimzi.io", "strimzipodsets.core.strimzi.io"]
+)
 def test_check_strimzi_conversion_refuses_the_crds_the_four_crd_list_missed(
     monkeypatch: pytest.MonkeyPatch, stale: str
 ) -> None:
@@ -3387,19 +4661,35 @@ def test_check_strimzi_conversion_refuses_the_crds_the_four_crd_list_missed(
     assert [call[call.index("crd") + 1] for call in calls] == list(u.STRIMZI_CRDS)
 
 
-def test_check_strimzi_conversion_fails_a_crd_it_could_not_read(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_check_strimzi_conversion_fails_a_crd_it_could_not_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     responses = _crd_responses("", [])
-    responses[3] = _proc(1, stderr="Unable to connect to the server: dial tcp: i/o timeout")
+    responses[3] = _proc(
+        1, stderr="Unable to connect to the server: dial tcp: i/o timeout"
+    )
     _mock_run(monkeypatch, *responses)
     ok, detail = u.check_strimzi_conversion("kc")
     assert ok is False
     assert f"cannot read 1 Strimzi CRD(s): {u.STRIMZI_CRDS[3]}" in detail
 
 
-def test_conversion_refusal_carries_the_exact_commands(monkeypatch: pytest.MonkeyPatch) -> None:
-    _mock_run(monkeypatch, *_crd_responses("kafkarebalances.kafka.strimzi.io", ["v1beta2", "v1"]))
-    step = u.Step(stage="20-operators", order="50", key=u.STRIMZI_OPERATOR_KEY, before="stored-version conversion")
-    ok, detail = u.check_strimzi_conversion_before("kc", u.Move(step=step, old="0.51.0", new="1.2.0"))
+def test_conversion_refusal_carries_the_exact_commands(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _mock_run(
+        monkeypatch,
+        *_crd_responses("kafkarebalances.kafka.strimzi.io", ["v1beta2", "v1"]),
+    )
+    step = u.Step(
+        stage="20-operators",
+        order="50",
+        key=u.STRIMZI_OPERATOR_KEY,
+        before="stored-version conversion",
+    )
+    ok, detail = u.check_strimzi_conversion_before(
+        "kc", u.Move(step=step, old="0.51.0", new="1.2.0")
+    )
     assert ok is False
     assert "strimzi-v1-api-conversion-0.51.0.tar.gz" in detail
     assert "`bin/v1-api-conversion.sh convert-resource --all-namespaces`" in detail
@@ -3407,21 +4697,41 @@ def test_conversion_refusal_carries_the_exact_commands(monkeypatch: pytest.Monke
     assert detail.index("convert-resource") < detail.index("crd-upgrade")
 
 
-def test_preflight_runs_the_conversion_check_with_the_operator_move(monkeypatch: pytest.MonkeyPatch, deploy: Path) -> None:
+def test_preflight_runs_the_conversion_check_with_the_operator_move(
+    monkeypatch: pytest.MonkeyPatch, deploy: Path
+) -> None:
     seen: list[u.Move] = []
 
     def fake_before(_kubeconfig: str | None, move: u.Move) -> tuple[bool, str]:
         seen.append(move)
         return False, "1 CRD(s) still store a pre-v1 version"
 
-    for name in ("check_deploy_clean", "check_cluster_reachable", "check_argo_apps", "check_no_kafka_rebalance",
-                 "check_clickhouse_merges", "check_schema_lock_quorum", "check_node_capacity"):
+    for name in (
+        "check_deploy_clean",
+        "check_cluster_reachable",
+        "check_argo_apps",
+        "check_no_kafka_rebalance",
+        "check_clickhouse_merges",
+        "check_schema_lock_quorum",
+        "check_node_capacity",
+    ):
         monkeypatch.setattr(u, name, lambda *_a, **_k: (True, "ok"))
     monkeypatch.setattr(u, "check_strimzi_conversion_before", fake_before)
-    step = u.Step(stage="20-operators", order="50", key=u.STRIMZI_OPERATOR_KEY, before="x stored-version conversion y")
+    step = u.Step(
+        stage="20-operators",
+        order="50",
+        key=u.STRIMZI_OPERATOR_KEY,
+        before="x stored-version conversion y",
+    )
     move = u.Move(step=step, old="0.51.0", new="1.2.0")
-    checks = u.run_preflight(deploy, [move], from_stack="1.0.0", to_stack="1.1.0", kubeconfig="kc")
-    assert ("strimzi stored-version conversion", False, "1 CRD(s) still store a pre-v1 version") in checks
+    checks = u.run_preflight(
+        deploy, [move], from_stack="1.0.0", to_stack="1.1.0", kubeconfig="kc"
+    )
+    assert (
+        "strimzi stored-version conversion",
+        False,
+        "1 CRD(s) still store a pre-v1 version",
+    ) in checks
     assert seen == [move]
 
 
@@ -3462,19 +4772,28 @@ def test_set_overlay_hold_keeps_the_deployers_block_and_its_indent() -> None:
 
 
 def test_set_overlay_hold_appends_a_kafka_block_after_other_keys() -> None:
-    text = u.set_overlay_hold("clickhouse:\n  mode: cluster\n", "metadataVersion", "4.2-IV1")
-    assert text == f'clickhouse:\n  mode: cluster\n\nkafka:\n  metadataVersion: "4.2-IV1"  {u.HOLD_MARK}\n'
+    text = u.set_overlay_hold(
+        "clickhouse:\n  mode: cluster\n", "metadataVersion", "4.2-IV1"
+    )
+    assert (
+        text
+        == f'clickhouse:\n  mode: cluster\n\nkafka:\n  metadataVersion: "4.2-IV1"  {u.HOLD_MARK}\n'
+    )
 
 
 def test_set_overlay_hold_rewrites_its_own_hold_in_place() -> None:
-    text = u.set_overlay_hold(u.set_overlay_hold("", "version", "4.2.0"), "version", "4.2.1")
+    text = u.set_overlay_hold(
+        u.set_overlay_hold("", "version", "4.2.0"), "version", "4.2.1"
+    )
     assert text.count("version:") == 1
     assert u.overlay_entry(text, "version") == ("4.2.1", True)
 
 
 def test_set_overlay_hold_refuses_a_value_the_deployer_set() -> None:
     with pytest.raises(u.UpgradeError, match=r"sets kafka\.metadataVersion itself"):
-        u.set_overlay_hold('kafka:\n  metadataVersion: "4.1-IV1"\n', "metadataVersion", "4.2-IV1")
+        u.set_overlay_hold(
+            'kafka:\n  metadataVersion: "4.1-IV1"\n', "metadataVersion", "4.2-IV1"
+        )
 
 
 def test_set_overlay_hold_refuses_a_flow_style_kafka_key() -> None:
@@ -3510,36 +4829,56 @@ def _live_kafka(monkeypatch: pytest.MonkeyPatch, *statuses: dict) -> None:
 def test_plan_kafka_hold_pins_the_running_metadata_and_holds_the_brokers(
     monkeypatch: pytest.MonkeyPatch, deploy: Path
 ) -> None:
-    _live_kafka(monkeypatch, {"kafkaVersion": "4.2.0", "kafkaMetadataVersion": "4.2-IV1"})
+    _live_kafka(
+        monkeypatch, {"kafkaVersion": "4.2.0", "kafkaMetadataVersion": "4.2-IV1"}
+    )
     hold, detail = u.plan_kafka_hold("kc", deploy, KAFKA_MOVE, {})
     assert hold == u.KafkaHold(metadata="4.2-IV1", version="4.2.0")
     assert "metadata held at 4.2-IV1" in detail
 
 
-def test_plan_kafka_hold_never_holds_brokers_that_already_rolled(monkeypatch: pytest.MonkeyPatch, deploy: Path) -> None:
+def test_plan_kafka_hold_never_holds_brokers_that_already_rolled(
+    monkeypatch: pytest.MonkeyPatch, deploy: Path
+) -> None:
     (deploy / "infra").mkdir()
-    (deploy / "infra" / "kafka.yaml").write_text(u.set_overlay_hold("", "metadataVersion", "4.2-IV1"), encoding="utf-8")
-    _live_kafka(monkeypatch, {"kafkaVersion": "4.3.1", "kafkaMetadataVersion": "4.2-IV1"})
+    (deploy / "infra" / "kafka.yaml").write_text(
+        u.set_overlay_hold("", "metadataVersion", "4.2-IV1"), encoding="utf-8"
+    )
+    _live_kafka(
+        monkeypatch, {"kafkaVersion": "4.3.1", "kafkaMetadataVersion": "4.2-IV1"}
+    )
     hold, detail = u.plan_kafka_hold("kc", deploy, KAFKA_MOVE, {})
     assert hold == u.KafkaHold(metadata="", version="")
     assert "metadata held at 4.2-IV1" in detail
 
 
-def test_plan_kafka_hold_leaves_a_deployer_kafka_version_alone(monkeypatch: pytest.MonkeyPatch, deploy: Path) -> None:
+def test_plan_kafka_hold_leaves_a_deployer_kafka_version_alone(
+    monkeypatch: pytest.MonkeyPatch, deploy: Path
+) -> None:
     (deploy / "infra").mkdir()
-    (deploy / "infra" / "kafka.yaml").write_text('kafka:\n  version: "4.2.0"\n', encoding="utf-8")
-    _live_kafka(monkeypatch, {"kafkaVersion": "4.2.0", "kafkaMetadataVersion": "4.2-IV1"})
+    (deploy / "infra" / "kafka.yaml").write_text(
+        'kafka:\n  version: "4.2.0"\n', encoding="utf-8"
+    )
+    _live_kafka(
+        monkeypatch, {"kafkaVersion": "4.2.0", "kafkaMetadataVersion": "4.2-IV1"}
+    )
     hold, _detail = u.plan_kafka_hold("kc", deploy, KAFKA_MOVE, {})
     assert hold == u.KafkaHold(metadata="4.2-IV1", version="")
 
 
-def test_plan_kafka_hold_refuses_brokers_on_neither_version(monkeypatch: pytest.MonkeyPatch, deploy: Path) -> None:
-    _live_kafka(monkeypatch, {"kafkaVersion": "4.1.1", "kafkaMetadataVersion": "4.1-IV1"})
+def test_plan_kafka_hold_refuses_brokers_on_neither_version(
+    monkeypatch: pytest.MonkeyPatch, deploy: Path
+) -> None:
+    _live_kafka(
+        monkeypatch, {"kafkaVersion": "4.1.1", "kafkaMetadataVersion": "4.1-IV1"}
+    )
     with pytest.raises(u.UpgradeError, match=r"neither 4\.2\.0 nor 4\.3\.1"):
         u.plan_kafka_hold("kc", deploy, KAFKA_MOVE, {})
 
 
-def test_plan_kafka_hold_refuses_crs_that_disagree(monkeypatch: pytest.MonkeyPatch, deploy: Path) -> None:
+def test_plan_kafka_hold_refuses_crs_that_disagree(
+    monkeypatch: pytest.MonkeyPatch, deploy: Path
+) -> None:
     _live_kafka(
         monkeypatch,
         {"kafkaVersion": "4.2.0", "kafkaMetadataVersion": "4.2-IV1"},
@@ -3549,7 +4888,9 @@ def test_plan_kafka_hold_refuses_crs_that_disagree(monkeypatch: pytest.MonkeyPat
         u.plan_kafka_hold("kc", deploy, KAFKA_MOVE, {})
 
 
-def test_plan_kafka_hold_refuses_a_cr_with_no_metadata_version(monkeypatch: pytest.MonkeyPatch, deploy: Path) -> None:
+def test_plan_kafka_hold_refuses_a_cr_with_no_metadata_version(
+    monkeypatch: pytest.MonkeyPatch, deploy: Path
+) -> None:
     _live_kafka(monkeypatch, {"kafkaVersion": "4.2.0"})
     with pytest.raises(u.UpgradeError, match=r"no status\.kafkaMetadataVersion"):
         u.plan_kafka_hold("kc", deploy, KAFKA_MOVE, {})
@@ -3560,11 +4901,16 @@ def test_plan_kafka_hold_reads_nothing_once_finalised_or_without_a_move(
 ) -> None:
     calls = _mock_run(monkeypatch)
     assert u.plan_kafka_hold("kc", deploy, None, {})[0] is None
-    assert u.plan_kafka_hold("kc", deploy, KAFKA_MOVE, {"services.kafka-version": "t"})[0] is None
+    assert (
+        u.plan_kafka_hold("kc", deploy, KAFKA_MOVE, {"services.kafka-version": "t"})[0]
+        is None
+    )
     assert calls == []
 
 
-def test_plan_kafka_hold_holds_nothing_without_a_strimzi_broker(monkeypatch: pytest.MonkeyPatch, deploy: Path) -> None:
+def test_plan_kafka_hold_holds_nothing_without_a_strimzi_broker(
+    monkeypatch: pytest.MonkeyPatch, deploy: Path
+) -> None:
     _live_kafka(monkeypatch)
     hold, detail = u.plan_kafka_hold("kc", deploy, KAFKA_MOVE, {})
     assert hold is None
@@ -3574,17 +4920,26 @@ def test_plan_kafka_hold_holds_nothing_without_a_strimzi_broker(monkeypatch: pyt
 def test_release_metadata_hold_drops_only_the_hold(deploy: Path) -> None:
     (deploy / "infra").mkdir()
     overlay = deploy / "infra" / "kafka.yaml"
-    overlay.write_text(u.set_overlay_hold(DEPLOYER_OVERLAY, "metadataVersion", "4.2-IV1"), encoding="utf-8")
+    overlay.write_text(
+        u.set_overlay_hold(DEPLOYER_OVERLAY, "metadataVersion", "4.2-IV1"),
+        encoding="utf-8",
+    )
     ok, detail = u.release_metadata_hold(deploy, KAFKA_MOVE)
     assert ok is True
     assert "dropped the kafka.metadataVersion 4.2-IV1 hold" in detail
     assert overlay.read_text(encoding="utf-8") == DEPLOYER_OVERLAY
 
 
-def test_release_metadata_hold_refuses_a_deployer_pin_and_finalise_writes_no_marker(deploy: Path) -> None:
+def test_release_metadata_hold_refuses_a_deployer_pin_and_finalise_writes_no_marker(
+    deploy: Path,
+) -> None:
     (deploy / "infra").mkdir()
-    (deploy / "infra" / "kafka.yaml").write_text('kafka:\n  metadataVersion: "4.2-IV1"\n', encoding="utf-8")
-    ran, detail = u.run_finalise_hook(deploy, KAFKA_MOVE, from_name="1.0.0", to_name="2.0.0", assume_yes=True)
+    (deploy / "infra" / "kafka.yaml").write_text(
+        'kafka:\n  metadataVersion: "4.2-IV1"\n', encoding="utf-8"
+    )
+    ran, detail = u.run_finalise_hook(
+        deploy, KAFKA_MOVE, from_name="1.0.0", to_name="2.0.0", assume_yes=True
+    )
     assert ran is False
     assert "raise it to the 4.3.1 line by hand" in detail
     assert u.read_finalised_keys(deploy) == {}
@@ -3596,7 +4951,10 @@ def test_release_metadata_hold_refuses_a_deployer_pin_and_finalise_writes_no_mar
 
 
 def test_decide_retarget_moves_a_tag_pinned_secret() -> None:
-    assert u.decide_retarget("2.2.0-rc.13", "2.2.0-rc.13", "2.2.0-rc.14", None)[0] == "2.2.0-rc.14"
+    assert (
+        u.decide_retarget("2.2.0-rc.13", "2.2.0-rc.13", "2.2.0-rc.14", None)[0]
+        == "2.2.0-rc.14"
+    )
     assert u.decide_retarget("v1.0.0", "1.0.0", "2.0.0", None)[0] == "2.0.0"
 
 
@@ -3610,7 +4968,12 @@ def test_decide_retarget_leaves_a_branch_and_a_secret_already_there() -> None:
 def test_decide_retarget_never_repeats_the_value_it_read_from_the_secret() -> None:
     sha = "0123456789abcdef0123456789abcdef01234567"
     for current in ("release-train-xyzzy", "1.0.0", "2.0.0", "v1.0.0"):
-        _ref, why = u.decide_retarget(current, "0.9.0" if current == "release-train-xyzzy" else "1.0.0", "2.0.0", None)
+        _ref, why = u.decide_retarget(
+            current,
+            "0.9.0" if current == "release-train-xyzzy" else "1.0.0",
+            "2.0.0",
+            None,
+        )
         assert "secret/dfe-cluster dfe.hyperi.io/target_revision" in why
         assert "release-train-xyzzy" not in why
         assert "v1.0.0" not in why
@@ -3631,34 +4994,62 @@ def test_decide_retarget_refuses_an_unset_annotation() -> None:
         u.decide_retarget("", "1.0.0", "2.0.0", None)
 
 
-def test_read_target_revision_reads_only_the_annotation(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_read_target_revision_reads_only_the_annotation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     calls = _mock_run(monkeypatch, _proc(0, stdout="2.2.0-rc.13\n"))
     assert u.read_target_revision("kc", "argocd") == "2.2.0-rc.13"
-    assert calls[0][-2:] == ["-o", "jsonpath={.metadata.annotations.dfe\\.hyperi\\.io/target_revision}"]
-    assert ["secret", "dfe-cluster"] == calls[0][calls[0].index("get") + 1 : calls[0].index("get") + 3]
+    assert calls[0][-2:] == [
+        "-o",
+        "jsonpath={.metadata.annotations.dfe\\.hyperi\\.io/target_revision}",
+    ]
+    assert ["secret", "dfe-cluster"] == calls[0][
+        calls[0].index("get") + 1 : calls[0].index("get") + 3
+    ]
 
 
-def test_write_target_revision_moves_the_ref_and_the_stack_version(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_write_target_revision_moves_the_ref_and_the_stack_version(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     calls = _mock_run(monkeypatch, _proc(0))
     ok, _detail = u.write_target_revision("kc", "argocd", "2.2.0-rc.14", "2.2.0-rc.14")
     assert ok is True
     assert calls[0][-5:] == [
-        "annotate", "--overwrite", "secret/dfe-cluster",
-        "dfe.hyperi.io/target_revision=2.2.0-rc.14", "dfe.hyperi.io/stack_version=2.2.0-rc.14",
+        "annotate",
+        "--overwrite",
+        "secret/dfe-cluster",
+        "dfe.hyperi.io/target_revision=2.2.0-rc.14",
+        "dfe.hyperi.io/stack_version=2.2.0-rc.14",
     ]
 
 
-def test_check_argo_apps_fails_an_app_still_on_the_old_ref(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_check_argo_apps_fails_an_app_still_on_the_old_ref(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     synced = {"sync": {"status": "Synced"}, "health": {"status": "Healthy"}}
-    doc = {"items": [
-        {"metadata": {"name": "kafka-dfe"}, "spec": {"sources": [{"targetRevision": "1.0.0"}, {"targetRevision": "main"}]},
-         "status": synced},
-        {"metadata": {"name": "strimzi"}, "spec": {"source": {"targetRevision": "1.2.0"}}, "status": synced},
-    ]}
+    doc = {
+        "items": [
+            {
+                "metadata": {"name": "kafka-dfe"},
+                "spec": {
+                    "sources": [{"targetRevision": "1.0.0"}, {"targetRevision": "main"}]
+                },
+                "status": synced,
+            },
+            {
+                "metadata": {"name": "strimzi"},
+                "spec": {"source": {"targetRevision": "1.2.0"}},
+                "status": synced,
+            },
+        ]
+    }
     _mock_run(monkeypatch, _proc(0, stdout=json.dumps(doc)))
     ok, detail = u.check_argo_apps("kc", stale_revision="1.0.0")
     assert ok is False
-    assert "1 app(s) not Synced/Healthy: kafka-dfe (still renders from the previous" in detail
+    assert (
+        "1 app(s) not Synced/Healthy: kafka-dfe (still renders from the previous"
+        in detail
+    )
     assert "1.0.0" not in detail  # the stale ref came out of the cluster Secret
 
 
@@ -3666,20 +5057,35 @@ def test_check_argo_apps_fails_a_degraded_a_stale_and_an_unsynced_app(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def app(name: str, revision: str, sync: str, health: str) -> dict:
-        return {"metadata": {"name": name}, "spec": {"source": {"targetRevision": revision}},
-                "status": {"sync": {"status": sync}, "health": {"status": health}}}
+        return {
+            "metadata": {"name": name},
+            "spec": {"source": {"targetRevision": revision}},
+            "status": {"sync": {"status": sync}, "health": {"status": health}},
+        }
 
-    degraded = {"items": [app("vrl", "2.0.0", "Synced", "Degraded"), app("ui", "2.0.0", "Synced", "Healthy")]}
+    degraded = {
+        "items": [
+            app("vrl", "2.0.0", "Synced", "Degraded"),
+            app("ui", "2.0.0", "Synced", "Healthy"),
+        ]
+    }
     _mock_run(monkeypatch, _proc(0, stdout=json.dumps(degraded)))
     ok, detail = u.check_argo_apps("kc", stale_revision="1.0.0")
     assert ok is False
     assert "1 app(s) not Synced/Healthy: vrl (sync Synced, health Degraded)" in detail
 
-    behind = {"items": [app("vrl", "2.0.0", "OutOfSync", "Healthy"), app("ui", "1.0.0", "Synced", "Healthy")]}
+    behind = {
+        "items": [
+            app("vrl", "2.0.0", "OutOfSync", "Healthy"),
+            app("ui", "1.0.0", "Synced", "Healthy"),
+        ]
+    }
     _mock_run(monkeypatch, _proc(0, stdout=json.dumps(behind)))
     ok, detail = u.check_argo_apps("kc", stale_revision="1.0.0")
     assert ok is False
-    assert detail.startswith("2 app(s) not Synced/Healthy: vrl (sync OutOfSync, health Healthy), ui (still renders")
+    assert detail.startswith(
+        "2 app(s) not Synced/Healthy: vrl (sync OutOfSync, health Healthy), ui (still renders"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -3690,7 +5096,9 @@ def test_check_argo_apps_fails_a_degraded_a_stale_and_an_unsynced_app(
 CHANGE = datetime(2026, 10, 11, 3, 0, 0, tzinfo=UTC)
 
 
-def _reconciled_app(name: str, reconciled_at: str | None, sync: str = "Synced", health: str = "Healthy") -> dict:
+def _reconciled_app(
+    name: str, reconciled_at: str | None, sync: str = "Synced", health: str = "Healthy"
+) -> dict:
     """One Application as `kubectl get -o json` lists it, with the `status.reconciledAt` Argo stamped."""
     status: dict[str, object] = {"sync": {"status": sync}, "health": {"status": health}}
     if reconciled_at is not None:
@@ -3702,12 +5110,17 @@ def _apps(*apps: dict) -> subprocess.CompletedProcess:
     return _proc(0, stdout=json.dumps({"items": list(apps)}))
 
 
-def test_check_argo_apps_fails_a_healthy_app_reconciled_before_the_change(monkeypatch: pytest.MonkeyPatch) -> None:
-    _mock_run(monkeypatch, _apps(
-        _reconciled_app("kafka-dfe", "2026-10-11T02:59:59Z"),
-        _reconciled_app("never-compared", None),
-        _reconciled_app("loader", "2026-10-11T03:00:07Z"),
-    ))
+def test_check_argo_apps_fails_a_healthy_app_reconciled_before_the_change(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _mock_run(
+        monkeypatch,
+        _apps(
+            _reconciled_app("kafka-dfe", "2026-10-11T02:59:59Z"),
+            _reconciled_app("never-compared", None),
+            _reconciled_app("loader", "2026-10-11T03:00:07Z"),
+        ),
+    )
 
     ok, detail = u.check_argo_apps("kc", reconciled_after=CHANGE)
 
@@ -3718,26 +5131,49 @@ def test_check_argo_apps_fails_a_healthy_app_reconciled_before_the_change(monkey
     )
 
 
-def test_check_argo_apps_passes_apps_reconciled_at_or_after_the_change(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_check_argo_apps_passes_apps_reconciled_at_or_after_the_change(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # Argo stamps whole seconds, so a reconcile in the second the change landed counts.
-    _mock_run(monkeypatch, _apps(
-        _reconciled_app("kafka-dfe", "2026-10-11T03:00:00Z"), _reconciled_app("loader", "2026-10-11T03:04:12Z"),
-    ))
+    _mock_run(
+        monkeypatch,
+        _apps(
+            _reconciled_app("kafka-dfe", "2026-10-11T03:00:00Z"),
+            _reconciled_app("loader", "2026-10-11T03:04:12Z"),
+        ),
+    )
     assert u.check_argo_apps("kc", reconciled_after=CHANGE) == (
-        True, "2 Application(s) Synced and Healthy, each reconciled since this change"
+        True,
+        "2 Application(s) Synced and Healthy, each reconciled since this change",
     )
 
 
-def test_check_argo_apps_reads_reconcile_time_only_when_asked_to(monkeypatch: pytest.MonkeyPatch) -> None:
-    _mock_run(monkeypatch, _apps(_reconciled_app("kafka-dfe", "2020-01-01T00:00:00Z"), _reconciled_app("loader", None)))
+def test_check_argo_apps_reads_reconcile_time_only_when_asked_to(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _mock_run(
+        monkeypatch,
+        _apps(
+            _reconciled_app("kafka-dfe", "2020-01-01T00:00:00Z"),
+            _reconciled_app("loader", None),
+        ),
+    )
     assert u.check_argo_apps("kc") == (True, "2 Application(s) Synced and Healthy")
 
 
-def test_a_reconciled_app_that_is_still_out_of_sync_fails_on_its_sync(monkeypatch: pytest.MonkeyPatch) -> None:
-    _mock_run(monkeypatch, _apps(_reconciled_app("kafka-dfe", "2026-10-11T03:00:07Z", sync="OutOfSync")))
+def test_a_reconciled_app_that_is_still_out_of_sync_fails_on_its_sync(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _mock_run(
+        monkeypatch,
+        _apps(_reconciled_app("kafka-dfe", "2026-10-11T03:00:07Z", sync="OutOfSync")),
+    )
     ok, detail = u.check_argo_apps("kc", reconciled_after=CHANGE)
     assert ok is False
-    assert detail == "1 app(s) not Synced/Healthy: kafka-dfe (sync OutOfSync, health Healthy)"
+    assert (
+        detail
+        == "1 app(s) not Synced/Healthy: kafka-dfe (sync OutOfSync, health Healthy)"
+    )
 
 
 def test_wait_for_argo_holds_on_a_healthy_app_until_it_is_reconciled_after_the_change(
@@ -3749,11 +5185,19 @@ def test_wait_for_argo_holds_on_a_healthy_app_until_it_is_reconciled_after_the_c
     clock, sleeps, fake_sleep = _clock()
 
     ok, detail = u.wait_for_argo(
-        "kc", argocd_namespace="argocd", timeout=120, reconciled_after=CHANGE, sleep=fake_sleep, now=lambda: clock["t"]
+        "kc",
+        argocd_namespace="argocd",
+        timeout=120,
+        reconciled_after=CHANGE,
+        sleep=fake_sleep,
+        now=lambda: clock["t"],
     )
 
     assert ok is True
-    assert detail == "1 Application(s) Synced and Healthy, each reconciled since this change"
+    assert (
+        detail
+        == "1 Application(s) Synced and Healthy, each reconciled since this change"
+    )
     assert len(calls) == 3
     assert len(sleeps) == 2
 
@@ -3761,12 +5205,20 @@ def test_wait_for_argo_holds_on_a_healthy_app_until_it_is_reconciled_after_the_c
 def test_wait_for_argo_times_out_naming_each_app_still_on_the_state_from_before_the_change(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    stale = _apps(_reconciled_app("kafka-dfe", "2026-10-11T02:50:00Z"), _reconciled_app("loader", "2026-10-11T03:00:01Z"))
+    stale = _apps(
+        _reconciled_app("kafka-dfe", "2026-10-11T02:50:00Z"),
+        _reconciled_app("loader", "2026-10-11T03:00:01Z"),
+    )
     _mock_run(monkeypatch, *[stale] * 10)
     clock, _sleeps, fake_sleep = _clock()
 
     ok, detail = u.wait_for_argo(
-        "kc", argocd_namespace="argocd", timeout=15, reconciled_after=CHANGE, sleep=fake_sleep, now=lambda: clock["t"]
+        "kc",
+        argocd_namespace="argocd",
+        timeout=15,
+        reconciled_after=CHANGE,
+        sleep=fake_sleep,
+        now=lambda: clock["t"],
     )
 
     assert ok is False
@@ -3786,7 +5238,12 @@ def _autosync_app(
 ) -> dict:
     """keda after a namespace-metadata change: pinned chart, auto-sync on, compared OutOfSync."""
     app = _reconciled_app("keda", reconciled_at, sync=sync)
-    app["spec"] = {"syncPolicy": {"automated": {"selfHeal": True}, "syncOptions": ["ServerSideApply=true"]}}
+    app["spec"] = {
+        "syncPolicy": {
+            "automated": {"selfHeal": True},
+            "syncOptions": ["ServerSideApply=true"],
+        }
+    }
     if not automated:
         app["spec"]["syncPolicy"].pop("automated")
     if op_started is not None:
@@ -3810,23 +5267,41 @@ def _autosync_app(
         (_autosync_app(pending=True), False),
     ],
     ids=[
-        "compared-since-and-skipped", "never-synced", "in-sync", "not-compared-since", "never-compared",
-        "synced-since", "sync-running", "manual-sync-app", "sync-already-requested",
+        "compared-since-and-skipped",
+        "never-synced",
+        "in-sync",
+        "not-compared-since",
+        "never-compared",
+        "synced-since",
+        "sync-running",
+        "manual-sync-app",
+        "sync-already-requested",
     ],
 )
-def test_only_an_app_auto_sync_compared_and_skipped_is_stalled(app: dict, stalled: bool) -> None:
+def test_only_an_app_auto_sync_compared_and_skipped_is_stalled(
+    app: dict, stalled: bool
+) -> None:
     assert u._stalled_autosync(app, CHANGE) is stalled
 
 
-def test_wait_for_argo_starts_one_sync_on_an_app_auto_sync_skipped(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_wait_for_argo_starts_one_sync_on_an_app_auto_sync_skipped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     patched = _autosync_app()
     patched["operation"] = {"sync": {}}
     synced = _autosync_app(sync="Synced", op_started="2026-10-11T03:00:20Z")
-    calls = _mock_run(monkeypatch, _apps(_autosync_app()), _proc(0), _apps(patched), _apps(synced))
+    calls = _mock_run(
+        monkeypatch, _apps(_autosync_app()), _proc(0), _apps(patched), _apps(synced)
+    )
     clock, _sleeps, fake_sleep = _clock()
 
     ok, _detail = u.wait_for_argo(
-        "kc", argocd_namespace="argocd", timeout=120, reconciled_after=CHANGE, sleep=fake_sleep, now=lambda: clock["t"]
+        "kc",
+        argocd_namespace="argocd",
+        timeout=120,
+        reconciled_after=CHANGE,
+        sleep=fake_sleep,
+        now=lambda: clock["t"],
     )
 
     assert ok is True
@@ -3836,26 +5311,39 @@ def test_wait_for_argo_starts_one_sync_on_an_app_auto_sync_skipped(monkeypatch: 
     assert body["operation"]["sync"]["syncOptions"] == ["ServerSideApply=true"]
 
 
-def _chart_app(name: str, reconciled_at: str, version: str, compared: str | None = None) -> dict:
+def _chart_app(
+    name: str, reconciled_at: str, version: str, compared: str | None = None
+) -> dict:
     """A Helm-repo Application, as layer1-addons renders keda, with the chart version Argo last compared."""
     app = _reconciled_app(name, reconciled_at)
-    source = {"repoURL": "https://charts.example.net", "chart": name, "targetRevision": version}
+    source = {
+        "repoURL": "https://charts.example.net",
+        "chart": name,
+        "targetRevision": version,
+    }
     app["spec"] = {"source": source}
     # Argo's comparedTo carries an empty `sources` beside `source` on a single-source Application.
-    app["status"]["sync"]["comparedTo"] = {"source": {**source, "targetRevision": compared or version}, "sources": []}
+    app["status"]["sync"]["comparedTo"] = {
+        "source": {**source, "targetRevision": compared or version},
+        "sources": [],
+    }
     return app
 
 
 def test_a_pinned_chart_argo_compared_against_its_spec_needs_no_reconcile_after_the_change(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _mock_run(monkeypatch, _apps(
-        _reconciled_app("loader", "2026-10-11T03:00:07Z"),
-        _chart_app("keda", "2026-10-11T02:51:00Z", "2.21.0"),
-        _chart_app("reloader", "2026-10-11T02:52:00Z", "2.2.18"),
-    ))
+    _mock_run(
+        monkeypatch,
+        _apps(
+            _reconciled_app("loader", "2026-10-11T03:00:07Z"),
+            _chart_app("keda", "2026-10-11T02:51:00Z", "2.21.0"),
+            _chart_app("reloader", "2026-10-11T02:52:00Z", "2.2.18"),
+        ),
+    )
     assert u.check_argo_apps("kc", reconciled_after=CHANGE) == (
-        True, "3 Application(s) Synced and Healthy, each reconciled since this change but 2 pinned Helm chart(s) it cannot move"
+        True,
+        "3 Application(s) Synced and Healthy, each reconciled since this change but 2 pinned Helm chart(s) it cannot move",
     )
 
 
@@ -3863,25 +5351,49 @@ def test_a_chart_whose_spec_moved_since_argo_compared_it_still_waits_for_a_recon
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # The regenerated ApplicationSet names a new keda version Argo has not compared yet.
-    _mock_run(monkeypatch, _apps(_chart_app("keda", "2026-10-11T02:51:00Z", "2.22.0", compared="2.21.0")))
+    _mock_run(
+        monkeypatch,
+        _apps(_chart_app("keda", "2026-10-11T02:51:00Z", "2.22.0", compared="2.21.0")),
+    )
     ok, detail = u.check_argo_apps("kc", reconciled_after=CHANGE)
     assert ok is False
-    assert detail == "1 app(s) not Synced/Healthy: keda (last reconciled 2026-10-11T02:51:00Z, before this change)"
+    assert (
+        detail
+        == "1 app(s) not Synced/Healthy: keda (last reconciled 2026-10-11T02:51:00Z, before this change)"
+    )
 
 
-def test_a_chart_reading_values_from_a_repository_still_waits_for_a_reconcile(monkeypatch: pytest.MonkeyPatch) -> None:
-    chart = {"repoURL": "https://charts.example.net", "chart": "kafbat", "targetRevision": "1.4.0"}
-    values = {"repoURL": "https://git.example.net/deploy.git", "targetRevision": "main", "ref": "values"}
+def test_a_chart_reading_values_from_a_repository_still_waits_for_a_reconcile(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    chart = {
+        "repoURL": "https://charts.example.net",
+        "chart": "kafbat",
+        "targetRevision": "1.4.0",
+    }
+    values = {
+        "repoURL": "https://git.example.net/deploy.git",
+        "targetRevision": "main",
+        "ref": "values",
+    }
     app = _reconciled_app("kafbat", "2026-10-11T02:51:00Z")
     app["spec"] = {"sources": [chart, values]}
-    app["status"]["sync"]["comparedTo"] = {"source": {"repoURL": ""}, "sources": [chart, values]}
+    app["status"]["sync"]["comparedTo"] = {
+        "source": {"repoURL": ""},
+        "sources": [chart, values],
+    }
     _mock_run(monkeypatch, _apps(app))
     ok, detail = u.check_argo_apps("kc", reconciled_after=CHANGE)
     assert ok is False
-    assert detail == "1 app(s) not Synced/Healthy: kafbat (last reconciled 2026-10-11T02:51:00Z, before this change)"
+    assert (
+        detail
+        == "1 app(s) not Synced/Healthy: kafbat (last reconciled 2026-10-11T02:51:00Z, before this change)"
+    )
 
 
-def test_a_pinned_chart_still_has_to_be_synced_and_healthy(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_pinned_chart_still_has_to_be_synced_and_healthy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     app = _chart_app("keda", "2026-10-11T02:51:00Z", "2.21.0")
     app["status"]["health"]["status"] = "Degraded"
     _mock_run(monkeypatch, _apps(app))
@@ -3890,18 +5402,28 @@ def test_a_pinned_chart_still_has_to_be_synced_and_healthy(monkeypatch: pytest.M
     assert detail == "1 app(s) not Synced/Healthy: keda (sync Synced, health Degraded)"
 
 
-def test_wait_for_argo_after_a_retarget_does_not_wait_on_the_helm_repo_apps(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_wait_for_argo_after_a_retarget_does_not_wait_on_the_helm_repo_apps(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Every repository-sourced Application reconciled after the retarget; the Helm-repo ones are on Argo's own cycle."""
     settled = _apps(
         _reconciled_app("otel-collector", "2026-10-11T03:00:05Z"),
-        *[_chart_app(chart, "2026-10-11T02:56:00Z", "1.0.0") for chart in ("keda", "metrics-server", "reloader")],
+        *[
+            _chart_app(chart, "2026-10-11T02:56:00Z", "1.0.0")
+            for chart in ("keda", "metrics-server", "reloader")
+        ],
     )
     calls = _mock_run(monkeypatch, settled)
     clock, sleeps, fake_sleep = _clock()
 
     ok, detail = u.wait_for_argo(
-        "kc", argocd_namespace="argocd", timeout=900, stale_revision="1.0.0-rc.1", reconciled_after=CHANGE,
-        sleep=fake_sleep, now=lambda: clock["t"],
+        "kc",
+        argocd_namespace="argocd",
+        timeout=900,
+        stale_revision="1.0.0-rc.1",
+        reconciled_after=CHANGE,
+        sleep=fake_sleep,
+        now=lambda: clock["t"],
     )
 
     assert ok is True, detail
@@ -3923,7 +5445,9 @@ def test_change_moment_drops_the_fraction_argo_does_not_stamp() -> None:
     assert timedelta(0) <= datetime.now(UTC) - moment < timedelta(seconds=2)
 
 
-@pytest.mark.parametrize("stamp", [None, "", "not a time", 17, {"at": "2026-10-11T03:00:00Z"}])
+@pytest.mark.parametrize(
+    "stamp", [None, "", "not a time", 17, {"at": "2026-10-11T03:00:00Z"}]
+)
 def test_an_unreadable_reconcile_time_counts_as_never_reconciled(stamp: object) -> None:
     assert u._argo_time(stamp) is None
 
@@ -3952,8 +5476,13 @@ def pushed_deploy(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[Path
     d = tmp_path / "deploy-template"
     d.mkdir()
     (d / "pins.yaml").write_text(PINS_YAML, encoding="utf-8")
-    for args in (["init", "-q", "-b", "main"], ["add", "pins.yaml"], ["commit", "-q", "-m", "initial"],
-                 ["remote", "add", "origin", str(remote)], ["push", "-q", "-u", "origin", "main"]):
+    for args in (
+        ["init", "-q", "-b", "main"],
+        ["add", "pins.yaml"],
+        ["commit", "-q", "-m", "initial"],
+        ["remote", "add", "origin", str(remote)],
+        ["push", "-q", "-u", "origin", "main"],
+    ):
         assert u._git(d, *args).returncode == 0, args
     return d, remote
 
@@ -3963,18 +5492,34 @@ def _remote_file(remote: Path, rev: str, path: str) -> str:
     return shown.stdout if shown.returncode == 0 else ""
 
 
-def _ga_cluster(monkeypatch: pytest.MonkeyPatch, live: dict[str, str]) -> list[tuple[str, str]]:
+def _ga_cluster(
+    monkeypatch: pytest.MonkeyPatch, live: dict[str, str]
+) -> list[tuple[str, str]]:
     """Stand in for the cluster: every cluster-facing call is recorded in order,
     and the remote HEAD at each one is captured so the order can be checked
     against what Argo could actually read."""
     events: list[tuple[str, str]] = []
     monkeypatch.setattr(u, "run_compat_check", lambda *_a, **_k: (True, "ok"))
-    monkeypatch.setattr(u, "run_preflight", lambda *_a, **_k: [("strimzi stored-version conversion", True, "ok")])
-    monkeypatch.setattr(u, "check_strimzi_conversion", lambda *_a, **_k: (True, "10 Strimzi CRD(s) store v1 only"))
-    monkeypatch.setattr(u, "read_target_revision", lambda *_a, **_k: live["target_revision"])
+    monkeypatch.setattr(
+        u,
+        "run_preflight",
+        lambda *_a, **_k: [("strimzi stored-version conversion", True, "ok")],
+    )
+    monkeypatch.setattr(
+        u,
+        "check_strimzi_conversion",
+        lambda *_a, **_k: (True, "10 Strimzi CRD(s) store v1 only"),
+    )
+    monkeypatch.setattr(
+        u, "read_target_revision", lambda *_a, **_k: live["target_revision"]
+    )
     monkeypatch.setattr(u, "read_dfe_namespace", lambda *_a, **_k: "dfe")
     monkeypatch.setattr(
-        u, "read_kafka_state", lambda *_a, **_k: u.KafkaState(crs=1, version=live["kafka"], metadata=live["metadata"])
+        u,
+        "read_kafka_state",
+        lambda *_a, **_k: u.KafkaState(
+            crs=1, version=live["kafka"], metadata=live["metadata"]
+        ),
     )
 
     def argo(*_a: object, stale_revision: str = "", **_k: object) -> tuple[bool, str]:
@@ -4009,7 +5554,9 @@ def _ga_cluster(monkeypatch: pytest.MonkeyPatch, live: dict[str, str]) -> list[t
 
 
 def _commit_with(remote: Path, subject: str) -> str:
-    log = u._run(["git", "--git-dir", str(remote), "log", "--format=%H %s", "main"]).stdout
+    log = u._run(
+        ["git", "--git-dir", str(remote), "log", "--format=%H %s", "main"]
+    ).stdout
     return next(line.split(" ", 1)[0] for line in log.splitlines() if subject in line)
 
 
@@ -4026,7 +5573,9 @@ def test_apply_holds_the_metadata_then_retargets_then_rolls_the_brokers(
     live = {"target_revision": "1.0.0", "kafka": "4.2.0", "metadata": "4.2-IV1"}
     events = _ga_cluster(monkeypatch, live)
 
-    rc = u.cmd_upgrade_apply(_apply_args(deploy=str(deploy), to="2.0.0", yes=True, dry_run=False, push=True))
+    rc = u.cmd_upgrade_apply(
+        _apply_args(deploy=str(deploy), to="2.0.0", yes=True, dry_run=False, push=True)
+    )
     err = capsys.readouterr().err
     assert rc == u.EXIT_OK, err
 
@@ -4045,12 +5594,12 @@ def test_apply_holds_the_metadata_then_retargets_then_rolls_the_brokers(
     assert u.overlay_entry(rolled, "version") is None
 
     assert events == [
-        ("argo", ""),          # stage 1
-        ("argo", ""),          # stage 2, the holds applied on the old charts
+        ("argo", ""),  # stage 1
+        ("argo", ""),  # stage 2, the holds applied on the old charts
         ("retarget", "2.0.0"),
-        ("argo", "1.0.0"),     # until no Application renders from the old tag
+        ("argo", "1.0.0"),  # until no Application renders from the old tag
         ("operator", ""),
-        ("argo", ""),          # stage 3, the version hold dropped
+        ("argo", ""),  # stage 3, the version hold dropped
         ("kafka-version", "4.3.1"),
     ]
     assert "finalise pending (manual, after a soak): services.kafka-version" in err
@@ -4059,19 +5608,31 @@ def test_apply_holds_the_metadata_then_retargets_then_rolls_the_brokers(
     # After the soak: pins.yaml already names 2.0.0, so --from names the start.
     live["kafka"] = "4.3.1"
     events.clear()
-    rc = u.cmd_upgrade_apply(_apply_args(
-        deploy=str(deploy), to="2.0.0", from_stack="1.0.0", yes=True, dry_run=False, push=True, finalise=True,
-    ))
+    rc = u.cmd_upgrade_apply(
+        _apply_args(
+            deploy=str(deploy),
+            to="2.0.0",
+            from_stack="1.0.0",
+            yes=True,
+            dry_run=False,
+            push=True,
+            finalise=True,
+        )
+    )
     err = capsys.readouterr().err
     assert rc == u.EXIT_OK, err
     assert ("retarget", "2.0.0") not in events  # already there
     assert ("metadata", "4.3.1") in events
-    assert events.index(("metadata", "4.3.1")) > events.index(("kafka-version", "4.3.1"))
+    assert events.index(("metadata", "4.3.1")) > events.index(
+        ("kafka-version", "4.3.1")
+    )
     finalised = _remote_file(remote, "main", "infra/kafka.yaml")
     assert u.overlay_entry(finalised, "metadataVersion") is None
     assert "kafka:" not in finalised
     assert "services.kafka-version" in u.read_finalised_keys(deploy)
-    assert _remote_file(remote, "main", "upgrades/1.0.0-to-2.0.0.finalised").startswith("services.kafka-version ")
+    assert _remote_file(remote, "main", "upgrades/1.0.0-to-2.0.0.finalised").startswith(
+        "services.kafka-version "
+    )
 
 
 def test_apply_asks_each_wait_for_a_reconcile_after_the_change_that_started_it(
@@ -4084,13 +5645,21 @@ def test_apply_asks_each_wait_for_a_reconcile_after_the_change_that_started_it(
     deploy, _remote = pushed_deploy
     monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
     monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
-    _ga_cluster(monkeypatch, {"target_revision": "1.0.0", "kafka": "4.2.0", "metadata": "4.2-IV1"})
+    _ga_cluster(
+        monkeypatch,
+        {"target_revision": "1.0.0", "kafka": "4.2.0", "metadata": "4.2-IV1"},
+    )
     started = datetime.now(UTC).replace(microsecond=0)
     waits: list[tuple[str, datetime | None]] = []
     retargeted: list[datetime] = []
     argo, retarget = u.wait_for_argo, u.write_target_revision
 
-    def spy_wait(*a: object, stale_revision: str = "", reconciled_after: datetime | None = None, **k: object):
+    def spy_wait(
+        *a: object,
+        stale_revision: str = "",
+        reconciled_after: datetime | None = None,
+        **k: object,
+    ):
         waits.append((stale_revision, reconciled_after))
         return argo(*a, stale_revision=stale_revision, **k)
 
@@ -4101,7 +5670,9 @@ def test_apply_asks_each_wait_for_a_reconcile_after_the_change_that_started_it(
     monkeypatch.setattr(u, "wait_for_argo", spy_wait)
     monkeypatch.setattr(u, "write_target_revision", spy_retarget)
 
-    rc = u.cmd_upgrade_apply(_apply_args(deploy=str(deploy), to="2.0.0", yes=True, dry_run=False, push=True))
+    rc = u.cmd_upgrade_apply(
+        _apply_args(deploy=str(deploy), to="2.0.0", yes=True, dry_run=False, push=True)
+    )
     assert rc == u.EXIT_OK, capsys.readouterr().err
 
     # Every stage commits and pushes, and the one retarget leaves the old tag.
@@ -4116,18 +5687,24 @@ def test_apply_asks_each_wait_for_a_reconcile_after_the_change_that_started_it(
 
 
 def test_apply_without_push_gives_no_wait_a_reconcile_to_ask_for(
-    monkeypatch: pytest.MonkeyPatch, real_git_deploy: Path, capsys: pytest.CaptureFixture
+    monkeypatch: pytest.MonkeyPatch,
+    real_git_deploy: Path,
+    capsys: pytest.CaptureFixture,
 ) -> None:
     _two_stage(monkeypatch, real_git_deploy)
     floors: list[datetime | None] = []
 
-    def wait(*_a: object, reconciled_after: datetime | None = None, **_k: object) -> tuple[bool, str]:
+    def wait(
+        *_a: object, reconciled_after: datetime | None = None, **_k: object
+    ) -> tuple[bool, str]:
         floors.append(reconciled_after)
         return True, "ok"
 
     monkeypatch.setattr(u, "wait_for_argo", wait)
 
-    rc = u.cmd_upgrade_apply(_apply_args(deploy=str(real_git_deploy), to="2.0.0", yes=True, dry_run=False))
+    rc = u.cmd_upgrade_apply(
+        _apply_args(deploy=str(real_git_deploy), to="2.0.0", yes=True, dry_run=False)
+    )
 
     assert rc == u.EXIT_OK, capsys.readouterr().err
     assert floors == [None, None]
@@ -4143,9 +5720,14 @@ def test_apply_refuses_a_retarget_without_push_before_anything_moves(
     deploy, _remote = pushed_deploy
     monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
     monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
-    events = _ga_cluster(monkeypatch, {"target_revision": "1.0.0", "kafka": "4.2.0", "metadata": "4.2-IV1"})
+    events = _ga_cluster(
+        monkeypatch,
+        {"target_revision": "1.0.0", "kafka": "4.2.0", "metadata": "4.2-IV1"},
+    )
 
-    rc = u.cmd_upgrade_apply(_apply_args(deploy=str(deploy), to="2.0.0", yes=True, dry_run=False, push=False))
+    rc = u.cmd_upgrade_apply(
+        _apply_args(deploy=str(deploy), to="2.0.0", yes=True, dry_run=False, push=False)
+    )
     assert rc == u.EXIT_BLOCKED
     assert "needs --push" in capsys.readouterr().err
     assert events == []
@@ -4163,20 +5745,31 @@ def test_apply_refuses_brokers_in_an_unexpected_state_before_anything_moves(
     deploy, _remote = pushed_deploy
     monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
     monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
-    _ga_cluster(monkeypatch, {"target_revision": "1.0.0", "kafka": "4.1.1", "metadata": "4.1-IV1"})
+    _ga_cluster(
+        monkeypatch,
+        {"target_revision": "1.0.0", "kafka": "4.1.1", "metadata": "4.1-IV1"},
+    )
 
-    rc = u.cmd_upgrade_apply(_apply_args(deploy=str(deploy), to="2.0.0", yes=True, dry_run=False, push=True))
+    rc = u.cmd_upgrade_apply(
+        _apply_args(deploy=str(deploy), to="2.0.0", yes=True, dry_run=False, push=True)
+    )
     assert rc == u.EXIT_BLOCKED
     assert "neither 4.2.0 nor 4.3.1" in capsys.readouterr().err
     assert u.read_deploy_pin(deploy) == "1.0.0"
 
 
 def test_apply_dry_run_names_the_holds_and_the_retarget_in_order(
-    monkeypatch: pytest.MonkeyPatch, deploy: Path, order_path: Path, versions_path: Path, capsys: pytest.CaptureFixture
+    monkeypatch: pytest.MonkeyPatch,
+    deploy: Path,
+    order_path: Path,
+    versions_path: Path,
+    capsys: pytest.CaptureFixture,
 ) -> None:
     monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
     monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
-    calls = _mock_run(monkeypatch, _proc(0, stdout="compat-check 2.0.0: 0 rule(s) checked"))
+    calls = _mock_run(
+        monkeypatch, _proc(0, stdout="compat-check 2.0.0: 0 rule(s) checked")
+    )
 
     assert u.cmd_upgrade_apply(_apply_args(deploy=str(deploy), to="2.0.0")) == u.EXIT_OK
     err = capsys.readouterr().err
@@ -4205,10 +5798,16 @@ def test_apply_on_a_deploy_repo_without_pins_yaml_commits_one_at_the_first_stage
     deploy, remote = pushed_deploy
     # The bundled repo's own shape: seeded values files and the marker, no pins.yaml.
     (deploy / "values").mkdir()
-    (deploy / "values" / "dfe-engine-default-values.yaml").write_text("deploy:\n  service: dfe-engine\n", "utf-8")
+    (deploy / "values" / "dfe-engine-default-values.yaml").write_text(
+        "deploy:\n  service: dfe-engine\n", "utf-8"
+    )
     (deploy / ".seeded-apps").write_text("dfe-engine\n", encoding="utf-8")
-    for args in (["rm", "-q", "pins.yaml"], ["add", "values", ".seeded-apps"], ["commit", "-q", "-m", "seed"],
-                 ["push", "-q"]):
+    for args in (
+        ["rm", "-q", "pins.yaml"],
+        ["add", "values", ".seeded-apps"],
+        ["commit", "-q", "-m", "seed"],
+        ["push", "-q"],
+    ):
         assert u._git(deploy, *args).returncode == 0, args
     monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
     monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
@@ -4216,31 +5815,59 @@ def test_apply_on_a_deploy_repo_without_pins_yaml_commits_one_at_the_first_stage
     events = _ga_cluster(monkeypatch, live)
     monkeypatch.setattr(u, "read_stack_version", lambda *_a, **_k: "1.0.0")
 
-    rc = u.cmd_upgrade_apply(_apply_args(deploy=str(deploy), to="2.0.0", yes=True, dry_run=False, push=True))
+    rc = u.cmd_upgrade_apply(
+        _apply_args(deploy=str(deploy), to="2.0.0", yes=True, dry_run=False, push=True)
+    )
 
     err = capsys.readouterr().err
     assert rc == u.EXIT_OK, err
     assert "FROM is secret/dfe-cluster's dfe.hyperi.io/stack_version" in err
     stage1 = _commit_with(remote, "stage 1 -- bootstrap.cert-manager")
-    pinned = u.yaml_subset.parse(_remote_file(remote, stage1, "pins.yaml"), source="pins.yaml")
+    pinned = u.yaml_subset.parse(
+        _remote_file(remote, stage1, "pins.yaml"), source="pins.yaml"
+    )
     assert pinned == {"base": {"dfe-infra": "2.0.0"}}
     assert ("retarget", "2.0.0") in events
     assert u.read_deploy_pin(deploy) == "2.0.0"
     assert u._git(deploy, "status", "--porcelain").stdout == ""
 
 
-def test_the_in_pod_script_hands_the_stdin_password_to_clickhouse_client_by_environment(tmp_path: Path) -> None:
+def test_the_in_pod_script_hands_the_stdin_password_to_clickhouse_client_by_environment(
+    tmp_path: Path,
+) -> None:
     """Runs CLICKHOUSE_CLIENT_SH under a real sh, with a clickhouse-client that reports what it was given."""
     fake = tmp_path / "clickhouse-client"
-    fake.write_text('#!/bin/sh\nprintf "env=%s\\n" "${CLICKHOUSE_PASSWORD-unset}"\nprintf "arg=%s\\n" "$@"\n', encoding="utf-8")
+    fake.write_text(
+        '#!/bin/sh\nprintf "env=%s\\n" "${CLICKHOUSE_PASSWORD-unset}"\nprintf "arg=%s\\n" "$@"\n',
+        encoding="utf-8",
+    )
     fake.chmod(0o755)
     env = {"PATH": f"{tmp_path}:/usr/bin:/bin"}
-    argv = ["sh", "-c", u.CLICKHOUSE_CLIENT_SH, "sh", "--user", "admin", "-q", "SELECT 1"]
+    argv = [
+        "sh",
+        "-c",
+        u.CLICKHOUSE_CLIENT_SH,
+        "sh",
+        "--user",
+        "admin",
+        "-q",
+        "SELECT 1",
+    ]
 
-    given = subprocess.run(argv, input="p w\"\\x\n", capture_output=True, text=True, env=env, check=True)
-    assert given.stdout.splitlines() == ["env=p w\"\\x", "arg=--user", "arg=admin", "arg=-q", "arg=SELECT 1"]
+    given = subprocess.run(
+        argv, input='p w"\\x\n', capture_output=True, text=True, env=env, check=True
+    )
+    assert given.stdout.splitlines() == [
+        'env=p w"\\x',
+        "arg=--user",
+        "arg=admin",
+        "arg=-q",
+        "arg=SELECT 1",
+    ]
 
-    none = subprocess.run(argv, input="", capture_output=True, text=True, env=env, check=True)
+    none = subprocess.run(
+        argv, input="", capture_output=True, text=True, env=env, check=True
+    )
     assert none.stdout.splitlines()[0] == "env=unset"
 
 
@@ -4283,7 +5910,10 @@ INGEST_BLOCKS = (
         "      allow:\n        - 203.0.113.0/24\n        - 198.51.100.7/32\n  public:\n    loadBalancerIP: 10.0.0.9\n",
         ["door", "allow"],
     ),
-    ("exposure:\n  groups:\n    ingest: {door: gateway, allow: [192.0.2.0/24]}\n", ["door", "allow"]),
+    (
+        "exposure:\n  groups:\n    ingest: {door: gateway, allow: [192.0.2.0/24]}\n",
+        ["door", "allow"],
+    ),
     ("exposure:\n  groups:\n    ingest:\n      enabled: false\n", ["enabled"]),
 )
 
@@ -4295,20 +5925,26 @@ def _write_common(deploy: Path, text: str) -> None:
 
 
 @pytest.mark.parametrize("overlay", NO_INGEST_BLOCK)
-def test_an_upgrade_from_220_without_an_ingest_block_is_refused_naming_the_keys(deploy: Path, overlay: str) -> None:
+def test_an_upgrade_from_220_without_an_ingest_block_is_refused_naming_the_keys(
+    deploy: Path, overlay: str
+) -> None:
     _write_common(deploy, overlay)
     ok, detail = u.check_ingest_door(deploy, "2.2.0", "2.2.1-rc.8")
     assert ok is False
     assert "2.2.0 predates 2.2.1-rc.7" in detail
     assert "infra/common.yaml does not set exposure.groups.ingest" in detail
-    assert "a LoadBalancer open to every address on the receiver's public ports" in detail
+    assert (
+        "a LoadBalancer open to every address on the receiver's public ports" in detail
+    )
     assert "exposure.groups.ingest.door" in detail
     assert "exposure.groups.ingest.allow" in detail
     assert "See docs/ingest-edge.md." in detail
 
 
 @pytest.mark.parametrize(("overlay", "keys"), INGEST_BLOCKS)
-def test_an_explicit_ingest_block_passes_an_upgrade_from_220(deploy: Path, overlay: str, keys: list[str]) -> None:
+def test_an_explicit_ingest_block_passes_an_upgrade_from_220(
+    deploy: Path, overlay: str, keys: list[str]
+) -> None:
     _write_common(deploy, overlay)
     assert u.yaml_subset.keys_under(overlay, u.INGEST_GROUP_PATH) == keys
     ok, detail = u.check_ingest_door(deploy, "2.2.0", "2.2.1-rc.8")
@@ -4317,16 +5953,22 @@ def test_an_explicit_ingest_block_passes_an_upgrade_from_220(deploy: Path, overl
 
 
 @pytest.mark.parametrize("from_stack", ["2.2.1-rc.7", "2.2.1-rc.8", "2.2.1"])
-def test_an_upgrade_from_a_stack_with_the_ingest_group_passes_without_a_block(deploy: Path, from_stack: str) -> None:
+def test_an_upgrade_from_a_stack_with_the_ingest_group_passes_without_a_block(
+    deploy: Path, from_stack: str
+) -> None:
     ok, detail = u.check_ingest_door(deploy, from_stack, "2.2.1-rc.8")
     assert ok is True
     assert detail.startswith(f"{from_stack} is at or after 2.2.1-rc.7")
 
 
-def test_an_upgrade_that_stops_short_of_the_ingest_group_passes_without_a_block(deploy: Path) -> None:
+def test_an_upgrade_that_stops_short_of_the_ingest_group_passes_without_a_block(
+    deploy: Path,
+) -> None:
     ok, detail = u.check_ingest_door(deploy, "2.2.0", "2.2.1-rc.6")
     assert ok is True
-    assert detail == "2.2.1-rc.6 predates 2.2.1-rc.7, so the receiver's door does not move"
+    assert (
+        detail == "2.2.1-rc.6 predates 2.2.1-rc.7, so the receiver's door does not move"
+    )
 
 
 def test_the_ingest_group_stack_is_a_certified_stack_above_220(deploy: Path) -> None:
@@ -4336,53 +5978,92 @@ def test_the_ingest_group_stack_is_a_certified_stack_above_220(deploy: Path) -> 
     assert u.check_ingest_door(deploy, "2.2.0", u.INGEST_GROUP_STACK)[0] is False
 
 
-def _ingest_upgrade(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, deploy: Path, order_path: Path, pin: str) -> None:
+def _ingest_upgrade(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    deploy: Path,
+    order_path: Path,
+    pin: str,
+) -> None:
     """FROM `pin` in a versions.yaml carrying the stacks either side of the ingest group, every other check passing."""
     versions = tmp_path / "ingest-versions.yaml"
     versions.write_text(INGEST_VERSIONS_YAML, encoding="utf-8")
     monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
     monkeypatch.setattr(u, "VERSIONS_FILE", versions)
-    (deploy / "pins.yaml").write_text(PINS_YAML.replace('"1.0.0"', f'"{pin}"'), encoding="utf-8")
-    for name in ("check_deploy_clean", "check_web_plane", "check_cluster_reachable", "check_argo_apps",
-                 "check_no_kafka_rebalance", "check_clickhouse_merges", "check_schema_lock_quorum", "check_node_capacity", "check_backup_marker"):
+    (deploy / "pins.yaml").write_text(
+        PINS_YAML.replace('"1.0.0"', f'"{pin}"'), encoding="utf-8"
+    )
+    for name in (
+        "check_deploy_clean",
+        "check_web_plane",
+        "check_cluster_reachable",
+        "check_argo_apps",
+        "check_no_kafka_rebalance",
+        "check_clickhouse_merges",
+        "check_schema_lock_quorum",
+        "check_node_capacity",
+        "check_backup_marker",
+    ):
         monkeypatch.setattr(u, name, lambda *_a, **_k: (True, "ok"))
 
 
 def test_preflight_refuses_an_upgrade_from_220_until_the_deploy_repo_states_its_door(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, deploy: Path, order_path: Path, capsys: pytest.CaptureFixture
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    deploy: Path,
+    order_path: Path,
+    capsys: pytest.CaptureFixture,
 ) -> None:
     _ingest_upgrade(monkeypatch, tmp_path, deploy, order_path, "2.2.0")
 
     rc = u.cmd_upgrade_preflight(_apply_args(deploy=str(deploy), to="2.2.1-rc.8"))
     out = capsys.readouterr().out
     assert rc == u.EXIT_BLOCKED, out
-    assert "[FAIL] ingest door (exposure.groups.ingest): 2.2.0 predates 2.2.1-rc.7" in out
+    assert (
+        "[FAIL] ingest door (exposure.groups.ingest): 2.2.0 predates 2.2.1-rc.7" in out
+    )
 
     _write_common(deploy, INGEST_BLOCKS[0][0])
     rc = u.cmd_upgrade_preflight(_apply_args(deploy=str(deploy), to="2.2.1-rc.8"))
     out = capsys.readouterr().out
     assert rc == u.EXIT_OK, out
-    assert "[PASS] ingest door (exposure.groups.ingest): infra/common.yaml sets exposure.groups.ingest: allow" in out
+    assert (
+        "[PASS] ingest door (exposure.groups.ingest): infra/common.yaml sets exposure.groups.ingest: allow"
+        in out
+    )
 
 
 def test_preflight_passes_an_upgrade_from_the_ingest_group_stack_without_a_block(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, deploy: Path, order_path: Path, capsys: pytest.CaptureFixture
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    deploy: Path,
+    order_path: Path,
+    capsys: pytest.CaptureFixture,
 ) -> None:
     _ingest_upgrade(monkeypatch, tmp_path, deploy, order_path, "2.2.1-rc.7")
     rc = u.cmd_upgrade_preflight(_apply_args(deploy=str(deploy), to="2.2.1-rc.8"))
     out = capsys.readouterr().out
     assert rc == u.EXIT_OK, out
-    assert "[PASS] ingest door (exposure.groups.ingest): 2.2.1-rc.7 is at or after 2.2.1-rc.7" in out
+    assert (
+        "[PASS] ingest door (exposure.groups.ingest): 2.2.1-rc.7 is at or after 2.2.1-rc.7"
+        in out
+    )
 
 
 def test_apply_refuses_an_upgrade_from_220_without_an_ingest_block_and_moves_nothing(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, deploy: Path, order_path: Path, capsys: pytest.CaptureFixture
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    deploy: Path,
+    order_path: Path,
+    capsys: pytest.CaptureFixture,
 ) -> None:
     _ingest_upgrade(monkeypatch, tmp_path, deploy, order_path, "2.2.0")
     monkeypatch.setattr(u, "run_compat_check", lambda *_a, **_k: (True, "ok"))
     pins = (deploy / "pins.yaml").read_text(encoding="utf-8")
 
-    rc = u.cmd_upgrade_apply(_apply_args(deploy=str(deploy), to="2.2.1-rc.8", yes=True, dry_run=False))
+    rc = u.cmd_upgrade_apply(
+        _apply_args(deploy=str(deploy), to="2.2.1-rc.8", yes=True, dry_run=False)
+    )
 
     captured = capsys.readouterr()
     assert rc == u.EXIT_BLOCKED
@@ -4402,10 +6083,18 @@ def test_the_walk_reads_a_values_file_the_subset_parser_refuses() -> None:
         'exposure:\n  groups:\n    ingest:\n      door: "gateway"  # quoted\n      allow:\n        - 10.0.0.0/8\n'
         "  door: tunnel # a comment\n"
     )
-    assert u.yaml_subset.value_at(text, ("exposure", "groups", "ingest", "door")) == "gateway"
-    assert u.yaml_subset.value_at(text, ("exposure", "groups", "ingest", "allow")) is None
+    assert (
+        u.yaml_subset.value_at(text, ("exposure", "groups", "ingest", "door"))
+        == "gateway"
+    )
+    assert (
+        u.yaml_subset.value_at(text, ("exposure", "groups", "ingest", "allow")) is None
+    )
     assert u.yaml_subset.value_at(text, ("exposure", "door")) == "tunnel"
-    assert u.yaml_subset.keys_under(text, ("exposure", "groups", "ingest")) == ["door", "allow"]
+    assert u.yaml_subset.keys_under(text, ("exposure", "groups", "ingest")) == [
+        "door",
+        "allow",
+    ]
     assert u.yaml_subset.keys_under(text, ("listeners",)) == ["port"]
     with pytest.raises(u.yaml_subset.YamlSubsetError):
         u.yaml_subset.parse(text)
@@ -4456,7 +6145,10 @@ WEB_BLOCKS = (
 
 # An ingest door alone, then with both web groups, for the verbs that run both checks.
 INGEST_ONLY = "exposure:\n  groups:\n    ingest:\n      door: tunnel\n"
-INGEST_AND_WEB = INGEST_ONLY + "    console:\n      allow: [203.0.113.0/24]\n    api:\n      allow: []\n"
+INGEST_AND_WEB = (
+    INGEST_ONLY
+    + "    console:\n      allow: [203.0.113.0/24]\n    api:\n      allow: []\n"
+)
 
 
 def _write_infra(deploy: Path, name: str, text: str) -> None:
@@ -4465,13 +6157,25 @@ def _write_infra(deploy: Path, name: str, text: str) -> None:
 
 
 def _web(
-    deploy: Path, cloud: str | None = "aws", from_stack: str = "2.2.0", to_stack: str = "2.2.1-rc.8"
+    deploy: Path,
+    cloud: str | None = "aws",
+    from_stack: str = "2.2.0",
+    to_stack: str = "2.2.1-rc.8",
 ) -> tuple[bool, str]:
-    return u.check_web_plane(deploy, from_stack, to_stack, cloud=cloud, kubeconfig="kc", argocd_namespace="cd")
+    return u.check_web_plane(
+        deploy,
+        from_stack,
+        to_stack,
+        cloud=cloud,
+        kubeconfig="kc",
+        argocd_namespace="cd",
+    )
 
 
 def _no_cluster(*_a: object, **_k: object) -> str:
-    raise AssertionError("the web check read the cluster secret with nothing left to decide")
+    raise AssertionError(
+        "the web check read the cluster secret with nothing left to decide"
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -4480,13 +6184,17 @@ def _no_self_ranges(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(u, "read_self_ranges", lambda *_a, **_k: "")
 
 
-SELF_RANGES_JSONPATH = "jsonpath={.metadata.annotations.dfe\\.hyperi\\.io/edge_self_ranges}"
+SELF_RANGES_JSONPATH = (
+    "jsonpath={.metadata.annotations.dfe\\.hyperi\\.io/edge_self_ranges}"
+)
 # The reader itself, taken before _no_self_ranges replaces it for every test.
 READ_SELF_RANGES = u.read_self_ranges
 
 
 @pytest.mark.parametrize("cloud", INTERNET_FACING)
-def test_an_upgrade_from_220_on_a_cloud_without_web_groups_is_refused_naming_them(deploy: Path, cloud: str) -> None:
+def test_an_upgrade_from_220_on_a_cloud_without_web_groups_is_refused_naming_them(
+    deploy: Path, cloud: str
+) -> None:
     ok, detail = _web(deploy, cloud)
     assert ok is False
     assert detail.startswith(
@@ -4512,7 +6220,9 @@ def test_an_upgrade_from_220_on_a_cloud_without_web_groups_is_refused_naming_the
 
 
 @pytest.mark.parametrize("overlay", NO_WEB_BLOCK)
-def test_a_deploy_repo_that_states_neither_web_group_is_refused(deploy: Path, overlay: str) -> None:
+def test_a_deploy_repo_that_states_neither_web_group_is_refused(
+    deploy: Path, overlay: str
+) -> None:
     _write_common(deploy, overlay)
     ok, detail = _web(deploy)
     assert ok is False, detail
@@ -4520,16 +6230,24 @@ def test_a_deploy_repo_that_states_neither_web_group_is_refused(deploy: Path, ov
 
 
 @pytest.mark.parametrize("cloud", ON_PREM)
-def test_an_on_prem_gateway_is_not_internet_facing_so_the_upgrade_passes(deploy: Path, cloud: str) -> None:
+def test_an_on_prem_gateway_is_not_internet_facing_so_the_upgrade_passes(
+    deploy: Path, cloud: str
+) -> None:
     assert _web(deploy, cloud) == (
-        True, f"the gateway is not internet-facing on {cloud}, so an empty web allow list fences nothing"
+        True,
+        f"the gateway is not internet-facing on {cloud}, so an empty web allow list fences nothing",
     )
 
 
 @pytest.mark.parametrize("cloud", [*INTERNET_FACING, None])
 @pytest.mark.parametrize(("name", "overlay", "stated"), WEB_BLOCKS)
 def test_web_groups_the_deploy_repo_states_pass_without_reading_the_cloud(
-    monkeypatch: pytest.MonkeyPatch, deploy: Path, name: str, overlay: str, stated: str, cloud: str | None
+    monkeypatch: pytest.MonkeyPatch,
+    deploy: Path,
+    name: str,
+    overlay: str,
+    stated: str,
+    cloud: str | None,
 ) -> None:
     monkeypatch.setattr(u, "read_cloud", _no_cluster)
     _write_infra(deploy, name, overlay)
@@ -4537,7 +6255,9 @@ def test_web_groups_the_deploy_repo_states_pass_without_reading_the_cloud(
 
 
 def test_one_web_group_left_unstated_is_refused_by_name(deploy: Path) -> None:
-    _write_common(deploy, "exposure:\n  groups:\n    console:\n      allow: [10.0.0.0/8]\n")
+    _write_common(
+        deploy, "exposure:\n  groups:\n    console:\n      allow: [10.0.0.0/8]\n"
+    )
     ok, detail = _web(deploy)
     assert ok is False
     assert "nor infra/envoy-gateway-config.yaml sets exposure.groups.api." in detail
@@ -4546,29 +6266,47 @@ def test_one_web_group_left_unstated_is_refused_by_name(deploy: Path) -> None:
 
 
 def test_a_deploy_repo_that_makes_the_gateway_internal_passes(deploy: Path) -> None:
-    _write_infra(deploy, "envoy-gateway-config.yaml", "envoyGateway:\n  service:\n    internetFacing: false\n")
+    _write_infra(
+        deploy,
+        "envoy-gateway-config.yaml",
+        "envoyGateway:\n  service:\n    internetFacing: false\n",
+    )
     assert _web(deploy, "aws") == (
-        True, "the gateway is not internet-facing on aws, so an empty web allow list fences nothing"
+        True,
+        "the gateway is not internet-facing on aws, so an empty web allow list fences nothing",
     )
 
 
-@pytest.mark.parametrize("from_stack", ["2.2.1-rc.6", "2.2.1-rc.7", "2.2.1-rc.8", "2.2.1"])
-def test_an_upgrade_from_a_fenced_stack_passes_without_web_groups(deploy: Path, from_stack: str) -> None:
+@pytest.mark.parametrize(
+    "from_stack", ["2.2.1-rc.6", "2.2.1-rc.7", "2.2.1-rc.8", "2.2.1"]
+)
+def test_an_upgrade_from_a_fenced_stack_passes_without_web_groups(
+    deploy: Path, from_stack: str
+) -> None:
     assert _web(deploy, from_stack=from_stack) == (
-        True, f"{from_stack} is at or after 2.2.1-rc.6: the web routes are already fenced"
+        True,
+        f"{from_stack} is at or after 2.2.1-rc.6: the web routes are already fenced",
     )
 
 
 @pytest.mark.parametrize("to_stack", ["2.2.0", "2.2.1-rc.5"])
-def test_an_upgrade_that_stops_short_of_the_web_fence_passes(deploy: Path, to_stack: str) -> None:
-    assert _web(deploy, to_stack=to_stack) == (True, f"{to_stack} predates 2.2.1-rc.6, so the web routes stay unfenced")
+def test_an_upgrade_that_stops_short_of_the_web_fence_passes(
+    deploy: Path, to_stack: str
+) -> None:
+    assert _web(deploy, to_stack=to_stack) == (
+        True,
+        f"{to_stack} predates 2.2.1-rc.6, so the web routes stay unfenced",
+    )
 
 
 def test_an_upgrade_to_the_fence_stack_needs_ui_allowed_cidrs(deploy: Path) -> None:
     _write_common(deploy, WEB_BLOCKS[0][1])
     ok, detail = _web(deploy, to_stack="2.2.1-rc.6")
     assert ok is False
-    assert "neither infra/common.yaml nor infra/envoy-gateway-config.yaml sets ui.allowed_cidrs." in detail
+    assert (
+        "neither infra/common.yaml nor infra/envoy-gateway-config.yaml sets ui.allowed_cidrs."
+        in detail
+    )
     assert "dfe-ui, HyperDX and the engine API (ui.allowed_cidrs)" in detail
     assert (
         "Set ui.allowed_cidrs to the CIDRs that may reach them in infra/common.yaml; from 2.2.1-rc.7 the list is "
@@ -4576,10 +6314,15 @@ def test_an_upgrade_to_the_fence_stack_needs_ui_allowed_cidrs(deploy: Path) -> N
     ) in detail
 
     _write_common(deploy, 'ui:\n  allowed_cidrs: ""\n')
-    assert _web(deploy, to_stack="2.2.1-rc.6") == (True, "the deploy repo sets ui.allowed_cidrs")
+    assert _web(deploy, to_stack="2.2.1-rc.6") == (
+        True,
+        "the deploy repo sets ui.allowed_cidrs",
+    )
 
 
-def test_the_cloud_comes_from_the_cluster_secret_when_not_given(monkeypatch: pytest.MonkeyPatch, deploy: Path) -> None:
+def test_the_cloud_comes_from_the_cluster_secret_when_not_given(
+    monkeypatch: pytest.MonkeyPatch, deploy: Path
+) -> None:
     seen: list[tuple[str | None, str]] = []
 
     def read(kubeconfig: str | None, namespace: str) -> str:
@@ -4604,7 +6347,9 @@ def test_expected_fail_a_refusal_names_the_self_ranges_the_gateway_still_admits(
     monkeypatch: pytest.MonkeyPatch, deploy: Path
 ) -> None:
     """layer2-edge.yaml hands every web group these, so "every address" would be wrong."""
-    monkeypatch.setattr(u, "read_self_ranges", lambda *_a, **_k: "203.0.113.7/32,198.51.100.4/32")
+    monkeypatch.setattr(
+        u, "read_self_ranges", lambda *_a, **_k: "203.0.113.7/32,198.51.100.4/32"
+    )
     ok, detail = _web(deploy)
     assert ok is False
     assert (
@@ -4617,16 +6362,25 @@ def test_expected_fail_an_unreadable_self_range_annotation_claims_no_list(
     monkeypatch: pytest.MonkeyPatch, deploy: Path
 ) -> None:
     def unreadable(*_a: object, **_k: object) -> str:
-        raise u.UpgradeError("cannot read dfe.hyperi.io/edge_self_ranges on secret/dfe-cluster in cd: refused")
+        raise u.UpgradeError(
+            "cannot read dfe.hyperi.io/edge_self_ranges on secret/dfe-cluster in cd: refused"
+        )
 
     monkeypatch.setattr(u, "read_self_ranges", unreadable)
     ok, detail = _web(deploy)
     assert ok is False
-    assert "these answer 403 to every address outside exposure.selfRanges from the first sync" in detail
+    assert (
+        "these answer 403 to every address outside exposure.selfRanges from the first sync"
+        in detail
+    )
 
 
-def test_expected_fail_a_deploy_repo_self_range_counts_while_the_cluster_secret_names_none(deploy: Path) -> None:
-    _write_infra(deploy, "common.yaml", "exposure:\n  selfRanges:\n    - 192.0.2.9/32\n")
+def test_expected_fail_a_deploy_repo_self_range_counts_while_the_cluster_secret_names_none(
+    deploy: Path,
+) -> None:
+    _write_infra(
+        deploy, "common.yaml", "exposure:\n  selfRanges:\n    - 192.0.2.9/32\n"
+    )
     ok, detail = _web(deploy)
     assert ok is False
     assert (
@@ -4662,7 +6416,10 @@ def test_expected_fail_an_empty_deploy_repo_self_range_list_admits_nobody(
 @pytest.mark.parametrize(
     ("overlays", "named"),
     [
-        ({"common.yaml": "exposure:\n  selfRanges: [192.0.2.9/32]\n"}, "infra/common.yaml"),
+        (
+            {"common.yaml": "exposure:\n  selfRanges: [192.0.2.9/32]\n"},
+            "infra/common.yaml",
+        ),
         (
             {"common.yaml": "exposure:\n  selfRanges: [\n    192.0.2.9/32\n  ]\n"},
             "infra/common.yaml",
@@ -4683,59 +6440,93 @@ def test_a_deploy_repo_self_range_list_with_an_entry_is_named(
         _write_infra(deploy, name, text)
     ok, detail = _web(deploy)
     assert ok is False
-    assert f"every address outside the exposure.selfRanges {named} sets from the first sync" in detail, detail
+    assert (
+        f"every address outside the exposure.selfRanges {named} sets from the first sync"
+        in detail
+    ), detail
 
 
 def test_expected_fail_plan_with_a_cloud_and_no_cluster_reads_no_self_range(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, deploy: Path, order_path: Path, capsys: pytest.CaptureFixture
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    deploy: Path,
+    order_path: Path,
+    capsys: pytest.CaptureFixture,
 ) -> None:
     """--cloud answers the one question plan needs a cluster for, and no --kubeconfig names one."""
     _web_upgrade(monkeypatch, tmp_path, deploy, order_path, INGEST_ONLY)
     monkeypatch.setattr(u, "read_self_ranges", READ_SELF_RANGES)
     calls = _mock_run(monkeypatch, _proc(0, stdout="203.0.113.7/32\n"))
 
-    rc = u.cmd_upgrade_plan(_plan_args(deploy=str(deploy), to="2.2.1-rc.8", cloud="aws"))
+    rc = u.cmd_upgrade_plan(
+        _plan_args(deploy=str(deploy), to="2.2.1-rc.8", cloud="aws")
+    )
 
     out = capsys.readouterr().out
     assert rc == u.EXIT_BLOCKED, out
     assert calls == []
-    assert "these answer 403 to every address outside exposure.selfRanges from the first sync" in out
+    assert (
+        "these answer 403 to every address outside exposure.selfRanges from the first sync"
+        in out
+    )
 
 
 def test_plan_with_a_cloud_and_a_kubeconfig_names_the_self_ranges(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, deploy: Path, order_path: Path, capsys: pytest.CaptureFixture
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    deploy: Path,
+    order_path: Path,
+    capsys: pytest.CaptureFixture,
 ) -> None:
     _web_upgrade(monkeypatch, tmp_path, deploy, order_path, INGEST_ONLY)
     monkeypatch.setattr(u, "read_self_ranges", READ_SELF_RANGES)
     calls = _mock_run(monkeypatch, _proc(0, stdout="203.0.113.7/32\n"))
 
-    rc = u.cmd_upgrade_plan(_plan_args(deploy=str(deploy), to="2.2.1-rc.8", cloud="aws", kubeconfig="kc"))
+    rc = u.cmd_upgrade_plan(
+        _plan_args(deploy=str(deploy), to="2.2.1-rc.8", cloud="aws", kubeconfig="kc")
+    )
 
     assert rc == u.EXIT_BLOCKED
-    assert "every address outside exposure.selfRanges (203.0.113.7/32)" in capsys.readouterr().out
+    assert (
+        "every address outside exposure.selfRanges (203.0.113.7/32)"
+        in capsys.readouterr().out
+    )
     assert len(calls) == 1
     assert calls[0][:3] == ["kubectl", "--kubeconfig", "kc"]
     assert calls[0][-1] == SELF_RANGES_JSONPATH
 
 
 def test_plan_whose_from_came_off_the_cluster_secret_names_the_self_ranges(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, deploy: Path, order_path: Path, capsys: pytest.CaptureFixture
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    deploy: Path,
+    order_path: Path,
+    capsys: pytest.CaptureFixture,
 ) -> None:
     """Reading FROM off the cluster secret puts a cluster in play, --cloud or not."""
     _web_upgrade(monkeypatch, tmp_path, deploy, order_path, INGEST_ONLY)
     (deploy / "pins.yaml").unlink()
     monkeypatch.setattr(u, "read_self_ranges", READ_SELF_RANGES)
-    calls = _mock_run(monkeypatch, _proc(0, stdout="2.2.0\n"), _proc(0, stdout="203.0.113.7/32\n"))
+    calls = _mock_run(
+        monkeypatch, _proc(0, stdout="2.2.0\n"), _proc(0, stdout="203.0.113.7/32\n")
+    )
 
-    rc = u.cmd_upgrade_plan(_plan_args(deploy=str(deploy), to="2.2.1-rc.8", cloud="aws"))
+    rc = u.cmd_upgrade_plan(
+        _plan_args(deploy=str(deploy), to="2.2.1-rc.8", cloud="aws")
+    )
 
     assert rc == u.EXIT_BLOCKED
-    assert "every address outside exposure.selfRanges (203.0.113.7/32)" in capsys.readouterr().out
+    assert (
+        "every address outside exposure.selfRanges (203.0.113.7/32)"
+        in capsys.readouterr().out
+    )
     assert len(calls) == 2
     assert calls[1][-1] == SELF_RANGES_JSONPATH
 
 
-def test_read_self_ranges_reads_only_that_annotation(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_read_self_ranges_reads_only_that_annotation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     calls = _mock_run(monkeypatch, _proc(0, stdout="203.0.113.7/32\n"))
     assert READ_SELF_RANGES("kc", "argocd") == "203.0.113.7/32"
     assert calls[0][-2:] == ["-o", SELF_RANGES_JSONPATH]
@@ -4745,8 +6536,12 @@ def test_read_self_ranges_reads_only_that_annotation(monkeypatch: pytest.MonkeyP
 @pytest.mark.parametrize(
     ("secret", "why"),
     [
-        (u.UpgradeError("cannot read dfe.hyperi.io/cloud on secret/dfe-cluster in cd: refused"),
-         "cannot read dfe.hyperi.io/cloud on secret/dfe-cluster in cd: refused"),
+        (
+            u.UpgradeError(
+                "cannot read dfe.hyperi.io/cloud on secret/dfe-cluster in cd: refused"
+            ),
+            "cannot read dfe.hyperi.io/cloud on secret/dfe-cluster in cd: refused",
+        ),
         ("", "secret/dfe-cluster's dfe.hyperi.io/cloud is empty"),
     ],
 )
@@ -4770,15 +6565,26 @@ def test_a_cloud_nothing_names_is_refused_saying_how_to_name_it(
 def test_a_cloud_name_that_is_not_one_is_refused(deploy: Path) -> None:
     ok, detail = _web(deploy, "../../etc")
     assert ok is False
-    assert detail == "the cloud '../../etc' is not a cloud name, so no argocd/values file can be read for it"
+    assert (
+        detail
+        == "the cloud '../../etc' is not a cloud name, so no argocd/values file can be read for it"
+    )
 
 
 @pytest.mark.parametrize(
     ("cloud", "facing"),
-    [("aws", "true"), ("gcp", "true"), ("azure", "true"), ("local", "false"), ("local-dfe", "false"),
-     ("rancher", "false")],
+    [
+        ("aws", "true"),
+        ("gcp", "true"),
+        ("azure", "true"),
+        ("local", "false"),
+        ("local-dfe", "false"),
+        ("rancher", "false"),
+    ],
 )
-def test_the_gateway_values_say_which_clouds_are_internet_facing(cloud: str, facing: str) -> None:
+def test_the_gateway_values_say_which_clouds_are_internet_facing(
+    cloud: str, facing: str
+) -> None:
     assert u._layered(u.gateway_values(cloud), u.INTERNET_FACING_PATH)[0] == facing
 
 
@@ -4786,15 +6592,23 @@ def test_the_web_fence_stacks_are_certified_stacks_above_220() -> None:
     stacks = u.load_versions_root()["stacks"]
     assert {"2.2.0", u.WEB_FENCE_STACK, u.WEB_GROUP_STACK} <= set(stacks)
     semver_key = u._dfe_stack().semver_key
-    assert semver_key("2.2.0") < semver_key(u.WEB_FENCE_STACK) < semver_key(u.WEB_GROUP_STACK)
+    assert (
+        semver_key("2.2.0")
+        < semver_key(u.WEB_FENCE_STACK)
+        < semver_key(u.WEB_GROUP_STACK)
+    )
 
 
 def test_the_gateway_layers_are_the_ones_layer2_edge_renders_it_with() -> None:
-    gateway = (REPO_ROOT / "argocd" / "appsets" / "layer2-edge.yaml").read_text(encoding="utf-8").split("\n---\n")[0]
+    gateway = (
+        (REPO_ROOT / "argocd" / "appsets" / "layer2-edge.yaml")
+        .read_text(encoding="utf-8")
+        .split("\n---\n")[0]
+    )
     app = re.search(r"- app: (\S+)", gateway)
     assert app is not None
     assert u.GATEWAY_OVERLAY.name == f"{app[1]}.yaml"
-    value_files = gateway[gateway.index("valueFiles:"):]
+    value_files = gateway[gateway.index("valueFiles:") :]
     layers = (
         "argocd/values/common.yaml",
         'argocd/values/{{ index .metadata.annotations "dfe.hyperi.io/cloud" }}.yaml',
@@ -4816,7 +6630,9 @@ def test_no_profile_file_sets_a_key_the_web_check_reads() -> None:
         text = path.read_text(encoding="utf-8")
         assert u.yaml_subset.value_at(text, u.INTERNET_FACING_PATH) is None, path.name
         for group in u.WEB_GROUPS:
-            assert u.yaml_subset.keys_under(text, ("exposure", "groups", group)) == [], path.name
+            assert (
+                u.yaml_subset.keys_under(text, ("exposure", "groups", group)) == []
+            ), path.name
 
 
 def test_no_layer_below_the_deploy_repo_lists_a_web_group() -> None:
@@ -4828,7 +6644,13 @@ def test_no_layer_below_the_deploy_repo_lists_a_web_group() -> None:
             assert (groups.get(group) or {}).get("allow") in (None, []), path.name
 
 
-def _web_upgrade(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, deploy: Path, order_path: Path, overlay: str) -> None:
+def _web_upgrade(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    deploy: Path,
+    order_path: Path,
+    overlay: str,
+) -> None:
     """FROM 2.2.0 with `overlay` as infra/common.yaml, the real web check and every other check passing."""
     _ingest_upgrade(monkeypatch, tmp_path, deploy, order_path, "2.2.0")
     monkeypatch.setattr(u, "check_web_plane", REAL_CHECK_WEB_PLANE)
@@ -4838,12 +6660,18 @@ def _web_upgrade(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, deploy: Path, 
 
 @pytest.mark.parametrize("cloud", [*INTERNET_FACING, *ON_PREM])
 def test_plan_reports_a_closed_web_plane_as_blocked_on_a_cloud_only(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, deploy: Path, order_path: Path, capsys: pytest.CaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    deploy: Path,
+    order_path: Path,
+    capsys: pytest.CaptureFixture,
     cloud: str,
 ) -> None:
     _web_upgrade(monkeypatch, tmp_path, deploy, order_path, INGEST_ONLY)
 
-    rc = u.cmd_upgrade_plan(_plan_args(deploy=str(deploy), to="2.2.1-rc.8", cloud=cloud))
+    rc = u.cmd_upgrade_plan(
+        _plan_args(deploy=str(deploy), to="2.2.1-rc.8", cloud=cloud)
+    )
 
     captured = capsys.readouterr()
     assert (
@@ -4852,7 +6680,10 @@ def test_plan_reports_a_closed_web_plane_as_blocked_on_a_cloud_only(
     ) in captured.out
     if cloud in INTERNET_FACING:
         assert rc == u.EXIT_BLOCKED, captured.out
-        assert "[FAIL] web plane (exposure.groups console and api): 2.2.0 predates 2.2.1-rc.6" in captured.out
+        assert (
+            "[FAIL] web plane (exposure.groups console and api): 2.2.0 predates 2.2.1-rc.6"
+            in captured.out
+        )
         assert (
             "dfe-ops upgrade plan: BLOCKED -- see compat-check / exposure / values migration / sizing sections above"
         ) in captured.err
@@ -4865,11 +6696,17 @@ def test_plan_reports_a_closed_web_plane_as_blocked_on_a_cloud_only(
 
 @pytest.mark.parametrize("cloud", INTERNET_FACING)
 def test_plan_passes_once_the_deploy_repo_states_the_web_groups(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, deploy: Path, order_path: Path, capsys: pytest.CaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    deploy: Path,
+    order_path: Path,
+    capsys: pytest.CaptureFixture,
     cloud: str,
 ) -> None:
     _web_upgrade(monkeypatch, tmp_path, deploy, order_path, INGEST_AND_WEB)
-    rc = u.cmd_upgrade_plan(_plan_args(deploy=str(deploy), to="2.2.1-rc.8", cloud=cloud))
+    rc = u.cmd_upgrade_plan(
+        _plan_args(deploy=str(deploy), to="2.2.1-rc.8", cloud=cloud)
+    )
     out = capsys.readouterr().out
     assert rc == u.EXIT_OK, out
     assert (
@@ -4879,23 +6716,43 @@ def test_plan_passes_once_the_deploy_repo_states_the_web_groups(
 
 
 def test_plan_reports_an_unstated_ingest_door_as_blocked(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, deploy: Path, order_path: Path, capsys: pytest.CaptureFixture
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    deploy: Path,
+    order_path: Path,
+    capsys: pytest.CaptureFixture,
 ) -> None:
     _web_upgrade(monkeypatch, tmp_path, deploy, order_path, "")
-    rc = u.cmd_upgrade_plan(_plan_args(deploy=str(deploy), to="2.2.1-rc.8", cloud="local"))
+    rc = u.cmd_upgrade_plan(
+        _plan_args(deploy=str(deploy), to="2.2.1-rc.8", cloud="local")
+    )
     captured = capsys.readouterr()
     assert rc == u.EXIT_BLOCKED, captured.out
-    assert "[FAIL] ingest door (exposure.groups.ingest): 2.2.0 predates 2.2.1-rc.7" in captured.out
-    assert "BLOCKED -- see compat-check / exposure / values migration / sizing sections above" in captured.err
+    assert (
+        "[FAIL] ingest door (exposure.groups.ingest): 2.2.0 predates 2.2.1-rc.7"
+        in captured.out
+    )
+    assert (
+        "BLOCKED -- see compat-check / exposure / values migration / sizing sections above"
+        in captured.err
+    )
 
 
 def test_plan_without_cloud_reads_it_from_the_cluster_secret(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, deploy: Path, order_path: Path, capsys: pytest.CaptureFixture
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    deploy: Path,
+    order_path: Path,
+    capsys: pytest.CaptureFixture,
 ) -> None:
     _web_upgrade(monkeypatch, tmp_path, deploy, order_path, INGEST_ONLY)
     calls = _mock_run(monkeypatch, _proc(0, stdout="aws\n"))
 
-    rc = u.cmd_upgrade_plan(_plan_args(deploy=str(deploy), to="2.2.1-rc.8", kubeconfig="kc", argocd_namespace="cd"))
+    rc = u.cmd_upgrade_plan(
+        _plan_args(
+            deploy=str(deploy), to="2.2.1-rc.8", kubeconfig="kc", argocd_namespace="cd"
+        )
+    )
 
     assert rc == u.EXIT_BLOCKED
     assert "internet-facing on aws" in capsys.readouterr().out
@@ -4906,29 +6763,51 @@ def test_plan_without_cloud_reads_it_from_the_cluster_secret(
 
 
 def test_preflight_refuses_a_closed_web_plane_until_the_deploy_repo_states_it(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, deploy: Path, order_path: Path, capsys: pytest.CaptureFixture
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    deploy: Path,
+    order_path: Path,
+    capsys: pytest.CaptureFixture,
 ) -> None:
     _web_upgrade(monkeypatch, tmp_path, deploy, order_path, INGEST_ONLY)
 
-    rc = u.cmd_upgrade_preflight(_apply_args(deploy=str(deploy), to="2.2.1-rc.8", cloud="azure"))
+    rc = u.cmd_upgrade_preflight(
+        _apply_args(deploy=str(deploy), to="2.2.1-rc.8", cloud="azure")
+    )
     out = capsys.readouterr().out
     assert rc == u.EXIT_BLOCKED, out
-    assert "[FAIL] web plane (exposure.groups console and api): 2.2.0 predates 2.2.1-rc.6" in out
+    assert (
+        "[FAIL] web plane (exposure.groups console and api): 2.2.0 predates 2.2.1-rc.6"
+        in out
+    )
 
     _write_common(deploy, INGEST_AND_WEB)
-    rc = u.cmd_upgrade_preflight(_apply_args(deploy=str(deploy), to="2.2.1-rc.8", cloud="azure"))
+    rc = u.cmd_upgrade_preflight(
+        _apply_args(deploy=str(deploy), to="2.2.1-rc.8", cloud="azure")
+    )
     out = capsys.readouterr().out
     assert rc == u.EXIT_OK, out
-    assert "[PASS] web plane (exposure.groups console and api): the deploy repo sets" in out
+    assert (
+        "[PASS] web plane (exposure.groups console and api): the deploy repo sets"
+        in out
+    )
 
 
 def test_apply_refuses_a_closed_web_plane_and_moves_nothing(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, deploy: Path, order_path: Path, capsys: pytest.CaptureFixture
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    deploy: Path,
+    order_path: Path,
+    capsys: pytest.CaptureFixture,
 ) -> None:
     _web_upgrade(monkeypatch, tmp_path, deploy, order_path, INGEST_ONLY)
     pins = (deploy / "pins.yaml").read_text(encoding="utf-8")
 
-    rc = u.cmd_upgrade_apply(_apply_args(deploy=str(deploy), to="2.2.1-rc.8", yes=True, dry_run=False, cloud="gcp"))
+    rc = u.cmd_upgrade_apply(
+        _apply_args(
+            deploy=str(deploy), to="2.2.1-rc.8", yes=True, dry_run=False, cloud="gcp"
+        )
+    )
 
     captured = capsys.readouterr()
     assert rc == u.EXIT_BLOCKED
@@ -4941,7 +6820,10 @@ def test_apply_refuses_a_closed_web_plane_and_moves_nothing(
 def test_the_verbs_that_run_the_web_check_take_cloud(verb: str) -> None:
     parser = argparse.ArgumentParser()
     u.add_upgrade_subparser(parser.add_subparsers())
-    assert parser.parse_args(["upgrade", verb, "--deploy", "d", "--cloud", "gcp"]).cloud == "gcp"
+    assert (
+        parser.parse_args(["upgrade", verb, "--deploy", "d", "--cloud", "gcp"]).cloud
+        == "gcp"
+    )
     assert parser.parse_args(["upgrade", verb, "--deploy", "d"]).cloud is None
 
 
@@ -4987,12 +6869,20 @@ def pushed_220(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[Path, P
     monkeypatch.setattr(u, "UPGRADE_ORDER", order)
     monkeypatch.setattr(u, "VERSIONS_FILE", versions)
     remote = tmp_path / "remote.git"
-    assert u._run(["git", "init", "-q", "--bare", "-b", "main", str(remote)]).returncode == 0
+    assert (
+        u._run(["git", "init", "-q", "--bare", "-b", "main", str(remote)]).returncode
+        == 0
+    )
     d = tmp_path / "deploy-220"
     shutil.copytree(VALUES_FIXTURES, d)
     (d / "pins.yaml").write_text('base:\n  dfe-infra: "2.2.0"\n', encoding="utf-8")
-    for args in (["init", "-q", "-b", "main"], ["add", "-A"], ["commit", "-q", "-m", "initial"],
-                 ["remote", "add", "origin", str(remote)], ["push", "-q", "-u", "origin", "main"]):
+    for args in (
+        ["init", "-q", "-b", "main"],
+        ["add", "-A"],
+        ["commit", "-q", "-m", "initial"],
+        ["remote", "add", "origin", str(remote)],
+        ["push", "-q", "-u", "origin", "main"],
+    ):
         assert u._git(d, *args).returncode == 0, args
     return d, remote
 
@@ -5003,19 +6893,29 @@ def _engine_edit(tmp_path: Path, remote: Path) -> None:
     assert u._run(["git", "clone", "-q", str(remote), str(clone)]).returncode == 0
     path = clone / VRL_OVERLAY
     path.write_text(
-        path.read_text(encoding="utf-8").replace(". = parse_json!(.message)", ". = parse_json!(.edited)", 1),
+        path.read_text(encoding="utf-8").replace(
+            ". = parse_json!(.message)", ". = parse_json!(.edited)", 1
+        ),
         encoding="utf-8",
     )
-    for args in (["add", VRL_OVERLAY], ["commit", "-q", "-m", "engine edit"], ["push", "-q", "origin", "HEAD:main"]):
+    for args in (
+        ["add", VRL_OVERLAY],
+        ["commit", "-q", "-m", "engine edit"],
+        ["push", "-q", "origin", "HEAD:main"],
+    ):
         assert u._git(clone, *args).returncode == 0, args
 
 
-def _values_cluster(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, remote: Path, live: dict[str, str]) -> list:
+def _values_cluster(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, remote: Path, live: dict[str, str]
+) -> list:
     """The cluster, recorded: the 2.2.0 engine edits the vrl overlay while the stage push settles."""
     events: list[tuple[str, object]] = []
     monkeypatch.setattr(u, "run_compat_check", lambda *_a, **_k: (True, "ok"))
     monkeypatch.setattr(u, "run_preflight", lambda *_a, **_k: [])
-    monkeypatch.setattr(u, "read_target_revision", lambda *_a, **_k: live["target_revision"])
+    monkeypatch.setattr(
+        u, "read_target_revision", lambda *_a, **_k: live["target_revision"]
+    )
     monkeypatch.setattr(u, "read_dfe_namespace", lambda *_a, **_k: "dfe")
 
     def argo(*_a: object, stale_revision: str = "", **_k: object) -> tuple[bool, str]:
@@ -5025,7 +6925,9 @@ def _values_cluster(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, remote: Pat
         return True, "converged"
 
     def retarget(_kc: object, _ns: str, ref: str, _stack: str) -> tuple[bool, str]:
-        events.append(("retarget", yaml.safe_load(_remote_file(remote, "main", VRL_OVERLAY))))
+        events.append(
+            ("retarget", yaml.safe_load(_remote_file(remote, "main", VRL_OVERLAY)))
+        )
         live["target_revision"] = ref
         return True, ref
 
@@ -5035,13 +6937,20 @@ def _values_cluster(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, remote: Pat
 
 
 def test_apply_carries_the_220_values_before_the_retarget_and_again_from_the_remote(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, pushed_220: tuple[Path, Path], capsys: pytest.CaptureFixture
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    pushed_220: tuple[Path, Path],
+    capsys: pytest.CaptureFixture,
 ) -> None:
     deploy, remote = pushed_220
     live = {"target_revision": "2.2.0", "edit_on_first_wait": "yes"}
     events = _values_cluster(monkeypatch, tmp_path, remote, live)
 
-    rc = u.cmd_upgrade_apply(_apply_args(deploy=str(deploy), to="2.2.1-rc.9", yes=True, dry_run=False, push=True))
+    rc = u.cmd_upgrade_apply(
+        _apply_args(
+            deploy=str(deploy), to="2.2.1-rc.9", yes=True, dry_run=False, push=True
+        )
+    )
     err = capsys.readouterr().err
     assert rc == u.EXIT_OK, err
 
@@ -5049,32 +6958,52 @@ def test_apply_carries_the_220_values_before_the_retarget_and_again_from_the_rem
     staged = yaml.safe_load(_remote_file(remote, stage, VRL_OVERLAY))
     assert staged["fullnameOverride"] == "dfe-transform-vrl-merakivrl"
     assert staged["fileSets"]["transforms"]["files"] == staged["transformFiles"]
-    assert yaml.safe_load(_remote_file(remote, stage, "values/dfe-fetcher-pypiwatch-values.yaml"))["writablePaths"] == {
-        "cursor": {"persistence": {"enabled": True}}
-    }
+    assert yaml.safe_load(
+        _remote_file(remote, stage, "values/dfe-fetcher-pypiwatch-values.yaml")
+    )["writablePaths"] == {"cursor": {"persistence": {"enabled": True}}}
 
     # The engine's edit landed after the stage push, and the retarget saw it carried.
     assert [kind for kind, _ in events] == ["argo", "retarget", "argo"]
     at_retarget = events[1][1]
     assert ". = parse_json!(.edited)" in at_retarget["transformFiles"][0]["content"]
-    assert at_retarget["fileSets"]["transforms"]["files"] == at_retarget["transformFiles"]
+    assert (
+        at_retarget["fileSets"]["transforms"]["files"] == at_retarget["transformFiles"]
+    )
     assert _commit_with(remote, "carry the 2.2.0 value keys again")
     assert "finalise pending (manual, after a soak): the 2.2.0 value keys" in err
     assert "transformFiles" in yaml.safe_load(_remote_file(remote, "main", VRL_OVERLAY))
 
 
 def test_finalise_drops_the_220_keys_and_rollback_below_the_thin_charts_then_refuses(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, pushed_220: tuple[Path, Path], capsys: pytest.CaptureFixture
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    pushed_220: tuple[Path, Path],
+    capsys: pytest.CaptureFixture,
 ) -> None:
     deploy, remote = pushed_220
     live = {"target_revision": "2.2.0"}
     _values_cluster(monkeypatch, tmp_path, remote, live)
-    assert u.cmd_upgrade_apply(_apply_args(deploy=str(deploy), to="2.2.1-rc.9", yes=True, dry_run=False, push=True)) == 0
+    assert (
+        u.cmd_upgrade_apply(
+            _apply_args(
+                deploy=str(deploy), to="2.2.1-rc.9", yes=True, dry_run=False, push=True
+            )
+        )
+        == 0
+    )
     capsys.readouterr()
 
-    rc = u.cmd_upgrade_apply(_apply_args(
-        deploy=str(deploy), to="2.2.1-rc.9", from_stack="2.2.0", yes=True, dry_run=False, push=True, finalise=True,
-    ))
+    rc = u.cmd_upgrade_apply(
+        _apply_args(
+            deploy=str(deploy),
+            to="2.2.1-rc.9",
+            from_stack="2.2.0",
+            yes=True,
+            dry_run=False,
+            push=True,
+            finalise=True,
+        )
+    )
     err = capsys.readouterr().err
     assert rc == u.EXIT_OK, err
     finalised = yaml.safe_load(_remote_file(remote, "main", VRL_OVERLAY))
@@ -5091,44 +7020,82 @@ def test_finalise_drops_the_220_keys_and_rollback_below_the_thin_charts_then_ref
 
 
 def test_rollback_before_finalise_is_only_a_retarget(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, pushed_220: tuple[Path, Path], capsys: pytest.CaptureFixture
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    pushed_220: tuple[Path, Path],
+    capsys: pytest.CaptureFixture,
 ) -> None:
     deploy, remote = pushed_220
     _values_cluster(monkeypatch, tmp_path, remote, {"target_revision": "2.2.0"})
-    assert u.cmd_upgrade_apply(_apply_args(deploy=str(deploy), to="2.2.1-rc.9", yes=True, dry_run=False, push=True)) == 0
+    assert (
+        u.cmd_upgrade_apply(
+            _apply_args(
+                deploy=str(deploy), to="2.2.1-rc.9", yes=True, dry_run=False, push=True
+            )
+        )
+        == 0
+    )
     capsys.readouterr()
-    assert u.cmd_upgrade_rollback(_rollback_args(deploy=str(deploy), to="2.2.0")) == u.EXIT_OK
+    assert (
+        u.cmd_upgrade_rollback(_rollback_args(deploy=str(deploy), to="2.2.0"))
+        == u.EXIT_OK
+    )
 
 
 def test_a_resumed_apply_never_rewrites_a_key_the_thin_charts_own(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, pushed_220: tuple[Path, Path], capsys: pytest.CaptureFixture
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    pushed_220: tuple[Path, Path],
+    capsys: pytest.CaptureFixture,
 ) -> None:
     """Past the retarget the engine writes the new keys, so the old ones no longer win."""
     deploy, remote = pushed_220
     live = {"target_revision": "2.2.0"}
     _values_cluster(monkeypatch, tmp_path, remote, live)
-    assert u.cmd_upgrade_apply(_apply_args(deploy=str(deploy), to="2.2.1-rc.9", yes=True, dry_run=False, push=True)) == 0
+    assert (
+        u.cmd_upgrade_apply(
+            _apply_args(
+                deploy=str(deploy), to="2.2.1-rc.9", yes=True, dry_run=False, push=True
+            )
+        )
+        == 0
+    )
     path = deploy / VRL_OVERLAY
     text = path.read_text(encoding="utf-8")
     cut = text.index("fileSets:")
-    path.write_text(text[:cut] + text[cut:].replace("parse_json!(.message)", "parse_json!(.thin)", 1), encoding="utf-8")
+    path.write_text(
+        text[:cut]
+        + text[cut:].replace("parse_json!(.message)", "parse_json!(.thin)", 1),
+        encoding="utf-8",
+    )
     assert u._git(deploy, "commit", "-qam", "thin engine edit").returncode == 0
     capsys.readouterr()
 
-    rc = u.cmd_upgrade_apply(_apply_args(
-        deploy=str(deploy), to="2.2.1-rc.9", from_stack="2.2.0", yes=True, dry_run=False, push=True,
-    ))
+    rc = u.cmd_upgrade_apply(
+        _apply_args(
+            deploy=str(deploy),
+            to="2.2.1-rc.9",
+            from_stack="2.2.0",
+            yes=True,
+            dry_run=False,
+            push=True,
+        )
+    )
     assert rc == u.EXIT_OK, capsys.readouterr().err
     assert "parse_json!(.thin)" in path.read_text(encoding="utf-8")
 
 
 def test_a_dry_run_names_the_carry_the_recarry_and_the_finalise(
-    monkeypatch: pytest.MonkeyPatch, pushed_220: tuple[Path, Path], capsys: pytest.CaptureFixture
+    monkeypatch: pytest.MonkeyPatch,
+    pushed_220: tuple[Path, Path],
+    capsys: pytest.CaptureFixture,
 ) -> None:
     deploy, _remote = pushed_220
     monkeypatch.setattr(u, "run_compat_check", lambda *_a, **_k: (True, "ok"))
     before = {p: p.read_text(encoding="utf-8") for p in (deploy / "values").iterdir()}
-    rc = u.cmd_upgrade_apply(_apply_args(deploy=str(deploy), to="2.2.1-rc.9", push=True, finalise=True))
+    rc = u.cmd_upgrade_apply(
+        _apply_args(deploy=str(deploy), to="2.2.1-rc.9", push=True, finalise=True)
+    )
     err = capsys.readouterr().err
     assert rc == u.EXIT_OK, err
     carry = err.index("[dry-run] carry the 2.2.0 value keys onto the thin-chart keys")
@@ -5162,7 +7129,9 @@ def test_an_undeclared_rollback_points_at_the_rollback_verb_not_the_backup_marke
 # ---------------------------------------------------------------------------
 
 # 1.0.1 pins exactly what 1.0.0 does, the way a GA pins what its last rc did.
-SAME_PINS_VERSIONS_YAML = VERSIONS_YAML + """  1.0.1:
+SAME_PINS_VERSIONS_YAML = (
+    VERSIONS_YAML
+    + """  1.0.1:
     bootstrap:
       cert-manager: "v1.0.0"
     operators:
@@ -5171,6 +7140,7 @@ SAME_PINS_VERSIONS_YAML = VERSIONS_YAML + """  1.0.1:
       kafka-version: "4.2.0"
       clickhouse-version: "26.3.17.56"
 """
+)
 
 
 @pytest.fixture
@@ -5181,7 +7151,10 @@ def same_pins_versions(tmp_path: Path) -> Path:
 
 
 def test_apply_to_a_stack_with_the_same_pins_dry_run_names_the_pin_and_the_retarget(
-    monkeypatch: pytest.MonkeyPatch, deploy: Path, order_path: Path, same_pins_versions: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    deploy: Path,
+    order_path: Path,
+    same_pins_versions: Path,
     capsys: pytest.CaptureFixture,
 ) -> None:
     monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
@@ -5194,13 +7167,19 @@ def test_apply_to_a_stack_with_the_same_pins_dry_run_names_the_pin_and_the_retar
     assert rc == u.EXIT_OK, err
     assert "nothing to apply" not in out
     assert '[dry-run] set pins.yaml base.dfe-infra = "1.0.1"' in err
-    assert "[dry-run] if secret/dfe-cluster targets 1.0.0: kubectl -n argocd annotate" in err
+    assert (
+        "[dry-run] if secret/dfe-cluster targets 1.0.0: kubectl -n argocd annotate"
+        in err
+    )
     assert (deploy / "pins.yaml").read_text(encoding="utf-8") == before
 
 
 def test_apply_to_a_stack_with_the_same_pins_moves_the_pin_then_retargets(
-    monkeypatch: pytest.MonkeyPatch, pushed_deploy: tuple[Path, Path], order_path: Path,
-    same_pins_versions: Path, capsys: pytest.CaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    pushed_deploy: tuple[Path, Path],
+    order_path: Path,
+    same_pins_versions: Path,
+    capsys: pytest.CaptureFixture,
 ) -> None:
     deploy, remote = pushed_deploy
     monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
@@ -5208,7 +7187,9 @@ def test_apply_to_a_stack_with_the_same_pins_moves_the_pin_then_retargets(
     live = {"target_revision": "1.0.0", "kafka": "4.2.0", "metadata": "4.2-IV1"}
     events = _ga_cluster(monkeypatch, live)
 
-    rc = u.cmd_upgrade_apply(_apply_args(deploy=str(deploy), to="1.0.1", yes=True, dry_run=False, push=True))
+    rc = u.cmd_upgrade_apply(
+        _apply_args(deploy=str(deploy), to="1.0.1", yes=True, dry_run=False, push=True)
+    )
 
     err = capsys.readouterr().err
     assert rc == u.EXIT_OK, err
@@ -5226,17 +7207,29 @@ def test_apply_to_a_stack_with_the_same_pins_moves_the_pin_then_retargets(
     ],
 )
 def test_apply_to_a_stack_with_the_same_pins_judges_the_cluster_secret(
-    monkeypatch: pytest.MonkeyPatch, pushed_deploy: tuple[Path, Path], order_path: Path,
-    same_pins_versions: Path, capsys: pytest.CaptureFixture, current: str, push: bool, rc: int, expect: str,
+    monkeypatch: pytest.MonkeyPatch,
+    pushed_deploy: tuple[Path, Path],
+    order_path: Path,
+    same_pins_versions: Path,
+    capsys: pytest.CaptureFixture,
+    current: str,
+    push: bool,
+    rc: int,
+    expect: str,
 ) -> None:
     """A refusal leaves pins.yaml where it was, and a branch-tracking secret is never retargeted."""
     deploy, _remote = pushed_deploy
     monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
     monkeypatch.setattr(u, "VERSIONS_FILE", same_pins_versions)
-    events = _ga_cluster(monkeypatch, {"target_revision": current, "kafka": "4.2.0", "metadata": "4.2-IV1"})
+    events = _ga_cluster(
+        monkeypatch,
+        {"target_revision": current, "kafka": "4.2.0", "metadata": "4.2-IV1"},
+    )
     before = (deploy / "pins.yaml").read_text(encoding="utf-8")
 
-    got = u.cmd_upgrade_apply(_apply_args(deploy=str(deploy), to="1.0.1", yes=True, dry_run=False, push=push))
+    got = u.cmd_upgrade_apply(
+        _apply_args(deploy=str(deploy), to="1.0.1", yes=True, dry_run=False, push=push)
+    )
 
     err = capsys.readouterr().err
     assert got == rc, err

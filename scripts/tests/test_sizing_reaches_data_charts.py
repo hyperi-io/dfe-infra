@@ -125,7 +125,11 @@ def _shapes(out: Path) -> dict:
 
 def _facts(out: Path) -> dict[str, str]:
     """A fresh AWS deploy's cluster secret, the storage keys it carries for #827 included."""
-    storage = (out / "sizing" / "scale.clickhouse-storage.json").read_text(encoding="utf-8").strip()
+    storage = (
+        (out / "sizing" / "scale.clickhouse-storage.json")
+        .read_text(encoding="utf-8")
+        .strip()
+    )
     return {**AWS_FACTS, "dfe.hyperi.io/clickhouse_storage": storage}
 
 
@@ -144,7 +148,9 @@ def _application(app: str, facts: dict[str, str]) -> tuple[dict, dict]:
     return data_application(app, "scale", "aws", facts)
 
 
-def data_docs(app: str, deploy: Path, facts: dict[str, str] | None = None) -> list[dict]:
+def data_docs(
+    app: str, deploy: Path, facts: dict[str, str] | None = None
+) -> list[dict]:
     """One layer2-data chart on a scale AWS cluster, rendered over the deploy repo at ``deploy``."""
     if shutil.which(helm()) is None:
         pytest.skip("helm is not on PATH")
@@ -169,7 +175,10 @@ def _sized(deploy: Path, facts: dict[str, str]) -> dict[str, dict]:
 
 def _resources(block: dict) -> dict:
     """A rendered resources block with every quantity as the string the base writes."""
-    return {side: {k: str(v) for k, v in quantities.items()} for side, quantities in block.items()}
+    return {
+        side: {k: str(v) for k, v in quantities.items()}
+        for side, quantities in block.items()
+    }
 
 
 def _assert_sized(spec: dict[str, dict], base: dict) -> None:
@@ -179,7 +188,8 @@ def _assert_sized(spec: dict[str, dict], base: dict) -> None:
     assert server["replicas"] == ch["replicas"]
     assert _resources(server["containerTemplate"]["resources"]) == ch["resources"]
     assert (
-        server["dataVolumeClaimSpec"]["resources"]["requests"]["storage"] == ch["storage"]["size"]
+        server["dataVolumeClaimSpec"]["resources"]["requests"]["storage"]
+        == ch["storage"]["size"]
     )
     assert (
         server["settings"]["extraConfig"]["max_server_memory_usage_to_ram_ratio"]
@@ -196,14 +206,19 @@ def _assert_sized(spec: dict[str, dict], base: dict) -> None:
     assert pool["replicas"] == kafka["replicas"]
     assert _resources(pool["resources"]) == kafka["resources"]
     assert pool["storage"]["volumes"][0]["size"] == kafka["storage"]["size"]
-    hours = kafka["retention"]["assumedConsumerDowntimeH"] + kafka["retention"]["archiverLagH"]
+    hours = (
+        kafka["retention"]["assumedConsumerDowntimeH"]
+        + kafka["retention"]["archiverLagH"]
+    )
     assert spec["Kafka"]["kafka"]["config"]["log.retention.ms"] == hours * 3600 * 1000
 
 
 # ------------------------------------------------------------- the resolver's artefact
 
 
-def test_the_base_carries_the_sizing_and_none_of_the_first_sync_keys(resolved: Path) -> None:
+def test_the_base_carries_the_sizing_and_none_of_the_first_sync_keys(
+    resolved: Path,
+) -> None:
     """The storage keys ride the cluster secret, the pools the node-pools chart, and the
     message size is one chain with apps that never read this file."""
     base = _base(resolved)
@@ -226,7 +241,9 @@ def test_a_fresh_bundled_repo_gets_the_sizing_in_its_first_commit(
     tmp_path: Path, resolved: Path
 ) -> None:
     """Created empty, the repo has no branch until its first commit, and that commit is the sizing."""
-    job = run_job(tmp_path, seed_apps=("dfe-loader",), fresh=True, sizing=_seed(resolved))
+    job = run_job(
+        tmp_path, seed_apps=("dfe-loader",), fresh=True, sizing=_seed(resolved)
+    )
     assert job.returncode == 0, job.output
     assert job.writes[0]["path"] == "user/repos"
     assert job.writes[0]["content"]["auto_init"] is False
@@ -241,7 +258,9 @@ def test_a_fresh_bundled_repo_gets_the_sizing_in_its_first_commit(
     ]
 
 
-def test_a_deploy_repos_own_sizing_is_left_as_it_is(tmp_path: Path, resolved: Path) -> None:
+def test_a_deploy_repos_own_sizing_is_left_as_it_is(
+    tmp_path: Path, resolved: Path
+) -> None:
     own = "kafka:\n  replicas: 6\n"
     job = run_job(tmp_path, repo_files={f"sizing/{BASE}": own}, sizing=_seed(resolved))
     assert job.returncode == 0, job.output
@@ -254,7 +273,11 @@ def test_a_failed_sizing_write_stops_before_the_repo_gets_a_branch(
 ) -> None:
     """An app seed would then be the repo's first commit, and layer2-data would sync without the sizing."""
     job = run_job(
-        tmp_path, seed_apps=("dfe-loader",), fresh=True, sizing=_seed(resolved), refuse="sizing/"
+        tmp_path,
+        seed_apps=("dfe-loader",),
+        fresh=True,
+        sizing=_seed(resolved),
+        refuse="sizing/",
     )
     assert job.returncode != 0
     assert [w["path"] for w in job.writes] == ["user/repos"]
@@ -273,7 +296,9 @@ def test_a_deploy_with_no_resolve_seeds_no_sizing(tmp_path: Path) -> None:
 def test_one_name_from_the_resolver_to_the_appset() -> None:
     """The resolver's artefact, bootstrap's read, the Job's ConfigMap and layer2-data's value file."""
     script = BOOTSTRAP.read_text(encoding="utf-8")
-    seed = yaml.safe_load(FORGEJO_VALUES.read_text(encoding="utf-8"))["deployRepo"]["sizingSeed"]
+    seed = yaml.safe_load(FORGEJO_VALUES.read_text(encoding="utf-8"))["deployRepo"][
+        "sizingSeed"
+    ]
     assert f"create configmap {seed['configMapName']}" in script
     assert (
         'DFE_SIZING_BASE_FILE="${DFE_SIZING_DIR}/sizing/${DFE_PROFILE}.data-charts.values.yaml"'
@@ -292,7 +317,9 @@ def test_one_name_from_the_resolver_to_the_appset() -> None:
 def _configmap_block() -> str:
     """bootstrap.sh's own ConfigMap lines, run on their own rather than copied here."""
     lines = BOOTSTRAP.read_text(encoding="utf-8").splitlines()
-    start = next(i for i, line in enumerate(lines) if line.strip() == "sizing_seed_args=()")
+    start = next(
+        i for i, line in enumerate(lines) if line.strip() == "sizing_seed_args=()"
+    )
     end = next(i for i, line in enumerate(lines) if "Deploy-repo sizing seed" in line)
     return "\n".join(line.strip() for line in lines[start:end])
 
@@ -308,7 +335,9 @@ def _run_configmap_block(base_file: Path, sizing_dir: Path | None = None) -> dic
         env={
             "PATH": "/usr/bin:/bin:/usr/local/bin",
             "DFE_SIZING_BASE_FILE": str(base_file),
-            "DFE_NODE_POOLS_VALUES_FILE": str(images / node_images.NODE_POOLS_VALUES_NAME),
+            "DFE_NODE_POOLS_VALUES_FILE": str(
+                images / node_images.NODE_POOLS_VALUES_NAME
+            ),
             "DFE_NODE_IMAGES_FILE": str(images / node_images.RECORD_NAME),
             "KUBECONFIG": "/nonexistent",
         },
@@ -324,11 +353,16 @@ def _run_configmap_block(base_file: Path, sizing_dir: Path | None = None) -> dic
 
 def test_bootstrap_carries_the_resolve_into_the_configmap(resolved: Path) -> None:
     configmap = _run_configmap_block(resolved / "sizing" / BASE)
-    assert configmap["metadata"] == {"name": "dfe-deploy-repo-sizing", "namespace": "forgejo"}
+    assert configmap["metadata"] == {
+        "name": "dfe-deploy-repo-sizing",
+        "namespace": "forgejo",
+    }
     assert configmap["data"] == _seed(resolved)
 
 
-def test_bootstrap_empties_the_configmap_when_nothing_was_resolved(tmp_path: Path) -> None:
+def test_bootstrap_empties_the_configmap_when_nothing_was_resolved(
+    tmp_path: Path,
+) -> None:
     """An earlier resolve's file would otherwise seed a deploy repo created later."""
     configmap = _run_configmap_block(tmp_path / "sizing" / BASE)
     assert "data" not in configmap
@@ -370,7 +404,10 @@ def test_bootstrap_seeds_the_gated_node_image_beside_the_sizing(
         node_images.NODE_POOLS_VALUES_NAME,
         node_images.RECORD_NAME,
     }
-    assert "amiAlias: al2023@v20261012" in configmap["data"][node_images.NODE_POOLS_VALUES_NAME]
+    assert (
+        "amiAlias: al2023@v20261012"
+        in configmap["data"][node_images.NODE_POOLS_VALUES_NAME]
+    )
     record = json.loads(configmap["data"][node_images.RECORD_NAME])
     assert record["karpenter_ami_alias"]["release"] == "v20261012"
 
@@ -382,10 +419,12 @@ def test_a_fresh_bundled_repo_gets_the_node_image_before_any_app(
     sizing = _images_resolved(tmp_path / "images")
     seed = {
         **_seed(resolved),
-        node_images.NODE_POOLS_VALUES_NAME: (sizing / node_images.NODE_POOLS_VALUES_NAME).read_text(
+        node_images.NODE_POOLS_VALUES_NAME: (
+            sizing / node_images.NODE_POOLS_VALUES_NAME
+        ).read_text(encoding="utf-8"),
+        node_images.RECORD_NAME: (sizing / node_images.RECORD_NAME).read_text(
             encoding="utf-8"
         ),
-        node_images.RECORD_NAME: (sizing / node_images.RECORD_NAME).read_text(encoding="utf-8"),
     }
     job = run_job(tmp_path / "job", seed_apps=("dfe-loader",), fresh=True, sizing=seed)
     assert job.returncode == 0, job.output
@@ -401,11 +440,17 @@ def test_one_name_from_the_images_resolve_to_the_node_pools_appset() -> None:
     script = BOOTSTRAP.read_text(encoding="utf-8")
     name = node_images.NODE_POOLS_VALUES_NAME
     assert f'DFE_NODE_POOLS_VALUES_FILE="${{DFE_SIZING_DIR}}/sizing/{name}"' in script
-    assert f'DFE_NODE_IMAGES_FILE="${{DFE_SIZING_DIR}}/sizing/{node_images.RECORD_NAME}"' in script
+    assert (
+        f'DFE_NODE_IMAGES_FILE="${{DFE_SIZING_DIR}}/sizing/{node_images.RECORD_NAME}"'
+        in script
+    )
     platform = (REPO_ROOT / "argocd" / "appsets" / "layer2-platform.yaml").read_text(
         encoding="utf-8"
     )
-    assert "'$values/sizing/{{ index . \"overlay\" | default .app }}.values.yaml'" in platform
+    assert (
+        "'$values/sizing/{{ index . \"overlay\" | default .app }}.values.yaml'"
+        in platform
+    )
     assert "overlay: node-pools" in platform
     assert name == "node-pools.values.yaml"
 
@@ -414,7 +459,9 @@ def _node_image_block() -> str:
     """bootstrap.sh's own node-image lines, from the two paths to the closing fi."""
     lines = BOOTSTRAP.read_text(encoding="utf-8").splitlines()
     start = next(
-        i for i, line in enumerate(lines) if line.startswith("DFE_NODE_POOLS_VALUES_FILE=")
+        i
+        for i, line in enumerate(lines)
+        if line.startswith("DFE_NODE_POOLS_VALUES_FILE=")
     )
     end = next(i for i in range(start, len(lines)) if lines[i] == "fi")
     return "\n".join(lines[start : end + 1])
@@ -423,7 +470,11 @@ def _node_image_block() -> str:
 def _run_node_image_block(sizing_dir: Path, cloud: str) -> str:
     done = subprocess.run(
         ["bash", "-euo", "pipefail", "-c", _node_image_block()],
-        env={"PATH": "/usr/bin:/bin", "DFE_SIZING_DIR": str(sizing_dir), "DFE_CLOUD": cloud},
+        env={
+            "PATH": "/usr/bin:/bin",
+            "DFE_SIZING_DIR": str(sizing_dir),
+            "DFE_CLOUD": cloud,
+        },
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -461,7 +512,9 @@ def test_a_fresh_bundled_deploy_runs_the_data_charts_at_the_resolvers_sizes(
     tmp_path: Path, resolved: Path
 ) -> None:
     """Nothing hand-copied: the deploy repo is whatever the setup Job made of an empty one."""
-    job = run_job(tmp_path / "job", seed_apps=("dfe-loader",), fresh=True, sizing=_seed(resolved))
+    job = run_job(
+        tmp_path / "job", seed_apps=("dfe-loader",), fresh=True, sizing=_seed(resolved)
+    )
     assert job.returncode == 0, job.output
     sized = _sized(job.repo, _facts(resolved))
     _assert_sized(sized, _base(resolved))
@@ -483,7 +536,10 @@ def test_a_deploy_repo_overlay_beats_the_sizing(tmp_path: Path, resolved: Path) 
     (deploy / "sizing").mkdir(parents=True)
     shutil.copy(resolved / "sizing" / BASE, deploy / "sizing" / BASE)
     (deploy / "infra").mkdir()
-    server = {"requests": {"cpu": "3", "memory": "12Gi"}, "limits": {"cpu": "3", "memory": "12Gi"}}
+    server = {
+        "requests": {"cpu": "3", "memory": "12Gi"},
+        "limits": {"cpu": "3", "memory": "12Gi"},
+    }
     overlays = {
         "clickhouse-cluster.yaml": {"clickhouse": {"replicas": 5, "resources": server}},
         "kafka.yaml": {"kafka": {"storage": {"size": "200Gi"}}},
@@ -494,10 +550,16 @@ def test_a_deploy_repo_overlay_beats_the_sizing(tmp_path: Path, resolved: Path) 
     sized = _sized(deploy, _facts(resolved))
     base = _base(resolved)
     assert sized["ClickHouseCluster"]["replicas"] == 5
-    assert _resources(sized["ClickHouseCluster"]["containerTemplate"]["resources"]) == server
+    assert (
+        _resources(sized["ClickHouseCluster"]["containerTemplate"]["resources"])
+        == server
+    )
     assert sized["KafkaNodePool"]["storage"]["volumes"][0]["size"] == "200Gi"
     assert (
-        sized["KeeperCluster"]["dataVolumeClaimSpec"]["resources"]["requests"]["storage"] == "40Gi"
+        sized["KeeperCluster"]["dataVolumeClaimSpec"]["resources"]["requests"][
+            "storage"
+        ]
+        == "40Gi"
     )
     # A key no overlay names still comes from the base.
     assert _resources(sized["KafkaNodePool"]["resources"]) == base["kafka"]["resources"]
@@ -554,11 +616,17 @@ def _reserve_core() -> resolve_sizing.Core:
 
 
 @pytest.mark.parametrize(
-    ("memory_gib", "allocatable_mib"), [(4.0, 1711), (8.0, 5500), (16.0, 13078), (64.0, 58543)]
+    ("memory_gib", "allocatable_mib"),
+    [(4.0, 1711), (8.0, 5500), (16.0, 13078), (64.0, 58543)],
 )
-def test_the_memory_a_node_leaves_a_pod(memory_gib: float, allocatable_mib: int) -> None:
+def test_the_memory_a_node_leaves_a_pod(
+    memory_gib: float, allocatable_mib: int
+) -> None:
     """7.5% to the kernel, nodeadm's 11 MiB a pod at 110 pods plus 255, 100 to eviction, 512 to DaemonSets."""
-    assert resolve_sizing._allocatable_memory_mib(memory_gib, _reserve_core()) == allocatable_mib
+    assert (
+        resolve_sizing._allocatable_memory_mib(memory_gib, _reserve_core())
+        == allocatable_mib
+    )
 
 
 def _millicores(quantity: str) -> int:
@@ -589,7 +657,9 @@ DIALS = {
 
 
 @pytest.mark.parametrize("dial", sorted(DIALS))
-def test_every_sized_request_fits_what_its_node_leaves(tmp_path: Path, dial: str) -> None:
+def test_every_sized_request_fits_what_its_node_leaves(
+    tmp_path: Path, dial: str
+) -> None:
     """A request at a node's whole vCPU or memory never schedules, and nothing reports it."""
     assert _resolve(tmp_path, **DIALS[dial]) in (0, 1)
     base, shapes = _base(tmp_path), _shapes(tmp_path)
@@ -604,12 +674,18 @@ def test_every_sized_request_fits_what_its_node_leaves(tmp_path: Path, dial: str
             continue
         node = catalogue.types[shapes[use_case]["instance_types"][0]]
         cpu_room = (
-            node.vcpu * 1000 - resolve_sizing._kube_reserved_cpu_m(node.vcpu) - core.daemonset_cpu_m
+            node.vcpu * 1000
+            - resolve_sizing._kube_reserved_cpu_m(node.vcpu)
+            - core.daemonset_cpu_m
         )
         memory_room = resolve_sizing._allocatable_memory_mib(node.memory_gib, core)
         requests = block["requests"]
         assert _millicores(requests["cpu"]) <= cpu_room, (use_case, node.name, requests)
-        assert _mebibytes(requests["memory"]) <= memory_room, (use_case, node.name, requests)
+        assert _mebibytes(requests["memory"]) <= memory_room, (
+            use_case,
+            node.name,
+            requests,
+        )
         assert requests["memory"] == block["limits"]["memory"], use_case
         checked += 1
     assert checked >= 3, dial
@@ -618,10 +694,15 @@ def test_every_sized_request_fits_what_its_node_leaves(tmp_path: Path, dial: str
 def test_the_floor_broker_takes_the_shape_that_holds_its_memory(resolved: Path) -> None:
     """8 GiB of an m8g.large is more than it leaves a pod, so the floor broker takes an xlarge."""
     assert _shapes(resolved)["kafka-broker"]["instance_types"][0] == "m8g.xlarge"
-    assert _base(resolved)["kafka"]["resources"]["requests"] == {"cpu": "2", "memory": "8Gi"}
+    assert _base(resolved)["kafka"]["resources"]["requests"] == {
+        "cpu": "2",
+        "memory": "8Gi",
+    }
 
 
-def test_an_override_onto_a_node_too_small_for_the_memory_is_refused(tmp_path: Path) -> None:
+def test_an_override_onto_a_node_too_small_for_the_memory_is_refused(
+    tmp_path: Path,
+) -> None:
     override = "  overrides:\n    kafka-broker:\n      instance_type: m8g.large\n"
     assert _resolve(tmp_path, sizing_extra=override) == 1
     report = (tmp_path / "sizing" / "scale.report.md").read_text(encoding="utf-8")
@@ -639,7 +720,9 @@ def _broker_config(out: Path) -> dict:
     return _kind(data_docs("kafka", deploy), "Kafka")["spec"]["kafka"]["config"]
 
 
-def test_a_broker_on_every_core_of_its_node_keeps_the_thread_dials(tmp_path: Path) -> None:
+def test_a_broker_on_every_core_of_its_node_keeps_the_thread_dials(
+    tmp_path: Path,
+) -> None:
     """4 vCPU on an m8g.xlarge schedules at 3620m, and the dials read the 4-core limit."""
     assert _resolve(tmp_path, sizing_extra=FOUR_CORE_BROKER) == 0
     assert _shapes(tmp_path)["kafka-broker"]["instance_types"][0] == "m8g.xlarge"
@@ -651,7 +734,9 @@ def test_a_broker_on_every_core_of_its_node_keeps_the_thread_dials(tmp_path: Pat
     assert config["num.network.threads"] == 8
 
 
-def test_a_two_core_broker_runs_without_the_thread_dials(resolved: Path, tmp_path: Path) -> None:
+def test_a_two_core_broker_runs_without_the_thread_dials(
+    resolved: Path, tmp_path: Path
+) -> None:
     out = tmp_path / "floor"
     shutil.copytree(resolved, out)
     assert "num.io.threads" not in _broker_config(out)

@@ -43,7 +43,9 @@ from _gate import CLOUDS, PROFILES, effective_env, golden
 from _weave import REPO_ROOT, render_app, render_extras, weave
 
 ENGINE = "dfe-engine"
-COMMON = yaml.safe_load((REPO_ROOT / "argocd" / "values" / "common.yaml").read_text("utf-8"))
+COMMON = yaml.safe_load(
+    (REPO_ROOT / "argocd" / "values" / "common.yaml").read_text("utf-8")
+)
 # The admin account common.yaml hands every deployment.
 ADMIN = COMMON["clickhouse"]
 ADMIN_USER = ADMIN["user"]
@@ -53,7 +55,10 @@ KEY = "password"
 RUNNER_USER = "dfe_hunt_runner"
 # The instance values that leave a deployment without the runner: the runner and its
 # Secret, and the engine's reference through the contract's hunt-runner group.
-NO_RUNNER = {"huntRunner": {"enabled": False}, "secrets": {"hunt-runner": {"enabled": False}}}
+NO_RUNNER = {
+    "huntRunner": {"enabled": False},
+    "secrets": {"hunt-runner": {"enabled": False}},
+}
 MINTED = (("Password", f"{SECRET}-gen"), ("ExternalSecret", SECRET), ("Secret", SECRET))
 
 
@@ -78,7 +83,9 @@ def env(docs: list[dict], deployment: str) -> dict[str, object]:
 
 
 def secret_ref(entry: object) -> tuple[str, str] | None:
-    ref = ((entry if isinstance(entry, dict) else {}).get("valueFrom") or {}).get("secretKeyRef")
+    ref = ((entry if isinstance(entry, dict) else {}).get("valueFrom") or {}).get(
+        "secretKeyRef"
+    )
     return (ref["name"], ref["key"]) if ref else None
 
 
@@ -116,7 +123,9 @@ def test_the_engine_is_handed_the_same_secret() -> None:
         )
 
 
-def test_the_engine_keeps_the_admin_account_and_the_shim_reads_as_the_query_reader() -> None:
+def test_the_engine_keeps_the_admin_account_and_the_shim_reads_as_the_query_reader() -> (
+    None
+):
     reader = COMMON["clickhouse"]["serviceUsers"]["queryReader"]
     for profile, cloud in cells():
         docs = golden(ENGINE, profile, cloud)
@@ -140,7 +149,9 @@ def test_the_password_is_minted_once_by_eso() -> None:
     expect("the default renders the generator", len(gens) == 1, f"got {len(gens)}")
     expect("and the ExternalSecret", len(es) == 1, f"got {len(es)}")
     expect(
-        "and no template-minted Secret", named(docs, "Secret", SECRET) == [], "a Secret rendered"
+        "and no template-minted Secret",
+        named(docs, "Secret", SECRET) == [],
+        "a Secret rendered",
     )
     if gens:
         spec = gens[0]["spec"]
@@ -153,7 +164,8 @@ def test_the_password_is_minted_once_by_eso() -> None:
         spec = es[0]["spec"]
         expect(
             "written once and never refreshed",
-            spec.get("refreshPolicy") == "CreatedOnce" and str(spec.get("refreshInterval")) == "0",
+            spec.get("refreshPolicy") == "CreatedOnce"
+            and str(spec.get("refreshInterval")) == "0",
             f"{spec.get('refreshPolicy')} {spec.get('refreshInterval')}",
         )
         expect(
@@ -169,7 +181,9 @@ def test_a_pinned_password_renders_that_password_alone() -> None:
     plain = named(docs, "Secret", SECRET)
     expect("one plain Secret", len(plain) == 1, f"got {len(plain)}")
     expect(
-        "and no generator", named(docs, "Password", f"{SECRET}-gen") == [], "a generator rendered"
+        "and no generator",
+        named(docs, "Password", f"{SECRET}-gen") == [],
+        "a generator rendered",
     )
     if plain:
         expect(
@@ -224,7 +238,9 @@ def test_no_runner_means_no_secret_and_no_reference() -> None:
 def test_a_paused_runner_leaves_the_engines_password_minted() -> None:
     """The runner off alone: the engine still reads the password through a required
     reference, so the Secret behind it still renders."""
-    docs = render_app(ENGINE, "slim", "local", overlay={"huntRunner": {"enabled": False}})
+    docs = render_app(
+        ENGINE, "slim", "local", overlay={"huntRunner": {"enabled": False}}
+    )
     expect(
         "the runner is gone",
         named(docs, "Deployment", "dfe-hunt-runner") == [],
@@ -232,11 +248,16 @@ def test_a_paused_runner_leaves_the_engines_password_minted() -> None:
     )
     expect(
         "the engine still reads the runner's password",
-        secret_ref(env(docs, ENGINE).get("DFE_ENGINE_CLICKHOUSE_HUNT_RUNNER_PASSWORD")) == (SECRET, KEY),
+        secret_ref(env(docs, ENGINE).get("DFE_ENGINE_CLICKHOUSE_HUNT_RUNNER_PASSWORD"))
+        == (SECRET, KEY),
         f"{env(docs, ENGINE).get('DFE_ENGINE_CLICKHOUSE_HUNT_RUNNER_PASSWORD')}",
     )
     for kind, name in MINTED[:2]:
-        expect(f"and the {kind} behind it renders", len(named(docs, kind, name)) == 1, "absent")
+        expect(
+            f"and the {kind} behind it renders",
+            len(named(docs, kind, name)) == 1,
+            "absent",
+        )
 
 
 def test_a_cleared_identity_fails_the_render() -> None:

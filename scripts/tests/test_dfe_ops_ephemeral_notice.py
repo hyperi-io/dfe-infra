@@ -75,13 +75,21 @@ def _stamp(age_hours: float, spelling: str = "rfc3339") -> str:
     return then.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _deployment(tmp_path: Path, monkeypatch, *, lifecycle: str, created_at: str | None,
-                resolved: bool) -> None:
+def _deployment(
+    tmp_path: Path,
+    monkeypatch,
+    *,
+    lifecycle: str,
+    created_at: str | None,
+    resolved: bool,
+) -> None:
     dial = tmp_path / "deployment.yaml"
     dial.write_text(DIAL.format(lifecycle=lifecycle), encoding="utf-8")
     monkeypatch.setattr(dfeops, "DIAL", dial)
 
-    monkeypatch.setattr(dfeops, "TF_ENVIRONMENTS", tmp_path / "terraform" / "environments")
+    monkeypatch.setattr(
+        dfeops, "TF_ENVIRONMENTS", tmp_path / "terraform" / "environments"
+    )
     monkeypatch.setattr(dfeops, "_tf_output", lambda _cloud, _name: created_at)
 
     sizing = tmp_path / "sizing" / "resolved.yaml"
@@ -91,8 +99,16 @@ def _deployment(tmp_path: Path, monkeypatch, *, lifecycle: str, created_at: str 
         sizing.write_text(RESOLVED, encoding="utf-8")
 
 
-def test_an_ephemeral_deployment_reports_its_age_and_its_bucket(tmp_path: Path, monkeypatch) -> None:
-    _deployment(tmp_path, monkeypatch, lifecycle="ephemeral", created_at=_stamp(2.75), resolved=True)
+def test_an_ephemeral_deployment_reports_its_age_and_its_bucket(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _deployment(
+        tmp_path,
+        monkeypatch,
+        lifecycle="ephemeral",
+        created_at=_stamp(2.75),
+        resolved=True,
+    )
     notice = dfeops._ephemeral_notice()
     assert notice is not None
     assert "ephemeral deployment (aws)" in notice
@@ -104,31 +120,51 @@ def test_an_ephemeral_deployment_reports_its_age_and_its_bucket(tmp_path: Path, 
 def test_both_spellings_of_the_stamp_read_the_same(tmp_path: Path, monkeypatch) -> None:
     """The provider renders a creation stamp as RFC 3339 on some resources and
     as a Go time on others, and the banner cannot tell which it will be given."""
-    _deployment(tmp_path, monkeypatch, lifecycle="ephemeral",
-                created_at=_stamp(9.0, "go"), resolved=True)
+    _deployment(
+        tmp_path,
+        monkeypatch,
+        lifecycle="ephemeral",
+        created_at=_stamp(9.0, "go"),
+        resolved=True,
+    )
     assert "up 9h00m" in dfeops._ephemeral_notice()
 
 
 def test_a_persistent_deployment_gets_no_line(tmp_path: Path, monkeypatch) -> None:
     """The banner is for the deployments meant to be torn down, not every one."""
-    _deployment(tmp_path, monkeypatch, lifecycle="persistent", created_at=_stamp(2.0), resolved=True)
+    _deployment(
+        tmp_path,
+        monkeypatch,
+        lifecycle="persistent",
+        created_at=_stamp(2.0),
+        resolved=True,
+    )
     assert dfeops._ephemeral_notice() is None
 
 
 def test_a_missing_output_or_resolve_still_answers(tmp_path: Path, monkeypatch) -> None:
     """Neither reading may fail a command -- an unknown is said, not raised."""
-    _deployment(tmp_path, monkeypatch, lifecycle="ephemeral", created_at=None, resolved=False)
+    _deployment(
+        tmp_path, monkeypatch, lifecycle="ephemeral", created_at=None, resolved=False
+    )
     notice = dfeops._ephemeral_notice()
     assert notice is not None
     assert "age unavailable (no cluster_created_at output)" in notice
     assert "compute bucket not resolved" in notice
 
 
-def test_a_stamp_in_no_spelling_at_all_is_unavailable(tmp_path: Path, monkeypatch) -> None:
+def test_a_stamp_in_no_spelling_at_all_is_unavailable(
+    tmp_path: Path, monkeypatch
+) -> None:
     """An output that is not a timestamp is an unknown age, never an exception
     in front of every command."""
-    _deployment(tmp_path, monkeypatch, lifecycle="ephemeral", created_at="(known after apply)",
-                resolved=True)
+    _deployment(
+        tmp_path,
+        monkeypatch,
+        lifecycle="ephemeral",
+        created_at="(known after apply)",
+        resolved=True,
+    )
     assert "age unavailable" in dfeops._ephemeral_notice()
 
 
@@ -148,10 +184,14 @@ def test_a_root_bridge_cannot_read_does_not_take_the_command_with_it(
     assert capsys.readouterr().err == ""
 
 
-def test_an_environment_that_does_not_exist_is_never_read(tmp_path: Path, monkeypatch) -> None:
+def test_an_environment_that_does_not_exist_is_never_read(
+    tmp_path: Path, monkeypatch
+) -> None:
     """A dial naming a cloud this checkout has no root for reads nothing at all,
     rather than shelling out to find that out."""
-    monkeypatch.setattr(dfeops, "TF_ENVIRONMENTS", tmp_path / "terraform" / "environments")
+    monkeypatch.setattr(
+        dfeops, "TF_ENVIRONMENTS", tmp_path / "terraform" / "environments"
+    )
 
     def _never(_tf_dir: str) -> dict[str, tuple[str, bool]]:
         raise AssertionError("no root directory means no tofu call")
@@ -168,7 +208,9 @@ def test_no_dial_means_no_line(tmp_path: Path, monkeypatch) -> None:
     assert dfeops._ephemeral_notice() is None
 
 
-def test_a_dial_that_provisions_nothing_gets_no_line(tmp_path: Path, monkeypatch) -> None:
+def test_a_dial_that_provisions_nothing_gets_no_line(
+    tmp_path: Path, monkeypatch
+) -> None:
     """target.existing runs no tofu, so there is no environment to read and no
     reason to stat one an unrelated deployment happens to have left behind."""
     dial = tmp_path / "deployment.yaml"

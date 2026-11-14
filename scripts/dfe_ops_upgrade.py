@@ -225,7 +225,15 @@ CHECK_NODE_CAPACITY = SCRIPTS / "check_node_capacity.py"
 ARGOCD_LOGIN = REPO_ROOT / "bootstrap" / "argocd_login.py"
 
 # Where a step's `key:` (the first five), `image:` (digests) and `chart:` (chart-digests) point; a pin no step names moves unreported.
-UPGRADE_SECTIONS = ("bootstrap", "operators", "services", "apps", "content", "digests", "chart-digests")
+UPGRADE_SECTIONS = (
+    "bootstrap",
+    "operators",
+    "services",
+    "apps",
+    "content",
+    "digests",
+    "chart-digests",
+)
 # Stacks published before 2.2.2-rc.2 key dfe-hyperdx's chart pin by its old app id.
 CHART_DIGEST_ALIASES = {"hyperdx": "dfe-hyperdx"}
 
@@ -236,7 +244,9 @@ EXIT_PREFLIGHT_FAILED = 2
 DEFAULT_ARGOCD_NAMESPACE = "argocd"
 DEFAULT_CLICKHOUSE_NAMESPACE = "clickhouse"
 # The server pod in either layout: the chart's single-mode StatefulSet, then the operator's cluster pods.
-DEFAULT_CLICKHOUSE_SELECTOR = "app.kubernetes.io/name in (dfe-clickhouse,clickhouse-server)"
+DEFAULT_CLICKHOUSE_SELECTOR = (
+    "app.kubernetes.io/name in (dfe-clickhouse,clickhouse-server)"
+)
 DEFAULT_CLICKHOUSE_MERGE_THRESHOLD = 300.0  # seconds
 # The chart's clickhouse.users.admin.secretName, whose `password` key is the deploy layer's credential.
 DEFAULT_CLICKHOUSE_CREDENTIALS = "clickhouse-admin-password"
@@ -346,7 +356,9 @@ def _last_line(text: str) -> str:
     return lines[-1] if lines else ""
 
 
-def _kubectl(kubeconfig: str | None, *args: str, stdin: str | None = None) -> subprocess.CompletedProcess:
+def _kubectl(
+    kubeconfig: str | None, *args: str, stdin: str | None = None
+) -> subprocess.CompletedProcess:
     cmd = ["kubectl"]
     if kubeconfig:
         cmd += ["--kubeconfig", kubeconfig]
@@ -362,7 +374,13 @@ DEFAULT_KUBECTL_REQUEST_TIMEOUT = "10s"
 
 
 def _kubectl_json(kubeconfig: str | None, *args: str) -> tuple[int, dict, str]:
-    result = _kubectl(kubeconfig, *args, f"--request-timeout={DEFAULT_KUBECTL_REQUEST_TIMEOUT}", "-o", "json")
+    result = _kubectl(
+        kubeconfig,
+        *args,
+        f"--request-timeout={DEFAULT_KUBECTL_REQUEST_TIMEOUT}",
+        "-o",
+        "json",
+    )
     if result.returncode != 0:
         return result.returncode, {}, (result.stderr or "").strip()
     try:
@@ -387,17 +405,24 @@ def _git(deploy: Path, *args: str) -> subprocess.CompletedProcess:
     return _run(["git", "-C", str(deploy), *args])
 
 
-def _with_bundled_repo(func: Callable[[argparse.Namespace], int]) -> Callable[[argparse.Namespace], int]:
+def _with_bundled_repo(
+    func: Callable[[argparse.Namespace], int],
+) -> Callable[[argparse.Namespace], int]:
     """Run a verb with --deploy attached to the bundled Forgejo deploy repo when --bundled-forgejo is set."""
 
     def run(args: argparse.Namespace) -> int:
         if not args.bundled_forgejo:
             return func(args)
-        repo = BundledRepo(kubeconfig=args.kubeconfig, repo=args.forgejo_repo, owner=args.forgejo_owner)
+        repo = BundledRepo(
+            kubeconfig=args.kubeconfig, repo=args.forgejo_repo, owner=args.forgejo_owner
+        )
         try:
             with repo.open(Path(args.deploy)) as session:
                 _GIT_ENV.update(session.git_env)
-                print(f"dfe-ops upgrade: {args.deploy} is attached to the bundled deploy repo", file=sys.stderr)
+                print(
+                    f"dfe-ops upgrade: {args.deploy} is attached to the bundled deploy repo",
+                    file=sys.stderr,
+                )
                 try:
                     return func(args)
                 finally:
@@ -416,8 +441,14 @@ def _add_bundled_args(parser: argparse.ArgumentParser) -> None:
         help="--deploy is a checkout of the bundled in-cluster Forgejo deploy repo (cloned when absent): "
         "the admin credential is read from the cluster and used in-process, so the push needs no clone of your own",
     )
-    parser.add_argument("--forgejo-repo", default="deploy", help="the bundled repo's name")
-    parser.add_argument("--forgejo-owner", default=None, help="the bundled repo's owner (default: the admin user)")
+    parser.add_argument(
+        "--forgejo-repo", default="deploy", help="the bundled repo's name"
+    )
+    parser.add_argument(
+        "--forgejo-owner",
+        default=None,
+        help="the bundled repo's owner (default: the admin user)",
+    )
 
 
 def _unpushed(deploy: Path) -> bool:
@@ -434,8 +465,12 @@ def _push_moment(deploy: Path) -> datetime | None:
 # The deploy paths an upgrade commit carries. `git add` with one missing
 # pathspec stages nothing at all, so only the ones that exist are named.
 STAGED_PATHS = (
-    "pins.yaml", "sizing", "upgrades", str(KAFKA_OVERLAY),
-    values_migration.OVERLAY_DIR.as_posix(), COMMON_OVERLAY.as_posix(),
+    "pins.yaml",
+    "sizing",
+    "upgrades",
+    str(KAFKA_OVERLAY),
+    values_migration.OVERLAY_DIR.as_posix(),
+    COMMON_OVERLAY.as_posix(),
 )
 
 
@@ -448,7 +483,12 @@ def _stage(deploy: Path) -> tuple[bool, str]:
 
 
 def _wait_until(
-    check: Callable[[], tuple[bool, str]], *, timeout: float, stuck: str, sleep=time.sleep, now=time.monotonic
+    check: Callable[[], tuple[bool, str]],
+    *,
+    timeout: float,
+    stuck: str,
+    sleep=time.sleep,
+    now=time.monotonic,
 ) -> tuple[bool, str]:
     """Poll `check` until it passes or `timeout` seconds pass; `stuck` heads the
     timeout detail. `sleep`/`now` are injected so a test drives it without a clock."""
@@ -572,7 +612,9 @@ def resolve_stack(root: dict, name: str) -> tuple[str, dict]:
         match = next((n for n in stacks if _norm_stack(n) == _norm_stack(name)), None)
     if match is None:
         have = ", ".join(sorted(stacks)) or "none"
-        raise UpgradeError(f"stack {name!r} not in versions.yaml stacks: (have: {have})")
+        raise UpgradeError(
+            f"stack {name!r} not in versions.yaml stacks: (have: {have})"
+        )
     return match, stacks[match]
 
 
@@ -603,7 +645,9 @@ def read_deploy_pin(deploy: Path) -> str:
     pins_path = deploy / "pins.yaml"
     if not pins_path.is_file():
         raise UpgradeError(f"no pins.yaml in {deploy} -- not a dfe-deploy checkout")
-    tree = yaml_subset.parse(pins_path.read_text(encoding="utf-8"), source=str(pins_path))
+    tree = yaml_subset.parse(
+        pins_path.read_text(encoding="utf-8"), source=str(pins_path)
+    )
     pinned = yaml_subset.at(tree, ("base", "dfe-infra"))
     if not pinned:
         raise UpgradeError(f"{pins_path}: no base.dfe-infra pin")
@@ -617,7 +661,10 @@ def read_upstream_pin(deploy: Path) -> str | None:
     shown = _git(deploy, "show", "@{upstream}:pins.yaml")
     if shown.returncode != 0:
         return None
-    pinned = yaml_subset.at(yaml_subset.parse(shown.stdout, source="@{upstream}:pins.yaml"), ("base", "dfe-infra"))
+    pinned = yaml_subset.at(
+        yaml_subset.parse(shown.stdout, source="@{upstream}:pins.yaml"),
+        ("base", "dfe-infra"),
+    )
     return str(pinned) if pinned else None
 
 
@@ -638,7 +685,9 @@ class Move:
     pins: tuple[tuple[str, str, str, str], ...] = ()
 
 
-def plan_moves(steps: list[Step], from_pins: dict[str, str], to_pins: dict[str, str]) -> list[Move]:
+def plan_moves(
+    steps: list[Step], from_pins: dict[str, str], to_pins: dict[str, str]
+) -> list[Move]:
     """Every step whose key, image digest or chart digest differs between the two
     flattened pin sets, in upgrade-order.yaml order."""
     moves: list[Move] = []
@@ -646,17 +695,26 @@ def plan_moves(steps: list[Step], from_pins: dict[str, str], to_pins: dict[str, 
         old = from_pins.get(step.key)
         new = to_pins.get(step.key)
         pins = tuple(
-            (label, key, from_pins.get(key) or "(absent)", to_pins.get(key) or "(absent)")
+            (
+                label,
+                key,
+                from_pins.get(key) or "(absent)",
+                to_pins.get(key) or "(absent)",
+            )
             for label, key in (("image", step.image), ("chart", step.chart))
             if key and from_pins.get(key) != to_pins.get(key)
         )
         if old == new and not pins:
             continue
-        moves.append(Move(step=step, old=old or "(absent)", new=new or "(absent)", pins=pins))
+        moves.append(
+            Move(step=step, old=old or "(absent)", new=new or "(absent)", pins=pins)
+        )
     return moves
 
 
-def render_plan(moves: list[Move], *, from_stack: str, to_stack: str, note: str = "") -> str:
+def render_plan(
+    moves: list[Move], *, from_stack: str, to_stack: str, note: str = ""
+) -> str:
     """The numbered plan, grouped by stage, each move carrying its notes, with `note`
     under the heading."""
     lines = [f"# Upgrade plan: {from_stack} -> {to_stack}", ""]
@@ -673,7 +731,9 @@ def render_plan(moves: list[Move], *, from_stack: str, to_stack: str, note: str 
             lines.append(f"## stage {stage}")
             lines.append("")
         n += 1
-        scoped_key = f"{move.step.key} ({move.step.scope})" if move.step.scope else move.step.key
+        scoped_key = (
+            f"{move.step.key} ({move.step.scope})" if move.step.scope else move.step.key
+        )
         lines.append(f"{n}. {scoped_key}: {move.old} -> {move.new}")
         for label, key, old, new in move.pins:
             lines.append(f"   {label + ':':<9} {key}: {old} -> {new}")
@@ -706,20 +766,41 @@ def moves_by_stage(moves: list[Move]) -> list[tuple[str, list[Move]]]:
 
 def run_compat_check(stack: str) -> tuple[bool, str]:
     """`dfe-stack compat-check --stack <stack> --strict`. ok, combined output."""
-    result = _run([sys.executable, str(DFE_STACK), "compat-check", "--stack", stack, "--strict"])
+    result = _run(
+        [sys.executable, str(DFE_STACK), "compat-check", "--stack", stack, "--strict"]
+    )
     output = ((result.stdout or "") + (result.stderr or "")).strip()
     return result.returncode == 0, output
 
 
-def check_upgrade_path(from_stack: str, to_stack: str, *, allow_unverified: bool = False) -> tuple[bool, str]:
+def check_upgrade_path(
+    from_stack: str, to_stack: str, *, allow_unverified: bool = False
+) -> tuple[bool, str]:
     """`dfe-stack check-upgrade`: whether TO declares FROM as a stack it was tested from."""
-    result = _run([sys.executable, str(DFE_STACK), "check-upgrade", "--from", from_stack, "--to", to_stack])
-    verdict = _last_line(result.stdout) or _last_line(result.stderr) or "check-upgrade printed no verdict"
+    result = _run(
+        [
+            sys.executable,
+            str(DFE_STACK),
+            "check-upgrade",
+            "--from",
+            from_stack,
+            "--to",
+            to_stack,
+        ]
+    )
+    verdict = (
+        _last_line(result.stdout)
+        or _last_line(result.stderr)
+        or "check-upgrade printed no verdict"
+    )
     if result.returncode == 0:
         return True, verdict
     if allow_unverified:
         return True, f"{verdict} -- run anyway: --allow-unverified-path"
-    return False, f"{verdict}. Upgrades step one release at a time. --allow-unverified-path runs it anyway"
+    return (
+        False,
+        f"{verdict}. Upgrades step one release at a time. --allow-unverified-path runs it anyway",
+    )
 
 
 # --- the sizing locked-change classifier --------------------------------------
@@ -755,7 +836,15 @@ def check_locked_sizing(
     if not fixtures and not live:
         return True, "skipped: neither --fixtures nor --live given", False
 
-    cmd = [sys.executable, str(RESOLVE_SIZING), "resolve", "--dial", str(dial), "--previous", str(previous)]
+    cmd = [
+        sys.executable,
+        str(RESOLVE_SIZING),
+        "resolve",
+        "--dial",
+        str(dial),
+        "--previous",
+        str(previous),
+    ]
     if fixtures:
         cmd += ["--fixtures", str(fixtures)]
     else:
@@ -774,10 +863,16 @@ def check_locked_sizing(
     output = ((result.stdout or "") + (result.stderr or "")).strip()
     if result.returncode == 3:
         locked_lines = [ln for ln in output.splitlines() if "LOCKED" in ln]
-        detail = "LOCKED change(s) detected -- --migrate required:\n" + "\n".join(locked_lines or [output])
+        detail = "LOCKED change(s) detected -- --migrate required:\n" + "\n".join(
+            locked_lines or [output]
+        )
         return True, detail, True
     if result.returncode != 0:
-        return False, f"resolver failed (rc {result.returncode}): {_last_line(output)}", True
+        return (
+            False,
+            f"resolver failed (rc {result.returncode}): {_last_line(output)}",
+            True,
+        )
     return True, (output or "no locked-field change") + refreshed, False
 
 
@@ -795,7 +890,9 @@ def check_deploy_clean(deploy: Path) -> tuple[bool, str]:
     return True, "working tree clean"
 
 
-def check_cluster_reachable(kubeconfig: str | None, timeout: str = "10s") -> tuple[bool, str]:
+def check_cluster_reachable(
+    kubeconfig: str | None, timeout: str = "10s"
+) -> tuple[bool, str]:
     result = _kubectl(kubeconfig, "version", f"--request-timeout={timeout}")
     if result.returncode != 0:
         return False, _last_line(result.stderr) or "kubectl version failed"
@@ -815,7 +912,9 @@ def _sources(holder: dict) -> list[dict]:
 
 
 def _source_revisions(app: dict) -> list[str]:
-    return [str(src.get("targetRevision") or "") for src in _sources(app.get("spec") or {})]
+    return [
+        str(src.get("targetRevision") or "") for src in _sources(app.get("spec") or {})
+    ]
 
 
 def _pinned_chart_as_compared(app: dict) -> bool:
@@ -826,8 +925,14 @@ def _pinned_chart_as_compared(app: dict) -> bool:
     and a changed spec leaves comparedTo behind until Argo compares it again.
     """
     sources = _sources(app.get("spec") or {})
-    compared = _sources(((app.get("status") or {}).get("sync") or {}).get("comparedTo") or {})
-    return bool(sources) and all(src.get("chart") for src in sources) and sources == compared
+    compared = _sources(
+        ((app.get("status") or {}).get("sync") or {}).get("comparedTo") or {}
+    )
+    return (
+        bool(sources)
+        and all(src.get("chart") for src in sources)
+        and sources == compared
+    )
 
 
 def _argo_time(value: object) -> datetime | None:
@@ -874,13 +979,19 @@ def check_argo_apps(
     compared against its current spec, which neither change can move, so its
     Synced and Healthy stand without a fresh reconcile.
     """
-    rc, doc, err = _kubectl_json(kubeconfig, "-n", namespace, "get", "applications.argoproj.io")
+    rc, doc, err = _kubectl_json(
+        kubeconfig, "-n", namespace, "get", "applications.argoproj.io"
+    )
     if rc != 0:
         return False, f"cannot list Argo Applications in {namespace}: {err}"
     items = doc.get("items") or []
     if start_stalled_syncs and reconciled_after is not None:
-        for name in request_stalled_syncs(kubeconfig, namespace, items, reconciled_after):
-            print(f"  argo: {name} compared OutOfSync and auto-sync skipped it; started a sync")
+        for name in request_stalled_syncs(
+            kubeconfig, namespace, items, reconciled_after
+        ):
+            print(
+                f"  argo: {name} compared OutOfSync and auto-sync skipped it; started a sync"
+            )
     if not items:
         return False, f"no Argo Applications found in {namespace}"
     bad = []
@@ -898,7 +1009,9 @@ def check_argo_apps(
             before_change = False
             unmoved += 1
         if stale_revision and stale_revision in _source_revisions(app):
-            bad.append(f"{name} (still renders from the previous {TARGET_REVISION_ANNOTATION})")
+            bad.append(
+                f"{name} (still renders from the previous {TARGET_REVISION_ANNOTATION})"
+            )
         elif before_change:
             seen = status.get("reconciledAt") or "never"
             bad.append(f"{name} (last reconciled {seen}, before this change)")
@@ -906,19 +1019,22 @@ def check_argo_apps(
             bad.append(f"{name} (sync {sync}, health {health})")
     if bad:
         extra = f", +{len(bad) - 6} more" if len(bad) > 6 else ""
-        return False, f"{len(bad)} app(s) not Synced/Healthy: {', '.join(bad[:6])}{extra}"
+        return (
+            False,
+            f"{len(bad)} app(s) not Synced/Healthy: {', '.join(bad[:6])}{extra}",
+        )
     since = ""
     if reconciled_after and unmoved:
-        since = (
-            f", each reconciled since this change but {unmoved} pinned Helm chart(s) it cannot move"
-        )
+        since = f", each reconciled since this change but {unmoved} pinned Helm chart(s) it cannot move"
     elif reconciled_after:
         since = ", each reconciled since this change"
     return True, f"{len(items)} Application(s) Synced and Healthy{since}"
 
 
 def check_no_kafka_rebalance(kubeconfig: str | None) -> tuple[bool, str]:
-    rc, doc, err = _kubectl_json(kubeconfig, "get", "kafkarebalances.kafka.strimzi.io", "-A")
+    rc, doc, err = _kubectl_json(
+        kubeconfig, "get", "kafkarebalances.kafka.strimzi.io", "-A"
+    )
     if rc != 0:
         if _absent(err):
             return True, "no KafkaRebalance CRD on this cluster"
@@ -931,7 +1047,10 @@ def check_no_kafka_rebalance(kubeconfig: str | None) -> tuple[bool, str]:
         if any(c.get("type") == "Rebalancing" for c in conditions):
             in_progress.append(name)
     if in_progress:
-        return False, f"{len(in_progress)} KafkaRebalance in progress: {', '.join(in_progress)}"
+        return (
+            False,
+            f"{len(in_progress)} KafkaRebalance in progress: {', '.join(in_progress)}",
+        )
     return True, f"no KafkaRebalance in progress ({len(items)} total)"
 
 
@@ -953,14 +1072,29 @@ def _clickhouse_client(
 ) -> subprocess.CompletedProcess:
     user = ["--user", login.user] if login.user else []
     return _kubectl(
-        kubeconfig, "-n", namespace, f"--request-timeout={DEFAULT_KUBECTL_REQUEST_TIMEOUT}",
-        "exec", "-i", pod, "--", "sh", "-c", CLICKHOUSE_CLIENT_SH, "sh", *user, "-q", query,
+        kubeconfig,
+        "-n",
+        namespace,
+        f"--request-timeout={DEFAULT_KUBECTL_REQUEST_TIMEOUT}",
+        "exec",
+        "-i",
+        pod,
+        "--",
+        "sh",
+        "-c",
+        CLICKHOUSE_CLIENT_SH,
+        "sh",
+        *user,
+        "-q",
+        query,
         # Always given, even empty: exec -i with no stdin would read the caller's terminal.
         stdin=f"{login.password}\n" if login.password else "",
     )
 
 
-def _clickhouse_login(kubeconfig: str | None, namespace: str, store: str, pod: str) -> ClickHouseLogin:
+def _clickhouse_login(
+    kubeconfig: str | None, namespace: str, store: str, pod: str
+) -> ClickHouseLogin:
     """The clickhouse-client login that answers on `pod` -- raises UpgradeError.
 
     The `password` key of the `store` Secret as each of CLICKHOUSE_USERS, then
@@ -968,30 +1102,53 @@ def _clickhouse_login(kubeconfig: str | None, namespace: str, store: str, pod: s
     resolves it in. The password only ever travels on stdin.
     """
     read = _kubectl(
-        kubeconfig, "-n", namespace, f"--request-timeout={DEFAULT_KUBECTL_REQUEST_TIMEOUT}",
-        "get", "secret", store, "-o", "jsonpath={.data.password}",
+        kubeconfig,
+        "-n",
+        namespace,
+        f"--request-timeout={DEFAULT_KUBECTL_REQUEST_TIMEOUT}",
+        "get",
+        "secret",
+        store,
+        "-o",
+        "jsonpath={.data.password}",
     )
     users: tuple[str, ...] = ()
     unread = ""
     if read.returncode == 0:
         try:
-            pw = base64.b64decode((read.stdout or "").strip(), validate=True).decode("utf-8", errors="replace")
+            pw = base64.b64decode((read.stdout or "").strip(), validate=True).decode(
+                "utf-8", errors="replace"
+            )
         except ValueError:
             pw = ""
         if pw:
             users = CLICKHOUSE_USERS
             for user in users:
                 login = ClickHouseLogin(user=user, password=pw)
-                if _clickhouse_client(kubeconfig, namespace, pod, "SELECT 1", login).returncode == 0:
+                if (
+                    _clickhouse_client(
+                        kubeconfig, namespace, pod, "SELECT 1", login
+                    ).returncode
+                    == 0
+                ):
                     return login
         else:
             unread = f"secret/{store} holds no password, "
     else:
         unread = f"secret/{store} unreadable ({_last_line(read.stderr) or 'kubectl failed'}), "
-    if _clickhouse_client(kubeconfig, namespace, pod, "SELECT 1", ClickHouseLogin()).returncode == 0:
+    if (
+        _clickhouse_client(
+            kubeconfig, namespace, pod, "SELECT 1", ClickHouseLogin()
+        ).returncode
+        == 0
+    ):
         return ClickHouseLogin()
-    tried = [f"secret/{store} as {user}" for user in users] + ["default with no password"]
-    raise UpgradeError(f"no ClickHouse credential answers on {pod}: {unread}tried {', '.join(tried)}")
+    tried = [f"secret/{store} as {user}" for user in users] + [
+        "default with no password"
+    ]
+    raise UpgradeError(
+        f"no ClickHouse credential answers on {pod}: {unread}tried {', '.join(tried)}"
+    )
 
 
 def check_clickhouse_merges(
@@ -1003,10 +1160,15 @@ def check_clickhouse_merges(
 ) -> tuple[bool, str]:
     """No ClickHouse server pod the selector matches runs a merge past the
     threshold. system.merges is per server, so every pod is asked."""
-    rc, doc, err = _kubectl_json(kubeconfig, "-n", namespace, "get", "pods", "-l", selector)
+    rc, doc, err = _kubectl_json(
+        kubeconfig, "-n", namespace, "get", "pods", "-l", selector
+    )
     if rc != 0:
         return False, f"cannot find a ClickHouse pod: {err}"
-    pods = [str((item.get("metadata") or {}).get("name", "")) for item in doc.get("items") or []]
+    pods = [
+        str((item.get("metadata") or {}).get("name", ""))
+        for item in doc.get("items") or []
+    ]
     if not pods:
         return False, f"no pod matching {selector!r} in {namespace}"
     try:
@@ -1018,7 +1180,10 @@ def check_clickhouse_merges(
     for pod in pods:
         result = _clickhouse_client(kubeconfig, namespace, pod, query, login)
         if result.returncode != 0:
-            return False, f"{pod}: {_last_line(result.stderr) or 'clickhouse-client query failed'}"
+            return (
+                False,
+                f"{pod}: {_last_line(result.stderr) or 'clickhouse-client query failed'}",
+            )
         raw = (result.stdout or "0").strip()
         try:
             count = int(raw)
@@ -1031,7 +1196,10 @@ def check_clickhouse_merges(
             f"{len(merging)} of {len(pods)} ClickHouse pod(s) carry a merge running longer than "
             f"{threshold_seconds:.0f}s: {', '.join(merging)}"
         )
-    return True, f"no merge running longer than {threshold_seconds:.0f}s on {len(pods)} ClickHouse pod(s)"
+    return (
+        True,
+        f"no merge running longer than {threshold_seconds:.0f}s on {len(pods)} ClickHouse pod(s)",
+    )
 
 
 def _sql_text(value: str) -> str:
@@ -1067,10 +1235,15 @@ def check_schema_lock_quorum(
     with code 289 and no engine can start. A replica only lagging also answers
     289, so the part must be missing on every replica before this fails.
     """
-    rc, doc, err = _kubectl_json(kubeconfig, "-n", namespace, "get", "pods", "-l", selector)
+    rc, doc, err = _kubectl_json(
+        kubeconfig, "-n", namespace, "get", "pods", "-l", selector
+    )
     if rc != 0:
         return False, f"cannot find a ClickHouse pod: {err}"
-    pods = [str((item.get("metadata") or {}).get("name", "")) for item in doc.get("items") or []]
+    pods = [
+        str((item.get("metadata") or {}).get("name", ""))
+        for item in doc.get("items") or []
+    ]
     if not pods:
         return False, f"no pod matching {selector!r} in {namespace}"
     try:
@@ -1081,7 +1254,10 @@ def check_schema_lock_quorum(
     def ask(pod: str, query: str) -> tuple[bool, str]:
         result = _clickhouse_client(kubeconfig, namespace, pod, query, login)
         if result.returncode != 0:
-            return False, f"{pod}: {_last_line(result.stderr) or 'clickhouse-client query failed'}"
+            return (
+                False,
+                f"{pod}: {_last_line(result.stderr) or 'clickhouse-client query failed'}",
+            )
         return True, result.stdout or ""
 
     ok, out = ask(
@@ -1136,8 +1312,14 @@ def check_schema_lock_quorum(
             "-- then start an engine at v1.22.85 or later, which recreates the table at boot (docs/deployment/upgrades.md)"
         )
     if unproven:
-        return True, f"quorum part missing on every replica read, not all were: {', '.join(unproven)}"
-    return True, f"every schema_lock quorum part is held by a replica ({len(tables)} table(s), {len(pods)} pod(s))"
+        return (
+            True,
+            f"quorum part missing on every replica read, not all were: {', '.join(unproven)}",
+        )
+    return (
+        True,
+        f"every schema_lock quorum part is held by a replica ({len(tables)} table(s), {len(pods)} pod(s))",
+    )
 
 
 def stale_strimzi_crds(installed: dict[str, dict]) -> dict[str, str]:
@@ -1155,7 +1337,9 @@ def stale_strimzi_crds(installed: dict[str, dict]) -> dict[str, str]:
     return stale
 
 
-def check_strimzi_conversion(kubeconfig: str | None, crds: tuple[str, ...] = STRIMZI_CRDS) -> tuple[bool, str]:
+def check_strimzi_conversion(
+    kubeconfig: str | None, crds: tuple[str, ...] = STRIMZI_CRDS
+) -> tuple[bool, str]:
     """Every Strimzi CRD the 1.x operator needs stores v1 only -- the sign
     `bin/v1-api-conversion.sh convert-resource` (then `crd-upgrade`) already
     ran, which 1.x requires before the operator upgrade lands.
@@ -1178,7 +1362,10 @@ def check_strimzi_conversion(kubeconfig: str | None, crds: tuple[str, ...] = STR
         return True, "no Strimzi CRDs installed -- nothing to convert"
     stale = stale_strimzi_crds(installed)
     if stale:
-        return False, f"{len(stale)} CRD(s) still store a pre-v1 version: {', '.join(stale.values())}"
+        return (
+            False,
+            f"{len(stale)} CRD(s) still store a pre-v1 version: {', '.join(stale.values())}",
+        )
     return True, f"{len(installed)} Strimzi CRD(s) store v1 only"
 
 
@@ -1208,7 +1395,9 @@ def conversion_tool_line(move: Move) -> str:
     )
 
 
-def check_strimzi_conversion_before(kubeconfig: str | None, move: Move) -> tuple[bool, str]:
+def check_strimzi_conversion_before(
+    kubeconfig: str | None, move: Move
+) -> tuple[bool, str]:
     """The strimzi-kafka-operator step's before-hook, naming its own tool.
 
     A stale detail line would leave an operator reaching for the target
@@ -1218,11 +1407,17 @@ def check_strimzi_conversion_before(kubeconfig: str | None, move: Move) -> tuple
     return ok, f"{detail}; {conversion_tool_line(move)}"
 
 
-def _list_kafka_crs(kubeconfig: str | None, namespace: str | None = None) -> tuple[list[dict] | None, str]:
+def _list_kafka_crs(
+    kubeconfig: str | None, namespace: str | None = None
+) -> tuple[list[dict] | None, str]:
     """Every Strimzi Kafka CR: an empty list when the CRD is absent, None plus
     the error when kubectl could not answer. Reads every namespace unless the
     caller names one, because "every Kafka CR" is the claim callers make."""
-    args = ["get", "kafkas.kafka.strimzi.io", *(["-n", namespace] if namespace else ["-A"])]
+    args = [
+        "get",
+        "kafkas.kafka.strimzi.io",
+        *(["-n", namespace] if namespace else ["-A"]),
+    ]
     rc, doc, err = _kubectl_json(kubeconfig, *args)
     if rc != 0:
         return ([], "no Kafka CRD on this cluster") if _absent(err) else (None, err)
@@ -1267,7 +1462,10 @@ def check_kafka_status(
             behind.append(f"{_cr_name(item)} ({field} {seen or 'unset'})")
     if behind:
         extra = f", +{len(behind) - 6} more" if len(behind) > 6 else ""
-        return False, f"{len(behind)} Kafka CR(s) not yet at {field} {want}: {', '.join(behind[:6])}{extra}"
+        return (
+            False,
+            f"{len(behind)} Kafka CR(s) not yet at {field} {want}: {', '.join(behind[:6])}{extra}",
+        )
     return True, f"{len(items)} Kafka CR(s) report {field} {want}"
 
 
@@ -1280,7 +1478,9 @@ def check_kafka_operator_version(
     upgrade, so a wait on it returns at once and proves nothing; this field is
     the one the new operator writes only after it has reconciled the cluster.
     """
-    return check_kafka_status(kubeconfig, "operatorLastSuccessfulVersion", version, namespace=namespace)
+    return check_kafka_status(
+        kubeconfig, "operatorLastSuccessfulVersion", version, namespace=namespace
+    )
 
 
 def check_kafka_version(kubeconfig: str | None, version: str) -> tuple[bool, str]:
@@ -1288,12 +1488,16 @@ def check_kafka_version(kubeconfig: str | None, version: str) -> tuple[bool, str
     return check_kafka_status(kubeconfig, "kafkaVersion", version)
 
 
-def check_kafka_metadata_moved(kubeconfig: str | None, kafka_version: str) -> tuple[bool, str]:
+def check_kafka_metadata_moved(
+    kubeconfig: str | None, kafka_version: str
+) -> tuple[bool, str]:
     """Every Kafka CR's `status.kafkaMetadataVersion` is on `kafka_version`'s
     major.minor -- the finalise has landed."""
     target = _major_minor(kafka_version)
     return check_kafka_status(
-        kubeconfig, "kafkaMetadataVersion", f"{kafka_version}'s line",
+        kubeconfig,
+        "kafkaMetadataVersion",
+        f"{kafka_version}'s line",
         accept=lambda seen: _major_minor(seen) == target,
     )
 
@@ -1323,16 +1527,26 @@ def read_kafka_state(kubeconfig: str | None) -> KafkaState:
     seen: dict[tuple[str, str], list[str]] = {}
     for item in items:
         status = item.get("status") or {}
-        pair = (str(status.get("kafkaVersion") or ""), str(status.get("kafkaMetadataVersion") or ""))
+        pair = (
+            str(status.get("kafkaVersion") or ""),
+            str(status.get("kafkaMetadataVersion") or ""),
+        )
         seen.setdefault(pair, []).append(_cr_name(item))
     if len(seen) > 1:
-        detail = "; ".join(f"{', '.join(names)}: kafka {v or 'unset'}, metadata {m or 'unset'}" for (v, m), names in seen.items())
-        raise UpgradeError(f"the Kafka CRs disagree, so no one hold fits them all: {detail}")
+        detail = "; ".join(
+            f"{', '.join(names)}: kafka {v or 'unset'}, metadata {m or 'unset'}"
+            for (v, m), names in seen.items()
+        )
+        raise UpgradeError(
+            f"the Kafka CRs disagree, so no one hold fits them all: {detail}"
+        )
     ((version, metadata),) = seen
     return KafkaState(crs=len(items), version=version, metadata=metadata)
 
 
-def check_rollback_metadata(kubeconfig: str | None, target_kafka: str) -> tuple[bool, str]:
+def check_rollback_metadata(
+    kubeconfig: str | None, target_kafka: str
+) -> tuple[bool, str]:
     """Whether the brokers can go back to Kafka `target_kafka` at all.
 
     Kafka cannot run a metadata version newer than its own release line, so a
@@ -1345,12 +1559,18 @@ def check_rollback_metadata(kubeconfig: str | None, target_kafka: str) -> tuple[
     """
     target = _major_minor(target_kafka)
     if target is None:
-        return False, f"cannot read a major.minor from the rollback target's Kafka version {target_kafka!r}"
+        return (
+            False,
+            f"cannot read a major.minor from the rollback target's Kafka version {target_kafka!r}",
+        )
     items, err = _list_kafka_crs(kubeconfig)
     if items is None:
         return False, f"cannot list Kafka CRs: {err}"
     if not items:
-        return True, f"{err or 'no Kafka CR on this cluster'} -- no metadata version to strand"
+        return (
+            True,
+            f"{err or 'no Kafka CR on this cluster'} -- no metadata version to strand",
+        )
     above = []
     for item in items:
         live = str((item.get("status") or {}).get("kafkaMetadataVersion") or "")
@@ -1358,8 +1578,14 @@ def check_rollback_metadata(kubeconfig: str | None, target_kafka: str) -> tuple[
         if live_mm is None or live_mm > target:
             above.append(f"{_cr_name(item)} (kafkaMetadataVersion {live or 'unset'})")
     if above:
-        return False, f"Kafka {target_kafka} cannot run the live metadata version: {', '.join(above)}"
-    return True, f"{len(items)} Kafka CR(s) carry a metadata version Kafka {target_kafka} runs"
+        return (
+            False,
+            f"Kafka {target_kafka} cannot run the live metadata version: {', '.join(above)}",
+        )
+    return (
+        True,
+        f"{len(items)} Kafka CR(s) carry a metadata version Kafka {target_kafka} runs",
+    )
 
 
 def check_node_capacity(kubeconfig: str | None, nodes_file: Path) -> tuple[bool, str]:
@@ -1374,7 +1600,9 @@ def check_node_capacity(kubeconfig: str | None, nodes_file: Path) -> tuple[bool,
     return ok, detail or ("capacity ok" if ok else "capacity check failed")
 
 
-def check_backup_marker(deploy: Path, moves: list[Move], marker: str = DEFAULT_BACKUP_MARKER) -> tuple[bool, str]:
+def check_backup_marker(
+    deploy: Path, moves: list[Move], marker: str = DEFAULT_BACKUP_MARKER
+) -> tuple[bool, str]:
     irreversible = [move for move in moves if move.step.one_way]
     if not irreversible:
         return True, "no one-way step in this plan -- no backup marker required"
@@ -1382,7 +1610,10 @@ def check_backup_marker(deploy: Path, moves: list[Move], marker: str = DEFAULT_B
     if marker_path.is_file():
         return True, f"backup marker present: {marker_path}"
     names = ", ".join(move.step.key for move in irreversible)
-    return False, f"one-way step(s) in this plan ({names}) need a backup marker at {marker_path} before apply"
+    return (
+        False,
+        f"one-way step(s) in this plan ({names}) need a backup marker at {marker_path} before apply",
+    )
 
 
 @functools.cache
@@ -1427,11 +1658,21 @@ def check_ingest_door(deploy: Path, from_stack: str, to_stack: str) -> tuple[boo
             "the receiver's door is already exposure.groups.ingest"
         )
     if after is not None and after < cutover:
-        return True, f"{to_stack} predates {INGEST_GROUP_STACK}, so the receiver's door does not move"
+        return (
+            True,
+            f"{to_stack} predates {INGEST_GROUP_STACK}, so the receiver's door does not move",
+        )
     overlay = deploy / COMMON_OVERLAY
-    keys = yaml_subset.keys_under(overlay.read_text(encoding="utf-8"), INGEST_GROUP_PATH) if overlay.is_file() else []
+    keys = (
+        yaml_subset.keys_under(overlay.read_text(encoding="utf-8"), INGEST_GROUP_PATH)
+        if overlay.is_file()
+        else []
+    )
     if keys:
-        return True, f"{COMMON_OVERLAY.as_posix()} sets exposure.groups.ingest: {', '.join(keys)}"
+        return (
+            True,
+            f"{COMMON_OVERLAY.as_posix()} sets exposure.groups.ingest: {', '.join(keys)}",
+        )
     return False, (
         f"{from_stack} predates {INGEST_GROUP_STACK}, which moved the receiver's door from exposure.mode to "
         f"exposure.groups.ingest, and {COMMON_OVERLAY.as_posix()} does not set exposure.groups.ingest. "
@@ -1461,7 +1702,9 @@ def _read_layers(root: Path, paths: tuple[Path, ...]) -> list[tuple[str, str]]:
     layers: list[tuple[str, str]] = []
     for path in paths:
         try:
-            layers.append((path.relative_to(root).as_posix(), path.read_text(encoding="utf-8")))
+            layers.append(
+                (path.relative_to(root).as_posix(), path.read_text(encoding="utf-8"))
+            )
         except OSError:
             continue
     return layers
@@ -1493,7 +1736,9 @@ def _layered(layers: list[tuple[str, str]], path: tuple[str, ...]) -> tuple[str,
     return found
 
 
-def _keys_set(overlays: list[tuple[str, str]], parent: tuple[str, ...], keys: tuple[str, ...]) -> list[str]:
+def _keys_set(
+    overlays: list[tuple[str, str]], parent: tuple[str, ...], keys: tuple[str, ...]
+) -> list[str]:
     """Which of `keys` any overlay sets under `parent`, each once, in file order."""
     found: list[str] = []
     for _name, text in overlays:
@@ -1526,9 +1771,19 @@ def web_lists(*, grouped: bool) -> list[WebList]:
     """The web allow lists a target stack reads: one per web group from WEB_GROUP_STACK, else ui.allowed_cidrs."""
     if not grouped:
         serves = "dfe-ui, HyperDX and the engine API"
-        return [WebList(".".join(WEB_FENCE_KEY), WEB_FENCE_KEY[:-1], WEB_FENCE_KEY[-1:], serves)]
+        return [
+            WebList(
+                ".".join(WEB_FENCE_KEY), WEB_FENCE_KEY[:-1], WEB_FENCE_KEY[-1:], serves
+            )
+        ]
     return [
-        WebList(f"exposure.groups.{group}", ("exposure", "groups", group), WEB_GROUP_KEYS, serves, group)
+        WebList(
+            f"exposure.groups.{group}",
+            ("exposure", "groups", group),
+            WEB_GROUP_KEYS,
+            serves,
+            group,
+        )
         for group, serves in WEB_GROUPS.items()
     ]
 
@@ -1564,7 +1819,11 @@ def _lists_an_entry(text: str, path: tuple[str, ...]) -> bool:
 
 
 def _self_range_reach(
-    overlays: list[tuple[str, str]], kubeconfig: str | None, namespace: str, *, read_secret: bool = True
+    overlays: list[tuple[str, str]],
+    kubeconfig: str | None,
+    namespace: str,
+    *,
+    read_secret: bool = True,
 ) -> str:
     """Whom a closed web group answers 403, worded for the refusal.
 
@@ -1584,7 +1843,9 @@ def _self_range_reach(
     if own:
         return f"every address outside exposure.selfRanges ({', '.join(own)})"
     stated = [
-        (name, text) for name, text in overlays if "selfRanges" in yaml_subset.keys_under(text, ("exposure",))
+        (name, text)
+        for name, text in overlays
+        if "selfRanges" in yaml_subset.keys_under(text, ("exposure",))
     ]
     if stated and _lists_an_entry(stated[-1][1], ("exposure", "selfRanges")):
         return f"every address outside the exposure.selfRanges {stated[-1][0]} sets"
@@ -1641,9 +1902,15 @@ def check_web_plane(
     fence = semver_key(WEB_FENCE_STACK)
     before, after = semver_key(from_stack), semver_key(to_stack)
     if before is not None and before >= fence:
-        return True, f"{from_stack} is at or after {WEB_FENCE_STACK}: the web routes are already fenced"
+        return (
+            True,
+            f"{from_stack} is at or after {WEB_FENCE_STACK}: the web routes are already fenced",
+        )
     if after is not None and after < fence:
-        return True, f"{to_stack} predates {WEB_FENCE_STACK}, so the web routes stay unfenced"
+        return (
+            True,
+            f"{to_stack} predates {WEB_FENCE_STACK}, so the web routes stay unfenced",
+        )
 
     overlays = _read_layers(deploy, (deploy / COMMON_OVERLAY, deploy / GATEWAY_OVERLAY))
     stated: list[str] = []
@@ -1673,19 +1940,32 @@ def check_web_plane(
                 f"{COMMON_OVERLAY.as_posix()}. See {WEB_PLANE_DOC}."
             )
     if not _CLOUD_NAME.match(cloud):
-        return False, f"the cloud {cloud!r} is not a cloud name, so no argocd/values file can be read for it"
+        return (
+            False,
+            f"the cloud {cloud!r} is not a cloud name, so no argocd/values file can be read for it",
+        )
 
     layers = gateway_values(cloud) + overlays
     facing, facing_from = _layered(layers, INTERNET_FACING_PATH)
     if facing.lower() != "true":
-        return True, f"the gateway is not internet-facing on {cloud}, so an empty web allow list fences nothing"
-    closed = [web for web in unstated if not web.group or _group_closes(layers, web.parent)]
+        return (
+            True,
+            f"the gateway is not internet-facing on {cloud}, so an empty web allow list fences nothing",
+        )
+    closed = [
+        web for web in unstated if not web.group or _group_closes(layers, web.parent)
+    ]
     if not closed:
         names = " and ".join(web.name for web in unstated)
-        return True, f"the gateway is internet-facing on {cloud}, and its values leave {names} off or open"
+        return (
+            True,
+            f"the gateway is internet-facing on {cloud}, and its values leave {names} off or open",
+        )
 
     served = "; ".join(f"{web.serves} ({web.name})" for web in closed)
-    reach = _self_range_reach(overlays, kubeconfig, argocd_namespace, read_secret=read_secret)
+    reach = _self_range_reach(
+        overlays, kubeconfig, argocd_namespace, read_secret=read_secret
+    )
     if closed[0].group:
         remedy = (
             "Set exposure.groups.<group>.allow to the CIDRs that may reach them, for "
@@ -1695,7 +1975,7 @@ def check_web_plane(
     else:
         remedy = (
             f"Set ui.allowed_cidrs to the CIDRs that may reach them in {COMMON_OVERLAY.as_posix()}; from "
-            f"{WEB_GROUP_STACK} the list is exposure.groups.<group>.allow. Any explicit value passes, \"\" included."
+            f'{WEB_GROUP_STACK} the list is exposure.groups.<group>.allow. Any explicit value passes, "" included.'
         )
     return False, (
         f"{crossing}. The gateway is internet-facing on {cloud} ({facing_from} sets "
@@ -1718,11 +1998,19 @@ def exposure_checks(
 ) -> list[tuple[str, bool, str]]:
     """The preflight checks a plan runs too: the doors an upgrade can move or close without an error."""
     return [
-        ("ingest door (exposure.groups.ingest)", *check_ingest_door(deploy, from_stack, to_stack)),
+        (
+            "ingest door (exposure.groups.ingest)",
+            *check_ingest_door(deploy, from_stack, to_stack),
+        ),
         (
             "web plane (exposure.groups console and api)",
             *check_web_plane(
-                deploy, from_stack, to_stack, cloud=cloud, kubeconfig=kubeconfig, argocd_namespace=argocd_namespace,
+                deploy,
+                from_stack,
+                to_stack,
+                cloud=cloud,
+                kubeconfig=kubeconfig,
+                argocd_namespace=argocd_namespace,
                 cluster=cluster,
             ),
         ),
@@ -1743,13 +2031,24 @@ def values_cutover(from_stack: str, to_stack: str, since: str) -> tuple[bool, st
     cutover = semver_key(since)
     before, after = semver_key(from_stack), semver_key(to_stack)
     if before is not None and cutover is not None and before >= cutover:
-        return False, f"{from_stack} is at or after {since}: the thin charts already read this deploy repo"
+        return (
+            False,
+            f"{from_stack} is at or after {since}: the thin charts already read this deploy repo",
+        )
     if after is not None and cutover is not None and after < cutover:
-        return False, f"{to_stack} predates {since}, so the 2.2.0 charts keep reading the 2.2.0 keys"
-    return True, f"the move crosses {since}, from which the thin charts read their own keys"
+        return (
+            False,
+            f"{to_stack} predates {since}, so the 2.2.0 charts keep reading the 2.2.0 keys",
+        )
+    return (
+        True,
+        f"the move crosses {since}, from which the thin charts read their own keys",
+    )
 
 
-def check_values_migration(deploy: Path, from_stack: str, to_stack: str) -> tuple[bool, str]:
+def check_values_migration(
+    deploy: Path, from_stack: str, to_stack: str
+) -> tuple[bool, str]:
     """Every 2.2.0 value key in the deploy repo can be carried onto its thin-chart key.
 
     Fails on a refuse rule, an image pin the thin chart would keep running, and
@@ -1780,16 +2079,27 @@ def check_values_migration(deploy: Path, from_stack: str, to_stack: str) -> tupl
     )
 
 
-def _expand_values(deploy: Path, migration: values_migration.MigrationMap, *, resync: bool) -> tuple[bool, str]:
+def _expand_values(
+    deploy: Path, migration: values_migration.MigrationMap, *, resync: bool
+) -> tuple[bool, str]:
     """Run expand, printing each key it wrote; (False, why) when one needs a person."""
     hits = values_migration.expand(deploy, migration, resync=resync)
-    written = [hit for hit in hits if hit.state in (values_migration.MIGRATE, values_migration.RESYNC)]
+    written = [
+        hit
+        for hit in hits
+        if hit.state in (values_migration.MIGRATE, values_migration.RESYNC)
+    ]
     for hit in written:
         print(f"  values: {hit.line()}", file=sys.stderr)
     refused = values_migration.refused(hits)
     if refused:
         return False, "; ".join(f"{hit.file}: {hit.detail}" for hit in refused)
-    return True, f"{len(written)} key(s) written" if written else "every 2.2.0 key already carried"
+    return (
+        True,
+        f"{len(written)} key(s) written"
+        if written
+        else "every 2.2.0 key already carried",
+    )
 
 
 def _commit_and_push(deploy: Path, message: str, *, push: bool) -> tuple[str, str]:
@@ -1801,7 +2111,10 @@ def _commit_and_push(deploy: Path, message: str, *, push: bool) -> tuple[str, st
         return "", "nothing to commit"
     commit = _git(deploy, "commit", "-m", message)
     if commit.returncode != 0:
-        return f"git commit failed: {_last_line(commit.stderr) or _last_line(commit.stdout)}", ""
+        return (
+            f"git commit failed: {_last_line(commit.stderr) or _last_line(commit.stdout)}",
+            "",
+        )
     if push:
         failure = _push(deploy)
         if failure:
@@ -1817,7 +2130,9 @@ def _push(deploy: Path) -> str:
     lines = [line.strip() for line in push.stderr.splitlines() if line.strip()]
     # git ends a rejection with hints, so the ref line or the error line says more than the last.
     reason = next((line for line in lines if "rejected]" in line), None)
-    reason = reason or next((line for line in lines if line.startswith(("error:", "fatal:"))), None)
+    reason = reason or next(
+        (line for line in lines if line.startswith(("error:", "fatal:"))), None
+    )
     return f"git push failed: {reason or _last_line(push.stderr) or 'no detail'}"
 
 
@@ -1829,20 +2144,39 @@ def pending_renames(deploy: Path, to_pins: dict) -> list[tuple[Path, Path, str]]
         if new not in charts or old in charts:
             continue
         for path in sorted((deploy / "values").glob(f"{old}-*-values.yaml")):
-            if yaml_subset.value_at(path.read_text(encoding="utf-8"), ("deploy", "service")) == old:
+            if (
+                yaml_subset.value_at(
+                    path.read_text(encoding="utf-8"), ("deploy", "service")
+                )
+                == old
+            ):
                 found.append((path, path.with_name(new + path.name[len(old) :]), new))
     return found
 
 
-def _rename_services(deploy: Path, renames: list[tuple[Path, Path, str]]) -> tuple[bool, str]:
+def _rename_services(
+    deploy: Path, renames: list[tuple[Path, Path, str]]
+) -> tuple[bool, str]:
     """git mv each overlay to its new name and set its deploy.service. (False, why) on a git failure."""
     for path, target, service in renames:
-        moved = _git(deploy, "mv", path.relative_to(deploy).as_posix(), target.relative_to(deploy).as_posix())
+        moved = _git(
+            deploy,
+            "mv",
+            path.relative_to(deploy).as_posix(),
+            target.relative_to(deploy).as_posix(),
+        )
         if moved.returncode != 0:
-            return False, f"git mv {path.name} failed: {_last_line(moved.stderr) or 'no detail'}"
+            return (
+                False,
+                f"git mv {path.name} failed: {_last_line(moved.stderr) or 'no detail'}",
+            )
         text = target.read_text(encoding="utf-8")
-        target.write_text(_set_deploy_service(text, service), encoding="utf-8", newline="\n")
-    return True, ", ".join(f"{path.name} -> {target.name}" for path, target, _ in renames)
+        target.write_text(
+            _set_deploy_service(text, service), encoding="utf-8", newline="\n"
+        )
+    return True, ", ".join(
+        f"{path.name} -> {target.name}" for path, target, _ in renames
+    )
 
 
 def _set_deploy_service(text: str, service: str) -> str:
@@ -1863,7 +2197,9 @@ def _set_deploy_service(text: str, service: str) -> str:
     return "".join(lines)
 
 
-def _recarry_values(deploy: Path, migration: values_migration.MigrationMap, to_name: str) -> tuple[bool, str]:
+def _recarry_values(
+    deploy: Path, migration: values_migration.MigrationMap, to_name: str
+) -> tuple[bool, str]:
     """Carry the 2.2.0 value keys again from the deploy repo's remote head, just before the retarget.
 
     Until the retarget the 2.2.0 engine writes the old keys alone, so a console
@@ -1872,11 +2208,16 @@ def _recarry_values(deploy: Path, migration: values_migration.MigrationMap, to_n
     """
     pull = _git(deploy, "pull", "--ff-only", "-q")
     if pull.returncode != 0:
-        return False, f"git pull --ff-only failed before the retarget: {_last_line(pull.stderr) or 'no detail'}"
+        return (
+            False,
+            f"git pull --ff-only failed before the retarget: {_last_line(pull.stderr) or 'no detail'}",
+        )
     ok, detail = _expand_values(deploy, migration, resync=True)
     if not ok:
         return False, f"a 2.2.0 value key needs a hand edit: {detail}"
-    failure, done = _commit_and_push(deploy, f"chore(upgrade): {to_name} carry the 2.2.0 value keys again", push=True)
+    failure, done = _commit_and_push(
+        deploy, f"chore(upgrade): {to_name} carry the 2.2.0 value keys again", push=True
+    )
     if failure:
         return False, failure
     return True, f"carried again before the retarget: {detail}, {done}"
@@ -1902,7 +2243,10 @@ def _finalise_values(
     from_name, to_name = names
     dropped_at = read_finalised_keys(deploy).get(VALUES_CONTRACT_KEY)
     if dropped_at:
-        print(f"  [DONE] values: apply --finalise dropped the 2.2.0 value keys ({dropped_at})", file=sys.stderr)
+        print(
+            f"  [DONE] values: apply --finalise dropped the 2.2.0 value keys ({dropped_at})",
+            file=sys.stderr,
+        )
         return ""
     if not args.finalise:
         print(
@@ -1938,16 +2282,28 @@ def _finalise_values(
         return ""
     write_finalise_marker(deploy, from_name, to_name, VALUES_CONTRACT_KEY)
     moment = change_moment()
-    failure, done = _commit_and_push(deploy, f"chore(upgrade): {to_name} {VALUES_CONTRACT_SUBJECT}", push=args.push)
+    failure, done = _commit_and_push(
+        deploy, f"chore(upgrade): {to_name} {VALUES_CONTRACT_SUBJECT}", push=args.push
+    )
     if failure:
         return failure
     pushed_at = moment if args.push else None
     ok, detail = wait_for_argo(
-        args.kubeconfig, argocd_namespace=args.argocd_namespace, timeout=args.timeout,
-        rollout_namespace=rollout_namespace, reconciled_after=pushed_at,
+        args.kubeconfig,
+        argocd_namespace=args.argocd_namespace,
+        timeout=args.timeout,
+        rollout_namespace=rollout_namespace,
+        reconciled_after=pushed_at,
     )
-    print(f"  [DONE] values: the 2.2.0 keys dropped, {done}; argo: {detail}", file=sys.stderr)
-    return "" if ok else "Argo and the rollouts did not settle after the 2.2.0 value keys were dropped"
+    print(
+        f"  [DONE] values: the 2.2.0 keys dropped, {done}; argo: {detail}",
+        file=sys.stderr,
+    )
+    return (
+        ""
+        if ok
+        else "Argo and the rollouts did not settle after the 2.2.0 value keys were dropped"
+    )
 
 
 def run_preflight(
@@ -1970,34 +2326,82 @@ def run_preflight(
     """Every preflight check, in report order. Does not print -- the caller
     (cmd_upgrade_preflight, or apply before it acts) owns presentation."""
     checks: list[tuple[str, bool, str]] = []
-    checks.append((
-        "verified upgrade path",
-        *check_upgrade_path(from_stack, to_stack, allow_unverified=allow_unverified_path),
-    ))
+    checks.append(
+        (
+            "verified upgrade path",
+            *check_upgrade_path(
+                from_stack, to_stack, allow_unverified=allow_unverified_path
+            ),
+        )
+    )
     checks.append(("deploy repo clean", *check_deploy_clean(deploy)))
     checks += exposure_checks(
-        deploy, from_stack, to_stack, cloud=cloud, kubeconfig=kubeconfig, argocd_namespace=argocd_namespace
+        deploy,
+        from_stack,
+        to_stack,
+        cloud=cloud,
+        kubeconfig=kubeconfig,
+        argocd_namespace=argocd_namespace,
     )
-    checks.append(("2.2.0 value keys (values-migrations.yaml)", *check_values_migration(deploy, from_stack, to_stack)))
+    checks.append(
+        (
+            "2.2.0 value keys (values-migrations.yaml)",
+            *check_values_migration(deploy, from_stack, to_stack),
+        )
+    )
     checks.append(("cluster reachable", *check_cluster_reachable(kubeconfig)))
-    checks.append(("argo apps synced and healthy", *check_argo_apps(kubeconfig, argocd_namespace)))
-    checks.append(("no KafkaRebalance in progress", *check_no_kafka_rebalance(kubeconfig)))
-    checks.append((
-        "clickhouse merges under threshold",
-        *check_clickhouse_merges(
-            kubeconfig, clickhouse_namespace, clickhouse_selector, clickhouse_merge_threshold, clickhouse_credentials
-        ),
-    ))
-    checks.append((
-        "schema lock quorum part held",
-        *check_schema_lock_quorum(kubeconfig, clickhouse_namespace, clickhouse_selector, clickhouse_credentials),
-    ))
-    conversion = next((move for move in moves if "stored-version conversion" in move.step.before), None)
+    checks.append(
+        ("argo apps synced and healthy", *check_argo_apps(kubeconfig, argocd_namespace))
+    )
+    checks.append(
+        ("no KafkaRebalance in progress", *check_no_kafka_rebalance(kubeconfig))
+    )
+    checks.append(
+        (
+            "clickhouse merges under threshold",
+            *check_clickhouse_merges(
+                kubeconfig,
+                clickhouse_namespace,
+                clickhouse_selector,
+                clickhouse_merge_threshold,
+                clickhouse_credentials,
+            ),
+        )
+    )
+    checks.append(
+        (
+            "schema lock quorum part held",
+            *check_schema_lock_quorum(
+                kubeconfig,
+                clickhouse_namespace,
+                clickhouse_selector,
+                clickhouse_credentials,
+            ),
+        )
+    )
+    conversion = next(
+        (move for move in moves if "stored-version conversion" in move.step.before),
+        None,
+    )
     if conversion is not None:
-        checks.append(("strimzi stored-version conversion", *check_strimzi_conversion_before(kubeconfig, conversion)))
-    resolved_nodes_file = nodes_file or (deploy / "sizing" / f"{DEFAULT_TIER}.nodes.json")
-    checks.append(("on-prem node capacity", *check_node_capacity(kubeconfig, resolved_nodes_file)))
-    checks.append(("backup marker (one-way steps)", *check_backup_marker(deploy, moves, backup_marker)))
+        checks.append(
+            (
+                "strimzi stored-version conversion",
+                *check_strimzi_conversion_before(kubeconfig, conversion),
+            )
+        )
+    resolved_nodes_file = nodes_file or (
+        deploy / "sizing" / f"{DEFAULT_TIER}.nodes.json"
+    )
+    checks.append(
+        ("on-prem node capacity", *check_node_capacity(kubeconfig, resolved_nodes_file))
+    )
+    checks.append(
+        (
+            "backup marker (one-way steps)",
+            *check_backup_marker(deploy, moves, backup_marker),
+        )
+    )
     return checks
 
 
@@ -2096,7 +2500,9 @@ def bump_pin_file(deploy: Path, stack: str, *, channel: str = "") -> bool:
     pins_path = deploy / "pins.yaml"
     if not pins_path.is_file():
         named = _NEW_PIN_CHANNEL.format(channel=channel) if channel else ""
-        pins_path.write_text(_NEW_PIN_FILE.format(stack=stack, channel=named), encoding="utf-8")
+        pins_path.write_text(
+            _NEW_PIN_FILE.format(stack=stack, channel=named), encoding="utf-8"
+        )
         return True
     text = pins_path.read_text(encoding="utf-8")
     updated = set_pin_stack(text, stack)
@@ -2118,7 +2524,9 @@ def _kafka_block(lines: list[str]) -> tuple[int, int, str] | None:
     start = next((i for i, line in enumerate(lines) if _KAFKA_BLOCK.match(line)), None)
     if start is None:
         if any(line.startswith("kafka:") for line in lines):
-            raise UpgradeError(f"{KAFKA_OVERLAY}: `kafka:` is not a block mapping -- edit the hold by hand")
+            raise UpgradeError(
+                f"{KAFKA_OVERLAY}: `kafka:` is not a block mapping -- edit the hold by hand"
+            )
         return None
     end = len(lines)
     indent = ""
@@ -2170,7 +2578,9 @@ def set_overlay_hold(text: str, key: str, value: str) -> str:
     elif lines[index].rstrip().endswith(HOLD_MARK):
         lines[index] = f"{block[2]}{entry}"
     else:
-        raise UpgradeError(f"{KAFKA_OVERLAY} sets kafka.{key} itself, so apply will not overwrite it")
+        raise UpgradeError(
+            f"{KAFKA_OVERLAY} sets kafka.{key} itself, so apply will not overwrite it"
+        )
     return "\n".join(lines) + "\n"
 
 
@@ -2185,7 +2595,11 @@ def drop_overlay_hold(text: str, key: str) -> str:
         return text
     del lines[index]
     start, end, _indent = block
-    children = [ln for ln in lines[start + 1 : end - 1] if ln.strip() and not ln.strip().startswith("#")]
+    children = [
+        ln
+        for ln in lines[start + 1 : end - 1]
+        if ln.strip() and not ln.strip().startswith("#")
+    ]
     if not children:
         del lines[start]
     return "\n".join(lines) + "\n" if lines else ""
@@ -2212,7 +2626,10 @@ class KafkaHold:
 
 
 def plan_kafka_hold(
-    kubeconfig: str | None, deploy: Path, kafka_move: Move | None, finalised: dict[str, str]
+    kubeconfig: str | None,
+    deploy: Path,
+    kafka_move: Move | None,
+    finalised: dict[str, str],
 ) -> tuple[KafkaHold | None, str]:
     """Which holds the move needs, decided from the live Kafka CRs before any
     stage runs, so a cluster in an unexpected state refuses before anything moves.
@@ -2239,16 +2656,22 @@ def plan_kafka_hold(
     text = _read_overlay(deploy)
     pinned = overlay_entry(text, "metadataVersion")
     if pinned is None and not state.metadata:
-        raise UpgradeError("the Kafka CR reports no status.kafkaMetadataVersion, so there is no value to hold")
+        raise UpgradeError(
+            "the Kafka CR reports no status.kafkaMetadataVersion, so there is no value to hold"
+        )
     deployer_version = overlay_entry(text, "version")
     version_held_by_hand = deployer_version is not None and not deployer_version[1]
     hold = KafkaHold(
         metadata=state.metadata if pinned is None else "",
-        version=kafka_move.old if state.version == kafka_move.old and not version_held_by_hand else "",
+        version=kafka_move.old
+        if state.version == kafka_move.old and not version_held_by_hand
+        else "",
     )
     detail = f"metadata held at {pinned[0] if pinned else state.metadata}"
     if hold.version:
-        detail += f", brokers held at {hold.version} until the {kafka_move.step.stage} stage"
+        detail += (
+            f", brokers held at {hold.version} until the {kafka_move.step.stage} stage"
+        )
     return hold, detail
 
 
@@ -2259,7 +2682,10 @@ def release_metadata_hold(deploy: Path, move: Move) -> tuple[bool, str]:
     text = _read_overlay(deploy)
     entry = overlay_entry(text, "metadataVersion")
     if entry is None:
-        return True, f"no kafka.metadataVersion in {KAFKA_OVERLAY} -- the metadata version is not held"
+        return (
+            True,
+            f"no kafka.metadataVersion in {KAFKA_OVERLAY} -- the metadata version is not held",
+        )
     value, held = entry
     if not held:
         return False, (
@@ -2267,7 +2693,10 @@ def release_metadata_hold(deploy: Path, move: Move) -> tuple[bool, str]:
             f"{move.new} line by hand"
         )
     _write_overlay(deploy, drop_overlay_hold(text, "metadataVersion"))
-    return True, f"dropped the kafka.metadataVersion {value} hold; Strimzi moves it to {move.new}'s default"
+    return (
+        True,
+        f"dropped the kafka.metadataVersion {value} hold; Strimzi moves it to {move.new}'s default",
+    )
 
 
 # --- the cluster secret's target revision ----------------------------------------
@@ -2278,12 +2707,21 @@ def _norm_ref(ref: str) -> str:
     return _norm_stack(ref) if ref else ""
 
 
-def _cluster_secret_annotation(kubeconfig: str | None, namespace: str, annotation: str) -> str:
+def _cluster_secret_annotation(
+    kubeconfig: str | None, namespace: str, annotation: str
+) -> str:
     """One annotation on the cluster secret, empty when unset. Raises UpgradeError when unreadable."""
     jsonpath = "jsonpath={.metadata.annotations." + annotation.replace(".", "\\.") + "}"
     result = _kubectl(
-        kubeconfig, "-n", namespace, f"--request-timeout={DEFAULT_KUBECTL_REQUEST_TIMEOUT}",
-        "get", "secret", ARGO_CLUSTER, "-o", jsonpath,
+        kubeconfig,
+        "-n",
+        namespace,
+        f"--request-timeout={DEFAULT_KUBECTL_REQUEST_TIMEOUT}",
+        "get",
+        "secret",
+        ARGO_CLUSTER,
+        "-o",
+        jsonpath,
     )
     if result.returncode != 0:
         raise UpgradeError(
@@ -2310,7 +2748,9 @@ def read_dfe_namespace(kubeconfig: str | None, namespace: str) -> str:
     return _cluster_secret_annotation(kubeconfig, namespace, DFE_NAMESPACE_ANNOTATION)
 
 
-def decide_retarget(current: str, from_name: str, to_name: str, explicit: str | None) -> tuple[str | None, str]:
+def decide_retarget(
+    current: str, from_name: str, to_name: str, explicit: str | None
+) -> tuple[str | None, str]:
     """(the ref to write, why) -- None leaves the secret as it is.
 
     A tag-pinned secret names the FROM stack and moves to the TO tag (the stack
@@ -2340,15 +2780,26 @@ def decide_retarget(current: str, from_name: str, to_name: str, explicit: str | 
     )
 
 
-def write_target_revision(kubeconfig: str | None, namespace: str, ref: str, stack: str) -> tuple[bool, str]:
+def write_target_revision(
+    kubeconfig: str | None, namespace: str, ref: str, stack: str
+) -> tuple[bool, str]:
     """Move the cluster secret's target_revision, and its stack_version with it."""
     result = _kubectl(
-        kubeconfig, "-n", namespace, "annotate", "--overwrite", f"secret/{ARGO_CLUSTER}",
-        f"{TARGET_REVISION_ANNOTATION}={ref}", f"{STACK_VERSION_ANNOTATION}={stack}",
+        kubeconfig,
+        "-n",
+        namespace,
+        "annotate",
+        "--overwrite",
+        f"secret/{ARGO_CLUSTER}",
+        f"{TARGET_REVISION_ANNOTATION}={ref}",
+        f"{STACK_VERSION_ANNOTATION}={stack}",
     )
     if result.returncode != 0:
         return False, _last_line(result.stderr) or "kubectl annotate failed"
-    return True, f"{TARGET_REVISION_ANNOTATION}={ref}, {STACK_VERSION_ANNOTATION}={stack}"
+    return (
+        True,
+        f"{TARGET_REVISION_ANNOTATION}={ref}, {STACK_VERSION_ANNOTATION}={stack}",
+    )
 
 
 def retarget_command(namespace: str, ref: str, stack: str) -> str:
@@ -2394,7 +2845,9 @@ def _helm_json(kubeconfig: str | None, *argv: str) -> tuple[object, str]:
     except FileNotFoundError:
         return None, "helm is not on PATH"
     if result.returncode != 0:
-        return None, _last_line(result.stderr) or f"helm {argv[0]} exited {result.returncode}"
+        return None, _last_line(
+            result.stderr
+        ) or f"helm {argv[0]} exited {result.returncode}"
     try:
         return json.loads(result.stdout or "null"), ""
     except json.JSONDecodeError as exc:
@@ -2408,29 +2861,49 @@ def argocd_installed_by_bootstrap(kubeconfig: str | None) -> tuple[bool | None, 
     before it upgrades Argo, so an adopted Argo is never handed an upgrade.
     """
     scope = ["--namespace", argocd_release.NAMESPACE]
-    releases, error = _helm_json(kubeconfig, "list", *scope, "--filter", f"^{argocd_release.RELEASE}$")
+    releases, error = _helm_json(
+        kubeconfig, "list", *scope, "--filter", f"^{argocd_release.RELEASE}$"
+    )
     if error:
         return None, f"cannot list helm releases in {argocd_release.NAMESPACE}: {error}"
-    listed = [r for r in releases if isinstance(r, dict)] if isinstance(releases, list) else []
+    listed = (
+        [r for r in releases if isinstance(r, dict)]
+        if isinstance(releases, list)
+        else []
+    )
     cache = _cache_service()
     if not any(r.get("name") == argocd_release.RELEASE for r in listed):
         return argocd_release.verdict([], None, cache)
-    values, error = _helm_json(kubeconfig, "get", "values", argocd_release.RELEASE, *scope)
+    values, error = _helm_json(
+        kubeconfig, "get", "values", argocd_release.RELEASE, *scope
+    )
     if error:
-        return None, f"cannot read the values of helm release {argocd_release.RELEASE}: {error}"
-    return argocd_release.verdict(listed, values if isinstance(values, dict) else None, cache)
+        return (
+            None,
+            f"cannot read the values of helm release {argocd_release.RELEASE}: {error}",
+        )
+    return argocd_release.verdict(
+        listed, values if isinstance(values, dict) else None, cache
+    )
 
 
-def read_bootstrap_chart(kubeconfig: str | None, release: helm_releases.HelmRelease) -> tuple[str, str]:
+def read_bootstrap_chart(
+    kubeconfig: str | None, release: helm_releases.HelmRelease
+) -> tuple[str, str]:
     """(the chart version the cluster runs, why it could not be read).
 
     Read off the Deployment's `helm.sh/chart` label, which the chart stamps with
     its own version. A Deployment without one for this chart is an operator the
     deploy adopted rather than installed, which is the host's to upgrade.
     """
-    rc, doc, err = _kubectl_json(kubeconfig, "-n", release.namespace, "get", "deployment", release.deployment)
+    rc, doc, err = _kubectl_json(
+        kubeconfig, "-n", release.namespace, "get", "deployment", release.deployment
+    )
     if rc != 0:
-        return "", f"cannot read deployment/{release.deployment} in {release.namespace}: {err}"
+        return (
+            "",
+            f"cannot read deployment/{release.deployment} in {release.namespace}: {err}",
+        )
     label = ((doc.get("metadata") or {}).get("labels") or {}).get("helm.sh/chart", "")
     prefix = f"{release.chart}-"
     if not label.startswith(prefix):
@@ -2438,7 +2911,7 @@ def read_bootstrap_chart(kubeconfig: str | None, release: helm_releases.HelmRele
             f"deployment/{release.deployment} in {release.namespace} carries no helm.sh/chart label for "
             f"{release.chart} -- an operator this deploy adopted is upgraded by its owner"
         )
-    return label[len(prefix):], ""
+    return label[len(prefix) :], ""
 
 
 def bootstrap_upgrade_command(
@@ -2459,19 +2932,52 @@ def bootstrap_upgrade_command(
     refuses where no such release exists.
     """
     kube = ["--kubeconfig", kubeconfig] if kubeconfig else []
-    values = helm_releases.install_args(release, domain=_DOMAIN_MARK, cache_service=_cache_service())
-    command = shlex.join([
-        "helm", *kube, "-n", release.namespace, "upgrade", release.release, release.chart,
-        "--repo", release.repo, "--version", version, "--reset-values", *values,
-        "--wait", "--timeout", release.timeout,
-    ])
+    values = helm_releases.install_args(
+        release, domain=_DOMAIN_MARK, cache_service=_cache_service()
+    )
+    command = shlex.join(
+        [
+            "helm",
+            *kube,
+            "-n",
+            release.namespace,
+            "upgrade",
+            release.release,
+            release.chart,
+            "--repo",
+            release.repo,
+            "--version",
+            version,
+            "--reset-values",
+            *values,
+            "--wait",
+            "--timeout",
+            release.timeout,
+        ]
+    )
     if release.login_values:
-        login = shlex.join(["python3", str(ARGOCD_LOGIN), *kube, "values", "--domain", _DOMAIN_MARK])
+        login = shlex.join(
+            ["python3", str(ARGOCD_LOGIN), *kube, "values", "--domain", _DOMAIN_MARK]
+        )
         command = f"{login} | {command}"
     if _DOMAIN_MARK not in command:
         return command
-    jsonpath = "jsonpath={.metadata.annotations." + DOMAIN_ANNOTATION.replace(".", "\\.") + "}"
-    lookup = shlex.join(["kubectl", *kube, "-n", argocd_namespace, "get", "secret", ARGO_CLUSTER, "-o", jsonpath])
+    jsonpath = (
+        "jsonpath={.metadata.annotations." + DOMAIN_ANNOTATION.replace(".", "\\.") + "}"
+    )
+    lookup = shlex.join(
+        [
+            "kubectl",
+            *kube,
+            "-n",
+            argocd_namespace,
+            "get",
+            "secret",
+            ARGO_CLUSTER,
+            "-o",
+            jsonpath,
+        ]
+    )
     domain = f'"${DOMAIN_VAR}"'
     return f'{DOMAIN_VAR}="$({lookup})" && test -n {domain} && {command.replace(_DOMAIN_MARK, domain)}'
 
@@ -2486,7 +2992,8 @@ def check_bootstrap_move(
     command reads its domain off the cluster secret in `argocd_namespace`.
     """
     moved = (
-        f"{move.step.key} {move.old} -> {move.new}" if move.old != move.new
+        f"{move.step.key} {move.old} -> {move.new}"
+        if move.old != move.new
         else f"{move.step.key} {move.new} (unchanged by this upgrade)"
     )
     release = BOOTSTRAP_RELEASES.get(move.step.key)
@@ -2503,7 +3010,10 @@ def check_bootstrap_move(
         where = f" ({why}), where this deploy installed it" if ours is None else ""
     running, why = read_bootstrap_chart(kubeconfig, release)
     if running == move.new:
-        return BOOTSTRAP_DONE, f"{move.step.key} runs {running} (deployment/{release.deployment} helm.sh/chart)"
+        return (
+            BOOTSTRAP_DONE,
+            f"{move.step.key} runs {running} (deployment/{release.deployment} helm.sh/chart)",
+        )
     seen = f"the cluster runs {running}" if running else why
     return BOOTSTRAP_PENDING, (
         f"{moved}: bootstrap.sh installs it, not Argo, and {seen}. "
@@ -2550,7 +3060,12 @@ def read_finalised_keys(deploy: Path) -> dict[str, str]:
 
 
 def write_finalise_marker(
-    deploy: Path, from_stack: str, to_stack: str, key: str, *, timestamp: str | None = None
+    deploy: Path,
+    from_stack: str,
+    to_stack: str,
+    key: str,
+    *,
+    timestamp: str | None = None,
 ) -> Path:
     """Record that `key`'s finalise hook ran, in
     <deploy>/upgrades/<from_stack>-to-<to_stack>.finalised. Idempotent per
@@ -2568,7 +3083,9 @@ def write_finalise_marker(
             if existing_key:
                 entries[existing_key] = existing_ts
     entries[key] = timestamp or datetime.now(UTC).isoformat()
-    path.write_text("".join(f"{k} {v}\n" for k, v in sorted(entries.items())), encoding="utf-8")
+    path.write_text(
+        "".join(f"{k} {v}\n" for k, v in sorted(entries.items())), encoding="utf-8"
+    )
     return path
 
 
@@ -2598,14 +3115,19 @@ def rollout_pending(item: dict) -> str:
         strategy = spec.get("updateStrategy") or {}
         if strategy.get("type", "RollingUpdate") != "RollingUpdate":
             return ""
-        want = replicas - int((strategy.get("rollingUpdate") or {}).get("partition") or 0)
+        want = replicas - int(
+            (strategy.get("rollingUpdate") or {}).get("partition") or 0
+        )
         if updated < want:
             return f"{updated} of {want} replicas updated"
         if available < replicas:
             return f"{available} of {replicas} replicas available"
         return ""
     conditions = status.get("conditions") or []
-    if any(c.get("type") == "Progressing" and c.get("reason") == "ProgressDeadlineExceeded" for c in conditions):
+    if any(
+        c.get("type") == "Progressing" and c.get("reason") == "ProgressDeadlineExceeded"
+        for c in conditions
+    ):
         return "past its progress deadline"
     if updated < replicas:
         return f"{updated} of {replicas} replicas updated"
@@ -2624,9 +3146,14 @@ def check_rollouts(kubeconfig: str | None, namespace: str) -> tuple[bool, str]:
     stack, and neither is a settled one. The detail never names `namespace`,
     which apply can have read off the cluster secret.
     """
-    rc, doc, err = _kubectl_json(kubeconfig, "-n", namespace, "get", "deployments.apps,statefulsets.apps")
+    rc, doc, err = _kubectl_json(
+        kubeconfig, "-n", namespace, "get", "deployments.apps,statefulsets.apps"
+    )
     if rc != 0:
-        return False, f"cannot list Deployments and StatefulSets in the DFE namespace: {err}"
+        return (
+            False,
+            f"cannot list Deployments and StatefulSets in the DFE namespace: {err}",
+        )
     items = doc.get("items") or []
     if not items:
         return False, "no Deployment or StatefulSet in the DFE namespace"
@@ -2635,10 +3162,15 @@ def check_rollouts(kubeconfig: str | None, namespace: str) -> tuple[bool, str]:
         why = rollout_pending(item)
         if why:
             name = (item.get("metadata") or {}).get("name", "<unnamed>")
-            pending.append(f"{str(item.get('kind') or 'workload').lower()}/{name} ({why})")
+            pending.append(
+                f"{str(item.get('kind') or 'workload').lower()}/{name} ({why})"
+            )
     if pending:
         extra = f", +{len(pending) - 6} more" if len(pending) > 6 else ""
-        return False, f"{len(pending)} of {len(items)} rollout(s) not finished: {', '.join(pending[:6])}{extra}"
+        return (
+            False,
+            f"{len(pending)} of {len(items)} rollout(s) not finished: {', '.join(pending[:6])}{extra}",
+        )
     return True, f"{len(items)} rollout(s) finished"
 
 
@@ -2673,11 +3205,26 @@ def request_stalled_syncs(
         if not _stalled_autosync(app, after):
             continue
         name = (app.get("metadata") or {}).get("name", "")
-        options = ((app.get("spec") or {}).get("syncPolicy") or {}).get("syncOptions") or []
-        patch = {"operation": {"initiatedBy": {"username": "dfe-ops"}, "sync": {"syncOptions": options}}}
+        options = ((app.get("spec") or {}).get("syncPolicy") or {}).get(
+            "syncOptions"
+        ) or []
+        patch = {
+            "operation": {
+                "initiatedBy": {"username": "dfe-ops"},
+                "sync": {"syncOptions": options},
+            }
+        }
         result = _kubectl(
-            kubeconfig, "-n", namespace, "patch", "applications.argoproj.io", name,
-            "--type", "merge", "-p", json.dumps(patch),
+            kubeconfig,
+            "-n",
+            namespace,
+            "patch",
+            "applications.argoproj.io",
+            name,
+            "--type",
+            "merge",
+            "-p",
+            json.dumps(patch),
         )
         if result.returncode == 0:
             started.append(name)
@@ -2706,17 +3253,23 @@ def wait_for_argo(
     inside the same `timeout`; the timeout detail names each Application not
     yet reconciled and each rollout that had not finished.
     """
+
     def settled() -> tuple[bool, str]:
         ok, detail = check_argo_apps(
-            kubeconfig, argocd_namespace, stale_revision=stale_revision,
-            reconciled_after=reconciled_after, start_stalled_syncs=True,
+            kubeconfig,
+            argocd_namespace,
+            stale_revision=stale_revision,
+            reconciled_after=reconciled_after,
+            start_stalled_syncs=True,
         )
         if not ok or not rollout_namespace:
             return ok, detail
         rolled, rollouts = check_rollouts(kubeconfig, rollout_namespace)
         return rolled, f"{detail}; {rollouts}"
 
-    return _wait_until(settled, timeout=timeout, stuck="still not converged", sleep=sleep, now=now)
+    return _wait_until(
+        settled, timeout=timeout, stuck="still not converged", sleep=sleep, now=now
+    )
 
 
 def wait_for_kafka_operator_version(
@@ -2736,7 +3289,10 @@ def wait_for_kafka_operator_version(
     """
     return _wait_until(
         lambda: check_kafka_operator_version(kubeconfig, version, namespace=namespace),
-        timeout=timeout, stuck="still not reconciled", sleep=sleep, now=now,
+        timeout=timeout,
+        stuck="still not reconciled",
+        sleep=sleep,
+        now=now,
     )
 
 
@@ -2806,7 +3362,10 @@ def cmd_upgrade_plan(args: argparse.Namespace) -> int:
     deploy = Path(args.deploy)
     try:
         _root, from_name, from_pins, to_name, to_pins, from_note = _load_from_to(
-            deploy, args.to, kubeconfig=args.kubeconfig, argocd_namespace=args.argocd_namespace
+            deploy,
+            args.to,
+            kubeconfig=args.kubeconfig,
+            argocd_namespace=args.argocd_namespace,
         )
     except UpgradeError as err:
         print(f"dfe-ops upgrade plan: {err}", file=sys.stderr)
@@ -2816,16 +3375,25 @@ def cmd_upgrade_plan(args: argparse.Namespace) -> int:
     moves = plan_moves(steps, flatten_stack(from_pins), flatten_stack(to_pins))
     blocked = False
 
-    sections = [render_plan(moves, from_stack=from_name, to_stack=to_name, note=from_note)]
+    sections = [
+        render_plan(moves, from_stack=from_name, to_stack=to_name, note=from_note)
+    ]
 
     compat_ok, compat_out = run_compat_check(to_name)
-    sections.append(f"## compat-check ({to_name}, --strict)\n\n```\n{compat_out}\n```\n")
+    sections.append(
+        f"## compat-check ({to_name}, --strict)\n\n```\n{compat_out}\n```\n"
+    )
     if not compat_ok:
         blocked = True
 
     # A cluster is in play once one is named, or FROM came off its secret.
     exposure = exposure_checks(
-        deploy, from_name, to_name, cloud=args.cloud, kubeconfig=args.kubeconfig, argocd_namespace=args.argocd_namespace,
+        deploy,
+        from_name,
+        to_name,
+        cloud=args.cloud,
+        kubeconfig=args.kubeconfig,
+        argocd_namespace=args.argocd_namespace,
         cluster=args.kubeconfig is not None or not (deploy / "pins.yaml").is_file(),
     )
     lines = "\n".join(_check_line(*check) for check in exposure)
@@ -2840,7 +3408,10 @@ def cmd_upgrade_plan(args: argparse.Namespace) -> int:
     if args.dial:
         previous = deploy / "sizing" / "resolved.yaml"
         sizing_ok, sizing_detail, sizing_blocked = check_locked_sizing(
-            Path(args.dial), previous, fixtures=Path(args.fixtures) if args.fixtures else None, live=args.live
+            Path(args.dial),
+            previous,
+            fixtures=Path(args.fixtures) if args.fixtures else None,
+            live=args.live,
         )
         sections.append(f"## sizing locked-change check\n\n{sizing_detail}\n")
         if not sizing_ok or sizing_blocked:
@@ -2849,7 +3420,11 @@ def cmd_upgrade_plan(args: argparse.Namespace) -> int:
         sections.append("## sizing locked-change check\n\nskipped: no --dial given\n")
 
     text = "\n".join(sections)
-    out_path = Path(args.out) if args.out else DEFAULT_PLAN_DIR / f"{from_name}-to-{to_name}.md"
+    out_path = (
+        Path(args.out)
+        if args.out
+        else DEFAULT_PLAN_DIR / f"{from_name}-to-{to_name}.md"
+    )
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(text, encoding="utf-8", newline="\n")
 
@@ -2864,7 +3439,9 @@ def cmd_upgrade_plan(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
-def render_values_section(deploy: Path, from_stack: str, to_stack: str) -> tuple[str, bool]:
+def render_values_section(
+    deploy: Path, from_stack: str, to_stack: str
+) -> tuple[str, bool]:
     """(the plan's values-migration section, whether it blocks the plan).
 
     Lists every hit but the keys already carried: MIGRATE is a key apply writes
@@ -2876,9 +3453,16 @@ def render_values_section(deploy: Path, from_stack: str, to_stack: str) -> tuple
     heading = "## values migration (2.2.0 keys)"
     if not crosses:
         return f"{heading}\n\n{why}\n", False
-    hits = [hit for hit in values_migration.scan(deploy, migration) if hit.state != values_migration.DONE]
+    hits = [
+        hit
+        for hit in values_migration.scan(deploy, migration)
+        if hit.state != values_migration.DONE
+    ]
     if not hits:
-        return f"{heading}\n\nno 2.2.0 key in values/ or {COMMON_OVERLAY.as_posix()}\n", False
+        return (
+            f"{heading}\n\nno 2.2.0 key in values/ or {COMMON_OVERLAY.as_posix()}\n",
+            False,
+        )
     lines = "\n".join(hit.line() for hit in hits)
     note = (
         f"apply writes each MIGRATE key beside its old one before it moves {TARGET_REVISION_ANNOTATION}, and "
@@ -2894,7 +3478,10 @@ def cmd_upgrade_preflight(args: argparse.Namespace) -> int:
     deploy = Path(args.deploy)
     try:
         _root, from_name, from_pins, to_name, to_pins, from_note = _load_from_to(
-            deploy, args.to, kubeconfig=args.kubeconfig, argocd_namespace=args.argocd_namespace
+            deploy,
+            args.to,
+            kubeconfig=args.kubeconfig,
+            argocd_namespace=args.argocd_namespace,
         )
     except UpgradeError as err:
         print(f"dfe-ops upgrade preflight: {err}", file=sys.stderr)
@@ -2923,7 +3510,9 @@ def cmd_upgrade_preflight(args: argparse.Namespace) -> int:
     failed = _print_checks(checks)
     print()
     if failed:
-        print(f"preflight FAILED: {failed}/{len(checks)} check(s) failed", file=sys.stderr)
+        print(
+            f"preflight FAILED: {failed}/{len(checks)} check(s) failed", file=sys.stderr
+        )
         return EXIT_BLOCKED
     print(f"preflight PASSED: {len(checks)} check(s)")
     return EXIT_OK
@@ -2969,7 +3558,10 @@ def run_finalise_hook(
     one, and mark the step finalised. The marker is written only when both
     succeed, so a decline or a failed hook leaves the step exactly as
     reversible as it was before this call."""
-    if not _confirm(f"soak complete -- run finalise now: {move.step.finalise}", assume_yes=assume_yes):
+    if not _confirm(
+        f"soak complete -- run finalise now: {move.step.finalise}",
+        assume_yes=assume_yes,
+    ):
         return False, "declined by operator"
     detail = "confirmed by operator"
     hook = FINALISE_HOOKS.get(move.step.key)
@@ -2983,7 +3575,10 @@ def run_finalise_hook(
 
 
 def _stage_failed(stage_index: int, reason: str, stage_moves: list[Move]) -> int:
-    print(f"dfe-ops upgrade apply FAILED at stage {stage_index}: {reason}", file=sys.stderr)
+    print(
+        f"dfe-ops upgrade apply FAILED at stage {stage_index}: {reason}",
+        file=sys.stderr,
+    )
     _print_rollback(stage_moves)
     return EXIT_BLOCKED
 
@@ -2992,7 +3587,11 @@ def _chart_stage(grouped: list[tuple[str, list[Move]]]) -> str | None:
     """The first stage moving a component Argo renders -- everything outside
     the bootstrap section, which bootstrap.sh installs before Argo exists."""
     return next(
-        (stage for stage, stage_moves in grouped if any(not m.step.key.startswith("bootstrap.") for m in stage_moves)),
+        (
+            stage
+            for stage, stage_moves in grouped
+            if any(not m.step.key.startswith("bootstrap.") for m in stage_moves)
+        ),
         None,
     )
 
@@ -3014,15 +3613,24 @@ def _write_holds(deploy: Path, hold: KafkaHold, *, hold_version: bool) -> list[s
 
 def _rollout_scope(args: argparse.Namespace) -> str:
     """The namespace the rollout waits read, named by where it comes from rather than by a value read off a Secret."""
-    return args.namespace or f"the namespace secret/{ARGO_CLUSTER}'s {DFE_NAMESPACE_ANNOTATION} names"
+    return (
+        args.namespace
+        or f"the namespace secret/{ARGO_CLUSTER}'s {DFE_NAMESPACE_ANNOTATION} names"
+    )
 
 
-def _wait_line(args: argparse.Namespace, *, leaving: str = "", reconciled: str = "") -> str:
+def _wait_line(
+    args: argparse.Namespace, *, leaving: str = "", reconciled: str = ""
+) -> str:
     """What a healthy wait waits on, as a --dry-run prints it; `leaving` names the ref a retarget leaves.
 
     `reconciled` names the change each Application must have been reconciled after.
     """
-    argo = f"Argo Applications to leave {leaving}" if leaving else f"Argo Applications in {args.argocd_namespace}"
+    argo = (
+        f"Argo Applications to leave {leaving}"
+        if leaving
+        else f"Argo Applications in {args.argocd_namespace}"
+    )
     if reconciled:
         argo += f", each reconciled after {reconciled}"
     return (
@@ -3031,7 +3639,9 @@ def _wait_line(args: argparse.Namespace, *, leaving: str = "", reconciled: str =
     )
 
 
-def _rename_stack(args: argparse.Namespace, deploy: Path, from_name: str, to_name: str) -> int:
+def _rename_stack(
+    args: argparse.Namespace, deploy: Path, from_name: str, to_name: str
+) -> int:
     """Name TO on a deployment whose pins already equal it, as an rc's GA does.
 
     No pin moves, so no stage runs. pins.yaml still moves to TO and the cluster
@@ -3039,16 +3649,30 @@ def _rename_stack(args: argparse.Namespace, deploy: Path, from_name: str, to_nam
     """
     ref = args.target_revision or to_name
     if args.dry_run:
-        print(f"dfe-ops upgrade apply: {from_name} pins every key {to_name} does -- only the stack name moves", file=sys.stderr)
-        print(f"[dry-run] set pins.yaml base.dfe-infra = \"{to_name}\"", file=sys.stderr)
-        print(f"[dry-run] git -C {deploy} commit -m 'chore(upgrade): {to_name} -- no pinned key moved'", file=sys.stderr)
+        print(
+            f"dfe-ops upgrade apply: {from_name} pins every key {to_name} does -- only the stack name moves",
+            file=sys.stderr,
+        )
+        print(f'[dry-run] set pins.yaml base.dfe-infra = "{to_name}"', file=sys.stderr)
+        print(
+            f"[dry-run] git -C {deploy} commit -m 'chore(upgrade): {to_name} -- no pinned key moved'",
+            file=sys.stderr,
+        )
         if args.push:
             print(f"[dry-run] git -C {deploy} push", file=sys.stderr)
-        print(f"[dry-run] if secret/{ARGO_CLUSTER} targets {from_name}: {retarget_command(args.argocd_namespace, ref, to_name)}", file=sys.stderr)
-        print(f"[dry-run] {_wait_line(args, leaving=from_name, reconciled='the retarget')}", file=sys.stderr)
+        print(
+            f"[dry-run] if secret/{ARGO_CLUSTER} targets {from_name}: {retarget_command(args.argocd_namespace, ref, to_name)}",
+            file=sys.stderr,
+        )
+        print(
+            f"[dry-run] {_wait_line(args, leaving=from_name, reconciled='the retarget')}",
+            file=sys.stderr,
+        )
         return EXIT_OK
 
-    ok, why = check_upgrade_path(from_name, to_name, allow_unverified=args.allow_unverified_path)
+    ok, why = check_upgrade_path(
+        from_name, to_name, allow_unverified=args.allow_unverified_path
+    )
     print(f"  upgrade path: {why}", file=sys.stderr)
     if not ok:
         print(f"dfe-ops upgrade apply: REFUSED -- {why}", file=sys.stderr)
@@ -3056,9 +3680,13 @@ def _rename_stack(args: argparse.Namespace, deploy: Path, from_name: str, to_nam
     rollout_namespace = args.namespace or ""
     try:
         if not rollout_namespace:
-            rollout_namespace = read_dfe_namespace(args.kubeconfig, args.argocd_namespace)
+            rollout_namespace = read_dfe_namespace(
+                args.kubeconfig, args.argocd_namespace
+            )
         current_ref = read_target_revision(args.kubeconfig, args.argocd_namespace)
-        retarget, why = decide_retarget(current_ref, from_name, to_name, args.target_revision)
+        retarget, why = decide_retarget(
+            current_ref, from_name, to_name, args.target_revision
+        )
     except UpgradeError as err:
         print(f"dfe-ops upgrade apply: REFUSED -- {err}", file=sys.stderr)
         return EXIT_BLOCKED
@@ -3072,27 +3700,44 @@ def _rename_stack(args: argparse.Namespace, deploy: Path, from_name: str, to_nam
         return EXIT_BLOCKED
 
     bump_pin_file(deploy, to_name)
-    failure, done = _commit_and_push(deploy, f"chore(upgrade): {to_name} -- no pinned key moved", push=args.push)
+    failure, done = _commit_and_push(
+        deploy, f"chore(upgrade): {to_name} -- no pinned key moved", push=args.push
+    )
     if failure:
         print(f"dfe-ops upgrade apply: {failure}", file=sys.stderr)
         return EXIT_BLOCKED
     print(f"  pins.yaml base.dfe-infra = {to_name}: {done}", file=sys.stderr)
     if retarget:
         retargeted_at = change_moment()
-        ok, detail = write_target_revision(args.kubeconfig, args.argocd_namespace, retarget, to_name)
+        ok, detail = write_target_revision(
+            args.kubeconfig, args.argocd_namespace, retarget, to_name
+        )
         print(f"  [{'DONE' if ok else 'FAIL'}] retarget: {detail}", file=sys.stderr)
         if not ok:
-            print("dfe-ops upgrade apply: the cluster secret did not take the new target_revision", file=sys.stderr)
+            print(
+                "dfe-ops upgrade apply: the cluster secret did not take the new target_revision",
+                file=sys.stderr,
+            )
             return EXIT_BLOCKED
         ok, detail = wait_for_argo(
-            args.kubeconfig, argocd_namespace=args.argocd_namespace, timeout=args.timeout,
-            stale_revision=current_ref, rollout_namespace=rollout_namespace, reconciled_after=retargeted_at,
+            args.kubeconfig,
+            argocd_namespace=args.argocd_namespace,
+            timeout=args.timeout,
+            stale_revision=current_ref,
+            rollout_namespace=rollout_namespace,
+            reconciled_after=retargeted_at,
         )
         print(f"  argo: {detail}", file=sys.stderr)
         if not ok:
-            print(f"dfe-ops upgrade apply: Argo and the rollouts did not settle on {retarget}", file=sys.stderr)
+            print(
+                f"dfe-ops upgrade apply: Argo and the rollouts did not settle on {retarget}",
+                file=sys.stderr,
+            )
             return EXIT_BLOCKED
-    print(f"dfe-ops upgrade apply OK: {from_name} -> {to_name} (no pinned key moved)", file=sys.stderr)
+    print(
+        f"dfe-ops upgrade apply OK: {from_name} -> {to_name} (no pinned key moved)",
+        file=sys.stderr,
+    )
     return EXIT_OK
 
 
@@ -3100,7 +3745,11 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
     deploy = Path(args.deploy)
     try:
         _root, from_name, from_pins, to_name, to_pins, from_note = _load_from_to(
-            deploy, args.to, args.from_stack, kubeconfig=args.kubeconfig, argocd_namespace=args.argocd_namespace
+            deploy,
+            args.to,
+            args.from_stack,
+            kubeconfig=args.kubeconfig,
+            argocd_namespace=args.argocd_namespace,
         )
     except UpgradeError as err:
         print(f"dfe-ops upgrade apply: {err}", file=sys.stderr)
@@ -3112,13 +3761,18 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
     moves = plan_moves(steps, flatten_stack(from_pins), flatten_stack(to_pins))
     if not moves:
         if _norm_ref(from_name) == _norm_ref(to_name):
-            print(f"dfe-ops upgrade apply: {from_name} already matches {to_name} -- nothing to apply")
+            print(
+                f"dfe-ops upgrade apply: {from_name} already matches {to_name} -- nothing to apply"
+            )
             return EXIT_OK
         return _rename_stack(args, deploy, from_name, to_name)
 
     compat_ok, compat_out = run_compat_check(to_name)
     if not compat_ok:
-        print(f"dfe-ops upgrade apply: REFUSED -- compat-check --strict failed for {to_name}:", file=sys.stderr)
+        print(
+            f"dfe-ops upgrade apply: REFUSED -- compat-check --strict failed for {to_name}:",
+            file=sys.stderr,
+        )
         print(compat_out, file=sys.stderr)
         return EXIT_BLOCKED
 
@@ -3141,7 +3795,10 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
         )
         failed = _print_checks(checks)
         if failed:
-            print(f"dfe-ops upgrade apply: REFUSED -- {failed} preflight check(s) failed", file=sys.stderr)
+            print(
+                f"dfe-ops upgrade apply: REFUSED -- {failed} preflight check(s) failed",
+                file=sys.stderr,
+            )
             return EXIT_BLOCKED
 
     walk = moves_by_stage(moves)
@@ -3162,7 +3819,11 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
         if args.dry_run:
             print(f"[dry-run] {cmd}", file=sys.stderr)
 
-    reached = stage_names[: stage_names.index(args.stop_before)] if args.stop_before else stage_names
+    reached = (
+        stage_names[: stage_names.index(args.stop_before)]
+        if args.stop_before
+        else stage_names
+    )
     pins_present = (deploy / "pins.yaml").is_file()
     kafka_move = next((m for m in moves if m.step.key == KAFKA_VERSION_KEY), None)
     kafka_stage = kafka_move.step.stage if kafka_move else None
@@ -3175,7 +3836,9 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
     rollout_namespace = args.namespace or ""
     if not args.dry_run and not rollout_namespace:
         try:
-            rollout_namespace = read_dfe_namespace(args.kubeconfig, args.argocd_namespace)
+            rollout_namespace = read_dfe_namespace(
+                args.kubeconfig, args.argocd_namespace
+            )
         except UpgradeError as err:
             print(f"dfe-ops upgrade apply: REFUSED -- {err}", file=sys.stderr)
             return EXIT_BLOCKED
@@ -3187,15 +3850,22 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
             )
             return EXIT_BLOCKED
     if not args.dry_run:
-        print(f"  rollouts: every Deployment and StatefulSet in {_rollout_scope(args)}", file=sys.stderr)
+        print(
+            f"  rollouts: every Deployment and StatefulSet in {_rollout_scope(args)}",
+            file=sys.stderr,
+        )
     current_ref = ""
     retarget: str | None = None
     hold: KafkaHold | None = None
     if not args.dry_run and chart_stage in reached:
         try:
             current_ref = read_target_revision(args.kubeconfig, args.argocd_namespace)
-            retarget, retarget_why = decide_retarget(current_ref, from_name, to_name, args.target_revision)
-            hold, hold_why = plan_kafka_hold(args.kubeconfig, deploy, kafka_move, read_finalised_keys(deploy))
+            retarget, retarget_why = decide_retarget(
+                current_ref, from_name, to_name, args.target_revision
+            )
+            hold, hold_why = plan_kafka_hold(
+                args.kubeconfig, deploy, kafka_move, read_finalised_keys(deploy)
+            )
         except UpgradeError as err:
             print(f"dfe-ops upgrade apply: REFUSED -- {err}", file=sys.stderr)
             return EXIT_BLOCKED
@@ -3225,7 +3895,9 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
             for label, key, old, new in move.pins:
                 print(f"    {label} {key}: {old} -> {new}", file=sys.stderr)
 
-        if not args.dry_run and not _confirm(f"apply stage {stage_index} ({stage})?", assume_yes=args.yes):
+        if not args.dry_run and not _confirm(
+            f"apply stage {stage_index} ({stage})?", assume_yes=args.yes
+        ):
             print("dfe-ops upgrade apply: aborted by operator", file=sys.stderr)
             return EXIT_BLOCKED
 
@@ -3240,7 +3912,10 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
                     emit(f"# {note(move)}")
                 if not args.dry_run:
                     ok, detail = check(args.kubeconfig, move)
-                    print(f"  [{'PASS' if ok else 'FAIL'}] before-hook {move.step.key}: {detail}", file=sys.stderr)
+                    print(
+                        f"  [{'PASS' if ok else 'FAIL'}] before-hook {move.step.key}: {detail}",
+                        file=sys.stderr,
+                    )
                     if not ok:
                         print(
                             f"dfe-ops upgrade apply FAILED at stage {stage_index} ({move.step.key}): "
@@ -3252,7 +3927,8 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
             else:
                 emit(f"# manual before-hook: {move.step.before}")
                 if not args.dry_run and not _confirm(
-                    f"confirm this has been run by hand: {move.step.before}", assume_yes=args.yes
+                    f"confirm this has been run by hand: {move.step.before}",
+                    assume_yes=args.yes,
                 ):
                     print(
                         f"dfe-ops upgrade apply FAILED at stage {stage_index} ({move.step.key}): "
@@ -3285,28 +3961,44 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
                 )
                 print(f"  sizing: {detail}", file=sys.stderr)
                 if not ok:
-                    return _stage_failed(stage_index, "resolver did not accept the migration", stage_moves)
+                    return _stage_failed(
+                        stage_index,
+                        "resolver did not accept the migration",
+                        stage_moves,
+                    )
 
         # The holds land in the stage commit, so Argo has them before the retarget moves any chart.
         hold_version = kafka_stage is not None and kafka_stage != stage
         if stage == chart_stage and kafka_move is not None:
-            emit(f"hold kafka.metadataVersion at the live status.kafkaMetadataVersion in {KAFKA_OVERLAY} (Strimzi only)")
+            emit(
+                f"hold kafka.metadataVersion at the live status.kafkaMetadataVersion in {KAFKA_OVERLAY} (Strimzi only)"
+            )
             if hold_version:
-                emit(f"hold kafka.version at {kafka_move.old} in {KAFKA_OVERLAY} until stage {kafka_stage}")
+                emit(
+                    f"hold kafka.version at {kafka_move.old} in {KAFKA_OVERLAY} until stage {kafka_stage}"
+                )
             if not args.dry_run and hold is not None:
                 try:
                     written = _write_holds(deploy, hold, hold_version=hold_version)
                 except UpgradeError as err:
                     return _stage_failed(stage_index, str(err), stage_moves)
-                print(f"  kafka holds: {', '.join(written) or 'already in place'}", file=sys.stderr)
+                print(
+                    f"  kafka holds: {', '.join(written) or 'already in place'}",
+                    file=sys.stderr,
+                )
         if stage == kafka_stage:
-            emit(f"drop the kafka.version hold from {KAFKA_OVERLAY}, so the brokers roll to {kafka_move.new}")
+            emit(
+                f"drop the kafka.version hold from {KAFKA_OVERLAY}, so the brokers roll to {kafka_move.new}"
+            )
             if not args.dry_run:
                 text = _read_overlay(deploy)
                 released = drop_overlay_hold(text, "version")
                 if released != text:
                     _write_overlay(deploy, released)
-                    print(f"  kafka holds: dropped kafka.version {kafka_move.old}", file=sys.stderr)
+                    print(
+                        f"  kafka holds: dropped kafka.version {kafka_move.old}",
+                        file=sys.stderr,
+                    )
 
         metadata_released = False
         for move in stage_moves:
@@ -3321,10 +4013,19 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
             emit(f"finalise {move.step.key}: {move.step.finalise}")
             if args.dry_run:
                 continue
-            was_held = (overlay_entry(_read_overlay(deploy), "metadataVersion") or ("", False))[1]
-            ok, detail = run_finalise_hook(deploy, move, from_name=from_name, to_name=to_name, assume_yes=args.yes)
-            print(f"  [{'DONE' if ok else 'PENDING'}] finalise {move.step.key}: {detail}", file=sys.stderr)
-            metadata_released = metadata_released or (ok and was_held and move.step.key == KAFKA_VERSION_KEY)
+            was_held = (
+                overlay_entry(_read_overlay(deploy), "metadataVersion") or ("", False)
+            )[1]
+            ok, detail = run_finalise_hook(
+                deploy, move, from_name=from_name, to_name=to_name, assume_yes=args.yes
+            )
+            print(
+                f"  [{'DONE' if ok else 'PENDING'}] finalise {move.step.key}: {detail}",
+                file=sys.stderr,
+            )
+            metadata_released = metadata_released or (
+                ok and was_held and move.step.key == KAFKA_VERSION_KEY
+            )
 
         # The 2.2.0 charts read none of the keys this adds, so they ride the stage
         # commit, ahead of the retarget that hands the overlays to the thin charts.
@@ -3334,10 +4035,16 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
                 f"{COMMON_OVERLAY.as_posix()}, as {values_migration.MAP_FILE.relative_to(REPO_ROOT).as_posix()} maps them"
             )
             if not args.dry_run:
-                ok, detail = _expand_values(deploy, migration, resync=retarget is not None)
+                ok, detail = _expand_values(
+                    deploy, migration, resync=retarget is not None
+                )
                 print(f"  values: {detail}", file=sys.stderr)
                 if not ok:
-                    return _stage_failed(stage_index, f"a 2.2.0 value key needs a hand edit: {detail}", stage_moves)
+                    return _stage_failed(
+                        stage_index,
+                        f"a 2.2.0 value key needs a hand edit: {detail}",
+                        stage_moves,
+                    )
 
         keys = ", ".join(move.step.key for move in stage_moves)
         message = f"chore(upgrade): {to_name} stage {stage_index} -- {keys}"
@@ -3346,17 +4053,24 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
         if not args.dry_run:
             added, detail = _stage(deploy)
             if not added:
-                return _stage_failed(stage_index, f"git add failed: {detail}", stage_moves)
+                return _stage_failed(
+                    stage_index, f"git add failed: {detail}", stage_moves
+                )
             # A later stage's pin already matches an earlier stage's bump, so
             # this can stage nothing -- commit only when something is staged.
             staged = _git(deploy, "diff", "--cached", "--quiet")
             if staged.returncode == 0:
-                print(f"  stage {stage_index} ({stage}) changed nothing -- pin and sizing already matched", file=sys.stderr)
+                print(
+                    f"  stage {stage_index} ({stage}) changed nothing -- pin and sizing already matched",
+                    file=sys.stderr,
+                )
             else:
                 commit = _git(deploy, "commit", "-m", message)
                 if commit.returncode != 0:
                     failure = _last_line(commit.stderr) or _last_line(commit.stdout)
-                    return _stage_failed(stage_index, f"git commit failed: {failure}", stage_moves)
+                    return _stage_failed(
+                        stage_index, f"git commit failed: {failure}", stage_moves
+                    )
 
         pushed_at: datetime | None = None
         if args.push:
@@ -3370,15 +4084,22 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
         emit(_wait_line(args, reconciled="any change it pushes" if args.push else ""))
         if not args.dry_run:
             ok, detail = wait_for_argo(
-                args.kubeconfig, argocd_namespace=args.argocd_namespace, timeout=args.timeout,
-                rollout_namespace=rollout_namespace, reconciled_after=pushed_at,
+                args.kubeconfig,
+                argocd_namespace=args.argocd_namespace,
+                timeout=args.timeout,
+                rollout_namespace=rollout_namespace,
+                reconciled_after=pushed_at,
             )
             print(f"  argo: {detail}", file=sys.stderr)
             if not ok:
-                return _stage_failed(stage_index, "Argo and the rollouts did not settle", stage_moves)
+                return _stage_failed(
+                    stage_index, "Argo and the rollouts did not settle", stage_moves
+                )
 
         for move in stage_moves:
-            if move.step.key.startswith(BOOTSTRAP_PREFIX) and _bootstrap_pending(args, move, emit):
+            if move.step.key.startswith(BOOTSTRAP_PREFIX) and _bootstrap_pending(
+                args, move, emit
+            ):
                 bootstrap_pending.append(move.step.key)
 
         if stage == chart_stage:
@@ -3389,18 +4110,27 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
                     "wrote since the push, then commit and push what changed"
                 )
             if renames:
-                moved = ", ".join(f"values/{path.name} -> values/{target.name}" for path, target, _ in renames)
-                emit(f"git -C {deploy} mv {moved}, set each deploy.service, commit and push")
+                moved = ", ".join(
+                    f"values/{path.name} -> values/{target.name}"
+                    for path, target, _ in renames
+                )
+                emit(
+                    f"git -C {deploy} mv {moved}, set each deploy.service, commit and push"
+                )
             if not args.dry_run and renames:
                 # TO's appset renders only the new name, so the rename lands just before the retarget.
                 ok, detail = _rename_services(deploy, renames)
                 if not ok:
                     return _stage_failed(stage_index, detail, stage_moves)
-                failure, done = _commit_and_push(deploy, f"chore(upgrade): {to_name} rename {detail}", push=args.push)
+                failure, done = _commit_and_push(
+                    deploy, f"chore(upgrade): {to_name} rename {detail}", push=args.push
+                )
                 if failure:
                     return _stage_failed(stage_index, failure, stage_moves)
                 print(f"  rename: {detail} -- {done}", file=sys.stderr)
-            emit(f"if secret/{ARGO_CLUSTER} targets {from_name}: {retarget_command(args.argocd_namespace, ref, to_name)}")
+            emit(
+                f"if secret/{ARGO_CLUSTER} targets {from_name}: {retarget_command(args.argocd_namespace, ref, to_name)}"
+            )
             emit(_wait_line(args, leaving=from_name, reconciled="the retarget"))
             if not args.dry_run and retarget:
                 if values_move:
@@ -3409,30 +4139,56 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
                     if not ok:
                         return _stage_failed(stage_index, detail, stage_moves)
                 retargeted_at = change_moment()
-                ok, detail = write_target_revision(args.kubeconfig, args.argocd_namespace, retarget, to_name)
-                print(f"  [{'DONE' if ok else 'FAIL'}] retarget: {detail}", file=sys.stderr)
+                ok, detail = write_target_revision(
+                    args.kubeconfig, args.argocd_namespace, retarget, to_name
+                )
+                print(
+                    f"  [{'DONE' if ok else 'FAIL'}] retarget: {detail}",
+                    file=sys.stderr,
+                )
                 if not ok:
-                    return _stage_failed(stage_index, "the cluster secret did not take the new target_revision", stage_moves)
+                    return _stage_failed(
+                        stage_index,
+                        "the cluster secret did not take the new target_revision",
+                        stage_moves,
+                    )
                 ok, detail = wait_for_argo(
-                    args.kubeconfig, argocd_namespace=args.argocd_namespace, timeout=args.timeout,
-                    stale_revision=current_ref, rollout_namespace=rollout_namespace,
+                    args.kubeconfig,
+                    argocd_namespace=args.argocd_namespace,
+                    timeout=args.timeout,
+                    stale_revision=current_ref,
+                    rollout_namespace=rollout_namespace,
                     reconciled_after=retargeted_at,
                 )
                 print(f"  argo: {detail}", file=sys.stderr)
                 if not ok:
-                    return _stage_failed(stage_index, f"Argo and the rollouts did not settle on {retarget}", stage_moves)
+                    return _stage_failed(
+                        stage_index,
+                        f"Argo and the rollouts did not settle on {retarget}",
+                        stage_moves,
+                    )
             if values_move:
-                on_target = bool(retarget) or _norm_ref(current_ref) in (_norm_ref(to_name), _norm_ref(ref))
+                on_target = bool(retarget) or _norm_ref(current_ref) in (
+                    _norm_ref(to_name),
+                    _norm_ref(ref),
+                )
                 failure = _finalise_values(
-                    args, deploy, migration, emit,
-                    names=(from_name, to_name), on_target=on_target, rollout_namespace=rollout_namespace,
+                    args,
+                    deploy,
+                    migration,
+                    emit,
+                    names=(from_name, to_name),
+                    on_target=on_target,
+                    rollout_namespace=rollout_namespace,
                 )
                 if failure:
                     return _stage_failed(stage_index, failure, stage_moves)
 
         # Argo calls the operator Application Healthy as soon as its Deployment
         # is up, which is well before the new operator has reconciled anything.
-        operator_move = next((m for m in stage_moves if m.step.key == STRIMZI_OPERATOR_KEY), None)
+        operator_move = next(
+            (m for m in stage_moves if m.step.key == STRIMZI_OPERATOR_KEY), None
+        )
         if operator_move is not None:
             emit(
                 f"wait for every Kafka CR to report operatorLastSuccessfulVersion "
@@ -3444,37 +4200,57 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
                 )
                 print(f"  strimzi: {detail}", file=sys.stderr)
                 if not ok:
-                    return _stage_failed(stage_index, "the Strimzi operator did not reconcile every Kafka CR", stage_moves)
+                    return _stage_failed(
+                        stage_index,
+                        "the Strimzi operator did not reconcile every Kafka CR",
+                        stage_moves,
+                    )
 
         # Unpushed, Argo has nothing new to roll, so these waits run only with --push.
         if stage == kafka_stage:
-            emit(f"wait for every Kafka CR to report kafkaVersion {kafka_move.new} (timeout {args.timeout}s)")
+            emit(
+                f"wait for every Kafka CR to report kafkaVersion {kafka_move.new} (timeout {args.timeout}s)"
+            )
             if not args.dry_run and hold is not None and args.push:
                 ok, detail = _wait_until(
                     lambda: check_kafka_version(args.kubeconfig, kafka_move.new),
-                    timeout=args.timeout, stuck="still rolling",
+                    timeout=args.timeout,
+                    stuck="still rolling",
                 )
                 print(f"  kafka: {detail}", file=sys.stderr)
                 if not ok:
-                    return _stage_failed(stage_index, f"the brokers did not roll to {kafka_move.new}", stage_moves)
+                    return _stage_failed(
+                        stage_index,
+                        f"the brokers did not roll to {kafka_move.new}",
+                        stage_moves,
+                    )
         if metadata_released:
-            emit(f"wait for every Kafka CR's kafkaMetadataVersion to reach the {kafka_move.new} line")
+            emit(
+                f"wait for every Kafka CR's kafkaMetadataVersion to reach the {kafka_move.new} line"
+            )
             if args.push:
                 ok, detail = _wait_until(
                     lambda: check_kafka_metadata_moved(args.kubeconfig, kafka_move.new),
-                    timeout=args.timeout, stuck="metadata version still held",
+                    timeout=args.timeout,
+                    stuck="metadata version still held",
                 )
                 print(f"  kafka: {detail}", file=sys.stderr)
                 if not ok:
-                    return _stage_failed(stage_index, "the metadata version did not move", stage_moves)
+                    return _stage_failed(
+                        stage_index, "the metadata version did not move", stage_moves
+                    )
 
     # A pin this plan does not move can still be one an earlier upgrade left uninstalled.
     walked = {move.step.key for _stage, stage_moves in walk for move in stage_moves}
     from_flat, to_flat = flatten_stack(from_pins), flatten_stack(to_pins)
     held = [
-        Move(step=step, old=from_flat.get(step.key) or "(absent)", new=to_flat[step.key])
+        Move(
+            step=step, old=from_flat.get(step.key) or "(absent)", new=to_flat[step.key]
+        )
         for step in steps
-        if step.key.startswith(BOOTSTRAP_PREFIX) and step.key not in walked and to_flat.get(step.key)
+        if step.key.startswith(BOOTSTRAP_PREFIX)
+        and step.key not in walked
+        and to_flat.get(step.key)
     ]
     if held:
         print("\n=== bootstrap releases this plan does not move ===", file=sys.stderr)
@@ -3483,23 +4259,36 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
             bootstrap_pending.append(move.step.key)
 
     if args.dry_run:
-        print(f"\n[dry-run] {len(commands)} command(s) would run; nothing was executed", file=sys.stderr)
+        print(
+            f"\n[dry-run] {len(commands)} command(s) would run; nothing was executed",
+            file=sys.stderr,
+        )
         return EXIT_OK
     if bootstrap_pending:
         return _report_bootstrap_pending(bootstrap_pending, from_name, to_name)
-    print(f"\ndfe-ops upgrade apply OK: {from_name} -> {to_name} ({len(walk)} stage(s))", file=sys.stderr)
+    print(
+        f"\ndfe-ops upgrade apply OK: {from_name} -> {to_name} ({len(walk)} stage(s))",
+        file=sys.stderr,
+    )
     return EXIT_OK
 
 
-def _bootstrap_pending(args: argparse.Namespace, move: Move, emit: Callable[[str], None]) -> bool:
+def _bootstrap_pending(
+    args: argparse.Namespace, move: Move, emit: Callable[[str], None]
+) -> bool:
     """Whether the cluster is not shown running a bootstrap pin; a dry run only names the read and the command."""
     if args.dry_run:
         release = BOOTSTRAP_RELEASES.get(move.step.key)
         command = (
-            bootstrap_upgrade_command(release, move.new, args.kubeconfig, args.argocd_namespace)
-            if release else "re-run bootstrap/bootstrap.sh"
+            bootstrap_upgrade_command(
+                release, move.new, args.kubeconfig, args.argocd_namespace
+            )
+            if release
+            else "re-run bootstrap/bootstrap.sh"
         )
-        emit(f"# {move.step.key} is installed by bootstrap.sh, not Argo; unless it runs {move.new}: {command}")
+        emit(
+            f"# {move.step.key} is installed by bootstrap.sh, not Argo; unless it runs {move.new}: {command}"
+        )
         return False
     state, detail = check_bootstrap_move(args.kubeconfig, move, args.argocd_namespace)
     print(f"  [{state}] {detail}", file=sys.stderr)
@@ -3525,8 +4314,13 @@ _ROLLBACK_DEFAULT = "not declared -- dfe-ops upgrade rollback --to <the FROM sta
 
 def _print_rollback(stage_moves: list[Move]) -> None:
     for move in stage_moves:
-        note = move.step.rollback or ("none (finalise: " + move.step.finalise + ")" if move.step.finalise else "")
-        print(f"  rollback ({move.step.key}): {note or _ROLLBACK_DEFAULT}", file=sys.stderr)
+        note = move.step.rollback or (
+            "none (finalise: " + move.step.finalise + ")" if move.step.finalise else ""
+        )
+        print(
+            f"  rollback ({move.step.key}): {note or _ROLLBACK_DEFAULT}",
+            file=sys.stderr,
+        )
 
 
 # --- rollback ----------------------------------------------------------------
@@ -3562,7 +4356,12 @@ def cmd_upgrade_rollback(args: argparse.Namespace) -> int:
         step = move.step
         if step.finalise:
             if step.key in finalised:
-                blocked.append((move, f"finalise already ran ({finalised[step.key]}): {step.finalise}"))
+                blocked.append(
+                    (
+                        move,
+                        f"finalise already ran ({finalised[step.key]}): {step.finalise}",
+                    )
+                )
             else:
                 pending_finalise.append(move)
             continue
@@ -3580,7 +4379,10 @@ def cmd_upgrade_rollback(args: argparse.Namespace) -> int:
 
     # The charts before `since` cannot render the overlays once the 2.2.0 keys are gone.
     since = values_migration.load_map().since
-    if VALUES_CONTRACT_KEY in finalised and values_cutover(to_name, from_name, since)[0]:
+    if (
+        VALUES_CONTRACT_KEY in finalised
+        and values_cutover(to_name, from_name, since)[0]
+    ):
         print(
             f"dfe-ops upgrade rollback: REFUSED -- apply --finalise dropped the 2.2.0 value keys "
             f"({finalised[VALUES_CONTRACT_KEY]}), and a stack before {since} renders the overlays without them: "
@@ -3602,7 +4404,10 @@ def cmd_upgrade_rollback(args: argparse.Namespace) -> int:
     else:
         if kafka_move is not None:
             ok, detail = check_rollback_metadata(args.kubeconfig, kafka_move.old)
-            print(f"[{'PASS' if ok else 'FAIL'}] live metadata version: {detail}", file=sys.stderr)
+            print(
+                f"[{'PASS' if ok else 'FAIL'}] live metadata version: {detail}",
+                file=sys.stderr,
+            )
             if not ok:
                 print(
                     f"dfe-ops upgrade rollback: REFUSED -- the brokers cannot be shown able to go back to "
@@ -3613,7 +4418,9 @@ def cmd_upgrade_rollback(args: argparse.Namespace) -> int:
                 return EXIT_BLOCKED
         try:
             current_ref = read_target_revision(args.kubeconfig, args.argocd_namespace)
-            retarget, why = decide_retarget(current_ref, from_name, to_name, args.target_revision)
+            retarget, why = decide_retarget(
+                current_ref, from_name, to_name, args.target_revision
+            )
         except UpgradeError as err:
             print(f"dfe-ops upgrade rollback: REFUSED -- {err}", file=sys.stderr)
             return EXIT_BLOCKED
@@ -3635,12 +4442,16 @@ def cmd_upgrade_rollback(args: argparse.Namespace) -> int:
 
     print(render_plan(moves, from_stack=from_name, to_stack=to_name))
     if args.dry_run:
-        print(f"[dry-run] set pins.yaml base.dfe-infra = \"{to_name}\"")
-        print(f"[dry-run] git -C {deploy} commit -m 'chore(upgrade): rollback to {to_name}'")
+        print(f'[dry-run] set pins.yaml base.dfe-infra = "{to_name}"')
+        print(
+            f"[dry-run] git -C {deploy} commit -m 'chore(upgrade): rollback to {to_name}'"
+        )
         if args.push:
             print(f"[dry-run] git -C {deploy} push")
         if retarget:
-            print(f"[dry-run] {retarget_command(args.argocd_namespace, retarget, to_name)}")
+            print(
+                f"[dry-run] {retarget_command(args.argocd_namespace, retarget, to_name)}"
+            )
         return EXIT_OK
 
     bump_pin_file(deploy, to_name)
@@ -3652,18 +4463,29 @@ def cmd_upgrade_rollback(args: argparse.Namespace) -> int:
         return EXIT_BLOCKED
     commit = _git(deploy, "commit", "-m", message)
     if commit.returncode != 0:
-        print(f"dfe-ops upgrade rollback: git commit failed: {_last_line(commit.stderr)}", file=sys.stderr)
+        print(
+            f"dfe-ops upgrade rollback: git commit failed: {_last_line(commit.stderr)}",
+            file=sys.stderr,
+        )
         return EXIT_BLOCKED
     if args.push:
         push = _git(deploy, "push")
         if push.returncode != 0:
-            print(f"dfe-ops upgrade rollback: git push failed: {_last_line(push.stderr)}", file=sys.stderr)
+            print(
+                f"dfe-ops upgrade rollback: git push failed: {_last_line(push.stderr)}",
+                file=sys.stderr,
+            )
             return EXIT_BLOCKED
     if retarget:
-        ok, detail = write_target_revision(args.kubeconfig, args.argocd_namespace, retarget, to_name)
+        ok, detail = write_target_revision(
+            args.kubeconfig, args.argocd_namespace, retarget, to_name
+        )
         print(f"  [{'DONE' if ok else 'FAIL'}] retarget: {detail}", file=sys.stderr)
         if not ok:
-            print("dfe-ops upgrade rollback: the cluster secret did not take the rollback ref", file=sys.stderr)
+            print(
+                "dfe-ops upgrade rollback: the cluster secret did not take the rollback ref",
+                file=sys.stderr,
+            )
             return EXIT_BLOCKED
     print(f"dfe-ops upgrade rollback OK: {from_name} -> {to_name}", file=sys.stderr)
     return EXIT_OK
@@ -3681,18 +4503,32 @@ def cmd_upgrade_migrate_values(args: argparse.Namespace) -> int:
     """
     deploy = Path(args.deploy)
     if not deploy.is_dir():
-        print(f"dfe-ops upgrade migrate-values: {deploy} is not a directory", file=sys.stderr)
+        print(
+            f"dfe-ops upgrade migrate-values: {deploy} is not a directory",
+            file=sys.stderr,
+        )
         return EXIT_PREFLIGHT_FAILED
     migration = values_migration.load_map()
-    hits = (values_migration.scan if args.check else values_migration.expand)(deploy, migration)
+    hits = (values_migration.scan if args.check else values_migration.expand)(
+        deploy, migration
+    )
     shown = [hit for hit in hits if hit.state != values_migration.DONE]
     for hit in shown:
         print(hit.line())
-    left = values_migration.pending(hits) if args.check else values_migration.refused(hits)
+    left = (
+        values_migration.pending(hits) if args.check else values_migration.refused(hits)
+    )
     carried = [hit for hit in hits if hit.state == values_migration.MIGRATE]
     if args.check:
-        verdict = f"{len(left)} 2.2.0 value key(s) to carry or edit by hand" if left else "nothing to carry"
-        print(f"dfe-ops upgrade migrate-values --check: {verdict} (map: since {migration.since})", file=sys.stderr)
+        verdict = (
+            f"{len(left)} 2.2.0 value key(s) to carry or edit by hand"
+            if left
+            else "nothing to carry"
+        )
+        print(
+            f"dfe-ops upgrade migrate-values --check: {verdict} (map: since {migration.since})",
+            file=sys.stderr,
+        )
     elif left:
         print(
             f"dfe-ops upgrade migrate-values: {len(carried)} key(s) written, {len(left)} need a hand edit (REFUSED above)",
@@ -3710,8 +4546,14 @@ def cmd_upgrade_migrate_values(args: argparse.Namespace) -> int:
 # --- parser --------------------------------------------------------------------
 
 
-def _add_deploy_target_args(parser: argparse.ArgumentParser, *, to_required: bool = False) -> None:
-    parser.add_argument("--deploy", required=True, help="the dfe-deploy checkout (pins.yaml's directory)")
+def _add_deploy_target_args(
+    parser: argparse.ArgumentParser, *, to_required: bool = False
+) -> None:
+    parser.add_argument(
+        "--deploy",
+        required=True,
+        help="the dfe-deploy checkout (pins.yaml's directory)",
+    )
     parser.add_argument(
         "--to",
         required=to_required,
@@ -3722,7 +4564,9 @@ def _add_deploy_target_args(parser: argparse.ArgumentParser, *, to_required: boo
 
 def _add_cloud_arg(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
-        "--cloud", default=None, metavar="<cloud>",
+        "--cloud",
+        default=None,
+        metavar="<cloud>",
         help=f"the deployment's cloud (aws, gcp, azure, local, ...), which decides whether its gateway is "
         f"internet-facing (default: the cluster secret's {CLOUD_ANNOTATION}, read only when the web check needs it)",
     )
@@ -3730,27 +4574,62 @@ def _add_cloud_arg(parser: argparse.ArgumentParser) -> None:
 
 def _add_sizing_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
-        "--dial", default=None, help="deployment.yaml dial to re-resolve sizing against (default: skip the check)"
+        "--dial",
+        default=None,
+        help="deployment.yaml dial to re-resolve sizing against (default: skip the check)",
     )
-    parser.add_argument("--fixtures", default=None, help="resolve_sizing.py --fixtures (offline sizing check)")
-    parser.add_argument("--live", action="store_true", help="resolve_sizing.py --live (calls the real cloud API)")
+    parser.add_argument(
+        "--fixtures",
+        default=None,
+        help="resolve_sizing.py --fixtures (offline sizing check)",
+    )
+    parser.add_argument(
+        "--live",
+        action="store_true",
+        help="resolve_sizing.py --live (calls the real cloud API)",
+    )
 
 
 def _add_preflight_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--kubeconfig", default=None, help="kubeconfig for the target cluster")
-    parser.add_argument("--argocd-namespace", default=DEFAULT_ARGOCD_NAMESPACE, help="namespace holding Argo Applications")
-    parser.add_argument("--clickhouse-namespace", default=DEFAULT_CLICKHOUSE_NAMESPACE, help="namespace ClickHouse runs in")
-    parser.add_argument("--clickhouse-selector", default=DEFAULT_CLICKHOUSE_SELECTOR, help="label selector for a ClickHouse pod")
     parser.add_argument(
-        "--clickhouse-merge-threshold", type=float, default=DEFAULT_CLICKHOUSE_MERGE_THRESHOLD,
+        "--kubeconfig", default=None, help="kubeconfig for the target cluster"
+    )
+    parser.add_argument(
+        "--argocd-namespace",
+        default=DEFAULT_ARGOCD_NAMESPACE,
+        help="namespace holding Argo Applications",
+    )
+    parser.add_argument(
+        "--clickhouse-namespace",
+        default=DEFAULT_CLICKHOUSE_NAMESPACE,
+        help="namespace ClickHouse runs in",
+    )
+    parser.add_argument(
+        "--clickhouse-selector",
+        default=DEFAULT_CLICKHOUSE_SELECTOR,
+        help="label selector for a ClickHouse pod",
+    )
+    parser.add_argument(
+        "--clickhouse-merge-threshold",
+        type=float,
+        default=DEFAULT_CLICKHOUSE_MERGE_THRESHOLD,
         help="refuse when a merge has run longer than this many seconds",
     )
     parser.add_argument(
-        "--clickhouse-credentials", default=DEFAULT_CLICKHOUSE_CREDENTIALS,
+        "--clickhouse-credentials",
+        default=DEFAULT_CLICKHOUSE_CREDENTIALS,
         help="Secret in --clickhouse-namespace whose `password` key logs clickhouse-client in",
     )
-    parser.add_argument("--nodes-file", default=None, help="sizing/<tier>.nodes.json (default: <deploy>/sizing/scale.nodes.json)")
-    parser.add_argument("--backup-marker", default=DEFAULT_BACKUP_MARKER, help="path (relative to --deploy) proving a backup was taken")
+    parser.add_argument(
+        "--nodes-file",
+        default=None,
+        help="sizing/<tier>.nodes.json (default: <deploy>/sizing/scale.nodes.json)",
+    )
+    parser.add_argument(
+        "--backup-marker",
+        default=DEFAULT_BACKUP_MARKER,
+        help="path (relative to --deploy) proving a backup was taken",
+    )
 
 
 def add_upgrade_subparser(sub: argparse._SubParsersAction) -> None:
@@ -3771,13 +4650,20 @@ def add_upgrade_subparser(sub: argparse._SubParsersAction) -> None:
     _add_sizing_args(plan)
     _add_cloud_arg(plan)
     plan.add_argument(
-        "--kubeconfig", default=None,
+        "--kubeconfig",
+        default=None,
         help="kubeconfig for the target cluster, read only when the deploy repo carries no pins.yaml, "
         "for the cloud when --cloud is not given, or for the self ranges a web plane refusal names",
     )
-    plan.add_argument("--argocd-namespace", default=DEFAULT_ARGOCD_NAMESPACE, help="namespace holding the cluster secret")
     plan.add_argument(
-        "--out", default=None, metavar="<file>",
+        "--argocd-namespace",
+        default=DEFAULT_ARGOCD_NAMESPACE,
+        help="namespace holding the cluster secret",
+    )
+    plan.add_argument(
+        "--out",
+        default=None,
+        metavar="<file>",
         help="where the plan is written (default: .tmp/upgrades/<from>-to-<to>.md in this dfe-infra "
         "checkout, outside the deploy repo, whose untracked files preflight refuses)",
     )
@@ -3807,18 +4693,28 @@ def add_upgrade_subparser(sub: argparse._SubParsersAction) -> None:
     _add_sizing_args(apply_)
     _add_preflight_args(apply_)
     _add_cloud_arg(apply_)
-    apply_.add_argument("--yes", action="store_true", help="do not ask for confirmation between stages")
-    apply_.add_argument("--push", action="store_true", help="git push after each stage's commit")
     apply_.add_argument(
-        "--timeout", type=float, default=DEFAULT_TIMEOUT,
+        "--yes", action="store_true", help="do not ask for confirmation between stages"
+    )
+    apply_.add_argument(
+        "--push", action="store_true", help="git push after each stage's commit"
+    )
+    apply_.add_argument(
+        "--timeout",
+        type=float,
+        default=DEFAULT_TIMEOUT,
         help="bounded wait (seconds) for Argo to converge and the rollouts to finish, per stage",
     )
     apply_.add_argument(
-        "--namespace", default=None, metavar="<ns>",
+        "--namespace",
+        default=None,
+        metavar="<ns>",
         help=f"the DFE namespace whose Deployments and StatefulSets every wait waits on to finish rolling "
         f"out (default: the cluster secret's {DFE_NAMESPACE_ANNOTATION})",
     )
-    apply_.add_argument("--dry-run", action="store_true", help="print every command without running it")
+    apply_.add_argument(
+        "--dry-run", action="store_true", help="print every command without running it"
+    )
     apply_.add_argument(
         "--finalise",
         action="store_true",
@@ -3854,10 +4750,22 @@ def add_upgrade_subparser(sub: argparse._SubParsersAction) -> None:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     _add_deploy_target_args(rollback, to_required=True)
-    rollback.add_argument("--kubeconfig", default=None, help="kubeconfig for the target cluster")
-    rollback.add_argument("--argocd-namespace", default=DEFAULT_ARGOCD_NAMESPACE, help="namespace holding the cluster secret")
-    rollback.add_argument("--push", action="store_true", help="git push after the rollback commit")
-    rollback.add_argument("--dry-run", action="store_true", help="print what would happen without running it")
+    rollback.add_argument(
+        "--kubeconfig", default=None, help="kubeconfig for the target cluster"
+    )
+    rollback.add_argument(
+        "--argocd-namespace",
+        default=DEFAULT_ARGOCD_NAMESPACE,
+        help="namespace holding the cluster secret",
+    )
+    rollback.add_argument(
+        "--push", action="store_true", help="git push after the rollback commit"
+    )
+    rollback.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="print what would happen without running it",
+    )
     rollback.add_argument(
         "--skip-cluster-check",
         action="store_true",
@@ -3873,9 +4781,14 @@ def add_upgrade_subparser(sub: argparse._SubParsersAction) -> None:
         help="write the thin-chart keys beside a deploy checkout's 2.2.0 value keys (--check: list them)",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    migrate.add_argument("--deploy", required=True, help="the dfe-deploy checkout holding values/ and infra/")
     migrate.add_argument(
-        "--check", action="store_true",
+        "--deploy",
+        required=True,
+        help="the dfe-deploy checkout holding values/ and infra/",
+    )
+    migrate.add_argument(
+        "--check",
+        action="store_true",
         help="write nothing; exit 1 while a 2.2.0 key is left to carry or needs a hand edit",
     )
     migrate.set_defaults(func=cmd_upgrade_migrate_values)

@@ -57,12 +57,14 @@ def expect_raises(name: str, call, needle: str = "") -> None:
     try:
         call()
     except ValueError as exc:
-        expect(name, not needle or needle in str(exc), f"raised without {needle!r}: {exc}")
+        expect(
+            name, not needle or needle in str(exc), f"raised without {needle!r}: {exc}"
+        )
         return
     expect(name, False, "did not raise")
 
 
-SAMPLE = '''
+SAMPLE = """
 schema: "1"
 tags:
   audience:
@@ -145,51 +147,101 @@ lanes:
       - app-b
       - side-c
     why: "second"
-'''
+"""
 
 
 def test_reader_shapes() -> None:
     g = suite_graph.parse_block_yaml(SAMPLE)
     expect("top-level scalar", g["schema"] == "1")
-    expect("quoted string keeps its colon and hash",
-           g["tags"]["audience"]["general"] == "Stands alone: value with a colon # and a hash")
-    expect("flow list of words", g["edge_kinds"]["cargo-dep"]["gates"] == ["cargo-build", "cargo-test"])
-    expect("booleans", g["nodes"]["lib-a"]["default_in_pass"] is True
-           and g["nodes"]["app-b"]["default_in_pass"] is False)
-    expect("block sequence of maps", g["nodes"]["lib-a"]["artefacts"] == [
-        {"kind": "crate", "registry": "crates.io", "public": True}])
+    expect(
+        "quoted string keeps its colon and hash",
+        g["tags"]["audience"]["general"]
+        == "Stands alone: value with a colon # and a hash",
+    )
+    expect(
+        "flow list of words",
+        g["edge_kinds"]["cargo-dep"]["gates"] == ["cargo-build", "cargo-test"],
+    )
+    expect(
+        "booleans",
+        g["nodes"]["lib-a"]["default_in_pass"] is True
+        and g["nodes"]["app-b"]["default_in_pass"] is False,
+    )
+    expect(
+        "block sequence of maps",
+        g["nodes"]["lib-a"]["artefacts"]
+        == [{"kind": "crate", "registry": "crates.io", "public": True}],
+    )
     expect("comment between nodes does not end the map", "app-b" in g["nodes"])
-    expect("edge map with note", g["edges"][0]["note"] == "second range at Cargo.toml:180")
+    expect(
+        "edge map with note", g["edges"][0]["note"] == "second range at Cargo.toml:180"
+    )
     expect("block sequence of scalars", g["lanes"][1]["members"] == ["app-b", "side-c"])
-    expect("two lanes", [lane["name"] for lane in g["lanes"]] == ["libraries", "consumers"])
+    expect(
+        "two lanes", [lane["name"] for lane in g["lanes"]] == ["libraries", "consumers"]
+    )
     expect("runtime edge with no evidence", g["runtime_edges"][0]["kind"] == "http-api")
 
 
 def test_reader_refuses_what_pyyaml_would_read_differently() -> None:
     parse = suite_graph.parse_block_yaml
-    expect_raises("a single-quoted scalar is refused",
-                  lambda: parse("role: 'library'\n"), "single-quoted")
-    expect_raises("an escaped quote inside a quoted string is refused",
-                  lambda: parse('note: "he said \\"hi\\" then left"\n'), "escaped quote")
-    expect_raises("a quoted item in a flow list is refused",
-                  lambda: parse('gates: ["a,b", c]\n'), "flow list")
-    expect_raises("a tab indent is refused",
-                  lambda: parse("nodes:\n\ta: 1\n"), "tab")
-    expect_raises("a duplicate key is refused",
-                  lambda: parse("nodes:\n  a:\n    x: 1\n  a:\n    x: 2\n"), "duplicate")
-    expect("only lowercase true and false are booleans",
-           parse("flag: True\nother: yes\n") == {"flag": "True", "other": "yes"})
+    expect_raises(
+        "a single-quoted scalar is refused",
+        lambda: parse("role: 'library'\n"),
+        "single-quoted",
+    )
+    expect_raises(
+        "an escaped quote inside a quoted string is refused",
+        lambda: parse('note: "he said \\"hi\\" then left"\n'),
+        "escaped quote",
+    )
+    expect_raises(
+        "a quoted item in a flow list is refused",
+        lambda: parse('gates: ["a,b", c]\n'),
+        "flow list",
+    )
+    expect_raises("a tab indent is refused", lambda: parse("nodes:\n\ta: 1\n"), "tab")
+    expect_raises(
+        "a duplicate key is refused",
+        lambda: parse("nodes:\n  a:\n    x: 1\n  a:\n    x: 2\n"),
+        "duplicate",
+    )
+    expect(
+        "only lowercase true and false are booleans",
+        parse("flag: True\nother: yes\n") == {"flag": "True", "other": "yes"},
+    )
 
 
 def test_validate_catches_the_obvious() -> None:
     g = suite_graph.parse_block_yaml(SAMPLE)
-    expect("sample validates clean", suite_graph.validate(g) == [], str(suite_graph.validate(g)))
-    g["edges"].append({"from": "lib-a", "to": "ghost", "kind": "cargo-dep", "type": "potential", "evidence": "x/y:1"})
-    expect("unknown consumer is a problem", any("ghost" in p for p in suite_graph.validate(g)))
+    expect(
+        "sample validates clean",
+        suite_graph.validate(g) == [],
+        str(suite_graph.validate(g)),
+    )
+    g["edges"].append(
+        {
+            "from": "lib-a",
+            "to": "ghost",
+            "kind": "cargo-dep",
+            "type": "potential",
+            "evidence": "x/y:1",
+        }
+    )
+    expect(
+        "unknown consumer is a problem",
+        any("ghost" in p for p in suite_graph.validate(g)),
+    )
     g["edges"][0]["type"] = "maybe"
-    expect("unknown edge type is a problem", any("type must be" in p for p in suite_graph.validate(g)))
+    expect(
+        "unknown edge type is a problem",
+        any("type must be" in p for p in suite_graph.validate(g)),
+    )
     g["nodes"]["app-b"]["default_in_pass"] = True
-    expect("alpha in a default pass is a problem", any("alpha" in p for p in suite_graph.validate(g)))
+    expect(
+        "alpha in a default pass is a problem",
+        any("alpha" in p for p in suite_graph.validate(g)),
+    )
 
 
 def test_validate_negative_cases() -> None:
@@ -203,70 +255,169 @@ def test_validate_negative_cases() -> None:
     def drop_required(g):
         del g["nodes"]["lib-a"]["support"]
 
-    expect("a missing required field is named",
-           any("missing `support`" in p for p in broken(drop_required)))
-    expect("an unknown edge kind is named", any(
-        "not in edge_kinds" in p
-        for p in broken(lambda g: g["edges"][0].__setitem__("kind", "telepathy"))))
-    expect("an edge citing nothing is named", any(
-        "no evidence" in p
-        for p in broken(lambda g: g["edges"][0].__setitem__("evidence", ""))))
+    expect(
+        "a missing required field is named",
+        any("missing `support`" in p for p in broken(drop_required)),
+    )
+    expect(
+        "an unknown edge kind is named",
+        any(
+            "not in edge_kinds" in p
+            for p in broken(lambda g: g["edges"][0].__setitem__("kind", "telepathy"))
+        ),
+    )
+    expect(
+        "an edge citing nothing is named",
+        any(
+            "no evidence" in p
+            for p in broken(lambda g: g["edges"][0].__setitem__("evidence", ""))
+        ),
+    )
     for cited in ("app-b/Cargo.toml:35", "app-b/Cargo.toml:35-36"):
-        expect(f"a cargo-dep edge citing {cited} is named, the manifest alone being the citation", any(
+        expect(
+            f"a cargo-dep edge citing {cited} is named, the manifest alone being the citation",
+            any(
+                "cites the manifest alone" in p
+                for p in broken(
+                    lambda g, cited=cited: g["edges"][0].__setitem__("evidence", cited)
+                )
+            ),
+        )
+    expect(
+        "a line on a kind that cites a code site is not refused",
+        not any(
             "cites the manifest alone" in p
-            for p in broken(lambda g, cited=cited: g["edges"][0].__setitem__("evidence", cited))))
-    expect("a line on a kind that cites a code site is not refused", not any(
-        "cites the manifest alone" in p
-        for p in broken(lambda g: g["edges"][0].update(kind="mirrored-logic",
-                                                        evidence="app-b/src/config.rs:35"))))
-    expect("a runtime edge into a non-node is named", any(
-        "is not a node" in p
-        for p in broken(lambda g: g["runtime_edges"][0].__setitem__("to", "ghost"))))
-    expect("a runtime kind from the BUILD vocabulary is refused", any(
-        "runtime_kinds" in p
-        for p in broken(lambda g: g["runtime_edges"][0].__setitem__("kind", "cargo-dep"))))
-    expect("a lane member that is not a node is named", any(
-        "member ghost is not a node" in p
-        for p in broken(lambda g: g["lanes"][0]["members"].append("ghost"))))
-    expect("default_in_pass that is not a boolean is named", any(
-        "not true or false" in p
-        for p in broken(lambda g: g["nodes"]["lib-a"].__setitem__("default_in_pass", "yes"))))
-    expect("an artefact flag that is not a boolean is named", any(
-        "artefact `public`" in p
-        for p in broken(lambda g: g["nodes"]["lib-a"]["artefacts"][0].__setitem__("public", "True"))))
-    expect("an audience outside the vocabulary is named", any(
-        "audience" in p
-        for p in broken(lambda g: g["nodes"]["lib-a"].__setitem__("audience", "everyone"))))
-    expect("a node in no lane is named", any(
-        "in no lane" in p
-        for p in broken(lambda g: g["lanes"][0]["members"].remove("lib-a"))))
-    expect("an empty unconsumed note is named", any(
-        "`unconsumed` is empty" in p
-        for p in broken(lambda g: g["nodes"]["lib-a"].__setitem__("unconsumed", ""))))
-    expect("an unconsumed note on a node with no package is named", any(
-        "`unconsumed` needs a `package`" in p
-        for p in broken(lambda g: g["nodes"]["app-b"].__setitem__("unconsumed", "nothing uses it"))))
-    expect("an unconsumed note on a node with a package is sound", not any(
-        "unconsumed" in p
-        for p in broken(lambda g: g["nodes"]["lib-a"].__setitem__("unconsumed", "nothing uses it"))))
+            for p in broken(
+                lambda g: g["edges"][0].update(
+                    kind="mirrored-logic", evidence="app-b/src/config.rs:35"
+                )
+            )
+        ),
+    )
+    expect(
+        "a runtime edge into a non-node is named",
+        any(
+            "is not a node" in p
+            for p in broken(lambda g: g["runtime_edges"][0].__setitem__("to", "ghost"))
+        ),
+    )
+    expect(
+        "a runtime kind from the BUILD vocabulary is refused",
+        any(
+            "runtime_kinds" in p
+            for p in broken(
+                lambda g: g["runtime_edges"][0].__setitem__("kind", "cargo-dep")
+            )
+        ),
+    )
+    expect(
+        "a lane member that is not a node is named",
+        any(
+            "member ghost is not a node" in p
+            for p in broken(lambda g: g["lanes"][0]["members"].append("ghost"))
+        ),
+    )
+    expect(
+        "default_in_pass that is not a boolean is named",
+        any(
+            "not true or false" in p
+            for p in broken(
+                lambda g: g["nodes"]["lib-a"].__setitem__("default_in_pass", "yes")
+            )
+        ),
+    )
+    expect(
+        "an artefact flag that is not a boolean is named",
+        any(
+            "artefact `public`" in p
+            for p in broken(
+                lambda g: g["nodes"]["lib-a"]["artefacts"][0].__setitem__(
+                    "public", "True"
+                )
+            )
+        ),
+    )
+    expect(
+        "an audience outside the vocabulary is named",
+        any(
+            "audience" in p
+            for p in broken(
+                lambda g: g["nodes"]["lib-a"].__setitem__("audience", "everyone")
+            )
+        ),
+    )
+    expect(
+        "a node in no lane is named",
+        any(
+            "in no lane" in p
+            for p in broken(lambda g: g["lanes"][0]["members"].remove("lib-a"))
+        ),
+    )
+    expect(
+        "an empty unconsumed note is named",
+        any(
+            "`unconsumed` is empty" in p
+            for p in broken(lambda g: g["nodes"]["lib-a"].__setitem__("unconsumed", ""))
+        ),
+    )
+    expect(
+        "an unconsumed note on a node with no package is named",
+        any(
+            "`unconsumed` needs a `package`" in p
+            for p in broken(
+                lambda g: g["nodes"]["app-b"].__setitem__(
+                    "unconsumed", "nothing uses it"
+                )
+            )
+        ),
+    )
+    expect(
+        "an unconsumed note on a node with a package is sound",
+        not any(
+            "unconsumed" in p
+            for p in broken(
+                lambda g: g["nodes"]["lib-a"].__setitem__(
+                    "unconsumed", "nothing uses it"
+                )
+            )
+        ),
+    )
 
 
 def test_queries() -> None:
     g = suite_graph.parse_block_yaml(SAMPLE)
     rows = suite_graph.cycle_table(g)
-    expect("the build-cycle table joins the kind", rows[0]["gates"] == ["cargo-build", "cargo-test"])
+    expect(
+        "the build-cycle table joins the kind",
+        rows[0]["gates"] == ["cargo-build", "cargo-test"],
+    )
     s = suite_graph.slice_graph(g, producer="lib-a")
-    expect("producer slice keeps producer and consumers", sorted(s["nodes"]) == ["app-b", "lib-a"])
-    expect("producer slice keeps only the kinds it uses", list(s["edge_kinds"]) == ["cargo-dep"])
+    expect(
+        "producer slice keeps producer and consumers",
+        sorted(s["nodes"]) == ["app-b", "lib-a"],
+    )
+    expect(
+        "producer slice keeps only the kinds it uses",
+        list(s["edge_kinds"]) == ["cargo-dep"],
+    )
     s = suite_graph.slice_graph(g, consumer="app-b")
-    expect("consumer slice keeps the consumer and what reaches it",
-           sorted(s["nodes"]) == ["app-b", "lib-a"] and len(s["edges"]) == 1)
-    expect("consumer slice of a node nothing reaches is just the node",
-           list(suite_graph.slice_graph(g, consumer="lib-a")["nodes"]) == ["lib-a"])
+    expect(
+        "consumer slice keeps the consumer and what reaches it",
+        sorted(s["nodes"]) == ["app-b", "lib-a"] and len(s["edges"]) == 1,
+    )
+    expect(
+        "consumer slice of a node nothing reaches is just the node",
+        list(suite_graph.slice_graph(g, consumer="lib-a")["nodes"]) == ["lib-a"],
+    )
     s = suite_graph.slice_graph(g, lane="libraries")
-    expect("lane slice keeps only the lane's members", list(s["nodes"]) == ["lib-a"] and s["edges"] == [])
-    expect("in_edges answers what reaches a consumer",
-           [e["from"] for e in suite_graph.in_edges(g, "app-b")] == ["lib-a"])
+    expect(
+        "lane slice keeps only the lane's members",
+        list(s["nodes"]) == ["lib-a"] and s["edges"] == [],
+    )
+    expect(
+        "in_edges answers what reaches a consumer",
+        [e["from"] for e in suite_graph.in_edges(g, "app-b")] == ["lib-a"],
+    )
 
 
 def test_unknown_slice_names_what_exists() -> None:
@@ -287,28 +438,53 @@ def test_unknown_slice_names_what_exists() -> None:
 def test_mermaid_and_docs_render() -> None:
     g = suite_graph.parse_block_yaml(SAMPLE)
     overview = suite_graph.mermaid_overview(g)
-    expect("overview groups by role", "subgraph library" in overview and "subgraph service" in overview)
-    expect("overview shades by audience", ':::general' in overview and ':::suite' in overview)
-    expect("an optional member is labelled as one", 'side-c (optional)' in overview)
-    expect("a block declares only the classes it paints",
-           "classDef producer" not in overview and "classDef suite-optional" not in overview,
-           overview)
+    expect(
+        "overview groups by role",
+        "subgraph library" in overview and "subgraph service" in overview,
+    )
+    expect(
+        "overview shades by audience",
+        ":::general" in overview and ":::suite" in overview,
+    )
+    expect("an optional member is labelled as one", "side-c (optional)" in overview)
+    expect(
+        "a block declares only the classes it paints",
+        "classDef producer" not in overview
+        and "classDef suite-optional" not in overview,
+        overview,
+    )
     producer = suite_graph.mermaid_producer(g, "lib-a")
-    expect("producer diagram labels the edge with plain words -- no quotes, no parentheses",
-           "|cargo-dep, potential|" in producer and not any(c in producer.split("\n")[3] for c in '"()'))
-    expect("every class carries an explicit text colour",
-           all("color:" in line for line in producer.splitlines() if "classDef" in line))
+    expect(
+        "producer diagram labels the edge with plain words -- no quotes, no parentheses",
+        "|cargo-dep, potential|" in producer
+        and not any(c in producer.split("\n")[3] for c in '"()'),
+    )
+    expect(
+        "every class carries an explicit text colour",
+        all("color:" in line for line in producer.splitlines() if "classDef" in line),
+    )
     g["edges"].append(dict(g["edges"][0], evidence="app-b/other:1"))
-    expect("repeated edges collapse to one arrow with a count",
-           "|cargo-dep, potential x2|" in suite_graph.mermaid_producer(g, "lib-a"))
+    expect(
+        "repeated edges collapse to one arrow with a count",
+        "|cargo-dep, potential x2|" in suite_graph.mermaid_producer(g, "lib-a"),
+    )
     page = "intro\n<!-- suite-graph:begin producer:lib-a -->\nstale\n<!-- suite-graph:end producer:lib-a -->\nouttro\n"
     rendered = suite_graph.render_docs(g, page)
-    expect("marked block is replaced", "stale" not in rendered and "```mermaid" in rendered)
-    expect("prose outside the block survives", rendered.startswith("intro\n") and rendered.endswith("outtro\n"))
+    expect(
+        "marked block is replaced", "stale" not in rendered and "```mermaid" in rendered
+    )
+    expect(
+        "prose outside the block survives",
+        rendered.startswith("intro\n") and rendered.endswith("outtro\n"),
+    )
     expect("render is idempotent", suite_graph.render_docs(g, rendered) == rendered)
     empty = "intro\n<!-- suite-graph:begin producer:lib-a -->\n<!-- suite-graph:end producer:lib-a -->\nouttro\n"
     filled = suite_graph.render_docs(g, empty)
-    expect("an EMPTY marker pair is rendered too", "```mermaid" in filled and "lib_a" in filled, filled)
+    expect(
+        "an EMPTY marker pair is rendered too",
+        "```mermaid" in filled and "lib_a" in filled,
+        filled,
+    )
     expect("an empty pair renders the same as a stale one", filled == rendered)
 
 
@@ -334,8 +510,10 @@ def _luminance(colour: str) -> float:
     """WCAG relative luminance of a #RRGGBB colour."""
     total = 0.0
     for offset, weight in zip((1, 3, 5), (0.2126, 0.7152, 0.0722), strict=True):
-        value = int(colour[offset:offset + 2], 16) / 255
-        total += weight * (value / 12.92 if value <= 0.03928 else ((value + 0.055) / 1.055) ** 2.4)
+        value = int(colour[offset : offset + 2], 16) / 255
+        total += weight * (
+            value / 12.92 if value <= 0.03928 else ((value + 0.055) / 1.055) ** 2.4
+        )
     return total
 
 
@@ -356,69 +534,130 @@ def _class_styles() -> dict[str, dict[str, str]]:
 
 def test_contrast_on_both_canvases() -> None:
     """No class may disappear or go unreadable on either GitHub theme."""
-    expect("the helper reproduces the known ratio for navy on the light canvas",
-           round(contrast("#000647", "#FFFFFF"), 2) == 18.80,
-           str(round(contrast("#000647", "#FFFFFF"), 2)))
+    expect(
+        "the helper reproduces the known ratio for navy on the light canvas",
+        round(contrast("#000647", "#FFFFFF"), 2) == 18.80,
+        str(round(contrast("#000647", "#FFFFFF"), 2)),
+    )
     for name, style in _class_styles().items():
         ratio = contrast(style["color"], style["fill"])
-        expect(f"{name} text on its own fill clears 4.5:1", ratio >= 4.5, f"{ratio:.2f}")
+        expect(
+            f"{name} text on its own fill clears 4.5:1", ratio >= 4.5, f"{ratio:.2f}"
+        )
         for canvas, background in CANVASES.items():
             fill = contrast(style["fill"], background)
             soft = SOFT_FILLS.get((name, canvas))
             if soft is None:
-                expect(f"{name} fill stands off the {canvas} canvas",
-                       fill >= FILL_FLOOR, f"{fill:.2f}")
+                expect(
+                    f"{name} fill stands off the {canvas} canvas",
+                    fill >= FILL_FLOOR,
+                    f"{fill:.2f}",
+                )
                 continue
-            expect(f"{name} fill is the soft one it is declared to be on the {canvas} canvas",
-                   round(fill, 2) == soft, f"{fill:.2f}, declared {soft:.2f}")
+            expect(
+                f"{name} fill is the soft one it is declared to be on the {canvas} canvas",
+                round(fill, 2) == soft,
+                f"{fill:.2f}, declared {soft:.2f}",
+            )
             edge = contrast(style["stroke"], background)
-            expect(f"{name} stroke carries its boundary on the {canvas} canvas",
-                   edge >= FILL_FLOOR, f"{edge:.2f}")
-    navy_fills = [n for n, s in _class_styles().items() if s["fill"] == suite_graph.PALETTE["navy"]]
-    expect("navy is a fill for the producer alone", navy_fills == ["producer"], str(navy_fills))
+            expect(
+                f"{name} stroke carries its boundary on the {canvas} canvas",
+                edge >= FILL_FLOOR,
+                f"{edge:.2f}",
+            )
+    navy_fills = [
+        n
+        for n, s in _class_styles().items()
+        if s["fill"] == suite_graph.PALETTE["navy"]
+    ]
+    expect(
+        "navy is a fill for the producer alone",
+        navy_fills == ["producer"],
+        str(navy_fills),
+    )
 
 
 def test_brand_palette() -> None:
     """Every colour a diagram draws is a graphics.hyperi.io token or a 0.45 fade of one."""
-    expect("PALETTE is the brand tokens",
-           suite_graph.PALETTE == {"navy": "#000647", "tertiary": "#2EA4F6",
-                                   "accent": "#2DED88", "white": "#FFFFFF",
-                                   "black": "#000000"},
-           str(suite_graph.PALETTE))
-    expect("the fade mixes 45 per cent white into the brand tertiary",
-           suite_graph.faded("#2EA4F6") == "#8CCDFA", suite_graph.faded("#2EA4F6"))
+    expect(
+        "PALETTE is the brand tokens",
+        suite_graph.PALETTE
+        == {
+            "navy": "#000647",
+            "tertiary": "#2EA4F6",
+            "accent": "#2DED88",
+            "white": "#FFFFFF",
+            "black": "#000000",
+        },
+        str(suite_graph.PALETTE),
+    )
+    expect(
+        "the fade mixes 45 per cent white into the brand tertiary",
+        suite_graph.faded("#2EA4F6") == "#8CCDFA",
+        suite_graph.faded("#2EA4F6"),
+    )
     expect("fading white leaves white", suite_graph.faded("#FFFFFF") == "#FFFFFF")
     g = suite_graph.parse_block_yaml(SAMPLE)
-    g["edges"].append({"from": "lib-a", "to": "side-c", "kind": "cargo-dep",
-                       "type": "potential", "evidence": "side-c/pyproject.toml"})
+    g["edges"].append(
+        {
+            "from": "lib-a",
+            "to": "side-c",
+            "kind": "cargo-dep",
+            "type": "potential",
+            "evidence": "side-c/pyproject.toml",
+        }
+    )
     allowed = set(suite_graph.PALETTE.values()) | {
-        suite_graph.faded(c) for c in suite_graph.PALETTE.values()}
-    for label, block in (("overview", suite_graph.mermaid_overview(g)),
-                         ("producer diagram", suite_graph.mermaid_producer(g, "lib-a"))):
+        suite_graph.faded(c) for c in suite_graph.PALETTE.values()
+    }
+    for label, block in (
+        ("overview", suite_graph.mermaid_overview(g)),
+        ("producer diagram", suite_graph.mermaid_producer(g, "lib-a")),
+    ):
         found = set(re.findall(r"#[0-9A-Fa-f]{3,6}", block))
-        expect(f"the {label} draws no colour outside the palette and its fades",
-               found <= allowed, str(sorted(found - allowed)))
-        expect(f"every classDef in the {label} carries a text colour",
-               all("color:" in line for line in block.splitlines() if "classDef" in line))
-        expect(f"every classDef in the {label} strokes in the both-modes tertiary",
-               all(f"stroke:{suite_graph.PALETTE['tertiary']}," in line
-                   for line in block.splitlines() if "classDef" in line))
-        expect(f"an optional member is faded AND labelled in the {label}",
-               '["side-c (optional)"]:::general-optional' in block, block)
+        expect(
+            f"the {label} draws no colour outside the palette and its fades",
+            found <= allowed,
+            str(sorted(found - allowed)),
+        )
+        expect(
+            f"every classDef in the {label} carries a text colour",
+            all("color:" in line for line in block.splitlines() if "classDef" in line),
+        )
+        expect(
+            f"every classDef in the {label} strokes in the both-modes tertiary",
+            all(
+                f"stroke:{suite_graph.PALETTE['tertiary']}," in line
+                for line in block.splitlines()
+                if "classDef" in line
+            ),
+        )
+        expect(
+            f"an optional member is faded AND labelled in the {label}",
+            '["side-c (optional)"]:::general-optional' in block,
+            block,
+        )
 
 
 def test_an_unmatched_marker_is_refused() -> None:
     """A begin marker with no end marker can never be rewritten, so it must not read as in sync."""
     g = suite_graph.parse_block_yaml(SAMPLE)
     for label, page in (
-        ("no end marker at all",
-         "<!-- suite-graph:begin producer:lib-a -->\nstale\nouttro\n"),
-        ("the end marker names a different block",
-         "<!-- suite-graph:begin producer:lib-a -->\nstale\n"
-         "<!-- suite-graph:end producer:lib_a -->\n"),
+        (
+            "no end marker at all",
+            "<!-- suite-graph:begin producer:lib-a -->\nstale\nouttro\n",
+        ),
+        (
+            "the end marker names a different block",
+            "<!-- suite-graph:begin producer:lib-a -->\nstale\n"
+            "<!-- suite-graph:end producer:lib_a -->\n",
+        ),
     ):
-        expect_raises(f"{label} raises and names the block",
-                      lambda page=page: suite_graph.render_docs(g, page), "producer:lib-a")
+        expect_raises(
+            f"{label} raises and names the block",
+            lambda page=page: suite_graph.render_docs(g, page),
+            "producer:lib-a",
+        )
 
 
 def test_live_file() -> None:
@@ -432,15 +671,28 @@ def test_live_file() -> None:
     except ValueError:
         parsed = False
     expect("the verified date parses as YYYY-MM-DD", parsed, str(g.get("verified")))
-    expect("every lane member is a node", all(
-        m in g["nodes"] for lane in g["lanes"] for m in lane["members"]))
-    expect("the edge-kind vocabulary is the documented nine",
-           sorted(g["edge_kinds"]) == EDGE_KIND_NAMES, str(sorted(g["edge_kinds"])))
-    expect("the runtime-kind vocabulary is separate and declared",
-           sorted(g["runtime_kinds"]) == RUNTIME_KIND_NAMES, str(sorted(g.get("runtime_kinds", {}))))
-    expect("every library node names the package it publishes", all(
-        "package" in g["nodes"][e["from"]]
-        for e in g["edges"] if e["kind"] in ("cargo-dep", "python-dep")))
+    expect(
+        "every lane member is a node",
+        all(m in g["nodes"] for lane in g["lanes"] for m in lane["members"]),
+    )
+    expect(
+        "the edge-kind vocabulary is the documented nine",
+        sorted(g["edge_kinds"]) == EDGE_KIND_NAMES,
+        str(sorted(g["edge_kinds"])),
+    )
+    expect(
+        "the runtime-kind vocabulary is separate and declared",
+        sorted(g["runtime_kinds"]) == RUNTIME_KIND_NAMES,
+        str(sorted(g.get("runtime_kinds", {}))),
+    )
+    expect(
+        "every library node names the package it publishes",
+        all(
+            "package" in g["nodes"][e["from"]]
+            for e in g["edges"]
+            if e["kind"] in ("cargo-dep", "python-dep")
+        ),
+    )
 
 
 def test_no_version_literal_in_the_live_file() -> None:

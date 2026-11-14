@@ -78,7 +78,11 @@ def block_span(lines: list[str], stack: str) -> tuple[int, int]:
     to end of file for the last one.
     """
     start = next(
-        (i for i, ln in enumerate(lines) if re.match(rf"^  {re.escape(stack)}:\s*$", ln)),
+        (
+            i
+            for i, ln in enumerate(lines)
+            if re.match(rf"^  {re.escape(stack)}:\s*$", ln)
+        ),
         None,
     )
     if start is None:
@@ -126,7 +130,9 @@ class StackImage:
         return tuple(normalise_ref(r) for r in (self.ref, *self.aliases))
 
 
-def stack_images(versions_text: str, stack: str | None = None) -> tuple[str, list[StackImage]]:
+def stack_images(
+    versions_text: str, stack: str | None = None
+) -> tuple[str, list[StackImage]]:
     """(stack name, every annotated pin of it that also carries a digest).
 
     `stack` defaults to the `current` pointer. A pin with no services-digests

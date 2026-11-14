@@ -41,7 +41,9 @@ APPSET = REPO_ROOT / "argocd" / "appsets" / "layer2-edge.yaml"
 CULVERT_VALUES = REPO_ROOT / "argocd" / "values" / "apps" / "culvert" / "values.yaml"
 EXTRAS_VALUES = REPO_ROOT / "helm" / "charts" / "dfe-extras" / "values.yaml"
 FORWARDER_TF = REPO_ROOT / "terraform" / "modules" / "edge" / "aws" / "forwarder.tf"
-EDGE_VARIABLES_TF = REPO_ROOT / "terraform" / "modules" / "edge" / "aws" / "variables.tf"
+EDGE_VARIABLES_TF = (
+    REPO_ROOT / "terraform" / "modules" / "edge" / "aws" / "variables.tf"
+)
 AWS_ROOT_OUTPUTS = REPO_ROOT / "terraform" / "environments" / "aws" / "outputs.tf"
 AWS_ROOT_MAIN = REPO_ROOT / "terraform" / "environments" / "aws" / "main.tf"
 RENDER_DIAL = REPO_ROOT / "scripts" / "render_dial.py"
@@ -64,12 +66,16 @@ def _merge(base: dict, layer: dict) -> dict:
 
 def _extras_defaults() -> dict:
     """dfe-extras' culvert defaults."""
-    return yaml.safe_load(EXTRAS_VALUES.read_text(encoding="utf-8"))["extras"]["defaults"]["culvert"]
+    return yaml.safe_load(EXTRAS_VALUES.read_text(encoding="utf-8"))["extras"][
+        "defaults"
+    ]["culvert"]
 
 
 def _culvert_values() -> dict:
     """The values culvert deploys with: dfe-extras' defaults under its integration values."""
-    return _merge(_extras_defaults(), yaml.safe_load(CULVERT_VALUES.read_text(encoding="utf-8")))
+    return _merge(
+        _extras_defaults(), yaml.safe_load(CULVERT_VALUES.read_text(encoding="utf-8"))
+    )
 
 
 def _render(**env: str) -> str:
@@ -90,7 +96,9 @@ def _render(**env: str) -> str:
 def test_the_aws_root_emits_both_facts() -> None:
     outputs = AWS_ROOT_OUTPUTS.read_text(encoding="utf-8")
     for key in FACTS:
-        assert f'output "{key}"' in outputs, f"{key} is not a root output, so bridge.py can never pass it on"
+        assert f'output "{key}"' in outputs, (
+            f"{key} is not a root output, so bridge.py can never pass it on"
+        )
 
 
 def test_bootstrap_omits_the_annotation_rather_than_rendering_it_empty() -> None:
@@ -98,14 +106,20 @@ def test_bootstrap_omits_the_annotation_rather_than_rendering_it_empty() -> None
     present-and-blank; the `:+` form leaves the line out instead."""
     text = BOOTSTRAP.read_text(encoding="utf-8")
     for key, annotation in FACTS.items():
-        assert f'export {key}="${{{key}:-}}"' in text, f"{key} is not defaulted in bootstrap.sh"
-        assert f'${{{key}:+{annotation}:' in text, f"{key} does not render {annotation} conditionally"
+        assert f'export {key}="${{{key}:-}}"' in text, (
+            f"{key} is not defaulted in bootstrap.sh"
+        )
+        assert f"${{{key}:+{annotation}:" in text, (
+            f"{key} does not render {annotation} conditionally"
+        )
 
 
 def test_the_template_carries_both_annotation_substitutions() -> None:
     text = CLUSTER_SECRET.read_text(encoding="utf-8")
     for key in FACTS:
-        assert f"${{{key}_ANNOTATION}}" in text, f"{key}_ANNOTATION is not substituted into the cluster secret"
+        assert f"${{{key}_ANNOTATION}}" in text, (
+            f"{key}_ANNOTATION is not substituted into the cluster secret"
+        )
 
 
 def test_a_forwarder_deployment_writes_both_annotations() -> None:
@@ -115,7 +129,9 @@ def test_a_forwarder_deployment_writes_both_annotations() -> None:
     )
     assert 'dfe.hyperi.io/tunnel_address: "198.51.100.42"' in rendered
     assert 'dfe.hyperi.io/tunnel_zone: "us-west-2c"' in rendered
-    assert "${" not in rendered, "something in the cluster secret template was left unsubstituted"
+    assert "${" not in rendered, (
+        "something in the cluster secret template was left unsubstituted"
+    )
 
 
 def test_a_byo_deployment_writes_neither() -> None:
@@ -128,16 +144,23 @@ def test_the_appset_turns_the_zone_into_culverts_own_node_selector() -> None:
     """The annotation is inert unless something reads it, and a cluster secret
     that predates the fact must not select on an empty zone."""
     text = APPSET.read_text(encoding="utf-8")
-    assert '$tunnelZone := index .metadata.annotations "dfe.hyperi.io/tunnel_zone"' in text
+    assert (
+        '$tunnelZone := index .metadata.annotations "dfe.hyperi.io/tunnel_zone"' in text
+    )
     assert "{{- if $tunnelZone }}" in text
     assert "topology.kubernetes.io/zone: {{ $tunnelZone | quote }}" in text
     # The thin chart's own top-level nodeSelector, which the cloud files set
     # too; 2.2.0's nodeScheduling is a key it never reads.
-    assert "\n              nodeSelector:\n                topology.kubernetes.io/zone:" in text
+    assert (
+        "\n              nodeSelector:\n                topology.kubernetes.io/zone:"
+        in text
+    )
     assert "nodeScheduling:" not in text
 
 
-def test_the_toolbox_admin_cidr_travels_from_the_root_to_the_charts_admin_class() -> None:
+def test_the_toolbox_admin_cidr_travels_from_the_root_to_the_charts_admin_class() -> (
+    None
+):
     """The range an operator reaches an appliance FROM is a cloud fact, and a
     chart that never receives it renders an admin class with no hole at all."""
     outputs = AWS_ROOT_OUTPUTS.read_text(encoding="utf-8")
@@ -149,9 +172,14 @@ def test_the_toolbox_admin_cidr_travels_from_the_root_to_the_charts_admin_class(
     bootstrap = BOOTSTRAP.read_text(encoding="utf-8")
     assert 'export DFE_TOOLBOX_ADMIN_CIDR="${DFE_TOOLBOX_ADMIN_CIDR:-}"' in bootstrap
     assert "${DFE_TOOLBOX_ADMIN_CIDR:+dfe.hyperi.io/toolbox_admin_cidr:" in bootstrap
-    assert "${DFE_TOOLBOX_ADMIN_CIDR_ANNOTATION}" in CLUSTER_SECRET.read_text(encoding="utf-8")
+    assert "${DFE_TOOLBOX_ADMIN_CIDR_ANNOTATION}" in CLUSTER_SECRET.read_text(
+        encoding="utf-8"
+    )
     appset = APPSET.read_text(encoding="utf-8")
-    assert '$adminCIDR := index .metadata.annotations "dfe.hyperi.io/toolbox_admin_cidr"' in appset
+    assert (
+        '$adminCIDR := index .metadata.annotations "dfe.hyperi.io/toolbox_admin_cidr"'
+        in appset
+    )
     assert "{{- if $adminCIDR }}" in appset
     assert "adminCIDRs:" in appset
 
@@ -160,18 +188,28 @@ def test_the_renderer_and_the_chart_agree_on_the_reserved_client_range() -> None
     """The toolbox's reach-back egress is aimed at the range appliances are
     issued out of, which the dial renders into the root's edge.tunnel.client_cidr."""
     values = _culvert_values()
-    match = re.search(r'^TUNNEL_CLIENT_CIDR = "([^"]+)"', RENDER_DIAL.read_text(encoding="utf-8"), re.M)
+    match = re.search(
+        r'^TUNNEL_CLIENT_CIDR = "([^"]+)"',
+        RENDER_DIAL.read_text(encoding="utf-8"),
+        re.M,
+    )
     assert match is not None, "render_dial.py declares no TUNNEL_CLIENT_CIDR"
     assert match.group(1) == values["vpn"]["clientCIDR"]
     main = AWS_ROOT_MAIN.read_text(encoding="utf-8")
-    assert "var.edge.tunnel.client_cidr" in main, "the aws root must aim the reach-back at the rendered client range"
+    assert "var.edge.tunnel.client_cidr" in main, (
+        "the aws root must aim the reach-back at the rendered client range"
+    )
 
 
 def test_the_renderer_and_the_chart_agree_on_the_appliance_ports() -> None:
     """One list is a security-group rule and the other is a NetworkPolicy, so a
     drift opens one and not the other and neither reports it."""
     values = _culvert_values()
-    match = re.search(r"^TUNNEL_ADMIN_REACH = \(([^)]*)\)", RENDER_DIAL.read_text(encoding="utf-8"), re.M)
+    match = re.search(
+        r"^TUNNEL_ADMIN_REACH = \(([^)]*)\)",
+        RENDER_DIAL.read_text(encoding="utf-8"),
+        re.M,
+    )
     assert match is not None, "render_dial.py declares no TUNNEL_ADMIN_REACH"
     ports = [int(item) for item in match.group(1).split(",") if item.strip()]
     assert ports == values["peers"]["classes"]["admin"]["reach"]
@@ -180,7 +218,10 @@ def test_the_renderer_and_the_chart_agree_on_the_appliance_ports() -> None:
 def _culvert_listeners() -> dict[str, dict]:
     """The listeners culvert's Services expose where no layer names its own."""
     values = yaml.safe_load(CULVERT_VALUES.read_text(encoding="utf-8"))
-    return {entry["name"]: entry for entry in values.get("listeners") or values["defaultListeners"]}
+    return {
+        entry["name"]: entry
+        for entry in values.get("listeners") or values["defaultListeners"]
+    }
 
 
 def test_dfe_extras_admits_the_listeners_the_services_expose() -> None:
@@ -192,8 +233,14 @@ def test_dfe_extras_admits_the_listeners_the_services_expose() -> None:
 
 def _tf_default(name: str) -> int:
     """One node_ports default out of the edge module's tunnel variable."""
-    match = re.search(rf"^\s*{name}\s*=\s*optional\(number,\s*(\d+)\)", EDGE_VARIABLES_TF.read_text(encoding="utf-8"), re.M)
-    assert match is not None, f"the tunnel variable declares no node_ports.{name} default"
+    match = re.search(
+        rf"^\s*{name}\s*=\s*optional\(number,\s*(\d+)\)",
+        EDGE_VARIABLES_TF.read_text(encoding="utf-8"),
+        re.M,
+    )
+    assert match is not None, (
+        f"the tunnel variable declares no node_ports.{name} default"
+    )
     return int(match.group(1))
 
 
@@ -204,7 +251,9 @@ def test_the_chart_pins_a_node_port_for_every_exposed_listener() -> None:
         if not entry.get("exposed"):
             continue
         assert "nodePort" in entry, f"exposed listener {name} pins no nodePort"
-        assert 30000 <= entry["nodePort"] <= 32767, f"{name}'s nodePort is outside the Kubernetes range"
+        assert 30000 <= entry["nodePort"] <= 32767, (
+            f"{name}'s nodePort is outside the Kubernetes range"
+        )
 
 
 def test_the_module_dnats_to_the_ports_the_chart_pins() -> None:
@@ -225,12 +274,18 @@ def test_the_module_admits_the_listen_ports_the_chart_exposes() -> None:
         )
 
 
-def test_the_toolbox_keys_its_tunnel_egress_on_the_ports_and_never_the_address() -> None:
+def test_the_toolbox_keys_its_tunnel_egress_on_the_ports_and_never_the_address() -> (
+    None
+):
     """An Elastic IP is unknown until apply, so a for_each that reads it refuses
     to plan at all on the run that creates it -- and a second plan then succeeds,
     which reads as a flake rather than a fault."""
-    main = (REPO_ROOT / "terraform" / "modules" / "toolbox" / "aws" / "main.tf").read_text(encoding="utf-8")
-    block = main.split('resource "aws_vpc_security_group_egress_rule" "tunnel" {', 1)[1].split("\n}", 1)[0]
+    main = (
+        REPO_ROOT / "terraform" / "modules" / "toolbox" / "aws" / "main.tf"
+    ).read_text(encoding="utf-8")
+    block = main.split('resource "aws_vpc_security_group_egress_rule" "tunnel" {', 1)[
+        1
+    ].split("\n}", 1)[0]
     for_each = next(line for line in block.splitlines() if "for_each" in line)
     assert "var.tunnel.address" not in for_each, (
         "the tunnel egress for_each reads the address, which is unknown until apply"
@@ -243,7 +298,9 @@ def test_the_toolbox_keys_its_tunnel_egress_on_the_ports_and_never_the_address()
 def test_the_edge_module_empties_the_listener_ports_with_the_address() -> None:
     """The toolbox is gated on the ports now, so a port list that outlived the
     address would render an egress rule aimed at a bare `/32`."""
-    outputs = (REPO_ROOT / "terraform" / "modules" / "edge" / "aws" / "outputs.tf").read_text(encoding="utf-8")
+    outputs = (
+        REPO_ROOT / "terraform" / "modules" / "edge" / "aws" / "outputs.tf"
+    ).read_text(encoding="utf-8")
     block = outputs.split('output "tunnel_listener_ports" {', 1)[1].split("\n}", 1)[0]
     assert "local.forwarder_enabled ?" in block, (
         "tunnel_listener_ports must travel with tunnel_address, empty on address.mode byo"

@@ -48,8 +48,14 @@ SUBNETS_KEY = "dfe.hyperi.io/receiver_subnets"
 def _bootstrap_block() -> str:
     """bootstrap.sh's own block, run on its own rather than copied here."""
     lines = BOOTSTRAP.read_text(encoding="utf-8").splitlines()
-    start = lines.index('DFE_RECEIVER_EIP_ALLOCATIONS="${DFE_RECEIVER_EIP_ALLOCATIONS:-}"')
-    end = next(i for i, line in enumerate(lines) if line.startswith("export DFE_RECEIVER_SUBNETS_ANNOTATION="))
+    start = lines.index(
+        'DFE_RECEIVER_EIP_ALLOCATIONS="${DFE_RECEIVER_EIP_ALLOCATIONS:-}"'
+    )
+    end = next(
+        i
+        for i, line in enumerate(lines)
+        if line.startswith("export DFE_RECEIVER_SUBNETS_ANNOTATION=")
+    )
     return "\n".join(lines[start : end + 1])
 
 
@@ -61,7 +67,11 @@ def _run_block(**env: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["bash", "-euo", "pipefail", "-c", script],
         env={"PATH": "/usr/bin:/bin", **env},
-        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
     )
 
 
@@ -77,7 +87,10 @@ def test_the_aws_root_emits_both_lists_from_the_edge_module() -> None:
 def test_both_lists_write_both_annotations() -> None:
     done = _run_block(DFE_RECEIVER_EIP_ALLOCATIONS=EIPS, DFE_RECEIVER_SUBNETS=SUBNETS)
     assert done.returncode == 0, done.stderr
-    assert done.stdout.splitlines() == [f'{EIP_KEY}: "{EIPS}"', f'{SUBNETS_KEY}: "{SUBNETS}"']
+    assert done.stdout.splitlines() == [
+        f'{EIP_KEY}: "{EIPS}"',
+        f'{SUBNETS_KEY}: "{SUBNETS}"',
+    ]
 
 
 def test_neither_writes_neither() -> None:
@@ -88,14 +101,23 @@ def test_neither_writes_neither() -> None:
 
 def test_spaces_come_out_of_both_lists() -> None:
     """layer2-apps.yaml splits on commas alone, so a space would become part of an id."""
-    done = _run_block(DFE_RECEIVER_EIP_ALLOCATIONS=EIPS.replace(",", ", "),
-                      DFE_RECEIVER_SUBNETS=SUBNETS.replace(",", ", "))
+    done = _run_block(
+        DFE_RECEIVER_EIP_ALLOCATIONS=EIPS.replace(",", ", "),
+        DFE_RECEIVER_SUBNETS=SUBNETS.replace(",", ", "),
+    )
     assert done.returncode == 0, done.stderr
-    assert done.stdout.splitlines() == [f'{EIP_KEY}: "{EIPS}"', f'{SUBNETS_KEY}: "{SUBNETS}"']
+    assert done.stdout.splitlines() == [
+        f'{EIP_KEY}: "{EIPS}"',
+        f'{SUBNETS_KEY}: "{SUBNETS}"',
+    ]
 
 
-@pytest.mark.parametrize(("eips", "subnets"), [(EIPS, "subnet-0bbbbbbbbbbbbbbb1"), (EIPS, ""), ("", SUBNETS)])
-def test_expected_fail_lists_of_different_lengths_are_refused(eips: str, subnets: str) -> None:
+@pytest.mark.parametrize(
+    ("eips", "subnets"), [(EIPS, "subnet-0bbbbbbbbbbbbbbb1"), (EIPS, ""), ("", SUBNETS)]
+)
+def test_expected_fail_lists_of_different_lengths_are_refused(
+    eips: str, subnets: str
+) -> None:
     done = _run_block(DFE_RECEIVER_EIP_ALLOCATIONS=eips, DFE_RECEIVER_SUBNETS=subnets)
     assert done.returncode == 1, done.stdout
     assert "one allocation per subnet, in the same order" in done.stderr, done.stderr
@@ -111,14 +133,20 @@ def test_the_cluster_secret_carries_both_annotations() -> None:
             "DFE_RECEIVER_EIP_ALLOCATIONS_ANNOTATION": f'{EIP_KEY}: "{EIPS}"',
             "DFE_RECEIVER_SUBNETS_ANNOTATION": f'{SUBNETS_KEY}: "{SUBNETS}"',
         },
-        capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=True,
     ).stdout
     annotations = yaml.safe_load(rendered)["metadata"]["annotations"]
     assert annotations[EIP_KEY] == EIPS
     assert annotations[SUBNETS_KEY] == SUBNETS
 
 
-@pytest.mark.parametrize(("body", "eips"), [("", True), ("edge:\n  aws:\n    receiver_eips: false\n", False)])
+@pytest.mark.parametrize(
+    ("body", "eips"), [("", True), ("edge:\n  aws:\n    receiver_eips: false\n", False)]
+)
 def test_the_dial_switch_reaches_the_root(body: str, eips: bool) -> None:
     dial = parse_dial("substrate: k8s\n" + body, source="test-dial")
     assert render_dial._edge(dial)["receiver"] == {"eips": eips}

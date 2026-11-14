@@ -55,6 +55,7 @@ DROPPED_ENTRY = "dfe-transform-elastic-contract"
 # A pin no release carries, so a container running it can only have read it here.
 MOVED_REF = "registry.example.com/dfe/dfe-loader:v0.0.1@sha256:" + "1" * 64
 
+
 def content_values() -> dict:
     """The engine's content block as its integration values deploy it."""
     return yaml.safe_load(ENGINE_VALUES.read_text(encoding="utf-8"))["content"]
@@ -66,7 +67,9 @@ def entries() -> list[dict]:
 
 def engine(docs: list[dict]) -> dict:
     return next(
-        d for d in docs if d.get("kind") == "Deployment" and d["metadata"]["name"] == ENGINE
+        d
+        for d in docs
+        if d.get("kind") == "Deployment" and d["metadata"]["name"] == ENGINE
     )
 
 
@@ -87,13 +90,19 @@ def container(doc: dict, name: str) -> dict:
 
 
 def content_inits(doc: dict) -> list[dict]:
-    return [c for c in pod(doc).get("initContainers") or [] if c["name"].startswith(CONTENT_PREFIX)]
+    return [
+        c
+        for c in pod(doc).get("initContainers") or []
+        if c["name"].startswith(CONTENT_PREFIX)
+    ]
 
 
 def env_data(docs: list[dict]) -> dict[str, str]:
     """The literal env dfe-extras hands the engine, from its dfe-engine-env ConfigMap."""
     return next(
-        d for d in docs if d.get("kind") == "ConfigMap" and d["metadata"]["name"] == f"{ENGINE}-env"
+        d
+        for d in docs
+        if d.get("kind") == "ConfigMap" and d["metadata"]["name"] == f"{ENGINE}-env"
     )["data"]
 
 
@@ -151,12 +160,18 @@ def test_each_pin_renders_its_own_init_container() -> None:
             f"{script}",
         )
 
-    moved = [dict(e, ref=MOVED_REF) if e["name"] == "dfe-loader-contract" else e for e in entries()]
-    doc = engine(render_app(ENGINE, "slim", "local", overlay={"content": {"entries": moved}}))
+    moved = [
+        dict(e, ref=MOVED_REF) if e["name"] == "dfe-loader-contract" else e
+        for e in entries()
+    ]
+    doc = engine(
+        render_app(ENGINE, "slim", "local", overlay={"content": {"entries": moved}})
+    )
     loader = container(doc, "content-dfe-loader-contract")
     expect(
         "a moved pin moves its own container's image and the pin it records",
-        loader.get("image") == MOVED_REF and MOVED_REF in "".join(loader.get("command") or []),
+        loader.get("image") == MOVED_REF
+        and MOVED_REF in "".join(loader.get("command") or []),
         f"{loader.get('image')}",
     )
     expect(
@@ -187,7 +202,8 @@ def test_the_content_volume_is_pod_local_and_read_only_to_the_engine() -> None:
     main = pod(doc)["containers"][0]
     expect(
         "the engine mounts it read-only",
-        mount_of(main, "content") == {"name": "content", "mountPath": mount, "readOnly": True},
+        mount_of(main, "content")
+        == {"name": "content", "mountPath": mount, "readOnly": True},
         f"{mount_of(main, 'content')}",
     )
     for init in content_inits(doc):
@@ -237,8 +253,6 @@ def test_every_content_init_container_has_its_entry() -> None:
             )
 
 
-
-
 def test_content_is_not_profile_dependent() -> None:
     """What the engine serves is the same everywhere; only how much of it runs is not.
 
@@ -278,7 +292,8 @@ def test_no_content_travels_through_values_or_a_configmap() -> None:
     for entry in entries():
         expect(
             f"{entry['name']} names the app instead of paths, because the app chooses them",
-            set(entry) == {"name", "kind", "ref", "role", "app"} and entry["kind"] == "emit",
+            set(entry) == {"name", "kind", "ref", "role", "app"}
+            and entry["kind"] == "emit",
             f"{sorted(entry)}",
         )
         expect(
@@ -300,13 +315,13 @@ def test_no_content_travels_through_values_or_a_configmap() -> None:
             )
 
 
-
-
 def test_a_dropped_entry_leaves_its_container_materialising_nothing() -> None:
     """The container list is fixed, so a container whose entry is gone runs the
     engine's own image and exits before it calls an app that image does not carry."""
     dropped = [e for e in entries() if e["name"] != DROPPED_ENTRY]
-    doc = engine(render_app(ENGINE, "slim", "local", overlay={"content": {"entries": dropped}}))
+    doc = engine(
+        render_app(ENGINE, "slim", "local", overlay={"content": {"entries": dropped}})
+    )
     init = container(doc, f"{CONTENT_PREFIX}{DROPPED_ENTRY}")
     expect(
         "the container runs the engine's own image",

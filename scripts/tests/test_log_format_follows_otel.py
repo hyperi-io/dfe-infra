@@ -36,8 +36,14 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 FORMAT_NAME = re.compile(r"log[_.\-]?format|log[_.\-]fmt", re.IGNORECASE)
 ENDPOINT = "OTEL_EXPORTER_OTLP_ENDPOINT"
 SCALO = (
-    "dfe-receiver", "dfe-loader", "dfe-archiver", "dfe-fetcher",
-    "dfe-transform-vrl", "dfe-transform-vector", "dfe-transform-elastic", "dfe-engine",
+    "dfe-receiver",
+    "dfe-loader",
+    "dfe-archiver",
+    "dfe-fetcher",
+    "dfe-transform-vrl",
+    "dfe-transform-vector",
+    "dfe-transform-elastic",
+    "dfe-engine",
 )
 SOURCES = ("helm/charts", "helm/library", "helm/edge", "argocd", "bootstrap")
 
@@ -55,28 +61,49 @@ def test_no_deploy_file_names_a_log_format() -> None:
     hits = [
         f"{path.relative_to(REPO_ROOT)}:{n}"
         for path in deploy_files()
-        for n, line in enumerate(path.read_text(encoding="utf-8", errors="replace").splitlines(), 1)
+        for n, line in enumerate(
+            path.read_text(encoding="utf-8", errors="replace").splitlines(), 1
+        )
         if FORMAT_NAME.search(line)
     ]
     assert hits == []
 
 
 @pytest.mark.parametrize(("service", "profile", "cloud", "scenario"), CELLS)
-def test_no_render_carries_a_log_format(service: str, profile: str, cloud: str, scenario: str) -> None:
+def test_no_render_carries_a_log_format(
+    service: str, profile: str, cloud: str, scenario: str
+) -> None:
     names: list[str] = []
     for doc in golden(service, profile, cloud, scenario):
         if doc.get("kind") == "ConfigMap":
             names += [k for k in (doc.get("data") or {}) if FORMAT_NAME.search(k)]
         pod = (doc.get("spec", {}).get("template", {}) or {}).get("spec", {})
-        for container in (pod.get("containers") or []) + (pod.get("initContainers") or []):
-            names += [e["name"] for e in container.get("env") or [] if FORMAT_NAME.search(e["name"])]
+        for container in (pod.get("containers") or []) + (
+            pod.get("initContainers") or []
+        ):
+            names += [
+                e["name"]
+                for e in container.get("env") or []
+                if FORMAT_NAME.search(e["name"])
+            ]
     assert names == []
 
 
-@pytest.mark.parametrize(("service", "profile", "cloud", "scenario"), [c for c in CELLS if c[0] in SCALO])
-def test_every_scalo_workload_carries_the_endpoint_variable(service: str, profile: str, cloud: str, scenario: str) -> None:
+@pytest.mark.parametrize(
+    ("service", "profile", "cloud", "scenario"), [c for c in CELLS if c[0] in SCALO]
+)
+def test_every_scalo_workload_carries_the_endpoint_variable(
+    service: str, profile: str, cloud: str, scenario: str
+) -> None:
     docs = golden(service, profile, cloud, scenario)
-    workloads = [object_id(d) for d in docs if d.get("kind") in ("Deployment", "StatefulSet") and d["metadata"]["name"] == service]
-    assert workloads, f"{service} {profile}/{cloud}/{scenario} renders no workload of its own name"
+    workloads = [
+        object_id(d)
+        for d in docs
+        if d.get("kind") in ("Deployment", "StatefulSet")
+        and d["metadata"]["name"] == service
+    ]
+    assert workloads, (
+        f"{service} {profile}/{cloud}/{scenario} renders no workload of its own name"
+    )
     for workload in workloads:
         assert ENDPOINT in effective_env(list(docs), workload), workload

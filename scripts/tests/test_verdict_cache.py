@@ -38,7 +38,9 @@ BOTH = (
     '{"platform": {"os": "linux", "architecture": "arm64"}}]}'
 )
 # A single-platform manifest lists no platforms, so its config is read for the one it has.
-SINGLE = '{"schemaVersion": 2, "mediaType": "application/vnd.oci.image.manifest.v1+json"}'
+SINGLE = (
+    '{"schemaVersion": 2, "mediaType": "application/vnd.oci.image.manifest.v1+json"}'
+)
 DIGEST = "sha256:" + "a" * 64
 PINNED = f"public.ecr.aws/eks/aws-load-balancer-controller:v3.6.0@{DIGEST}"
 OTHER_PINNED = f"docker.io/library/busybox:1.38.0@sha256:{'b' * 64}"
@@ -131,7 +133,9 @@ def test_an_image_pinned_by_tag_alone_is_read_every_run_and_never_recorded(
     assert "; registry reads: 1 (public.ecr.aws=1)" in out
 
 
-def test_a_cache_miss_reads_the_registry_for_real(monkeypatch, tmp_path, capsys) -> None:
+def test_a_cache_miss_reads_the_registry_for_real(
+    monkeypatch, tmp_path, capsys
+) -> None:
     cache = tmp_path / "verdicts.json"
     images = {OTHER_PINNED: ["linux/amd64", "linux/arm64"]}
     cache.write_text(json.dumps({"schema": 1, "images": images}))
@@ -145,7 +149,9 @@ def test_a_cache_miss_reads_the_registry_for_real(monkeypatch, tmp_path, capsys)
     assert "verdict cache: 1 hit, 1 miss, 0 by tag" in capsys.readouterr().out
 
 
-def test_a_record_missing_a_required_platform_is_read_again(monkeypatch, tmp_path) -> None:
+def test_a_record_missing_a_required_platform_is_read_again(
+    monkeypatch, tmp_path
+) -> None:
     cache = tmp_path / "verdicts.json"
     cache.write_text(json.dumps({"schema": 1, "images": {PINNED: ["linux/amd64"]}}))
     registry = FakeRegistry(docker=[(0, BOTH, "")])
@@ -193,7 +199,9 @@ def test_a_rate_limited_read_is_not_recorded(monkeypatch, tmp_path) -> None:
         json.dumps([PINNED]),
     ],
 )
-def test_a_cache_it_cannot_parse_vouches_for_nothing(monkeypatch, tmp_path, capsys, text) -> None:
+def test_a_cache_it_cannot_parse_vouches_for_nothing(
+    monkeypatch, tmp_path, capsys, text
+) -> None:
     cache = tmp_path / "verdicts.json"
     cache.write_text(text)
     registry = FakeRegistry(docker=[(0, BOTH, "")])
@@ -205,7 +213,9 @@ def test_a_cache_it_cannot_parse_vouches_for_nothing(monkeypatch, tmp_path, caps
     assert recorded(cache) == {PINNED: ["linux/amd64", "linux/arm64"]}
 
 
-def test_no_cache_file_yet_reads_everything_and_writes_one(monkeypatch, tmp_path, capsys) -> None:
+def test_no_cache_file_yet_reads_everything_and_writes_one(
+    monkeypatch, tmp_path, capsys
+) -> None:
     cache = tmp_path / "restored" / "verdicts.json"
     registry = FakeRegistry(docker=[(0, BOTH, "")])
 
@@ -220,7 +230,9 @@ def test_a_record_under_a_tag_is_ignored_even_when_the_file_carries_one(
 ) -> None:
     """Only a digest names fixed content, so a tag entry in the file proves nothing."""
     cache = tmp_path / "verdicts.json"
-    cache.write_text(json.dumps({"schema": 1, "images": {BY_TAG: ["linux/amd64", "linux/arm64"]}}))
+    cache.write_text(
+        json.dumps({"schema": 1, "images": {BY_TAG: ["linux/amd64", "linux/arm64"]}})
+    )
     registry = FakeRegistry(docker=[(0, BOTH, "")])
 
     assert run_gate(monkeypatch, registry, cache, BY_TAG) == 0
@@ -229,7 +241,9 @@ def test_a_record_under_a_tag_is_ignored_even_when_the_file_carries_one(
     assert recorded(cache) == {}
 
 
-def test_without_the_flag_nothing_is_recalled_or_written(monkeypatch, tmp_path, capsys) -> None:
+def test_without_the_flag_nothing_is_recalled_or_written(
+    monkeypatch, tmp_path, capsys
+) -> None:
     registry = FakeRegistry(docker=[(0, BOTH, "")])
 
     assert run_gate(monkeypatch, registry, None, PINNED) == 0
@@ -239,7 +253,9 @@ def test_without_the_flag_nothing_is_recalled_or_written(monkeypatch, tmp_path, 
     assert "verdict cache: 0 hit, 1 miss, 0 by tag" in capsys.readouterr().out
 
 
-def test_the_read_count_names_each_registry_and_counts_retries_and_chart_reads(monkeypatch) -> None:
+def test_the_read_count_names_each_registry_and_counts_retries_and_chart_reads(
+    monkeypatch,
+) -> None:
     registry = FakeRegistry(
         docker=[(1, "", ECR_429), (0, BOTH, "")],
         helm=[(0, "name: karpenter\nappVersion: 1.14.1\n", "")],
@@ -275,17 +291,24 @@ def write_seed(path: Path, images: dict[str, list[str]]) -> Path:
     return path
 
 
-def test_a_seeded_digest_is_not_read_even_with_no_cache_yet(monkeypatch, tmp_path, capsys) -> None:
+def test_a_seeded_digest_is_not_read_even_with_no_cache_yet(
+    monkeypatch, tmp_path, capsys
+) -> None:
     seed = write_seed(tmp_path / "seed.json", {PINNED: ["linux/amd64", "linux/arm64"]})
     before = seed.read_text(encoding="utf-8")
     registry = FakeRegistry()
 
-    assert run_gate(monkeypatch, registry, tmp_path / "verdicts.json", PINNED, seed=seed) == 0
+    assert (
+        run_gate(monkeypatch, registry, tmp_path / "verdicts.json", PINNED, seed=seed)
+        == 0
+    )
 
     out = capsys.readouterr().out
     assert registry.calls == []
     assert f"  ok     {PINNED} {PINNED} (proven by an earlier run)" in out
-    assert recorded(tmp_path / "verdicts.json") == {PINNED: ["linux/amd64", "linux/arm64"]}
+    assert recorded(tmp_path / "verdicts.json") == {
+        PINNED: ["linux/amd64", "linux/arm64"]
+    }
     assert seed.read_text(encoding="utf-8") == before
 
 
@@ -297,7 +320,9 @@ def test_a_seed_entry_under_a_tag_is_ignored_and_read(monkeypatch, tmp_path) -> 
     assert registry.read(BY_TAG)
 
 
-def test_a_seed_missing_a_required_platform_is_read_again(monkeypatch, tmp_path) -> None:
+def test_a_seed_missing_a_required_platform_is_read_again(
+    monkeypatch, tmp_path
+) -> None:
     seed = write_seed(tmp_path / "seed.json", {PINNED: ["linux/amd64"]})
     registry = FakeRegistry(docker=[(0, BOTH, "")])
 
@@ -305,9 +330,13 @@ def test_a_seed_missing_a_required_platform_is_read_again(monkeypatch, tmp_path)
     assert registry.read(PINNED)
 
 
-def test_the_committed_seed_holds_only_digest_verdicts_carrying_both_platforms() -> None:
+def test_the_committed_seed_holds_only_digest_verdicts_carrying_both_platforms() -> (
+    None
+):
     seed, note = arch.load_verdicts(REPO_ROOT / "scripts" / "image-arch-proven.json")
-    doc = json.loads((REPO_ROOT / "scripts" / "image-arch-proven.json").read_text(encoding="utf-8"))
+    doc = json.loads(
+        (REPO_ROOT / "scripts" / "image-arch-proven.json").read_text(encoding="utf-8")
+    )
 
     assert note == ""
     assert len(seed.recalled) == len(doc["images"])

@@ -50,7 +50,9 @@ class Settings:
         return timedelta(seconds=self.period_seconds * self.evaluation_periods)
 
 
-def per_broker_load(cloudwatch: Any, settings: Settings, brokers: int, now: datetime) -> list[float]:
+def per_broker_load(
+    cloudwatch: Any, settings: Settings, brokers: int, now: datetime
+) -> list[float]:
     """Mean BytesInPerSec per broker, one value per period of the last window, over brokers 1..brokers.
 
     Average, not Sum: BytesInPerSec is already a per-second rate published once a
@@ -77,9 +79,22 @@ def per_broker_load(cloudwatch: Any, settings: Settings, brokers: int, now: date
         }
         for n, query_id in enumerate(ids, start=1)
     ]
-    queries.append({"Id": "per_broker", "Expression": f"SUM([{','.join(ids)}])/{brokers}", "ReturnData": True})
-    result = cloudwatch.get_metric_data(MetricDataQueries=queries, StartTime=now - settings.window, EndTime=now)
-    return [float(v) for r in result["MetricDataResults"] if r["Id"] == "per_broker" for v in r["Values"]]
+    queries.append(
+        {
+            "Id": "per_broker",
+            "Expression": f"SUM([{','.join(ids)}])/{brokers}",
+            "ReturnData": True,
+        }
+    )
+    result = cloudwatch.get_metric_data(
+        MetricDataQueries=queries, StartTime=now - settings.window, EndTime=now
+    )
+    return [
+        float(v)
+        for r in result["MetricDataResults"]
+        if r["Id"] == "per_broker"
+        for v in r["Values"]
+    ]
 
 
 def last_operation_end(kafka: Any, cluster_arn: str) -> datetime | None:
@@ -88,36 +103,67 @@ def last_operation_end(kafka: Any, cluster_arn: str) -> datetime | None:
     kwargs: dict[str, Any] = {"ClusterArn": cluster_arn}
     while True:
         page = kafka.list_cluster_operations_v2(**kwargs)
-        ended += [op["EndTime"] for op in page.get("ClusterOperationInfoList", []) if op.get("EndTime")]
+        ended += [
+            op["EndTime"]
+            for op in page.get("ClusterOperationInfoList", [])
+            if op.get("EndTime")
+        ]
         token = page.get("NextToken")
         if not token:
             return max(ended, default=None)
         kwargs["NextToken"] = token
 
 
-def scale(kafka: Any, cloudwatch: Any, settings: Settings, now: datetime) -> dict[str, Any]:
+def scale(
+    kafka: Any, cloudwatch: Any, settings: Settings, now: datetime
+) -> dict[str, Any]:
     """One run: read the cluster, judge its current brokers' load, add a step if every period was over."""
     info = kafka.describe_cluster_v2(ClusterArn=settings.cluster_arn)["ClusterInfo"]
     current = int(info["Provisioned"]["NumberOfBrokerNodes"])
     if info["State"] != "ACTIVE":
-        return {"scaled": False, "reason": f"cluster is {info['State']}", "current_brokers": current}
+        return {
+            "scaled": False,
+            "reason": f"cluster is {info['State']}",
+            "current_brokers": current,
+        }
 
     # Load read across a broker-count change belongs to the cluster before it.
     changed = last_operation_end(kafka, settings.cluster_arn)
     if changed is not None and now - changed < settings.window:
-        return {"scaled": False, "reason": "waiting a full window since the last change", "current_brokers": current}
+        return {
+            "scaled": False,
+            "reason": "waiting a full window since the last change",
+            "current_brokers": current,
+        }
 
     load = per_broker_load(cloudwatch, settings, current, now)
-    if len(load) < settings.evaluation_periods or min(load) <= settings.threshold_bytes_per_sec:
-        return {"scaled": False, "reason": "no sustained pressure", "current_brokers": current}
+    if (
+        len(load) < settings.evaluation_periods
+        or min(load) <= settings.threshold_bytes_per_sec
+    ):
+        return {
+            "scaled": False,
+            "reason": "no sustained pressure",
+            "current_brokers": current,
+        }
 
     target = current + settings.step
     if target > settings.max_brokers:
-        logger.info("refusing to scale %s: %d brokers would exceed max_brokers %d",
-                    settings.cluster_arn, target, settings.max_brokers)
-        return {"scaled": False, "reason": "at max_brokers ceiling", "current_brokers": current}
+        logger.info(
+            "refusing to scale %s: %d brokers would exceed max_brokers %d",
+            settings.cluster_arn,
+            target,
+            settings.max_brokers,
+        )
+        return {
+            "scaled": False,
+            "reason": "at max_brokers ceiling",
+            "current_brokers": current,
+        }
 
-    logger.info("scaling %s from %d to %d brokers", settings.cluster_arn, current, target)
+    logger.info(
+        "scaling %s from %d to %d brokers", settings.cluster_arn, current, target
+    )
     response = kafka.update_broker_count(
         ClusterArn=settings.cluster_arn,
         CurrentVersion=info["CurrentVersion"],
@@ -130,4 +176,9 @@ def scale(kafka: Any, cloudwatch: Any, settings: Settings, now: datetime) -> dic
 def handler(event: object, context: object) -> dict[str, Any]:
     import boto3  # in the Lambda runtime, never needed to import this module
 
-    return scale(boto3.client("kafka"), boto3.client("cloudwatch"), Settings.from_env(os.environ), datetime.now(UTC))
+    return scale(
+        boto3.client("kafka"),
+        boto3.client("cloudwatch"),
+        Settings.from_env(os.environ),
+        datetime.now(UTC),
+    )

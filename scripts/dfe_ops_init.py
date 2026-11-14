@@ -115,7 +115,7 @@ def _focus_choices() -> tuple[str, ...]:
     """The focus levels sizing.yaml declares, read from the SSoT itself."""
     try:
         sizing = resolve_sizing._load(resolve_sizing.SIZING_FILE)
-    except (OSError, yaml_subset.YamlSubsetError):
+    except OSError, yaml_subset.YamlSubsetError:
         return tuple(FOCUS_HELP)
     node = sizing.get("focus")
     if not isinstance(node, dict):
@@ -208,11 +208,15 @@ def ask_bool(
             raise ValueError(require_true_message)
         return "true" if value else "false"
 
-    result = ask(io, key, f"{question} {hint}", "true" if default else "false", validate=validate)
+    result = ask(
+        io, key, f"{question} {hint}", "true" if default else "false", validate=validate
+    )
     return result == "true"
 
 
-def ask_choice(io: WizardIO, key: str, question: str, default: str, choices: tuple[str, ...]) -> str:
+def ask_choice(
+    io: WizardIO, key: str, question: str, default: str, choices: tuple[str, ...]
+) -> str:
     """A plain membership prompt -- validated against `choices`, no renderer
     call needed because the renderer places no format constraint of its own."""
 
@@ -292,59 +296,88 @@ def step_target(io: WizardIO, a: Answers) -> None:
 
     def validate_target(raw: str) -> str:
         if raw not in TARGET_CHOICES:
-            raise ValueError(f"target must be one of {', '.join(TARGET_CHOICES)}, got {raw!r}")
+            raise ValueError(
+                f"target must be one of {', '.join(TARGET_CHOICES)}, got {raw!r}"
+            )
         if raw in NOT_YET_AVAILABLE:
-            raise ValueError(f"{raw}: not yet available -- terraform/environments/{raw} does not exist yet")
+            raise ValueError(
+                f"{raw}: not yet available -- terraform/environments/{raw} does not exist yet"
+            )
         if raw == "aws" and not (render_dial.TOFU_ROOTS / raw).is_dir():
             raise ValueError(f"{raw}: no tofu root at terraform/environments/{raw}")
         return raw
 
     a.target = ask(
-        io, "target",
+        io,
+        "target",
         "Target (on-prem or a cloud -- aws today; gcp/azure not yet available)",
-        a.target, validate=validate_target,
+        a.target,
+        validate=validate_target,
     )
 
     if a.target == "on-prem":
         a.existing_cluster_ref = ask(
-            io, "existing_cluster_ref",
+            io,
+            "existing_cluster_ref",
             "Existing cluster ref (kubeconfig context / Argo cluster secret; blank = current context)",
             a.existing_cluster_ref,
         )
         a.existing_namespace = ask_required(
-            io, "existing_namespace", "Target namespace", a.existing_namespace,
+            io,
+            "existing_namespace",
+            "Target namespace",
+            a.existing_namespace,
         )
         return
 
     # aws
-    a.aws_account = ask_required(io, "aws_account", "AWS account id (target.provision.account)", a.aws_account)
+    a.aws_account = ask_required(
+        io, "aws_account", "AWS account id (target.provision.account)", a.aws_account
+    )
     a.aws_region = ask_required(io, "aws_region", "AWS region", a.aws_region)
-    a.aws_cidr = ask_required(io, "aws_cidr", "VPC CIDR (must not overlap what you peer with, nor 172.31.0.0/16)", a.aws_cidr)
+    a.aws_cidr = ask_required(
+        io,
+        "aws_cidr",
+        "VPC CIDR (must not overlap what you peer with, nor 172.31.0.0/16)",
+        a.aws_cidr,
+    )
 
 
 def step_tier(io: WizardIO, a: Answers) -> None:
-    io.write("Tiers: " + ", ".join(
-        f"{TIER_LABELS[t]} ({t}) -- {profiles.PROFILES[t].description}" for t in TIER_CHOICES
-    ))
+    io.write(
+        "Tiers: "
+        + ", ".join(
+            f"{TIER_LABELS[t]} ({t}) -- {profiles.PROFILES[t].description}"
+            for t in TIER_CHOICES
+        )
+    )
     a.profile = ask_choice(io, "profile", "Profile/tier", a.profile, TIER_CHOICES)
 
     def validate_ingest(raw: str) -> str:
         if not raw.strip():
             return ""
         try:
-            resolve_sizing._dial_number(_wrap(("sizing", "ingest_gb_per_day"), raw), "sizing", "ingest_gb_per_day")
+            resolve_sizing._dial_number(
+                _wrap(("sizing", "ingest_gb_per_day"), raw),
+                "sizing",
+                "ingest_gb_per_day",
+            )
         except resolve_sizing.ResolveError as err:
             raise ValueError(str(err)) from err
         return raw.strip()
 
     a.ingest_gb_per_day = ask(
-        io, "ingest_gb_per_day",
+        io,
+        "ingest_gb_per_day",
         "Estimated ingest GB/day (blank = no estimate, the tyre-kick floor)",
-        a.ingest_gb_per_day, validate=validate_ingest,
+        a.ingest_gb_per_day,
+        validate=validate_ingest,
     )
 
     focus_choices = _focus_choices() or tuple(FOCUS_HELP)
-    io.write("Focus: " + ", ".join(f"{f} -- {FOCUS_HELP.get(f, '')}" for f in focus_choices))
+    io.write(
+        "Focus: " + ", ".join(f"{f} -- {FOCUS_HELP.get(f, '')}" for f in focus_choices)
+    )
     a.focus = ask_choice(io, "focus", "Focus", a.focus, focus_choices)
 
 
@@ -359,9 +392,11 @@ def step_kafka(io: WizardIO, a: Answers) -> None:
         return raw
 
     a.kafka_provider = ask(
-        io, "kafka_provider",
+        io,
+        "kafka_provider",
         f"Kafka provider ({', '.join(KAFKA_TOKENS)})",
-        default_provider, validate=validate_provider,
+        default_provider,
+        validate=validate_provider,
     )
 
     if a.kafka_provider not in render_dial.MANAGED_KAFKA_PROVIDERS:
@@ -371,20 +406,31 @@ def step_kafka(io: WizardIO, a: Answers) -> None:
             "then sizes. Moving it later on a live cluster re-forms the quorum."
         )
         a.controller_pool = ask_choice(
-            io, "controller_pool", "KRaft metadata quorum",
-            a.controller_pool, render_dial.CONTROLLER_POOLS,
+            io,
+            "controller_pool",
+            "KRaft metadata quorum",
+            a.controller_pool,
+            render_dial.CONTROLLER_POOLS,
         )
 
     if a.kafka_provider == "msk":
+
         def validate_count(raw: str) -> str:
             try:
-                render_dial._number(_wrap(("kafka", "msk", "broker_count"), raw), ("kafka", "msk", "broker_count"))
+                render_dial._number(
+                    _wrap(("kafka", "msk", "broker_count"), raw),
+                    ("kafka", "msk", "broker_count"),
+                )
             except render_dial.DialError as err:
                 raise ValueError(str(err)) from err
             return raw
 
         a.msk_broker_count = ask(
-            io, "msk_broker_count", "MSK broker count", a.msk_broker_count, validate=validate_count,
+            io,
+            "msk_broker_count",
+            "MSK broker count",
+            a.msk_broker_count,
+            validate=validate_count,
         )
 
 
@@ -410,25 +456,33 @@ def step_clickhouse_storage(io: WizardIO, a: Answers) -> None:
         return value
 
     a.clickhouse_storage_model = ask(
-        io, "clickhouse_storage_model",
+        io,
+        "clickhouse_storage_model",
         f"ClickHouse storage model ({', '.join(STORAGE_MODEL_CHOICES)})",
-        a.clickhouse_storage_model, validate=validate_storage_model,
+        a.clickhouse_storage_model,
+        validate=validate_storage_model,
     )
     a.clickhouse_instance_override = ask(
-        io, "clickhouse_instance_override",
+        io,
+        "clickhouse_instance_override",
         "Override the ClickHouse instance type used for sizing (blank = let the resolver choose)",
         a.clickhouse_instance_override,
     )
 
 
 def step_public_uis(io: WizardIO, a: Answers) -> None:
-    a.ui_public["dfe_ui"] = ask_bool(io, "ui_dfe_ui", "Public: dfe-ui", a.ui_public["dfe_ui"])
+    a.ui_public["dfe_ui"] = ask_bool(
+        io, "ui_dfe_ui", "Public: dfe-ui", a.ui_public["dfe_ui"]
+    )
     for name in ("kafbat", "cruise_control", "hyperdx", "argocd", "links"):
-        a.ui_public[name] = ask_bool(io, f"ui_{name}", f"Public admin UI: {name}", a.ui_public[name])
+        a.ui_public[name] = ask_bool(
+            io, f"ui_{name}", f"Public admin UI: {name}", a.ui_public[name]
+        )
 
     if any(a.ui_public.values()):
         ask_bool(
-            io, "oidc_confirmed",
+            io,
+            "oidc_confirmed",
             "At least one UI is public -- confirm OIDC will be configured for it "
             "(docs/deployment/gateway-oidc.md) before this goes live",
             False,
@@ -440,8 +494,12 @@ def step_public_uis(io: WizardIO, a: Answers) -> None:
         )
 
     a.ui_allowed_cidrs = ask(
-        io, "ui_allowed_cidrs", "UI allow-list CIDRs, comma-separated (blank = any address)", a.ui_allowed_cidrs,
+        io,
+        "ui_allowed_cidrs",
+        "UI allow-list CIDRs, comma-separated (blank = any address)",
+        a.ui_allowed_cidrs,
     )
+
     def validate_proxy_hops(raw: str) -> str:
         try:
             render_dial._proxy_hop_cidrs(_wrap(render_dial.PROXY_HOP_PATH, raw))
@@ -451,16 +509,23 @@ def step_public_uis(io: WizardIO, a: Answers) -> None:
 
     if a.ui_allowed_cidrs:
         a.ui_trusted_proxy_cidrs = ask(
-            io, "ui_trusted_proxy_cidrs",
+            io,
+            "ui_trusted_proxy_cidrs",
             "CDN or other L7 proxy CIDRs in front of the public hostnames (blank = none, "
             "the client address is read from the connection; never a load balancer subnet)",
             a.ui_trusted_proxy_cidrs,
             validate=validate_proxy_hops,
         )
-    a.public_zone = ask(io, "public_zone", "Public DNS zone (blank = no public UI is reachable yet)", a.public_zone)
+    a.public_zone = ask(
+        io,
+        "public_zone",
+        "Public DNS zone (blank = no public UI is reachable yet)",
+        a.public_zone,
+    )
     if a.public_zone and a.target == "aws":
         a.parent_zone_id = ask(
-            io, "parent_zone_id",
+            io,
+            "parent_zone_id",
             "Route 53 zone ID in this account the public zone sits under (blank = you delegate it yourself)",
             a.parent_zone_id,
         )
@@ -468,7 +533,9 @@ def step_public_uis(io: WizardIO, a: Answers) -> None:
 
 def step_telemetry(io: WizardIO, a: Answers) -> None:
     if a.target != "aws":
-        io.write("Telemetry: no cloud telemetry block for on-prem -- otel default kept.")
+        io.write(
+            "Telemetry: no cloud telemetry block for on-prem -- otel default kept."
+        )
         return
 
     def validate_sink(raw: str) -> str:
@@ -479,16 +546,25 @@ def step_telemetry(io: WizardIO, a: Answers) -> None:
         return raw
 
     a.telemetry_sink = ask(
-        io, "telemetry_sink", "Telemetry sink (otel | cloudwatch)", a.telemetry_sink, validate=validate_sink,
+        io,
+        "telemetry_sink",
+        "Telemetry sink (otel | cloudwatch)",
+        a.telemetry_sink,
+        validate=validate_sink,
     )
     if a.telemetry_sink == "cloudwatch":
         a.telemetry_reason = ask_required(
-            io, "telemetry_reason", "One-line reason for CloudWatch over otel", a.telemetry_reason,
+            io,
+            "telemetry_reason",
+            "One-line reason for CloudWatch over otel",
+            a.telemetry_reason,
         )
 
 
 def step_lifecycle(io: WizardIO, a: Answers) -> None:
-    a.lifecycle = ask_choice(io, "lifecycle", "Lifecycle", a.lifecycle, LIFECYCLE_CHOICES)
+    a.lifecycle = ask_choice(
+        io, "lifecycle", "Lifecycle", a.lifecycle, LIFECYCLE_CHOICES
+    )
 
     def validate_az(raw: str) -> str:
         try:
@@ -497,21 +573,30 @@ def step_lifecycle(io: WizardIO, a: Answers) -> None:
             raise ValueError(str(err)) from err
         return raw
 
-    a.az_count = ask(io, "az_count", "network.az_count (2-6)", a.az_count, validate=validate_az)
+    a.az_count = ask(
+        io, "az_count", "network.az_count (2-6)", a.az_count, validate=validate_az
+    )
 
 
 def step_toolbox(io: WizardIO, a: Answers) -> None:
     a.toolbox_pod_enabled = ask_bool(
-        io, "toolbox_pod_enabled", "Enable the in-cluster toolbox pod", a.toolbox_pod_enabled,
+        io,
+        "toolbox_pod_enabled",
+        "Enable the in-cluster toolbox pod",
+        a.toolbox_pod_enabled,
     )
     if a.target != "aws":
         return
     a.toolbox_aws_enabled = ask_bool(
-        io, "toolbox_aws_enabled", "Enable the on-demand SSM-managed toolbox instance", a.toolbox_aws_enabled,
+        io,
+        "toolbox_aws_enabled",
+        "Enable the on-demand SSM-managed toolbox instance",
+        a.toolbox_aws_enabled,
     )
     if a.toolbox_aws_enabled:
         a.toolbox_operator_role_arn = ask_required(
-            io, "toolbox_operator_role_arn",
+            io,
+            "toolbox_operator_role_arn",
             "Operator IAM role ARN (the EKS access entry toolbox up grants)",
             a.toolbox_operator_role_arn,
         )
@@ -523,18 +608,26 @@ def step_overrides_interactive(io: WizardIO, a: Answers) -> None:
         return
     while True:
         workload = ask(
-            io, "override_workload_next",
+            io,
+            "override_workload_next",
             f"Workload to override (blank to finish -- one of {', '.join(resolve_sizing.USE_CASES)})",
             "",
         )
         if not workload:
             return
         if workload not in resolve_sizing.USE_CASES:
-            io.write(f"  not a use case -- one of {', '.join(resolve_sizing.USE_CASES)}")
+            io.write(
+                f"  not a use case -- one of {', '.join(resolve_sizing.USE_CASES)}"
+            )
             continue
         fields: dict[str, str] = {}
         for name in OVERRIDE_FIELDS:
-            value = ask(io, f"override_{workload}_{name}_next", f"  {workload}.{name} (blank = skip)", "")
+            value = ask(
+                io,
+                f"override_{workload}_{name}_next",
+                f"  {workload}.{name} (blank = skip)",
+                "",
+            )
             if value:
                 fields[name] = value
         if fields:
@@ -606,12 +699,16 @@ def current_stack() -> str:
     """The stack a new dial pins: versions.yaml's `current`, as `dfe-stack current` reads it."""
     path = render_dial.VERSIONS_FILE
     try:
-        tree = yaml_subset.parse(path.read_text(encoding="utf-8", errors="replace"), source=str(path))
+        tree = yaml_subset.parse(
+            path.read_text(encoding="utf-8", errors="replace"), source=str(path)
+        )
     except (OSError, yaml_subset.YamlSubsetError) as err:
         raise InitError(f"cannot read the stack to pin from {path}: {err}") from err
     stack = render_dial._scalar(tree, ("current",))
     if stack is None:
-        raise InitError(f"{path} has no `current:` pointer, so there is no stack to pin")
+        raise InitError(
+            f"{path} has no `current:` pointer, so there is no stack to pin"
+        )
     return stack
 
 
@@ -775,7 +872,9 @@ def build_dial_text(a: Answers) -> str:
     telemetry_line = f"    sink: {a.telemetry_sink}"
     if a.telemetry_sink == "cloudwatch" and a.telemetry_reason:
         telemetry_line += f"  # {a.telemetry_reason}"
-    telemetry_block = "telemetry:\n  aws:\n" + telemetry_line + '\n    retention_days: ""\n'
+    telemetry_block = (
+        "telemetry:\n  aws:\n" + telemetry_line + '\n    retention_days: ""\n'
+    )
 
     toolbox_block = (
         "toolbox:\n"
@@ -824,8 +923,8 @@ def build_dial_text(a: Answers) -> str:
         '  repo_url: ""\n'
         "  target_revision: main\n"
         '  workload_identity_annotations: "{}"\n'
-        f"  load_balancer_type: \"{'nlb' if is_aws else ''}\"\n"
-        f"  config_storage: \"{'s3' if is_aws else ''}\"\n"
+        f'  load_balancer_type: "{"nlb" if is_aws else ""}"\n'
+        f'  config_storage: "{"s3" if is_aws else ""}"\n'
     )
 
     return "".join(
@@ -840,7 +939,8 @@ def build_dial_text(a: Answers) -> str:
             '  owner: ""\n',
             f"  lifecycle: {a.lifecycle}\n",
             "  ttl: 48h\n\n",
-            target_block, "\n",
+            target_block,
+            "\n",
             'kubernetes_version: "1.36"\n\n',
             "network:\n",
             "  nat: single\n",
@@ -852,8 +952,10 @@ def build_dial_text(a: Answers) -> str:
             "  private_zone: dfe.internal\n",
             f'  public_zone: "{a.public_zone}"\n',
             f'  parent_zone_id: "{a.parent_zone_id}"\n\n',
-            edge_block, "\n",
-            toolbox_block, "\n",
+            edge_block,
+            "\n",
+            toolbox_block,
+            "\n",
             "node_pools:\n",
             "  system:\n",
             "    shape_ref: eks-system\n",
@@ -862,9 +964,12 @@ def build_dial_text(a: Answers) -> str:
             "    desired_size: 2\n",
             "    capacity_type: ON_DEMAND\n",
             "    disk_gb: 40\n\n",
-            telemetry_block, "\n",
-            sizing_block, "\n",
-            _kafka_block(a), "\n",
+            telemetry_block,
+            "\n",
+            sizing_block,
+            "\n",
+            _kafka_block(a),
+            "\n",
             "state:\n",
             '  bucket: ""\n',
             "  key: dfe/test/aws.tfstate\n",
@@ -892,7 +997,8 @@ def build_dial_text(a: Answers) -> str:
             'overlay: ""\n\n',
             "retention:\n",
             "  default_ttl_days: 90\n\n",
-            k8s_block, "\n",
+            k8s_block,
+            "\n",
             "endpoints:\n",
             '  clickhouse_host: ""\n',
             '  kafka_bootstrap: ""\n',
@@ -919,7 +1025,9 @@ def _total_compute_line(report_text: str) -> str | None:
     return None
 
 
-def run_resolve(dial_path: Path, *, fixtures: Path | None, live: bool, out_dir: Path) -> int:
+def run_resolve(
+    dial_path: Path, *, fixtures: Path | None, live: bool, out_dir: Path
+) -> int:
     """Run `resolve_sizing.py resolve` against the written dial, then print its
     report path and total-compute line, which carries a cost bucket and no
     figure. scale tier only -- every other profile is skipped with a one-line
@@ -933,13 +1041,24 @@ def run_resolve(dial_path: Path, *, fixtures: Path | None, live: bool, out_dir: 
         )
         return 0
 
-    cmd = [sys.executable, str(RESOLVE_SIZING), "resolve", "--dial", str(dial_path), "--out", str(out_dir)]
+    cmd = [
+        sys.executable,
+        str(RESOLVE_SIZING),
+        "resolve",
+        "--dial",
+        str(dial_path),
+        "--out",
+        str(out_dir),
+    ]
     if live:
         cmd.append("--live")
     elif fixtures:
         cmd += ["--fixtures", str(fixtures)]
     else:
-        print("dfe-ops init: no --fixtures/--live -- skipping the sizing resolve", file=sys.stderr)
+        print(
+            "dfe-ops init: no --fixtures/--live -- skipping the sizing resolve",
+            file=sys.stderr,
+        )
         return 0
 
     result = _run(cmd, capture_output=True, text=True)
@@ -950,7 +1069,10 @@ def run_resolve(dial_path: Path, *, fixtures: Path | None, live: bool, out_dir: 
     # report is the more reliable signal than the exit code alone.
     report_path = out_dir / "sizing" / f"{tier}.report.md"
     if not report_path.is_file():
-        print(f"dfe-ops init: resolve_sizing.py exited {result.returncode}, no report written", file=sys.stderr)
+        print(
+            f"dfe-ops init: resolve_sizing.py exited {result.returncode}, no report written",
+            file=sys.stderr,
+        )
         return result.returncode
 
     print(f"dfe-ops init: sizing report at {report_path}", file=sys.stderr)
@@ -958,7 +1080,10 @@ def run_resolve(dial_path: Path, *, fixtures: Path | None, live: bool, out_dir: 
     if total:
         print(f"dfe-ops init: {total}", file=sys.stderr)
     if result.returncode != 0:
-        print(f"dfe-ops init: resolve_sizing.py refused (exit {result.returncode}) -- see the report above", file=sys.stderr)
+        print(
+            f"dfe-ops init: resolve_sizing.py refused (exit {result.returncode}) -- see the report above",
+            file=sys.stderr,
+        )
     return result.returncode
 
 
@@ -968,7 +1093,11 @@ def run_resolve(dial_path: Path, *, fixtures: Path | None, live: bool, out_dir: 
 
 
 def _next_commands(dial_out: Path, a: Answers) -> str:
-    rel = dial_out.relative_to(REPO_ROOT) if dial_out.is_relative_to(REPO_ROOT) else dial_out
+    rel = (
+        dial_out.relative_to(REPO_ROOT)
+        if dial_out.is_relative_to(REPO_ROOT)
+        else dial_out
+    )
     if a.target == "aws":
         return "\n".join(
             (
@@ -976,7 +1105,7 @@ def _next_commands(dial_out: Path, a: Answers) -> str:
                 "  tofu -chdir=terraform/environments/aws init",
                 "  tofu -chdir=terraform/environments/aws plan -out=deployment.tfplan",
                 "  tofu -chdir=terraform/environments/aws apply deployment.tfplan",
-                "  eval \"$(tofu -chdir=terraform/environments/aws output -raw kubeconfig_command)\"",
+                '  eval "$(tofu -chdir=terraform/environments/aws output -raw kubeconfig_command)"',
                 f"  python3 scripts/dfe-ops stack-deploy --stack <version> --mode {a.profile} \\",
                 "      --from-terraform terraform/environments/aws --kubeconfig <path>",
             )
@@ -992,7 +1121,13 @@ def _next_commands(dial_out: Path, a: Answers) -> str:
 # Estate context deployment.example.yaml ships blank -- injected by the
 # operator's own tooling or filled by hand, never invented here.
 # render_dial.py --tofu refuses on k8s.repo_url until one of those happens.
-_ESTATE_BLANKS_AWS = ("k8s.repo_url", "state.bucket", "state.region", "tags.owner", "tags.cost-center")
+_ESTATE_BLANKS_AWS = (
+    "k8s.repo_url",
+    "state.bucket",
+    "state.region",
+    "tags.owner",
+    "tags.cost-center",
+)
 
 
 def _estate_blanks_note(a: Answers) -> str | None:
@@ -1000,7 +1135,8 @@ def _estate_blanks_note(a: Answers) -> str | None:
         return None
     return (
         "Before tofu apply, fill these estate-specific fields by hand (left blank on "
-        "purpose -- the wizard never invents estate context): " + ", ".join(_ESTATE_BLANKS_AWS)
+        "purpose -- the wizard never invents estate context): "
+        + ", ".join(_ESTATE_BLANKS_AWS)
     )
 
 
@@ -1070,26 +1206,40 @@ def add_init_subparser(sub: argparse._SubParsersAction) -> None:
         "init",
         help="prompt-driven wizard that writes a deployment.yaml dial",
         description="Walks the nine deployment.example.yaml decisions (target, tier/ingest/focus, "
-                    "Kafka provider and quorum, ClickHouse storage, public UIs + OIDC, telemetry, "
-                    "lifecycle + AZ count, toolbox, sizing overrides) and writes a dial "
-                    "render_dial.py accepts. "
-                    "docs/deployment/wizard.md is the field-by-field reference.",
+        "Kafka provider and quorum, ClickHouse storage, public UIs + OIDC, telemetry, "
+        "lifecycle + AZ count, toolbox, sizing overrides) and writes a dial "
+        "render_dial.py accepts. "
+        "docs/deployment/wizard.md is the field-by-field reference.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    init.add_argument("--out", default=str(DEFAULT_DIAL_OUT), help="where to write the dial")
-    init.add_argument("--force", action="store_true", help="overwrite --out if it already exists")
     init.add_argument(
-        "--answers", default=None, metavar="PATH",
+        "--out", default=str(DEFAULT_DIAL_OUT), help="where to write the dial"
+    )
+    init.add_argument(
+        "--force", action="store_true", help="overwrite --out if it already exists"
+    )
+    init.add_argument(
+        "--answers",
+        default=None,
+        metavar="PATH",
         help="a flat key=value file driving the wizard non-interactively (CI/tests)",
     )
-    init.add_argument("--dry-run", action="store_true", help="print the resulting dial, write nothing")
     init.add_argument(
-        "--fixtures", default=None, metavar="DIR",
+        "--dry-run", action="store_true", help="print the resulting dial, write nothing"
+    )
+    init.add_argument(
+        "--fixtures",
+        default=None,
+        metavar="DIR",
         help="resolve sizing against captured fixtures once the dial is written (scale tier only)",
     )
-    init.add_argument("--live", action="store_true", help="resolve sizing against the live cloud API")
     init.add_argument(
-        "--sizing-out", default=None, metavar="DIR",
+        "--live", action="store_true", help="resolve sizing against the live cloud API"
+    )
+    init.add_argument(
+        "--sizing-out",
+        default=None,
+        metavar="DIR",
         help="where resolve_sizing.py writes its artefacts (default: repo root, as a normal resolve does)",
     )
     init.set_defaults(func=cmd_init)

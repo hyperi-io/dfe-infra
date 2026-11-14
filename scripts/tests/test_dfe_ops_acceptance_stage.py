@@ -47,6 +47,7 @@ def _engine_checkout_is_the_pin(monkeypatch: pytest.MonkeyPatch) -> None:
     """These tests are about what the stage does after the checkout gates, which have their own tests."""
     monkeypatch.setattr(dfeops, "_checkout_gate", lambda *_args: 0)
 
+
 import test_edge_web_fence as edge_fence  # noqa: E402
 from acceptance import clients  # noqa: E402
 from acceptance.onboarding import wizard  # noqa: E402
@@ -71,14 +72,33 @@ def _fake_bridge(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def _git(repo: Path, *argv: str) -> None:
     subprocess.run(
-        ["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false",
-         "-C", str(repo), *argv],
-        check=True, capture_output=True, text=True, encoding="utf-8", errors="replace",
+        [
+            "git",
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            "-C",
+            str(repo),
+            *argv,
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
     )
 
 
 def _engine_checkout(
-    tmp_path: Path, *, tag: str = "v1.0.0", past: bool = False, dirty: bool = False, unfetched: bool = False
+    tmp_path: Path,
+    *,
+    tag: str = "v1.0.0",
+    past: bool = False,
+    dirty: bool = False,
+    unfetched: bool = False,
 ) -> Path:
     """A git tree with one commit tagged *tag*, optionally a commit past it or with a modified tracked file.
 
@@ -108,38 +128,118 @@ def _engine_checkout(
     [
         ({}, "v1.0.0", False, 0, ["is v1.0.0, the release stack S pins"], False),
         ({}, "v1.0.0", True, 0, ["is v1.0.0"], False),
-        ({"past": True}, "v1.0.0", False, 2, ["v1.0.0-1-g", "pins dfe-engine v1.0.0", "--dev"], False),
-        ({"tag": "v0.9.0"}, "v1.0.0", False, 2, ["v0.9.0", "pins dfe-engine v1.0.0"], False),
-        ({"dirty": True}, "v1.0.0", False, 2, ["-dirty", "pins dfe-engine v1.0.0"], False),
+        (
+            {"past": True},
+            "v1.0.0",
+            False,
+            2,
+            ["v1.0.0-1-g", "pins dfe-engine v1.0.0", "--dev"],
+            False,
+        ),
+        (
+            {"tag": "v0.9.0"},
+            "v1.0.0",
+            False,
+            2,
+            ["v0.9.0", "pins dfe-engine v1.0.0"],
+            False,
+        ),
+        (
+            {"dirty": True},
+            "v1.0.0",
+            False,
+            2,
+            ["-dirty", "pins dfe-engine v1.0.0"],
+            False,
+        ),
         ({}, "", False, 2, ["pins no dfe-engine"], False),
-        ({"past": True}, "v1.0.0", True, 0, ["WARNING", "v1.0.0-1-g", "pins dfe-engine v1.0.0"], True),
-        ({"dirty": True}, "v1.0.0", True, 0, ["WARNING", "-dirty", "pins dfe-engine v1.0.0"], True),
-        ({"unfetched": True}, "v1.0.0", True, 0, ["is v1.0.0, the release stack S pins"], False),
-        ({"unfetched": True, "past": True}, "v1.0.0", False, 2, ["pins dfe-engine v1.0.0"], False),
-        ({"unfetched": True, "dirty": True}, "v1.0.0", False, 2, ["-dirty", "pins dfe-engine v1.0.0"], False),
+        (
+            {"past": True},
+            "v1.0.0",
+            True,
+            0,
+            ["WARNING", "v1.0.0-1-g", "pins dfe-engine v1.0.0"],
+            True,
+        ),
+        (
+            {"dirty": True},
+            "v1.0.0",
+            True,
+            0,
+            ["WARNING", "-dirty", "pins dfe-engine v1.0.0"],
+            True,
+        ),
+        (
+            {"unfetched": True},
+            "v1.0.0",
+            True,
+            0,
+            ["is v1.0.0, the release stack S pins"],
+            False,
+        ),
+        (
+            {"unfetched": True, "past": True},
+            "v1.0.0",
+            False,
+            2,
+            ["pins dfe-engine v1.0.0"],
+            False,
+        ),
+        (
+            {"unfetched": True, "dirty": True},
+            "v1.0.0",
+            False,
+            2,
+            ["-dirty", "pins dfe-engine v1.0.0"],
+            False,
+        ),
         ({"unfetched": True}, "v2.0.0", False, 2, ["pins dfe-engine v2.0.0"], False),
     ],
     ids=[
-        "on-pin", "on-pin-dev", "past-pin", "other-tag", "dirty", "no-pin", "past-pin-dev", "dirty-dev",
-        "unfetched-on-pin-dev", "unfetched-past-pin", "unfetched-dirty", "unfetched-other-pin",
+        "on-pin",
+        "on-pin-dev",
+        "past-pin",
+        "other-tag",
+        "dirty",
+        "no-pin",
+        "past-pin-dev",
+        "dirty-dev",
+        "unfetched-on-pin-dev",
+        "unfetched-past-pin",
+        "unfetched-dirty",
+        "unfetched-other-pin",
     ],
 )
 def test_the_engine_checkout_must_be_the_pinned_release_unless_dev(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys, tree: dict, pin: str, dev: bool, rc: int, said: list[str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys,
+    tree: dict,
+    pin: str,
+    dev: bool,
+    rc: int,
+    said: list[str],
     warns: bool,
 ) -> None:
     monkeypatch.setattr(dfeops, "_stack_app_pin", lambda _stack, _app: pin)
     repo = _engine_checkout(tmp_path, **tree)
-    assert _REAL_GATE(str(repo), "dfe-engine", "S", dev, "the acceptance suite runs") == rc
+    assert (
+        _REAL_GATE(str(repo), "dfe-engine", "S", dev, "the acceptance suite runs") == rc
+    )
     err = capsys.readouterr().err
     for phrase in said:
         assert phrase in err, err
     assert ("WARNING" in err) is warns, err
 
 
-def test_a_directory_that_is_not_a_git_checkout_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+def test_a_directory_that_is_not_a_git_checkout_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
     monkeypatch.setattr(dfeops, "_stack_app_pin", lambda _stack, _app: "v1.0.0")
-    assert _REAL_GATE(str(tmp_path), "dfe-engine", "S", False, "the acceptance suite runs") == 2
+    assert (
+        _REAL_GATE(str(tmp_path), "dfe-engine", "S", False, "the acceptance suite runs")
+        == 2
+    )
     assert "unknown" in capsys.readouterr().err
 
 
@@ -152,7 +252,9 @@ def test_the_pin_is_read_from_the_stack_under_test() -> None:
 # --- the stage inside the cycle ----------------------------------------------------
 
 
-def _cycle(monkeypatch: pytest.MonkeyPatch, *argv: str, fail: str = "") -> list[tuple[str, list[str]]]:
+def _cycle(
+    monkeypatch: pytest.MonkeyPatch, *argv: str, fail: str = ""
+) -> list[tuple[str, list[str]]]:
     """Run cmd_cycle with every stage stubbed; return (stage word, argv) in the order they ran.
 
     ``fail`` names the subcommand whose stage exits 1.
@@ -168,7 +270,14 @@ def _cycle(monkeypatch: pytest.MonkeyPatch, *argv: str, fail: str = "") -> list[
     monkeypatch.setattr(dfeops, "_run_streaming", run)
     monkeypatch.setenv("DFE_ENGINE_REPO", "/nonexistent/dfe-engine")
     args = dfeops.build_parser().parse_args(
-        ["cycle", "--skip-capacity-check", "--skip-preflight", "--stack", "2.2.0-rc.99", *argv]
+        [
+            "cycle",
+            "--skip-capacity-check",
+            "--skip-preflight",
+            "--stack",
+            "2.2.0-rc.99",
+            *argv,
+        ]
     )
     dfeops.cmd_cycle(args)
     return ran
@@ -184,7 +293,11 @@ def _cycle(monkeypatch: pytest.MonkeyPatch, *argv: str, fail: str = "") -> list[
     ],
 )
 def test_the_source_suite_gates_the_checkouts_it_reads_a_corpus_and_program_from(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, suite: str, case: str, reads: list[str]
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    suite: str,
+    case: str,
+    reads: list[str],
 ) -> None:
     asked: list[tuple] = []
     monkeypatch.setattr(dfeops, "_checkout_gate", lambda *args: asked.append(args) or 0)
@@ -195,37 +308,51 @@ def test_the_source_suite_gates_the_checkouts_it_reads_a_corpus_and_program_from
     assert all(args[2:4] == ("S", True) for args in asked)
 
 
-def test_a_wrong_corpus_checkout_refuses_the_source_suite(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_a_wrong_corpus_checkout_refuses_the_source_suite(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     monkeypatch.setattr(dfeops, "_checkout_gate", lambda *_args: 2)
     monkeypatch.setenv("DFE_TRANSFORM_VRL_REPO", str(tmp_path))
     assert dfeops._companion_checkouts_gate("source", "filebeat", "S", False) == 2
 
 
-def test_the_ui_stage_is_gated_in_the_cycle_and_in_its_own_command(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_ui_stage_is_gated_in_the_cycle_and_in_its_own_command(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     asked: list[tuple] = []
     monkeypatch.setattr(dfeops, "_checkout_gate", lambda *args: asked.append(args) or 2)
     assert _cycle(monkeypatch, "--ui-repo", "/nonexistent/dfe-ui", "--e2e") == []
     assert asked[0][:3] == ("/nonexistent/dfe-ui", "dfe-ui", "2.2.0-rc.99")
-    args = dfeops.build_parser().parse_args(["ui", "--ui-repo", "/nonexistent/dfe-ui", "--stack", "S"])
+    args = dfeops.build_parser().parse_args(
+        ["ui", "--ui-repo", "/nonexistent/dfe-ui", "--stack", "S"]
+    )
     assert dfeops.cmd_ui(args) == 2
     assert asked[-1][:3] == ("/nonexistent/dfe-ui", "dfe-ui", "S")
 
 
-def test_the_cycle_hands_the_ui_stage_its_stack_and_the_dev_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_cycle_hands_the_ui_stage_its_stack_and_the_dev_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     ran = _cycle(monkeypatch, "--ui-repo", "/nonexistent/dfe-ui", "--e2e", "--dev")
     stage = next(cmd for word, cmd in ran if word == "ui")
     assert stage[stage.index("--stack") + 1] == "2.2.0-rc.99"
     assert "--dev" in stage
 
 
-def test_the_cycle_refuses_a_wrong_engine_checkout_before_it_deploys(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_cycle_refuses_a_wrong_engine_checkout_before_it_deploys(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(dfeops, "_engine_checkout_gate", lambda *_args: 2)
     assert _cycle(monkeypatch, "--acceptance-suite", "source") == []
 
 
-def test_the_cycle_hands_the_acceptance_stage_its_stack_and_the_dev_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_cycle_hands_the_acceptance_stage_its_stack_and_the_dev_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     seen: list[tuple] = []
-    monkeypatch.setattr(dfeops, "_engine_checkout_gate", lambda *args: seen.append(args) or 0)
+    monkeypatch.setattr(
+        dfeops, "_engine_checkout_gate", lambda *args: seen.append(args) or 0
+    )
     ran = _cycle(monkeypatch, "--acceptance-suite", "source", "--dev")
     stage = next(cmd for word, cmd in ran if word == "acceptance")
     assert stage[stage.index("--stack") + 1] == "2.2.0-rc.99"
@@ -233,13 +360,26 @@ def test_the_cycle_hands_the_acceptance_stage_its_stack_and_the_dev_flag(monkeyp
     assert seen == [("/nonexistent/dfe-engine", "2.2.0-rc.99", True)]
 
 
-def test_no_acceptance_suite_runs_no_acceptance_stage(monkeypatch: pytest.MonkeyPatch) -> None:
-    assert [word for word, _ in _cycle(monkeypatch)] == ["stack-deploy", "verify", "teardown"]
+def test_no_acceptance_suite_runs_no_acceptance_stage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert [word for word, _ in _cycle(monkeypatch)] == [
+        "stack-deploy",
+        "verify",
+        "teardown",
+    ]
 
 
-def test_the_acceptance_stage_runs_after_smoke_and_before_destroy(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_acceptance_stage_runs_after_smoke_and_before_destroy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     ran = _cycle(monkeypatch, "--acceptance-suite", "source")
-    assert [word for word, _ in ran] == ["stack-deploy", "verify", "acceptance", "teardown"]
+    assert [word for word, _ in ran] == [
+        "stack-deploy",
+        "verify",
+        "acceptance",
+        "teardown",
+    ]
 
 
 def test_the_acceptance_stage_gets_the_deploys_target_mode_and_a_shots_dir(
@@ -249,9 +389,19 @@ def test_the_acceptance_stage_gets_the_deploys_target_mode_and_a_shots_dir(
     kubeconfig.write_text("", encoding="utf-8")
     shots = tmp_path / "shots"
     ran = _cycle(
-        monkeypatch, "--acceptance-suite", "source", "--mode", "single",
-        "--kubeconfig", str(kubeconfig), "--env-file", "x.env", "--from-terraform", "tf",
-        "--acceptance-shots-dir", str(shots),
+        monkeypatch,
+        "--acceptance-suite",
+        "source",
+        "--mode",
+        "single",
+        "--kubeconfig",
+        str(kubeconfig),
+        "--env-file",
+        "x.env",
+        "--from-terraform",
+        "tf",
+        "--acceptance-shots-dir",
+        str(shots),
     )
     cmd = dict(ran)["acceptance"]
     assert cmd[cmd.index("--suite") + 1] == "source"
@@ -263,7 +413,11 @@ def test_the_acceptance_stage_gets_the_deploys_target_mode_and_a_shots_dir(
     assert "--insecure" in cmd
     # The suite's own parser has to accept every flag the stage hands it.
     parsed = dfeops.build_parser().parse_args(cmd[2:])
-    assert (parsed.suite, parsed.from_terraform, parsed.insecure) == ("source", "tf", True)
+    assert (parsed.suite, parsed.from_terraform, parsed.insecure) == (
+        "source",
+        "tf",
+        True,
+    )
 
 
 @pytest.mark.parametrize(
@@ -276,12 +430,26 @@ def test_the_acceptance_stage_gets_the_deploys_target_mode_and_a_shots_dir(
     ],
 )
 def test_each_source_case_is_its_own_acceptance_stage_in_order(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, cases: list[str], expected: list[str]
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    cases: list[str],
+    expected: list[str],
 ) -> None:
     gated: list[str] = []
-    monkeypatch.setattr(dfeops, "_companion_checkouts_gate", lambda _suite, case, *_: gated.append(case) or 0)
+    monkeypatch.setattr(
+        dfeops,
+        "_companion_checkouts_gate",
+        lambda _suite, case, *_: gated.append(case) or 0,
+    )
     argv = [arg for case in cases for arg in ("--acceptance-source-case", case)]
-    ran = _cycle(monkeypatch, "--acceptance-suite", "source", "--acceptance-shots-dir", str(tmp_path), *argv)
+    ran = _cycle(
+        monkeypatch,
+        "--acceptance-suite",
+        "source",
+        "--acceptance-shots-dir",
+        str(tmp_path),
+        *argv,
+    )
     stages = [cmd for word, cmd in ran if word == "acceptance"]
     # The suite's own parser has to accept what each stage hands it.
     parsed = [dfeops.build_parser().parse_args(cmd[2:]) for cmd in stages]
@@ -291,12 +459,29 @@ def test_each_source_case_is_its_own_acceptance_stage_in_order(
     assert ran[-1][0] == "teardown"
 
 
-def test_a_failed_source_case_skips_the_cases_after_it(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_a_failed_source_case_skips_the_cases_after_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     monkeypatch.setattr(dfeops, "_companion_checkouts_gate", lambda *_: 0)
-    ran = _cycle(monkeypatch, "--acceptance-suite", "source", "--acceptance-shots-dir", str(tmp_path),
-                 "--acceptance-source-case", "syslog", "--acceptance-source-case", "syslog",
-                 fail="acceptance")
-    assert [word for word, _ in ran] == ["stack-deploy", "verify", "acceptance", "failure-evidence", "teardown"]
+    ran = _cycle(
+        monkeypatch,
+        "--acceptance-suite",
+        "source",
+        "--acceptance-shots-dir",
+        str(tmp_path),
+        "--acceptance-source-case",
+        "syslog",
+        "--acceptance-source-case",
+        "syslog",
+        fail="acceptance",
+    )
+    assert [word for word, _ in ran] == [
+        "stack-deploy",
+        "verify",
+        "acceptance",
+        "failure-evidence",
+        "teardown",
+    ]
 
 
 def test_an_unknown_source_case_is_refused() -> None:
@@ -310,36 +495,80 @@ def test_the_shots_dir_defaults_under_this_repos_tmp() -> None:
     assert args.acceptance_suite is None
 
 
-def test_the_acceptance_stage_runs_before_the_ui_stage(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_acceptance_stage_runs_before_the_ui_stage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """The ui suite's seed routes reset every account, the admin this stage signs in as included."""
-    ran = _cycle(monkeypatch, "--e2e", "--ui-repo", "/nonexistent/dfe-ui", "--acceptance-suite", "source")
-    assert [word for word, _ in ran] == ["stack-deploy", "verify", "acceptance", "ui", "teardown"]
-
-
-def test_a_failed_acceptance_stage_skips_the_rest_and_still_destroys(monkeypatch: pytest.MonkeyPatch) -> None:
     ran = _cycle(
-        monkeypatch, "--e2e", "--ui-repo", "/nonexistent/dfe-ui", "--acceptance-suite", "source",
-        fail="acceptance",
+        monkeypatch,
+        "--e2e",
+        "--ui-repo",
+        "/nonexistent/dfe-ui",
+        "--acceptance-suite",
+        "source",
     )
     assert [word for word, _ in ran] == [
-        "stack-deploy", "verify", "acceptance", "failure-evidence", "teardown"
+        "stack-deploy",
+        "verify",
+        "acceptance",
+        "ui",
+        "teardown",
     ]
 
 
-def test_a_failed_smoke_stage_runs_no_acceptance(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_failed_acceptance_stage_skips_the_rest_and_still_destroys(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ran = _cycle(
+        monkeypatch,
+        "--e2e",
+        "--ui-repo",
+        "/nonexistent/dfe-ui",
+        "--acceptance-suite",
+        "source",
+        fail="acceptance",
+    )
+    assert [word for word, _ in ran] == [
+        "stack-deploy",
+        "verify",
+        "acceptance",
+        "failure-evidence",
+        "teardown",
+    ]
+
+
+def test_a_failed_smoke_stage_runs_no_acceptance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     ran = _cycle(monkeypatch, "--acceptance-suite", "source", fail="verify")
-    assert [word for word, _ in ran] == ["stack-deploy", "verify", "failure-evidence", "teardown"]
+    assert [word for word, _ in ran] == [
+        "stack-deploy",
+        "verify",
+        "failure-evidence",
+        "teardown",
+    ]
 
 
-def test_a_failed_acceptance_stage_fails_the_cycle(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_failed_acceptance_stage_fails_the_cycle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(dfeops, "_resolve_stack", lambda _args: 0)
     monkeypatch.setattr(
-        dfeops, "_run_streaming", lambda cmd, env=None: 1 if cmd[2] == "acceptance" else 0
+        dfeops,
+        "_run_streaming",
+        lambda cmd, env=None: 1 if cmd[2] == "acceptance" else 0,
     )
     monkeypatch.setenv("DFE_ENGINE_REPO", "/nonexistent/dfe-engine")
     args = dfeops.build_parser().parse_args(
-        ["cycle", "--skip-capacity-check", "--skip-preflight", "--stack", "2.2.0-rc.99",
-         "--acceptance-suite", "source"]
+        [
+            "cycle",
+            "--skip-capacity-check",
+            "--skip-preflight",
+            "--stack",
+            "2.2.0-rc.99",
+            "--acceptance-suite",
+            "source",
+        ]
     )
     assert dfeops.cmd_cycle(args) == 1
 
@@ -350,18 +579,29 @@ def test_expected_fail_no_engine_checkout_refuses_before_anything_deploys(
     """acceptance cannot start without one, and finding that out after the deploy costs the deploy."""
     ran: list[list[str]] = []
     monkeypatch.setattr(dfeops, "_resolve_stack", lambda _args: 0)
-    monkeypatch.setattr(dfeops, "_run_streaming", lambda cmd, env=None: ran.append(cmd) or 0)
+    monkeypatch.setattr(
+        dfeops, "_run_streaming", lambda cmd, env=None: ran.append(cmd) or 0
+    )
     monkeypatch.setattr(dfeops, "_sibling_repo", lambda _name, _env_var: None)
     args = dfeops.build_parser().parse_args(
-        ["cycle", "--skip-capacity-check", "--skip-preflight", "--stack", "2.2.0-rc.99",
-         "--acceptance-suite", "source"]
+        [
+            "cycle",
+            "--skip-capacity-check",
+            "--skip-preflight",
+            "--stack",
+            "2.2.0-rc.99",
+            "--acceptance-suite",
+            "source",
+        ]
     )
     assert dfeops.cmd_cycle(args) == 2
     assert ran == []
     assert "DFE_ENGINE_REPO" in capsys.readouterr().err
 
 
-def test_expected_fail_an_unknown_suite_is_refused_at_parse_time(capsys: pytest.CaptureFixture) -> None:
+def test_expected_fail_an_unknown_suite_is_refused_at_parse_time(
+    capsys: pytest.CaptureFixture,
+) -> None:
     with pytest.raises(SystemExit) as refused:
         dfeops.build_parser().parse_args(["cycle", "--acceptance-suite", "bogus"])
     assert refused.value.code == 2
@@ -397,15 +637,27 @@ def _acceptance(
     monkeypatch.setattr(dfeops, "_secret_value", lambda *_a, **_k: "")
     monkeypatch.setattr(dfeops, "_pods_of", lambda *_a, **_k: [])
     monkeypatch.setattr(dfeops, "_resolves", lambda _host: True)
-    monkeypatch.setattr(dfeops, "admin_credential", lambda *_a, **_k: ("admin", "minted"))
+    monkeypatch.setattr(
+        dfeops, "admin_credential", lambda *_a, **_k: ("admin", "minted")
+    )
     monkeypatch.setattr(dfeops.subprocess, "run", fake_run)
     monkeypatch.delenv(dfeops.NEW_ADMIN_PASSWORD_VAR, raising=False)
     monkeypatch.delenv("DFE_NAMESPACE", raising=False)
     monkeypatch.delenv(dfeops.EDGE_FENCE_VAR, raising=False)
-    args = dfeops.build_parser().parse_args([
-        "acceptance", "--repo", "/nonexistent/dfe-engine", "--suite", "source",
-        "--ui-url", "https://dfe.example", "--shots-dir", str(tmp_path / "shots"), *argv,
-    ])
+    args = dfeops.build_parser().parse_args(
+        [
+            "acceptance",
+            "--repo",
+            "/nonexistent/dfe-engine",
+            "--suite",
+            "source",
+            "--ui-url",
+            "https://dfe.example",
+            "--shots-dir",
+            str(tmp_path / "shots"),
+            *argv,
+        ]
+    )
     assert dfeops.cmd_acceptance(args) == expect
     return forwards, seen.get("env", {})
 
@@ -418,12 +670,19 @@ def test_with_no_password_given_the_suite_moves_the_admin_to_the_one_ui_would(
     _forwards, env = _acceptance(monkeypatch, tmp_path)
     assert env[dfeops.NEW_ADMIN_PASSWORD_VAR] == dfeops.ui_admin_password({}, "minted")
     assert env["DFE_E2E_ADMIN_PASSWORD"] == "minted"
-    assert env[dfeops.NEW_ADMIN_PASSWORD_VAR] not in ("minted", dfeops.E2E_SEED_PASSWORD)
+    assert env[dfeops.NEW_ADMIN_PASSWORD_VAR] not in (
+        "minted",
+        dfeops.E2E_SEED_PASSWORD,
+    )
 
 
-def test_a_password_the_env_file_names_wins(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_a_password_the_env_file_names_wins(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     env_file = tmp_path / "estate.env"
-    env_file.write_text(f'{dfeops.NEW_ADMIN_PASSWORD_VAR}="chosen-by-the-operator"\n', encoding="utf-8")
+    env_file.write_text(
+        f'{dfeops.NEW_ADMIN_PASSWORD_VAR}="chosen-by-the-operator"\n', encoding="utf-8"
+    )
     _forwards, env = _acceptance(monkeypatch, tmp_path, "--env-file", str(env_file))
     assert env[dfeops.NEW_ADMIN_PASSWORD_VAR] == "chosen-by-the-operator"
 
@@ -433,18 +692,27 @@ def test_terraform_outputs_name_the_namespace_the_forwards_open_in(
 ) -> None:
     """Without them the suite forwards into dfe-local, which a cloud deploy has never had."""
     _fake_bridge(monkeypatch)
-    forwards, _env = _acceptance(monkeypatch, tmp_path, "--from-terraform", str(tmp_path))
+    forwards, _env = _acceptance(
+        monkeypatch, tmp_path, "--from-terraform", str(tmp_path)
+    )
     by_label = {args[0]: args[2] for args in forwards}
     assert by_label["receiver"] == "dfe-aws-test"
     assert by_label["engine"] == "dfe-aws-test"
 
 
-def test_an_env_file_wins_over_terraform(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_an_env_file_wins_over_terraform(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     _fake_bridge(monkeypatch)
     env_file = tmp_path / "estate.env"
     env_file.write_text('DFE_NAMESPACE="dfe-chosen"\n', encoding="utf-8")
     forwards, _env = _acceptance(
-        monkeypatch, tmp_path, "--from-terraform", str(tmp_path), "--env-file", str(env_file)
+        monkeypatch,
+        tmp_path,
+        "--from-terraform",
+        str(tmp_path),
+        "--env-file",
+        str(env_file),
     )
     assert {args[0]: args[2] for args in forwards}["engine"] == "dfe-chosen"
 
@@ -454,16 +722,30 @@ def test_an_env_file_wins_over_terraform(monkeypatch: pytest.MonkeyPatch, tmp_pa
 FENCE = "203.0.113.7/32,198.51.100.4/32,10.90.0.0/16"
 
 
-def _envoy_services(monkeypatch: pytest.MonkeyPatch, *ranges: list[str] | None, rc: int = 0) -> list[list[str]]:
+def _envoy_services(
+    monkeypatch: pytest.MonkeyPatch, *ranges: list[str] | None, rc: int = 0
+) -> list[list[str]]:
     """Stub the cluster's Envoy LoadBalancer Services, one per `ranges`; return the kubectl calls made."""
     calls: list[list[str]] = []
     items = [
-        {"metadata": {"namespace": "envoy-gateway-system", "name": f"envoy-dfe-gateway-{i}"},
-         "spec": {"type": "LoadBalancer", **({"loadBalancerSourceRanges": r} if r is not None else {})}}
+        {
+            "metadata": {
+                "namespace": "envoy-gateway-system",
+                "name": f"envoy-dfe-gateway-{i}",
+            },
+            "spec": {
+                "type": "LoadBalancer",
+                **({"loadBalancerSourceRanges": r} if r is not None else {}),
+            },
+        }
         for i, r in enumerate(ranges)
     ]
-    items.append({"metadata": {"namespace": "envoy-gateway-system", "name": "envoy-dfe-mesh"},
-                  "spec": {"type": "ClusterIP"}})
+    items.append(
+        {
+            "metadata": {"namespace": "envoy-gateway-system", "name": "envoy-dfe-mesh"},
+            "spec": {"type": "ClusterIP"},
+        }
+    )
 
     def fake(base: list[str], *_argv: str, **_kwargs: object) -> tuple[int, dict, str]:
         calls.append(base)
@@ -479,30 +761,45 @@ def test_no_fence_named_reads_no_service(monkeypatch: pytest.MonkeyPatch) -> Non
     assert calls == []
 
 
-def test_a_service_carrying_every_fenced_range_passes(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_service_carrying_every_fenced_range_passes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """The chart adds its own base ranges to the fence, so more is fine and fewer is not."""
     calls = _envoy_services(monkeypatch, [*FENCE.split(","), "192.0.2.0/24"])
     assert dfeops._edge_fence_problem(["kubectl"], FENCE, FENCE) == ""
     assert calls[0][-2:] == ["-l", dfeops.ENVOY_OWNER_LABEL]
 
 
-def test_expected_fail_a_service_missing_one_fenced_range_is_named(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_expected_fail_a_service_missing_one_fenced_range_is_named(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     _envoy_services(monkeypatch, ["203.0.113.7/32", "10.90.0.0/16"])
     problem = dfeops._edge_fence_problem(["kubectl"], FENCE, FENCE)
     assert problem == "envoy-gateway-system/envoy-dfe-gateway-0 lacks 198.51.100.4/32"
 
 
-def test_expected_fail_an_env_file_emptying_the_terraform_fence_is_named(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_expected_fail_an_env_file_emptying_the_terraform_fence_is_named(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     _envoy_services(monkeypatch, None)
     problem = dfeops._edge_fence_problem(["kubectl"], "", FENCE)
-    assert "envoy-dfe-gateway-0 lacks 10.90.0.0/16, 198.51.100.4/32, 203.0.113.7/32" in problem
-    assert "an env file sets DFE_EDGE_SELF_RANGES empty over the terraform output" in problem
+    assert (
+        "envoy-dfe-gateway-0 lacks 10.90.0.0/16, 198.51.100.4/32, 203.0.113.7/32"
+        in problem
+    )
+    assert (
+        "an env file sets DFE_EDGE_SELF_RANGES empty over the terraform output"
+        in problem
+    )
 
 
-@pytest.mark.parametrize(("ranges", "rc", "said"), [
-    ((), 0, "no Envoy Gateway LoadBalancer Service"),
-    ((["203.0.113.7/32"],), 1, "could not list the gateway's Services: Forbidden"),
-])
+@pytest.mark.parametrize(
+    ("ranges", "rc", "said"),
+    [
+        ((), 0, "no Envoy Gateway LoadBalancer Service"),
+        ((["203.0.113.7/32"],), 1, "could not list the gateway's Services: Forbidden"),
+    ],
+)
 def test_expected_fail_a_service_that_cannot_be_read_fails_rather_than_passing(
     monkeypatch: pytest.MonkeyPatch, ranges: tuple, rc: int, said: str
 ) -> None:
@@ -515,46 +812,89 @@ def test_a_nodeport_gateway_passes_with_a_note(
 ) -> None:
     """On-prem, no load balancer exists to carry source ranges; Envoy's CIDR filter is the fence."""
     items = [
-        {"metadata": {"namespace": "envoy-gateway-system", "name": "envoy-dfe-gateway"},
-         "spec": {"type": "NodePort"}},
-        {"metadata": {"namespace": "envoy-gateway-system", "name": "envoy-dfe-mesh"},
-         "spec": {"type": "ClusterIP"}},
+        {
+            "metadata": {
+                "namespace": "envoy-gateway-system",
+                "name": "envoy-dfe-gateway",
+            },
+            "spec": {"type": "NodePort"},
+        },
+        {
+            "metadata": {"namespace": "envoy-gateway-system", "name": "envoy-dfe-mesh"},
+            "spec": {"type": "ClusterIP"},
+        },
     ]
-    monkeypatch.setattr(dfeops, "_kubectl_json", lambda *_a, **_k: (0, {"items": items}, ""))
+    monkeypatch.setattr(
+        dfeops, "_kubectl_json", lambda *_a, **_k: (0, {"items": items}, "")
+    )
     assert dfeops._edge_fence_problem(["kubectl"], FENCE, FENCE) == ""
     assert "NodePort" in capsys.readouterr().err
 
 
-@pytest.mark.parametrize(("state", "said"), [
-    ("console=deny,api=deny,admin=off", "console: CLOSED"),
-    ("console=deny,api=deny,admin=off", "api: CLOSED"),
-    ("console=listed,api=deny,admin=allow-all", "WARNING: exposure.groups.admin admits every address"),
-    ("console=listed,api=open,admin=open", "console: fenced to exposure.groups.console.allow"),
-    (None, ""),
-])
+@pytest.mark.parametrize(
+    ("state", "said"),
+    [
+        ("console=deny,api=deny,admin=off", "console: CLOSED"),
+        ("console=deny,api=deny,admin=off", "api: CLOSED"),
+        (
+            "console=listed,api=deny,admin=allow-all",
+            "WARNING: exposure.groups.admin admits every address",
+        ),
+        (
+            "console=listed,api=open,admin=open",
+            "console: fenced to exposure.groups.console.allow",
+        ),
+        (None, ""),
+    ],
+)
 def test_the_fence_notice_reads_the_gateway_service(
     monkeypatch: pytest.MonkeyPatch, state: str | None, said: str
 ) -> None:
     annotations = {dfeops.EDGE_FENCE_ANNOTATION: state} if state else {}
-    items = [{"metadata": {"namespace": "envoy-gateway-system", "name": "envoy-dfe-gateway",
-                           "annotations": annotations}, "spec": {"type": "LoadBalancer"}}]
-    monkeypatch.setattr(dfeops, "_kubectl_json", lambda *_a, **_k: (0, {"items": items}, ""))
+    items = [
+        {
+            "metadata": {
+                "namespace": "envoy-gateway-system",
+                "name": "envoy-dfe-gateway",
+                "annotations": annotations,
+            },
+            "spec": {"type": "LoadBalancer"},
+        }
+    ]
+    monkeypatch.setattr(
+        dfeops, "_kubectl_json", lambda *_a, **_k: (0, {"items": items}, "")
+    )
     notice = dfeops.edge_fence_notice(["kubectl"])
     assert (said in notice) if said else notice == "", notice
 
 
-def test_expected_fail_an_off_or_open_group_earns_no_line(monkeypatch: pytest.MonkeyPatch) -> None:
-    items = [{"metadata": {"namespace": "envoy-gateway-system", "name": "envoy-dfe-gateway",
-                           "annotations": {dfeops.EDGE_FENCE_ANNOTATION: "console=listed,api=open,admin=off"}},
-              "spec": {"type": "LoadBalancer"}}]
-    monkeypatch.setattr(dfeops, "_kubectl_json", lambda *_a, **_k: (0, {"items": items}, ""))
+def test_expected_fail_an_off_or_open_group_earns_no_line(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    items = [
+        {
+            "metadata": {
+                "namespace": "envoy-gateway-system",
+                "name": "envoy-dfe-gateway",
+                "annotations": {
+                    dfeops.EDGE_FENCE_ANNOTATION: "console=listed,api=open,admin=off"
+                },
+            },
+            "spec": {"type": "LoadBalancer"},
+        }
+    ]
+    monkeypatch.setattr(
+        dfeops, "_kubectl_json", lambda *_a, **_k: (0, {"items": items}, "")
+    )
     notice = dfeops.edge_fence_notice(["kubectl"])
     assert notice.splitlines() == [
         "==> console: fenced to exposure.groups.console.allow and exposure.selfRanges"
     ], notice
 
 
-def test_an_unreadable_service_gives_no_fence_notice(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_an_unreadable_service_gives_no_fence_notice(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(dfeops, "_kubectl_json", lambda *_a, **_k: (1, {}, "Forbidden"))
     assert dfeops.edge_fence_notice(["kubectl"]) == ""
 
@@ -571,9 +911,19 @@ def _rendered_notice(monkeypatch: pytest.MonkeyPatch, *values: str) -> dict[str,
     it creates, which is the object the notice reads.
     """
     service = edge_fence.envoy_service(edge_fence.render("aws", *values))
-    items = [{"metadata": {"namespace": "envoy-gateway-system", "name": "envoy-dfe-gateway",
-                           "annotations": service["annotations"]}, "spec": {"type": service["type"]}}]
-    monkeypatch.setattr(dfeops, "_kubectl_json", lambda *_a, **_k: (0, {"items": items}, ""))
+    items = [
+        {
+            "metadata": {
+                "namespace": "envoy-gateway-system",
+                "name": "envoy-dfe-gateway",
+                "annotations": service["annotations"],
+            },
+            "spec": {"type": service["type"]},
+        }
+    ]
+    monkeypatch.setattr(
+        dfeops, "_kubectl_json", lambda *_a, **_k: (0, {"items": items}, "")
+    )
     lines = dfeops.edge_fence_notice(["kubectl"]).splitlines()
     return {line.removeprefix("==> ").split(":", 1)[0]: line for line in lines}
 
@@ -590,40 +940,68 @@ def test_an_empty_list_with_self_ranges_names_the_addresses_still_admitted(
     assert "admin" not in lines, lines
 
 
-@pytest.mark.parametrize("own", [GATEWAY_SELF, []], ids=["with self ranges", "no self ranges"])
+@pytest.mark.parametrize(
+    "own", [GATEWAY_SELF, []], ids=["with self ranges", "no self ranges"]
+)
 def test_a_listed_group_names_its_list_and_the_self_ranges_it_admits(
     monkeypatch: pytest.MonkeyPatch, own: list[str]
 ) -> None:
-    lines = _rendered_notice(monkeypatch, *edge_fence.allow("console", GATEWAY_CONSOLE),
-                             *edge_fence.self_ranges(own))
+    lines = _rendered_notice(
+        monkeypatch,
+        *edge_fence.allow("console", GATEWAY_CONSOLE),
+        *edge_fence.self_ranges(own),
+    )
     want = f"==> console: fenced to {', '.join(GATEWAY_CONSOLE)} from exposure.groups.console.allow"
     if own:
         want += f" and {own[0]} from exposure.selfRanges"
-    assert lines["console"] == f"{want} -- {dfeops.EDGE_GROUP_SURFACES['console']} answer 403 to every other address"
+    assert (
+        lines["console"]
+        == f"{want} -- {dfeops.EDGE_GROUP_SURFACES['console']} answer 403 to every other address"
+    )
 
 
-def test_expected_fail_no_list_and_no_self_ranges_admits_nobody(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_expected_fail_no_list_and_no_self_ranges_admits_nobody(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     lines = _rendered_notice(monkeypatch)
-    assert "answer 403 to every address. Set exposure.groups.console.allow" in lines["console"], lines
+    assert (
+        "answer 403 to every address. Set exposure.groups.console.allow"
+        in lines["console"]
+    ), lines
     assert "selfRanges" not in lines["console"], lines
 
 
 def test_a_gateway_that_wrote_no_ranges_claims_nothing_about_who_else_gets_in(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    items = [{"metadata": {"namespace": "envoy-gateway-system", "name": "envoy-dfe-gateway",
-                           "annotations": {dfeops.EDGE_FENCE_ANNOTATION: "console=deny,api=deny,admin=off",
-                                           dfeops.EDGE_FENCE_RANGES_ANNOTATION: "not json"}},
-              "spec": {"type": "LoadBalancer"}}]
-    monkeypatch.setattr(dfeops, "_kubectl_json", lambda *_a, **_k: (0, {"items": items}, ""))
+    items = [
+        {
+            "metadata": {
+                "namespace": "envoy-gateway-system",
+                "name": "envoy-dfe-gateway",
+                "annotations": {
+                    dfeops.EDGE_FENCE_ANNOTATION: "console=deny,api=deny,admin=off",
+                    dfeops.EDGE_FENCE_RANGES_ANNOTATION: "not json",
+                },
+            },
+            "spec": {"type": "LoadBalancer"},
+        }
+    ]
+    monkeypatch.setattr(
+        dfeops, "_kubectl_json", lambda *_a, **_k: (0, {"items": items}, "")
+    )
     notice = dfeops.edge_fence_notice(["kubectl"])
     assert "answer 403 to every address outside exposure.selfRanges" in notice, notice
 
 
-def test_expected_fail_only_clusterip_services_still_fail(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_expected_fail_only_clusterip_services_still_fail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A cloud gateway whose load balancer never appeared must not pass as on-prem."""
     _envoy_services(monkeypatch)
-    assert "no Envoy Gateway LoadBalancer Service" in dfeops._edge_fence_problem(["kubectl"], FENCE, FENCE)
+    assert "no Envoy Gateway LoadBalancer Service" in dfeops._edge_fence_problem(
+        ["kubectl"], FENCE, FENCE
+    )
 
 
 def test_expected_fail_an_env_file_line_that_empties_the_fence_stops_acceptance_before_the_browser(
@@ -631,56 +1009,84 @@ def test_expected_fail_an_env_file_line_that_empties_the_fence_stops_acceptance_
 ) -> None:
     """`KEY=` in the env file beats the terraform output, so bootstrap deployed an open gateway."""
     bridge = type(sys)("bridge")
-    bridge.get_tf_outputs = lambda _dir: {**TF_OUTPUTS, dfeops.EDGE_FENCE_VAR: (FENCE, False)}
+    bridge.get_tf_outputs = lambda _dir: {
+        **TF_OUTPUTS,
+        dfeops.EDGE_FENCE_VAR: (FENCE, False),
+    }
     monkeypatch.setitem(sys.modules, "bridge", bridge)
     _envoy_services(monkeypatch, None)
     env_file = tmp_path / "estate.env"
     env_file.write_text(f"{dfeops.EDGE_FENCE_VAR}=\n", encoding="utf-8")
     forwards, env = _acceptance(
-        monkeypatch, tmp_path, "--from-terraform", str(tmp_path), "--env-file", str(env_file), expect=1
+        monkeypatch,
+        tmp_path,
+        "--from-terraform",
+        str(tmp_path),
+        "--env-file",
+        str(env_file),
+        expect=1,
     )
     assert (forwards, env) == ([], {})
     assert "EDGE FENCE NOT DEPLOYED" in capsys.readouterr().err
 
 
-def test_a_deployed_fence_lets_acceptance_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_a_deployed_fence_lets_acceptance_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     bridge = type(sys)("bridge")
-    bridge.get_tf_outputs = lambda _dir: {**TF_OUTPUTS, dfeops.EDGE_FENCE_VAR: (FENCE, False)}
+    bridge.get_tf_outputs = lambda _dir: {
+        **TF_OUTPUTS,
+        dfeops.EDGE_FENCE_VAR: (FENCE, False),
+    }
     monkeypatch.setitem(sys.modules, "bridge", bridge)
     _envoy_services(monkeypatch, FENCE.split(","))
-    _forwards, env = _acceptance(monkeypatch, tmp_path, "--from-terraform", str(tmp_path))
+    _forwards, env = _acceptance(
+        monkeypatch, tmp_path, "--from-terraform", str(tmp_path)
+    )
     assert env["DFE_E2E_ENGINE_USER"] == "admin"
 
 
 # --- the smoke stage reads the same outputs ------------------------------------------
 
 
-def test_the_smoke_suite_gets_terraform_outputs_as_strings(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_smoke_suite_gets_terraform_outputs_as_strings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A (value, sensitive) pair in the env made subprocess refuse verify outright,
     so a cycle with --from-terraform failed at smoke and never reached acceptance."""
     _fake_bridge(monkeypatch)
-    args = argparse.Namespace(from_terraform="tf", env_file=[], kubeconfig="", mode="single")
+    args = argparse.Namespace(
+        from_terraform="tf", env_file=[], kubeconfig="", mode="single"
+    )
     env = dfeops._suite_env(args)
     assert env["DFE_NAMESPACE"] == "dfe-aws-test"
     assert all(isinstance(value, str) for value in env.values())
     assert "cluster_name" not in env
 
 
-def test_the_smoke_suite_gets_the_app_namespace_as_dfe_ns(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_smoke_suite_gets_the_app_namespace_as_dfe_ns(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """The readiness gate reads DFE_NS alone, so verify ran it with the app namespace dropped."""
     _fake_bridge(monkeypatch)
     monkeypatch.setenv("DFE_NS", "a-stale-namespace")
-    args = argparse.Namespace(from_terraform="tf", env_file=[], kubeconfig="", mode="single")
+    args = argparse.Namespace(
+        from_terraform="tf", env_file=[], kubeconfig="", mode="single"
+    )
     assert dfeops._suite_env(args)["DFE_NS"] == "dfe-aws-test"
 
     args.namespace = "dfe-named"
     assert dfeops._suite_env(args)["DFE_NS"] == "dfe-named"
 
 
-def test_an_operators_dfe_ns_stands_when_nothing_names_the_namespace(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_an_operators_dfe_ns_stands_when_nothing_names_the_namespace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("DFE_NS", "dfe-local")
     monkeypatch.delenv("DFE_NAMESPACE", raising=False)
-    args = argparse.Namespace(from_terraform=None, env_file=[], kubeconfig="", mode=None)
+    args = argparse.Namespace(
+        from_terraform=None, env_file=[], kubeconfig="", mode=None
+    )
     assert dfeops._suite_env(args)["DFE_NS"] == "dfe-local"
 
 
@@ -706,17 +1112,23 @@ def test_the_report_lands_beside_the_screenshots(tmp_path: Path) -> None:
 
 
 def test_a_clean_run_names_no_failure(tmp_path: Path) -> None:
-    results = [wizard.StepResult("observe", "done", "Observe search over fb-1: 12 Results")]
+    results = [
+        wizard.StepResult("observe", "done", "Observe search over fb-1: 12 Results")
+    ]
     assert "FAILED" not in source_run.report(results, tmp_path)
 
 
 def test_the_step_table_carries_no_secret_the_run_holds(tmp_path: Path) -> None:
     """The table prints to a job log that can be public, and a detail is free text."""
     results = [
-        wizard.StepResult("run", "failed", "RuntimeError: login refused for minted-issued-1"),
+        wizard.StepResult(
+            "run", "failed", "RuntimeError: login refused for minted-issued-1"
+        ),
         wizard.StepResult("teardown", "failed", "bearer eyJ0.token.sig went stale"),
     ]
-    text = source_run.report(results, tmp_path, secrets=("minted-issued-1", "", "eyJ0.token.sig"))
+    text = source_run.report(
+        results, tmp_path, secrets=("minted-issued-1", "", "eyJ0.token.sig")
+    )
     for copy in (text, (tmp_path / source_run.STEP_TABLE).read_text(encoding="utf-8")):
         assert "minted-issued-1" not in copy
         assert "eyJ0.token.sig" not in copy
@@ -736,56 +1148,89 @@ def test_a_secret_holding_another_is_redacted_whole(tmp_path: Path) -> None:
 ISSUED, CHOSEN = "issued-pw", "chosen-pw"
 
 
-def _issued_engine(monkeypatch: pytest.MonkeyPatch) -> tuple[clients.Engine, list[tuple[str, object]]]:
+def _issued_engine(
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[clients.Engine, list[tuple[str, object]]]:
     """An engine whose admin is on an issued password, answering as the v1.22 engine does."""
     sent: list[tuple[str, object]] = []
     engine = clients.Engine("https://dfe.example", "admin", ISSUED, new_password=CHOSEN)
 
-    def request(method: str, path: str, body: object = None, *, auth: bool = True) -> clients.Reply:
+    def request(
+        method: str, path: str, body: object = None, *, auth: bool = True
+    ) -> clients.Reply:
         sent.append((path, body))
         if path == "/auth/login":
             if body["password"] == ISSUED:  # type: ignore[index]
-                return clients.Reply(200, {"access_token": "issued-session", "password_change_required": True})
+                return clients.Reply(
+                    200,
+                    {
+                        "access_token": "issued-session",
+                        "password_change_required": True,
+                    },
+                )
             return clients.Reply(200, {"access_token": "fresh-session"})
         if path == "/auth/accounts/reset-password":
             # ChangeOwnPasswordRequest: a body without current_password is a 422.
             if not isinstance(body, dict) or body.get("current_password") != ISSUED:
-                return clients.Reply(422, {"detail": [{"field": "current_password", "type": "missing"}]})
+                return clients.Reply(
+                    422, {"detail": [{"field": "current_password", "type": "missing"}]}
+                )
             return clients.Reply(200, {"message": "password reset"})
         # The change ended the session it was made on.
-        return clients.Reply(200 if engine.token == "fresh-session" else 401, {"items": []})
+        return clients.Reply(
+            200 if engine.token == "fresh-session" else 401, {"items": []}
+        )
 
     monkeypatch.setattr(engine, "_request", request)
     return engine, sent
 
 
-def test_the_forced_change_proves_the_issued_password(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_forced_change_proves_the_issued_password(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     engine, sent = _issued_engine(monkeypatch)
     engine.login()
-    assert ("/auth/accounts/reset-password", {"current_password": ISSUED, "new_password": CHOSEN}) in sent
+    assert (
+        "/auth/accounts/reset-password",
+        {"current_password": ISSUED, "new_password": CHOSEN},
+    ) in sent
     assert engine.password == CHOSEN
 
 
-def test_after_the_forced_change_the_next_call_signs_in_again(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_after_the_forced_change_the_next_call_signs_in_again(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     engine, sent = _issued_engine(monkeypatch)
     assert engine.call("GET", "/sources").status == 200
     logins = [body["password"] for path, body in sent if path == "/auth/login"]  # type: ignore[index]
     assert logins == [ISSUED, CHOSEN]
 
 
-def test_an_engine_that_refuses_the_run_at_teardown_still_leaves_the_report(tmp_path: Path) -> None:
+def test_an_engine_that_refuses_the_run_at_teardown_still_leaves_the_report(
+    tmp_path: Path,
+) -> None:
     """A RuntimeError out of the engine client used to escape teardown, so no steps.txt was written."""
 
     class Refusing:
         def call(self, *_args: object, **_kwargs: object) -> clients.Reply:
             raise RuntimeError("forced password change failed: 422")
 
-    driver = types.SimpleNamespace(results=[wizard.StepResult("landed", "done", "60 of 60 rows")])
-    run = types.SimpleNamespace(driver=driver, engine=Refusing(), args=types.SimpleNamespace(keep=False))
+    driver = types.SimpleNamespace(
+        results=[wizard.StepResult("landed", "done", "60 of 60 rows")]
+    )
+    run = types.SimpleNamespace(
+        driver=driver, engine=Refusing(), args=types.SimpleNamespace(keep=False)
+    )
     cleaned: list[str] = []
-    case = types.SimpleNamespace(name="fb-1", cleanup=lambda _run: cleaned.append("cleanup") or [])
+    case = types.SimpleNamespace(
+        name="fb-1", cleanup=lambda _run: cleaned.append("cleanup") or []
+    )
     source_run.teardown(run, case, "https://dfe.example")
-    assert cleaned == ["cleanup"], "the case's own cleanup runs even when the engine refused the run"
+    assert cleaned == ["cleanup"], (
+        "the case's own cleanup runs even when the engine refused the run"
+    )
     text = source_run.report(driver.results, tmp_path)
     assert "FAILED: teardown" in text
-    assert "forced password change failed: 422" in (tmp_path / source_run.STEP_TABLE).read_text(encoding="utf-8")
+    assert "forced password change failed: 422" in (
+        tmp_path / source_run.STEP_TABLE
+    ).read_text(encoding="utf-8")

@@ -76,7 +76,9 @@ def served_by_gateway(issuer: str, domain: str) -> bool:
     return bool(domain) and bool(label) and parent == domain.lower()
 
 
-def oidc_config(policy: dict | None, domain: str, edge_ca: str) -> tuple[dict | None, str]:
+def oidc_config(
+    policy: dict | None, domain: str, edge_ca: str
+) -> tuple[dict | None, str]:
     """(Argo's oidc.config, why) from the gateway's policy on the argocd route.
 
     Args:
@@ -89,7 +91,10 @@ def oidc_config(policy: dict | None, domain: str, edge_ca: str) -> tuple[dict | 
     """
     local = "so Argo keeps its local admin"
     if policy is None:
-        return None, f"no {POLICY} policy in {NAMESPACE}: no OIDC provider fronts Argo, {local}"
+        return (
+            None,
+            f"no {POLICY} policy in {NAMESPACE}: no OIDC provider fronts Argo, {local}",
+        )
     spec = policy.get("spec") or {}
     oidc = spec.get("oidc") or {}
     issuer = (oidc.get("provider") or {}).get("issuer", "")
@@ -97,9 +102,14 @@ def oidc_config(policy: dict | None, domain: str, edge_ca: str) -> tuple[dict | 
     # A reference to the Secret holding the client credential, never the value.
     ref = oidc.get("clientSecret") or {}
     ref_name = ref.get("name", "")
-    ref_namespace = ref.get("namespace") or (policy.get("metadata") or {}).get("namespace", "")
+    ref_namespace = ref.get("namespace") or (policy.get("metadata") or {}).get(
+        "namespace", ""
+    )
     if not (issuer and client_id and ref_name):
-        return None, f"{POLICY} names no issuer, client id and credential Secret, {local}"
+        return (
+            None,
+            f"{POLICY} names no issuer, client id and credential Secret, {local}",
+        )
     if ref_namespace != NAMESPACE:
         return None, (
             f"{POLICY} reads its client credential from namespace {ref_namespace}, and Argo "
@@ -119,7 +129,10 @@ def oidc_config(policy: dict | None, domain: str, edge_ca: str) -> tuple[dict | 
     # gateway itself serves; a public IdP keeps the system roots.
     if edge_ca and served_by_gateway(issuer, domain):
         config["rootCA"] = edge_ca
-    return config, f"Argo signs in through {issuer} as client {client_id}, the same as its edge"
+    return (
+        config,
+        f"Argo signs in through {issuer} as client {client_id}, the same as its edge",
+    )
 
 
 def helm_values(config: dict | None) -> dict:
@@ -143,7 +156,9 @@ def configured_issuer(raw: str) -> str:
         parsed = None
     if isinstance(parsed, dict):
         return str(parsed.get("issuer", ""))
-    issuers = [line.split(":", 1)[1] for line in raw.splitlines() if line.startswith("issuer:")]
+    issuers = [
+        line.split(":", 1)[1] for line in raw.splitlines() if line.startswith("issuer:")
+    ]
     return issuers[0].strip() if issuers else ""
 
 
@@ -158,7 +173,9 @@ def summary(cm: dict | None, error: str = "") -> str:
             "- Argo CD has no OIDC provider, so it keeps its local `admin` login. Its password\n"
             "  is the `Argo CD initial admin` entry in the credentials block above.\n"
         )
-    admins = " and ".join(f"`{group}`" for group, role in GROUP_ROLES if role == "role:admin")
+    admins = " and ".join(
+        f"`{group}`" for group, role in GROUP_ROLES if role == "role:admin"
+    )
     return (
         f"- Argo CD signs in through {issuer}, the provider the gateway fronts it with.\n"
         f"  {admins} get `role:admin` and `{VIEWER_GROUP}` gets `role:readonly`;\n"
@@ -187,7 +204,17 @@ def _kubectl(argv: list[str], kube: list[str]) -> tuple[int, str, str]:
 def read_policy(kube: list[str]) -> tuple[dict | None, str]:
     """(the argocd route's SecurityPolicy or None, why it is None)."""
     rc, out, err = _kubectl(
-        ["-n", NAMESPACE, "get", POLICY_RESOURCE, POLICY, "-o", "json", "--ignore-not-found"], kube
+        [
+            "-n",
+            NAMESPACE,
+            "get",
+            POLICY_RESOURCE,
+            POLICY,
+            "-o",
+            "json",
+            "--ignore-not-found",
+        ],
+        kube,
     )
     if rc != 0:
         reason = err or f"kubectl exited {rc}"
@@ -210,7 +237,7 @@ def read_edge_ca(kube: list[str]) -> str:
         return ""
     try:
         return base64.b64decode(out.strip()).decode("utf-8")
-    except (ValueError, UnicodeDecodeError):
+    except ValueError, UnicodeDecodeError:
         return ""
 
 
@@ -253,12 +280,20 @@ def cmd_summary(args: argparse.Namespace) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--kubeconfig", default="", help="kubeconfig kubectl reads")
-    parser.add_argument("--context", default="", help="kubeconfig context kubectl reads")
+    parser.add_argument(
+        "--context", default="", help="kubeconfig context kubectl reads"
+    )
     sub = parser.add_subparsers(dest="action", required=True, metavar="<action>")
-    values = sub.add_parser("values", help="print the helm values for bootstrap.sh's Argo install")
-    values.add_argument("--domain", required=True, help="the deployment's domain (DFE_DOMAIN)")
+    values = sub.add_parser(
+        "values", help="print the helm values for bootstrap.sh's Argo install"
+    )
+    values.add_argument(
+        "--domain", required=True, help="the deployment's domain (DFE_DOMAIN)"
+    )
     values.set_defaults(func=cmd_values)
-    report = sub.add_parser("summary", help="print the access summary's Argo CD login block")
+    report = sub.add_parser(
+        "summary", help="print the access summary's Argo CD login block"
+    )
     report.set_defaults(func=cmd_summary)
     args = parser.parse_args()
     return args.func(args)

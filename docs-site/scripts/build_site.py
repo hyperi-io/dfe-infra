@@ -102,7 +102,9 @@ def redirects(
         The file's text.
     """
     target = f"/v/{newest}/"
-    lines = [f"{source} {target} 302" for source in ("/", "/v", "/v/", "/latest", "/latest/")]
+    lines = [
+        f"{source} {target} 302" for source in ("/", "/v", "/v/", "/latest", "/latest/")
+    ]
     lines.append(f"/latest/* {target}:splat 302")
     for section in sections or []:
         lines += [
@@ -111,7 +113,11 @@ def redirects(
         ]
     for stack in dropped or []:
         old = f"/v/{stack}"
-        lines += [f"{old} {target} 301", f"{old}/ {target} 301", f"{old}/* {target}:splat 301"]
+        lines += [
+            f"{old} {target} 301",
+            f"{old}/ {target} 301",
+            f"{old}/* {target}:splat 301",
+        ]
     return "".join(f"{line}\n" for line in lines)
 
 
@@ -159,7 +165,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument("--only", help="build this one version and keep the others as built")
+    parser.add_argument(
+        "--only", help="build this one version and keep the others as built"
+    )
     parser.add_argument(
         "--file-limit",
         type=int,
@@ -170,13 +178,19 @@ def main(argv: list[str] | None = None) -> int:
 
     site_file = CONTENT / "site.json"
     if not site_file.is_file():
-        raise SystemExit(f"error: {site_file} is missing: run scripts/aggregate.py first")
+        raise SystemExit(
+            f"error: {site_file} is missing: run scripts/aggregate.py first"
+        )
     site = json.loads(site_file.read_text(encoding="utf-8"))
-    entries = [entry for entry in site["builds"] if not args.only or entry["name"] == args.only]
+    entries = [
+        entry for entry in site["builds"] if not args.only or entry["name"] == args.only
+    ]
     if not entries:
         raise SystemExit(f"error: content/site.json lists no build named {args.only}")
     if not DOCUSAURUS.is_file():
-        raise SystemExit(f"error: {DOCUSAURUS} is missing: run npm ci in docs-site first")
+        raise SystemExit(
+            f"error: {DOCUSAURUS} is missing: run npm ci in docs-site first"
+        )
     if not args.only and BUILD.exists():
         shutil.rmtree(BUILD)
 
@@ -212,7 +226,9 @@ def main(argv: list[str] | None = None) -> int:
 
     pages, files, largest = count(BUILD)
     print(f"build/: {pages} pages, {files} files, largest {largest} bytes")
-    print(f"Workers limits: {args.file_limit} files per version, {FILE_SIZE_LIMIT} bytes per file")
+    print(
+        f"Workers limits: {args.file_limit} files per version, {FILE_SIZE_LIMIT} bytes per file"
+    )
     if files > args.file_limit or largest > FILE_SIZE_LIMIT:
         print("error: build/ passes a Workers static-asset limit", file=sys.stderr)
         return 1

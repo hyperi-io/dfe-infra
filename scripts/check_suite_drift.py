@@ -87,7 +87,9 @@ DOCS_PAGE = REPO_ROOT / "docs" / "suite-graph.md"
 CHARTS = REPO_ROOT / "helm" / "charts"
 VERSIONS = REPO_ROOT / "versions.yaml"
 
-_CITE = re.compile(r"^(?P<repo>[A-Za-z0-9_.-]+)/(?P<path>[^:]+?)(?::(?P<line>\d+)(?:-(?P<end>\d+))?)?$")
+_CITE = re.compile(
+    r"^(?P<repo>[A-Za-z0-9_.-]+)/(?P<path>[^:]+?)(?::(?P<line>\d+)(?:-(?P<end>\d+))?)?$"
+)
 
 
 def _cited(evidence: str) -> tuple[str, str, int | None, int | None]:
@@ -114,8 +116,19 @@ def _split_lines(text: str) -> list[str]:
 
 def _ref_exists(git: str, clone: Path, ref: str) -> bool:
     proc = subprocess.run(
-        [git, "-C", str(clone), "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"],
-        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        [
+            git,
+            "-C",
+            str(clone),
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            f"{ref}^{{commit}}",
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
     )
     return proc.returncode == 0
 
@@ -124,7 +137,10 @@ def _git_show(git: str, clone: Path, ref: str, rel: str) -> tuple[bool, str]:
     """The blob at ref:rel -- (False, "") when that path does not exist at ref."""
     proc = subprocess.run(
         [git, "-C", str(clone), "show", f"{ref}:{rel}"],
-        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
     )
     return proc.returncode == 0, proc.stdout
 
@@ -282,15 +298,21 @@ def check_locks(graph: dict, clones: Clones) -> tuple[list[str], list[str]]:
                 try:
                     versions = manifest_deps.locked(text, kind, package)
                 except ValueError as exc:
-                    fails.append(f"{member} {lock}: the lock is not readable TOML ({exc})")
+                    fails.append(
+                        f"{member} {lock}: the lock is not readable TOML ({exc})"
+                    )
                     break
                 if not versions:
                     continue
                 resolved = f"{member} {lock} resolves {package} {', '.join(versions)}"
                 if (producer, member) not in linked:
-                    fails.append(f"{resolved}, and suite.yaml has no edge {producer} -> {member}")
+                    fails.append(
+                        f"{resolved}, and suite.yaml has no edge {producer} -> {member}"
+                    )
                 if nodes[producer].get("unconsumed"):
-                    warns.append(f"node {producer} is marked unconsumed, but {resolved}")
+                    warns.append(
+                        f"node {producer} is marked unconsumed, but {resolved}"
+                    )
     return fails, warns
 
 
@@ -306,13 +328,23 @@ def read_stack() -> tuple[list[str], dict[str, set[str]]]:
     current = re.search(r'^current:\s*"([^"]+)"', text, re.MULTILINE)
     if not current:
         return ["versions.yaml has no `current:` pointer"], {}
-    block = re.search(rf"^  {re.escape(current.group(1))}:\n(.*?)(?=^  [0-9]|\Z)", text, re.MULTILINE | re.DOTALL)
+    block = re.search(
+        rf"^  {re.escape(current.group(1))}:\n(.*?)(?=^  [0-9]|\Z)",
+        text,
+        re.MULTILINE | re.DOTALL,
+    )
     sections: dict[str, set[str]] = {}
     for name in ("apps", "content", "digests", "chart-digests"):
         section = rf"^    {re.escape(name)}:\n(.*?)(?=^    [a-z]|\Z)"
-        found = re.search(section, block.group(1), re.MULTILINE | re.DOTALL) if block else None
+        found = (
+            re.search(section, block.group(1), re.MULTILINE | re.DOTALL)
+            if block
+            else None
+        )
         if found:
-            keys = re.findall(r"^      ([A-Za-z0-9_.-]+):", found.group(1), re.MULTILINE)
+            keys = re.findall(
+                r"^      ([A-Za-z0-9_.-]+):", found.group(1), re.MULTILINE
+            )
             sections[name] = set(keys)
     if "apps" not in sections:
         return [f"versions.yaml stack {current.group(1)} has no apps: block"], {}
@@ -326,7 +358,9 @@ def check_charts(graph: dict, stack: dict[str, set[str]]) -> tuple[list[str], se
     of them can be reported as stale.
     """
     declared = graph.get("non_members") or {}
-    charts = {p.name for p in CHARTS.iterdir() if p.is_dir() and p.name.startswith("dfe-")}
+    charts = {
+        p.name for p in CHARTS.iterdir() if p.is_dir() and p.name.startswith("dfe-")
+    }
     charts |= stack.get("chart-digests", set())
     warns = [
         f"chart {chart} has no member in suite.yaml"
@@ -336,7 +370,9 @@ def check_charts(graph: dict, stack: dict[str, set[str]]) -> tuple[list[str], se
     return warns, charts
 
 
-def check_app_pins(graph: dict, stack: dict[str, set[str]]) -> tuple[list[str], set[str]]:
+def check_app_pins(
+    graph: dict, stack: dict[str, set[str]]
+) -> tuple[list[str], set[str]]:
     """versions.yaml apps: keys with no member -- advisory, the pin may predate the tag."""
     declared = graph.get("non_members") or {}
     keys = stack.get("apps", set())
@@ -387,7 +423,9 @@ def check_non_members(graph: dict, named: set[str]) -> list[str]:
         if not isinstance(why, str) or not why.strip():
             fails.append(f"non_members {name}: no reason recorded")
         if name in graph["nodes"]:
-            fails.append(f"non_members {name}: is also a node, so the file disagrees with itself")
+            fails.append(
+                f"non_members {name}: is also a node, so the file disagrees with itself"
+            )
         elif name not in named:
             fails.append(
                 f"non_members {name}: names no chart and no versions.yaml app pin -- "
@@ -429,28 +467,47 @@ def check_docs(graph: dict) -> tuple[list[str], list[str]]:
     except ValueError as exc:
         return [f"{rel}: {exc}"], []
     if fresh != text:
-        return [f"{rel} diagrams differ from suite.yaml -- run `dfe-stack suite --render-docs`"], []
+        return [
+            f"{rel} diagrams differ from suite.yaml -- run `dfe-stack suite --render-docs`"
+        ], []
     maid = shutil.which("maid")
     if not maid:
         return [], ["mermaid syntax: `maid` is not on PATH"]
-    proc = subprocess.run([maid, str(DOCS_PAGE)], capture_output=True, text=True,
-                          encoding="utf-8", errors="replace")
+    proc = subprocess.run(
+        [maid, str(DOCS_PAGE)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
     if proc.returncode != 0:
         detail = (proc.stdout + proc.stderr).strip().splitlines()
-        return [f"{rel}: maid rejects a diagram -- {detail[0] if detail else 'see `maid`'}"], []
+        return [
+            f"{rel}: maid rejects a diagram -- {detail[0] if detail else 'see `maid`'}"
+        ], []
     return [], []
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    parser.add_argument("--repos", type=Path, default=REPO_ROOT.parent,
-                        help="directory holding the member clones (default: this repo's parent)")
-    parser.add_argument("--ref", default="origin/main",
-                        help="git ref to read cross-repo citations and lock files from "
-                             "(default: origin/main); pass --ref '' to read each clone's "
-                             "working tree instead")
-    parser.add_argument("--strict", action="store_true",
-                        help="exit 2 when any citation or lock file had to be skipped")
+    parser.add_argument(
+        "--repos",
+        type=Path,
+        default=REPO_ROOT.parent,
+        help="directory holding the member clones (default: this repo's parent)",
+    )
+    parser.add_argument(
+        "--ref",
+        default="origin/main",
+        help="git ref to read cross-repo citations and lock files from "
+        "(default: origin/main); pass --ref '' to read each clone's "
+        "working tree instead",
+    )
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="exit 2 when any citation or lock file had to be skipped",
+    )
     args = parser.parse_args()
 
     graph = suite_graph.load()
@@ -487,19 +544,27 @@ def main() -> int:
     no_clone = sorted(clones.no_clone)
     no_ref = sorted(clones.no_ref)
     if no_clone:
-        print(f"SKIPPED  citations and lock files in {', '.join(no_clone)}: "
-              f"clone not found under {args.repos}")
+        print(
+            f"SKIPPED  citations and lock files in {', '.join(no_clone)}: "
+            f"clone not found under {args.repos}"
+        )
     if no_ref:
-        reason = f"{args.ref} not found -- git fetch first" if git else "git is not on PATH"
+        reason = (
+            f"{args.ref} not found -- git fetch first" if git else "git is not on PATH"
+        )
         print(f"SKIPPED  citations and lock files in {', '.join(no_ref)}: {reason}")
     skipped = no_clone + no_ref
     if fails:
         print(f"FAIL -- {len(fails)} problem(s) in suite.yaml")
         return 1
-    print(f"OK -- suite.yaml: {len(graph['nodes'])} members, {len(graph['edges'])} edges, "
-          f"{len(warns)} advisory, {len(skipped)} repo(s) skipped")
+    print(
+        f"OK -- suite.yaml: {len(graph['nodes'])} members, {len(graph['edges'])} edges, "
+        f"{len(warns)} advisory, {len(skipped)} repo(s) skipped"
+    )
     if skipped and args.strict:
-        print("FAIL -- --strict and the cross-repo citations and lock files were never checked")
+        print(
+            "FAIL -- --strict and the cross-repo citations and lock files were never checked"
+        )
         return 2
     return 0
 

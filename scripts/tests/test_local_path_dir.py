@@ -74,7 +74,10 @@ def test_a_per_node_entry_is_left_alone():
         {
             "nodePathMap": [
                 {"node": "node-1", "paths": ["/mnt/fast"]},
-                {"node": "DEFAULT_PATH_FOR_NON_LISTED_NODES", "paths": ["/opt/local-path-provisioner"]},
+                {
+                    "node": "DEFAULT_PATH_FOR_NON_LISTED_NODES",
+                    "paths": ["/opt/local-path-provisioner"],
+                },
             ]
         }
     )
@@ -93,14 +96,19 @@ def test_keys_beside_the_node_map_survive():
 def test_a_config_with_no_default_entry_gains_one():
     config = json.dumps({"nodePathMap": [{"node": "node-1", "paths": ["/mnt/fast"]}]})
     got = json.loads(local_path_dir.retarget(config, DISK))
-    assert {"node": "DEFAULT_PATH_FOR_NON_LISTED_NODES", "paths": [DISK]} in got["nodePathMap"]
+    assert {"node": "DEFAULT_PATH_FOR_NON_LISTED_NODES", "paths": [DISK]} in got[
+        "nodePathMap"
+    ]
 
 
 def test_only_the_default_entry_is_rewritten_when_several_nodes_are_listed():
     config = json.dumps(
         {
             "nodePathMap": [
-                {"node": "DEFAULT_PATH_FOR_NON_LISTED_NODES", "paths": ["/opt/local-path-provisioner"]},
+                {
+                    "node": "DEFAULT_PATH_FOR_NON_LISTED_NODES",
+                    "paths": ["/opt/local-path-provisioner"],
+                },
                 {"node": "node-2", "paths": ["/mnt/a", "/mnt/b"]},
             ]
         }
@@ -114,8 +122,16 @@ def test_a_relative_dir_is_refused():
     import subprocess
 
     reply = subprocess.run(
-        [sys.executable, str(BOOTSTRAP / "local_path_dir.py"), "--dir", "var/lib/rancher"],
-        input=UPSTREAM, capture_output=True, text=True, check=False,
+        [
+            sys.executable,
+            str(BOOTSTRAP / "local_path_dir.py"),
+            "--dir",
+            "var/lib/rancher",
+        ],
+        input=UPSTREAM,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     assert reply.returncode == 2
     assert "absolute" in reply.stderr
@@ -126,7 +142,10 @@ def test_the_cli_reads_stdin_and_writes_the_document():
 
     reply = subprocess.run(
         [sys.executable, str(BOOTSTRAP / "local_path_dir.py"), "--dir", DISK],
-        input=UPSTREAM, capture_output=True, text=True, check=False,
+        input=UPSTREAM,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     assert reply.returncode == 0
     assert json.loads(reply.stdout)["nodePathMap"][0]["paths"] == [DISK]
@@ -157,7 +176,8 @@ def test_the_helper_pod_template_is_upstreams_with_only_the_image_pinned():
     The image is upstream's Docker Official Image, read from its public.ecr.aws mirror.
     """
     lines = [
-        line for line in HELPER_TEMPLATE.read_text(encoding="utf-8").splitlines()
+        line
+        for line in HELPER_TEMPLATE.read_text(encoding="utf-8").splitlines()
         if not line.startswith("#")
     ]
     image = [i for i, line in enumerate(lines) if line.strip().startswith("image:")]
@@ -196,14 +216,18 @@ UPSTREAM_MANIFEST = """      containers:
 def test_the_provisioner_image_is_pinned_and_nothing_else_moves():
     pinned = local_path_image.pin(UPSTREAM_MANIFEST, "v0.0.36", PINNED_DIGEST)
     want = UPSTREAM_MANIFEST.replace(
-        "local-path-provisioner:v0.0.36", f"local-path-provisioner:v0.0.36@{PINNED_DIGEST}"
+        "local-path-provisioner:v0.0.36",
+        f"local-path-provisioner:v0.0.36@{PINNED_DIGEST}",
     )
     assert pinned == want
 
 
 def test_a_manifest_that_does_not_name_the_pinned_tag_is_refused():
     """A moved upstream manifest must fail the install, not apply an unpinned image."""
-    for manifest in (UPSTREAM_MANIFEST.replace("v0.0.36", "v0.0.37"), UPSTREAM_MANIFEST * 2):
+    for manifest in (
+        UPSTREAM_MANIFEST.replace("v0.0.36", "v0.0.37"),
+        UPSTREAM_MANIFEST * 2,
+    ):
         try:
             local_path_image.pin(manifest, "v0.0.36", PINNED_DIGEST)
         except ValueError:
@@ -224,15 +248,25 @@ def test_bootstrap_applies_the_pinned_manifest_not_the_upstream_url():
     """Applying the URL directly would start a pod pulling the bare tag."""
     script = (BOOTSTRAP / "bootstrap.sh").read_text(encoding="utf-8")
     assert "services-digests.local-path-provisioner" in script
-    assert 'local_path_image.py" --version "${LOCAL_PATH_VERSION}" --digest "${local_path_digest}"' in script
+    assert (
+        'local_path_image.py" --version "${LOCAL_PATH_VERSION}" --digest "${local_path_digest}"'
+        in script
+    )
     assert "| kubectl apply -f -" in script
-    assert "kubectl apply -f \"https://raw.githubusercontent.com/rancher/local-path-provisioner" not in script
+    assert (
+        'kubectl apply -f "https://raw.githubusercontent.com/rancher/local-path-provisioner'
+        not in script
+    )
 
 
 # --- standalone runner (mirrors the other tests in this dir) ------------------
 def main() -> int:
     failures = 0
-    tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_") and callable(f)]
+    tests = [
+        (n, f)
+        for n, f in sorted(globals().items())
+        if n.startswith("test_") and callable(f)
+    ]
     for name, fn in tests:
         try:
             fn()

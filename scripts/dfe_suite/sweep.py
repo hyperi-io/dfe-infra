@@ -136,7 +136,9 @@ SECRET_SCANNING_JQ = (
     ".[] | {number, html_url, created_at, secret_type, secret_type_display_name, validity,"
     " publicly_leaked, push_protection_bypassed} | tojson"
 )
-ADVISORY_JQ = ".[] | {ghsa_id, cve_id, html_url, summary, severity, state, created_at} | tojson"
+ADVISORY_JQ = (
+    ".[] | {ghsa_id, cve_id, html_url, summary, severity, state, created_at} | tojson"
+)
 PULLS_JQ = (
     ".[] | {number, title, html_url, created_at, user: .user.login, draft, head: .head.ref}"
     " | tojson"
@@ -162,7 +164,15 @@ PRIORITY_FIELD = "Priority"
 EFFORT_FIELD = "Effort"
 # A backlog row as the report carries it; its labels and issue_repo stay internal.
 BACKLOG_FIELDS = (
-    "repo", "project", "status", "priority", "effort", "type", "number", "title", "url",
+    "repo",
+    "project",
+    "status",
+    "priority",
+    "effort",
+    "type",
+    "number",
+    "title",
+    "url",
     "created_at",
 )
 BACKLOG_QUERY = """\
@@ -213,12 +223,8 @@ RUNS_JQ = (
     ".workflow_runs[] | {id, name, workflow_id, path, event, conclusion, html_url, head_sha,"
     " created_at, check_suite_id} | tojson"
 )
-CHECK_RUNS_JQ = (
-    ".check_runs[] | {id, name, html_url, annotations: .output.annotations_count} | tojson"
-)
-ANNOTATIONS_JQ = (
-    ".[] | {path, start_line, annotation_level, title, message} | tojson"
-)
+CHECK_RUNS_JQ = ".check_runs[] | {id, name, html_url, annotations: .output.annotations_count} | tojson"
+ANNOTATIONS_JQ = ".[] | {path, start_line, annotation_level, title, message} | tojson"
 BRIDGE_JQ = (
     ".[] | {html_url, number, created_at, repo: .repository.full_name,"
     " repo_id: .repository.id} | tojson"
@@ -705,7 +711,9 @@ def resolve_members(
             slugs[member] = entry
         why.setdefault(member, []).append("config include")
     members = [
-        Member(member, slugs.get(member) or repo_slug(graph, member, org), tuple(reasons))
+        Member(
+            member, slugs.get(member) or repo_slug(graph, member, org), tuple(reasons)
+        )
         for member, reasons in why.items()
     ]
     notes: list[str] = []
@@ -718,7 +726,9 @@ def resolve_members(
     return name, members, notes
 
 
-def topic_members(org: str, topics: Iterable[str], api: Api) -> dict[str, tuple[str, list[str]]]:
+def topic_members(
+    org: str, topics: Iterable[str], api: Api
+) -> dict[str, tuple[str, list[str]]]:
     """The unarchived repos in ``org`` carrying each topic, by name.
 
     Returns:
@@ -729,11 +739,15 @@ def topic_members(org: str, topics: Iterable[str], api: Api) -> dict[str, tuple[
     """
     found: dict[str, tuple[str, list[str]]] = {}
     for topic in split_names(topics):
-        endpoint = f"search/repositories?q={quote(f'org:{org} topic:{topic}')}&per_page=100"
+        endpoint = (
+            f"search/repositories?q={quote(f'org:{org} topic:{topic}')}&per_page=100"
+        )
         try:
             rows = api(endpoint, TOPIC_JQ, True)
         except GhError as exc:
-            raise FleetError(f"cannot list the repos carrying topic {topic!r}: {exc}") from exc
+            raise FleetError(
+                f"cannot list the repos carrying topic {topic!r}: {exc}"
+            ) from exc
         for row in rows:
             if row.get("archived"):
                 continue
@@ -747,7 +761,9 @@ def topic_members(org: str, topics: Iterable[str], api: Api) -> dict[str, tuple[
 # ---------------------------------------------------------------------------
 
 
-def gh_api(endpoint: str, jq: str, paginate: bool, *, timeout: float = GH_TIMEOUT) -> list:
+def gh_api(
+    endpoint: str, jq: str, paginate: bool, *, timeout: float = GH_TIMEOUT
+) -> list:
     """GET one REST endpoint through ``gh api`` and return the projected records.
 
     Read-only by construction: the method is pinned to GET and query parameters ride in the
@@ -793,7 +809,11 @@ def gh_graphql(
         raise ValueError("gh_graphql runs queries only, never a mutation")
     argv = ["gh", "api", "graphql", "--paginate", "-f", f"query={query}"]
     for name, value in variables.items():
-        argv += ["-F", f"{name}={value}"] if isinstance(value, int) else ["-f", f"{name}={value}"]
+        argv += (
+            ["-F", f"{name}={value}"]
+            if isinstance(value, int)
+            else ["-f", f"{name}={value}"]
+        )
     return _run_gh([*argv, "--jq", jq], "graphql", timeout)
 
 
@@ -806,7 +826,17 @@ def projects_unreadable(org: str, projects: ProjectIndex | None) -> list[Unreada
 
 def project_index(org: str, limit: int, *, timeout: float = GH_TIMEOUT) -> ProjectIndex:
     """The org's open projects by title; a refusal is kept, never read as no projects."""
-    argv = ["gh", "project", "list", "--owner", org, "--format", "json", "--limit", str(limit)]
+    argv = [
+        "gh",
+        "project",
+        "list",
+        "--owner",
+        org,
+        "--format",
+        "json",
+        "--limit",
+        str(limit),
+    ]
     try:
         rows = _run_gh([*argv, "--jq", PROJECTS_JQ], f"projects of {org}", timeout)
     except GhError as exc:
@@ -859,14 +889,17 @@ def read_issue_labels(
         return IssueLabels(blocker, error=f"cannot run {command[0]}: {exc}")
     if proc.returncode != 0:
         said = _error_line(proc.stderr, proc.stdout)
-        return IssueLabels(blocker, error=said or f"{command[0]} exited {proc.returncode}")
+        return IssueLabels(
+            blocker, error=said or f"{command[0]} exited {proc.returncode}"
+        )
     try:
         names = gate_names(json.loads(proc.stdout))
     except ValueError as exc:
         return IssueLabels(blocker, error=str(exc))
     if blocker not in names:
         return IssueLabels(
-            blocker, error=f"{blocker!r} is not among the gate labels: {', '.join(names)}"
+            blocker,
+            error=f"{blocker!r} is not among the gate labels: {', '.join(names)}",
         )
     return IssueLabels(blocker, gate=frozenset(names))
 
@@ -885,12 +918,18 @@ GH_RETRIES = 2
 # GitHub answers an overloaded request with an HTML error page, which gh reports as a
 # JSON parse error with no status, or with a 5xx, and a cut-off body as unexpected end.
 _TRANSIENT_STATUS = {502, 503, 504}
-_TRANSIENT_TEXT = ("invalid character '<'", "not JSON: <", "unexpected end of JSON input")
+_TRANSIENT_TEXT = (
+    "invalid character '<'",
+    "not JSON: <",
+    "unexpected end of JSON input",
+)
 
 
 def _transient(exc: GhError) -> bool:
     text = str(exc)
-    return exc.status in _TRANSIENT_STATUS or any(mark in text for mark in _TRANSIENT_TEXT)
+    return exc.status in _TRANSIENT_STATUS or any(
+        mark in text for mark in _TRANSIENT_TEXT
+    )
 
 
 def _run_gh(argv: list[str], label: str, timeout: float) -> list:
@@ -962,8 +1001,15 @@ def dependabot_findings(repo: str, rows: list[dict]) -> list[Finding]:
                 created_at=_text(row.get("created_at")),
                 extra={
                     key: row.get(key)
-                    for key in ("ghsa", "cve", "package", "ecosystem", "manifest", "scope",
-                                "patched")
+                    for key in (
+                        "ghsa",
+                        "cve",
+                        "package",
+                        "ecosystem",
+                        "manifest",
+                        "scope",
+                        "patched",
+                    )
                 },
             )
         )
@@ -992,8 +1038,14 @@ def code_scanning_findings(repo: str, rows: list[dict]) -> list[Finding]:
                 created_at=_text(row.get("created_at")),
                 extra={
                     key: row.get(key)
-                    for key in ("rule_id", "tool", "path", "line", "rule_severity",
-                                "security_severity")
+                    for key in (
+                        "rule_id",
+                        "tool",
+                        "path",
+                        "line",
+                        "rule_severity",
+                        "security_severity",
+                    )
                 },
             )
         )
@@ -1022,8 +1074,12 @@ def secret_scanning_findings(repo: str, rows: list[dict]) -> list[Finding]:
                 created_at=_text(row.get("created_at")),
                 extra={
                     key: row.get(key)
-                    for key in ("secret_type", "validity", "publicly_leaked",
-                                "push_protection_bypassed")
+                    for key in (
+                        "secret_type",
+                        "validity",
+                        "publicly_leaked",
+                        "push_protection_bypassed",
+                    )
                 },
             )
         )
@@ -1057,7 +1113,9 @@ def advisory_findings(repo: str, rows: list[dict]) -> list[Finding]:
     return findings
 
 
-def bot_pr_findings(repo: str, rows: list[dict], bot_logins: frozenset[str]) -> list[Finding]:
+def bot_pr_findings(
+    repo: str, rows: list[dict], bot_logins: frozenset[str]
+) -> list[Finding]:
     """Open pull requests whose author is one of the bot logins."""
     findings = []
     for row in rows:
@@ -1073,7 +1131,11 @@ def bot_pr_findings(repo: str, rows: list[dict], bot_logins: frozenset[str]) -> 
                 title=f"#{row.get('number')} {_text(row.get('title'))} ({author})",
                 url=_text(row.get("html_url")),
                 created_at=_text(row.get("created_at")),
-                extra={"author": author, "branch": row.get("head"), "draft": row.get("draft")},
+                extra={
+                    "author": author,
+                    "branch": row.get("head"),
+                    "draft": row.get("draft"),
+                },
             )
         )
     return findings
@@ -1194,9 +1256,15 @@ def backlog_rows(repo: str, project: int, nodes: list[dict]) -> list[dict]:
                 "title": _text(content.get("title")),
                 "url": _text(content.get("url")),
                 "created_at": _text(content.get("createdAt")),
-                "issue_repo": _text((content.get("repository") or {}).get("nameWithOwner"))
+                "issue_repo": _text(
+                    (content.get("repository") or {}).get("nameWithOwner")
+                )
                 or repo,
-                "labels": [_text(label.get("name")) for label in labels if isinstance(label, dict)],
+                "labels": [
+                    _text(label.get("name"))
+                    for label in labels
+                    if isinstance(label, dict)
+                ],
             }
         )
     return rows
@@ -1279,7 +1347,11 @@ def backlog_drift(
 
 
 def backlog_split(
-    repo: str, issues: list[dict], rows: list[dict], model: BacklogModel, blocker: str = ""
+    repo: str,
+    issues: list[dict],
+    rows: list[dict],
+    model: BacklogModel,
+    blocker: str = "",
 ) -> tuple[list[dict], list[dict]]:
     """Split a member's open issues into the ones off the backlog and its backlog.
 
@@ -1303,9 +1375,15 @@ def backlog_split(
         priority.
     """
     at, label = model.backlog_status, model.label
-    own = {row["number"]: row for row in rows if row["issue_repo"].lower() == repo.lower()}
-    blocking = {issue["number"] for issue in issues if blocker and blocker in issue["labels"]}
-    labelled = {issue["number"] for issue in issues if label in issue["labels"]} - blocking
+    own = {
+        row["number"]: row for row in rows if row["issue_repo"].lower() == repo.lower()
+    }
+    blocking = {
+        issue["number"] for issue in issues if blocker and blocker in issue["labels"]
+    }
+    labelled = {
+        issue["number"] for issue in issues if label in issue["labels"]
+    } - blocking
     active = [
         issue
         for issue in issues
@@ -1592,12 +1670,15 @@ def _ci(
     repo = member.repo
     wanted = [tool for tool in ("ci_runs", "ci_annotations") if tool in config.tools]
     try:
-        workflows = api(f"repos/{repo}/actions/workflows?per_page={GH_PAGE_MAX}",
-                        WORKFLOWS_JQ, True)
+        workflows = api(
+            f"repos/{repo}/actions/workflows?per_page={GH_PAGE_MAX}", WORKFLOWS_JQ, True
+        )
     except GhError as exc:
         unreadable.extend(Unreadable(repo, tool, exc.reason) for tool in wanted)
         return []
-    on_branch = f"branch={quote(branch, safe='')}&status=completed&per_page={RUNS_PER_WORKFLOW}"
+    on_branch = (
+        f"branch={quote(branch, safe='')}&status=completed&per_page={RUNS_PER_WORKFLOW}"
+    )
     runs: list[dict] = []
     for workflow in workflows:
         ident = workflow.get("id")
@@ -1609,8 +1690,11 @@ def _ci(
         if str(workflow.get("path") or "").startswith(PR_ONLY_WORKFLOW_PATHS):
             continue
         try:
-            runs += api(f"repos/{repo}/actions/workflows/{ident}/runs?{on_branch}",
-                        RUNS_JQ, False)
+            runs += api(
+                f"repos/{repo}/actions/workflows/{ident}/runs?{on_branch}",
+                RUNS_JQ,
+                False,
+            )
         except GhError as exc:
             reason = f"{workflow.get('path') or ident}: {exc.reason}"
             unreadable.extend(Unreadable(repo, tool, reason) for tool in wanted)
@@ -1623,11 +1707,20 @@ def _ci(
             continue
 
         def annotated(run: dict = run, suite: object = suite) -> list[Finding]:
-            jobs = api(f"repos/{repo}/check-suites/{suite}/check-runs?per_page=100",
-                       CHECK_RUNS_JQ, True)
+            jobs = api(
+                f"repos/{repo}/check-suites/{suite}/check-runs?per_page=100",
+                CHECK_RUNS_JQ,
+                True,
+            )
             pairs = [
-                (job, api(f"repos/{repo}/check-runs/{job['id']}/annotations?per_page=100",
-                          ANNOTATIONS_JQ, True))
+                (
+                    job,
+                    api(
+                        f"repos/{repo}/check-runs/{job['id']}/annotations?per_page=100",
+                        ANNOTATIONS_JQ,
+                        True,
+                    ),
+                )
                 for job in jobs
                 if job.get("annotations")
             ]
@@ -1666,8 +1759,11 @@ def collect_repo(
         meta = api(f"repos/{repo}", REPO_JQ, False)[0]
     except (GhError, IndexError) as exc:
         reason = exc.reason if isinstance(exc, GhError) else "empty answer"
-        lost = [Unreadable(repo, tool, f"repo not readable: {reason}") for tool in TOOLS
-                if tool in config.tools]
+        lost = [
+            Unreadable(repo, tool, f"repo not readable: {reason}")
+            for tool in TOOLS
+            if tool in config.tools
+        ]
         return RepoResult(member, "", "", False, [], lost)
     branch = _text(meta.get("default_branch"))
     head_sha = ""
@@ -1679,19 +1775,39 @@ def collect_repo(
     ref = quote(f"refs/heads/{branch}", safe="")
     readers: dict[str, Callable[[], list[Finding]]] = {
         "dependabot": lambda: dependabot_findings(
-            repo, api(f"repos/{repo}/dependabot/alerts?state=open&per_page=100",
-                      DEPENDABOT_JQ, True)),
+            repo,
+            api(
+                f"repos/{repo}/dependabot/alerts?state=open&per_page=100",
+                DEPENDABOT_JQ,
+                True,
+            ),
+        ),
         "code_scanning": lambda: code_scanning_findings(
-            repo, api(f"repos/{repo}/code-scanning/alerts?state=open&per_page=100&ref={ref}",
-                      CODE_SCANNING_JQ, True)),
+            repo,
+            api(
+                f"repos/{repo}/code-scanning/alerts?state=open&per_page=100&ref={ref}",
+                CODE_SCANNING_JQ,
+                True,
+            ),
+        ),
         "secret_scanning": lambda: secret_scanning_findings(
-            repo, api(f"repos/{repo}/secret-scanning/alerts?state=open&per_page=100"
-                      "&hide_secret=true", SECRET_SCANNING_JQ, True)),
+            repo,
+            api(
+                f"repos/{repo}/secret-scanning/alerts?state=open&per_page=100"
+                "&hide_secret=true",
+                SECRET_SCANNING_JQ,
+                True,
+            ),
+        ),
         "advisories": lambda: advisory_findings(
-            repo, api(f"repos/{repo}/security-advisories?per_page=100", ADVISORY_JQ, True)),
+            repo,
+            api(f"repos/{repo}/security-advisories?per_page=100", ADVISORY_JQ, True),
+        ),
         "bot_prs": lambda: bot_pr_findings(
-            repo, api(f"repos/{repo}/pulls?state=open&per_page=100", PULLS_JQ, True),
-            config.bot_logins),
+            repo,
+            api(f"repos/{repo}/pulls?state=open&per_page=100", PULLS_JQ, True),
+            config.bot_logins,
+        ),
     }
     findings: list[Finding] = []
     for tool, read in readers.items():
@@ -1708,9 +1824,15 @@ def collect_repo(
         project, rows = _backlog(member, config, graphql, projects, unreadable)
         drift = backlog_drift(repo, issues or [], rows, config.backlog)
     blocker = labels.blocker if labels is not None else ""
-    off_backlog, backlog = backlog_split(repo, issues or [], rows, config.backlog, blocker)
+    off_backlog, backlog = backlog_split(
+        repo, issues or [], rows, config.backlog, blocker
+    )
     active, scheduled, triage = gate_split(off_backlog, labels)
-    if "issues" in config.tools and issues is not None and (labels is None or labels.error):
+    if (
+        "issues" in config.tools
+        and issues is not None
+        and (labels is None or labels.error)
+    ):
         why = f"not readable: {labels.error}" if labels is not None else "not read"
         unreadable.append(Unreadable(repo, "issues", f"issue label standard {why}"))
     with_issues = "issues" in config.tools
@@ -1742,7 +1864,9 @@ def _issues(
     Returns:
         The dashboard findings, and the issues as work items, or None when they were not read.
     """
-    wanted = [t for t in ("issues", "renovate_dashboard", "backlog") if t in config.tools]
+    wanted = [
+        t for t in ("issues", "renovate_dashboard", "backlog") if t in config.tools
+    ]
     if not wanted:
         return [], None
     repo = member.repo
@@ -1783,7 +1907,9 @@ def _backlog(
     if number is None:
         return NO_PROJECT, []
     try:
-        nodes = graphql(BACKLOG_QUERY, {"org": config.org, "number": number}, BACKLOG_JQ)
+        nodes = graphql(
+            BACKLOG_QUERY, {"org": config.org, "number": number}, BACKLOG_JQ
+        )
     except GhError as exc:
         unreadable.append(Unreadable(repo, "backlog", exc.reason))
         return NOT_READ, []
@@ -1906,7 +2032,12 @@ def rank(findings: Iterable[Finding]) -> list[Finding]:
     order = {severity: n for n, severity in enumerate(SEVERITIES)}
     return sorted(
         findings,
-        key=lambda f: (order.get(f.severity, len(SEVERITIES)), f.repo, f.tool, _id_key(f.id)),
+        key=lambda f: (
+            order.get(f.severity, len(SEVERITIES)),
+            f.repo,
+            f.tool,
+            _id_key(f.id),
+        ),
     )
 
 
@@ -1980,10 +2111,13 @@ def build_report(
                 "issues": len(issues),
                 "unreadable": blocked,
             },
-            "by_severity": {s: sum(f.severity == s for f in findings) for s in SEVERITIES},
+            "by_severity": {
+                s: sum(f.severity == s for f in findings) for s in SEVERITIES
+            },
             "by_tool": {t: sum(f.tool == t for f in findings) for t in enabled},
             "by_repo": {
-                r.member.repo: sum(f.repo == r.member.repo for f in findings) for r in results
+                r.member.repo: sum(f.repo == r.member.repo for f in findings)
+                for r in results
             },
             "work_items": {
                 "issues": len(issues),
@@ -2045,10 +2179,16 @@ def _work_by_repo(report: dict) -> dict[str, dict[str, list[dict]]]:
 
 
 # How a member's summary line names a backlog project that is not a number.
-_PROJECT_WORDS = {"": "project off", NOT_READ: "project not read", NO_PROJECT: "no project"}
+_PROJECT_WORDS = {
+    "": "project off",
+    NOT_READ: "project not read",
+    NO_PROJECT: "no project",
+}
 
 
-def _work_counts(project: int | str, items: dict[str, list[dict]], model: BacklogModel) -> str:
+def _work_counts(
+    project: int | str, items: dict[str, list[dict]], model: BacklogModel
+) -> str:
     """One member's work items as counts: issues, then its backlog by Status and Priority.
 
     Label drift is counted only where it was judged, which takes a project to judge against.
@@ -2061,7 +2201,9 @@ def _work_counts(project: int | str, items: dict[str, list[dict]], model: Backlo
     words = _PROJECT_WORDS.get(project) if isinstance(project, str) else None
     if words is not None and not items["backlog"]:
         return f"{issues}; backlog: {words}"
-    statuses = _tally((r["status"] for r in items["backlog"]), model.statuses, "no status")
+    statuses = _tally(
+        (r["status"] for r in items["backlog"]), model.statuses, "no status"
+    )
     priorities = _tally(
         (r["priority"] for r in items["backlog"]), model.priorities, "unprioritised"
     )
@@ -2077,7 +2219,9 @@ def _work_counts(project: int | str, items: dict[str, list[dict]], model: Backlo
 def _issue_summary_line(kind: str, row: dict) -> str:
     labels = f"[{', '.join(row['labels'])}] " if row["labels"] else ""
     author = f"  by {row['author']}" if kind == "triage" else ""
-    return f"    {kind:<8} #{row['number']} {labels}{row['title']}  {row['url']}{author}"
+    return (
+        f"    {kind:<8} #{row['number']} {labels}{row['title']}  {row['url']}{author}"
+    )
 
 
 def render_summary(report: dict, model: BacklogModel) -> list[str]:
@@ -2095,7 +2239,11 @@ def render_summary(report: dict, model: BacklogModel) -> list[str]:
             f"    drift    #{r['number']} {r['problem']}: {r['title']}  {r['url']}"
             for r in items["drift"]
         )
-        for kind, key in (("issue", "issues"), ("scheduled", "scheduled"), ("triage", "triage")):
+        for kind, key in (
+            ("issue", "issues"),
+            ("scheduled", "scheduled"),
+            ("triage", "triage"),
+        ):
             lines.extend(_issue_summary_line(kind, row) for row in items[key])
     lines.append("")
     return lines
@@ -2130,9 +2278,9 @@ def render_text(report: dict, model: BacklogModel | None = None) -> str:
     lines += render_summary(report, model or BacklogModel())
     by_severity: dict[str, dict[str, list[dict]]] = {}
     for finding in report["findings"]:
-        by_severity.setdefault(finding["severity"], {}).setdefault(finding["repo"], []).append(
-            finding
-        )
+        by_severity.setdefault(finding["severity"], {}).setdefault(
+            finding["repo"], []
+        ).append(finding)
     for severity in SEVERITIES:
         repos = by_severity.get(severity)
         if not repos:
@@ -2142,7 +2290,8 @@ def render_text(report: dict, model: BacklogModel | None = None) -> str:
         for repo, items in repos.items():
             lines.append(f"  {repo}")
             lines.extend(
-                f"    {f['tool']:<18} {f['id']:<10} {f['title']}  {f['url']}" for f in items
+                f"    {f['tool']:<18} {f['id']:<10} {f['title']}  {f['url']}"
+                for f in items
             )
         lines.append("")
     if report["unreadable"]:
@@ -2157,7 +2306,9 @@ def render_text(report: dict, model: BacklogModel | None = None) -> str:
             f"BRIDGE: {bridge['member_alerts']} open alert(s) on members, "
             f"{len(bridge['missing'])} missing from the sweep"
         )
-        lines.extend(f"  MISSING {a['repo']} {a['tool']}: {a['url']}" for a in bridge["missing"])
+        lines.extend(
+            f"  MISSING {a['repo']} {a['tool']}: {a['url']}" for a in bridge["missing"]
+        )
         lines.append("")
     totals = report["totals"]
     severities = ", ".join(f"{s} {n}" for s, n in totals["by_severity"].items())
@@ -2203,8 +2354,20 @@ SLACK_MORE_CHARS = SLACK_URL_CHARS + 60
 # A link label past this many characters is clipped for reading.
 SLACK_LABEL_CHARS = 100
 SLACK_STATS = (
-    "gating", "findings", "secrets", "critical", "high", "medium", "low", "ci_failing",
-    "issues", "backlog", "bot_prs", "drift", "unreadable", "members",
+    "gating",
+    "findings",
+    "secrets",
+    "critical",
+    "high",
+    "medium",
+    "low",
+    "ci_failing",
+    "issues",
+    "backlog",
+    "bot_prs",
+    "drift",
+    "unreadable",
+    "members",
 )
 # The stats keys counted from findings; slack_buckets fills one list per key.
 SLACK_FINDING_STATS = ("secrets", "critical", "high", "medium", "low", "ci_failing")
@@ -2395,7 +2558,9 @@ def _gating_line(report: dict, stats: dict[str, int], model: BacklogModel) -> st
     ungated = []
     if stats["backlog"]:
         priorities = _tally(
-            (r["priority"] for r in report["backlog"]), model.priorities, "unprioritised"
+            (r["priority"] for r in report["backlog"]),
+            model.priorities,
+            "unprioritised",
         )
         ungated.append(f"backlog {stats['backlog']} ({slack_escape(priorities)})")
     if work["scheduled"]:
@@ -2471,7 +2636,9 @@ def slack_summary(
             count = sum(f["tool"] in tools for f in rest)
             if count:
                 groups.append(f"{name} {count}")
-        lines.append(f"Medium {stats['medium']}, low {stats['low']}: {', '.join(groups)}")
+        lines.append(
+            f"Medium {stats['medium']}, low {stats['low']}: {', '.join(groups)}"
+        )
     if stats["unreadable"]:
         lines.append(
             f"Not readable: {stats['unreadable']} on {_repo_counts(report['unreadable'])}"
@@ -2497,7 +2664,9 @@ def _by_repo(rows: list[dict]) -> list[dict]:
     return list(chain.from_iterable(grouped.values()))
 
 
-def _by_repo_lines(rows: list[dict], line: Callable[[dict], str]) -> list[tuple[str, str]]:
+def _by_repo_lines(
+    rows: list[dict], line: Callable[[dict], str]
+) -> list[tuple[str, str]]:
     """``(kind, text)`` lines: a bold repo header before each run of one repo's rows."""
     lines: list[tuple[str, str]] = []
     for repo, items in groupby(rows, key=lambda row: row["repo"]):
@@ -2513,7 +2682,11 @@ SLACK_TITLE_CHARS = 300
 
 def _title(value: object) -> str:
     text = _text(value)
-    clipped = text if len(text) <= SLACK_TITLE_CHARS else text[: SLACK_TITLE_CHARS - 3] + "..."
+    clipped = (
+        text
+        if len(text) <= SLACK_TITLE_CHARS
+        else text[: SLACK_TITLE_CHARS - 3] + "..."
+    )
     return slack_escape(clipped)
 
 
@@ -2548,7 +2721,9 @@ def _dated(build: Callable[[dict], str], now: datetime) -> Callable[[dict], str]
 
 def _finding_line(row: dict) -> str:
     label = f"{row['tool']} #{row['id']}"
-    return f"- {slack_link(row['url'], label)} {row['severity']}: {_title(row['title'])}"
+    return (
+        f"- {slack_link(row['url'], label)} {row['severity']}: {_title(row['title'])}"
+    )
 
 
 def _drift_line(row: dict) -> str:
@@ -2570,7 +2745,9 @@ def _triage_line(row: dict) -> str:
 
 def _backlog_line(row: dict) -> str:
     link = slack_link(row["url"], f"#{row['number']}")
-    where = f"{slack_escape(row['status'] or '-')} {slack_escape(row['priority'] or '-')}"
+    where = (
+        f"{slack_escape(row['status'] or '-')} {slack_escape(row['priority'] or '-')}"
+    )
     return f"- {link} {where}: {_title(row['title'])}"
 
 
@@ -2582,7 +2759,9 @@ def _ci_key(row: dict) -> str:
     """A CI finding's key: repo, workflow file and jobs, then a hash of what it says."""
     extra = row.get("extra") or {}
     jobs = sorted({normalise_message(job) for job in extra.get("jobs") or ()})
-    said = _digest(*(normalise_message(extra.get(name)) for name in CI_KEY_FIELDS[row["tool"]]))
+    said = _digest(
+        *(normalise_message(extra.get(name)) for name in CI_KEY_FIELDS[row["tool"]])
+    )
     return f"{row['repo']}:{_text(extra.get('workflow'))}:{','.join(jobs)}:{said}"
 
 
@@ -2666,21 +2845,59 @@ def slack_groups(report: dict, model: BacklogModel) -> list[SlackGroup]:
                 SlackGroup(name, note, _by_repo(rows), line, finding_key, _always_gates)
             )
     issues, backlog = report["issues"], report["backlog"]
-    priorities = _tally((r["priority"] for r in backlog), model.priorities, "unprioritised")
+    priorities = _tally(
+        (r["priority"] for r in backlog), model.priorities, "unprioritised"
+    )
     on_repos = f" on {len({r['repo'] for r in issues})} repo(s)"
     work = (
-        ("Active issues", issues, on_repos, _dated(_issue_line, now), _issue_key,
-         _always_gates),
-        ("Not readable", report["unreadable"], "", _unreadable_line, _unreadable_key,
-         _unreadable_row_gates),
-        ("Issues to triage", report["triage"], "", _dated(_triage_line, now),
-         _relisted_key("triage"), _never_gates),
-        ("Scheduled issues", report["scheduled"], "", _dated(_issue_line, now),
-         _relisted_key("scheduled"), _never_gates),
-        ("Backlog items", backlog, f" ({slack_escape(priorities)})", _dated(_backlog_line, now),
-         _relisted_key("backlog"), _never_gates),
-        ("Backlog drift", report["backlog_drift"], "", _dated(_drift_line, now),
-         _relisted_key("drift"), _never_gates),
+        (
+            "Active issues",
+            issues,
+            on_repos,
+            _dated(_issue_line, now),
+            _issue_key,
+            _always_gates,
+        ),
+        (
+            "Not readable",
+            report["unreadable"],
+            "",
+            _unreadable_line,
+            _unreadable_key,
+            _unreadable_row_gates,
+        ),
+        (
+            "Issues to triage",
+            report["triage"],
+            "",
+            _dated(_triage_line, now),
+            _relisted_key("triage"),
+            _never_gates,
+        ),
+        (
+            "Scheduled issues",
+            report["scheduled"],
+            "",
+            _dated(_issue_line, now),
+            _relisted_key("scheduled"),
+            _never_gates,
+        ),
+        (
+            "Backlog items",
+            backlog,
+            f" ({slack_escape(priorities)})",
+            _dated(_backlog_line, now),
+            _relisted_key("backlog"),
+            _never_gates,
+        ),
+        (
+            "Backlog drift",
+            report["backlog_drift"],
+            "",
+            _dated(_drift_line, now),
+            _relisted_key("drift"),
+            _never_gates,
+        ),
     )
     for name, rows, note, line, key, gates in work:
         if rows:
@@ -2711,8 +2928,12 @@ def slack_keys(groups: list[SlackGroup]) -> list[dict[str, str | bool]]:
             key = group.key(row)
             if key not in keyed:
                 line = _clip_line(group.line(row), cap)
-                keyed[key] = {"key": key, "group": group.name, "line": line,
-                              "gates": group.gates(row)}
+                keyed[key] = {
+                    "key": key,
+                    "group": group.name,
+                    "line": line,
+                    "gates": group.gates(row),
+                }
     return list(keyed.values())
 
 

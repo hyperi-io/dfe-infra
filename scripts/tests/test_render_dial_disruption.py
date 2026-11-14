@@ -52,7 +52,9 @@ def window(schedule: str, duration: str) -> str:
 
 
 def test_a_dial_with_no_block_is_balanced_with_no_window() -> None:
-    read = render_dial.read_disruption(parse_dial("k8s:\n  cloud: aws\n", source="test-dial"))
+    read = render_dial.read_disruption(
+        parse_dial("k8s:\n  cloud: aws\n", source="test-dial")
+    )
     assert read == render_dial.Disruption("balanced", None)
 
 
@@ -72,27 +74,41 @@ def test_each_posture_reads_through(posture: str) -> None:
 
 def test_a_daily_window_reads_its_start_and_length() -> None:
     read = disruption(window("0 2 * * *", "4h")).window
-    assert read == render_dial.MaintenanceWindow(minute=0, hour=2, weekday=None, minutes=240)
+    assert read == render_dial.MaintenanceWindow(
+        minute=0, hour=2, weekday=None, minutes=240
+    )
     assert read.period_minutes == 24 * 60
 
 
 def test_a_weekly_window_reads_its_day() -> None:
     read = disruption(window("30 22 * * 6", "3h30m")).window
-    assert read == render_dial.MaintenanceWindow(minute=30, hour=22, weekday=6, minutes=210)
+    assert read == render_dial.MaintenanceWindow(
+        minute=30, hour=22, weekday=6, minutes=210
+    )
     assert read.period_minutes == 7 * 24 * 60
 
 
 @pytest.mark.parametrize(
     ("schedule", "duration", "minutes"),
-    [("0 0 * * *", "1m", 1), ("0 2 * * *", "23h59m", 1439), ("59 23 * * 0", "167h59m", 10079)],
+    [
+        ("0 0 * * *", "1m", 1),
+        ("0 2 * * *", "23h59m", 1439),
+        ("59 23 * * 0", "167h59m", 10079),
+    ],
 )
-def test_the_shortest_and_longest_windows_are_accepted(schedule: str, duration: str, minutes: int) -> None:
+def test_the_shortest_and_longest_windows_are_accepted(
+    schedule: str, duration: str, minutes: int
+) -> None:
     assert disruption(window(schedule, duration)).window.minutes == minutes
 
 
 @pytest.mark.parametrize("posture", ["aggressive", "Balanced", "none"])
-def test_expected_fail_a_posture_outside_the_vocabulary_is_refused_by_name(posture: str) -> None:
-    with pytest.raises(render_dial.DialError, match=r"k8s\.disruption\.posture must be one of"):
+def test_expected_fail_a_posture_outside_the_vocabulary_is_refused_by_name(
+    posture: str,
+) -> None:
+    with pytest.raises(
+        render_dial.DialError, match=r"k8s\.disruption\.posture must be one of"
+    ):
         disruption(f"    posture: {posture}\n")
 
 
@@ -126,9 +142,13 @@ def test_expected_fail_half_a_window_is_refused(body: str) -> None:
         "0 2 * * 7",
     ],
 )
-def test_expected_fail_a_schedule_with_no_single_complement_is_refused(schedule: str) -> None:
+def test_expected_fail_a_schedule_with_no_single_complement_is_refused(
+    schedule: str,
+) -> None:
     """The drift hold outside the window is one cron line, so only a daily or one-weekday start has one."""
-    with pytest.raises(render_dial.DialError, match=r"k8s\.disruption\.maintenance_window\.schedule"):
+    with pytest.raises(
+        render_dial.DialError, match=r"k8s\.disruption\.maintenance_window\.schedule"
+    ):
         disruption(window(schedule, "4h"))
 
 
@@ -145,8 +165,12 @@ def test_expected_fail_a_schedule_with_no_single_complement_is_refused(schedule:
         ("0 2 * * 0", "168h"),
     ],
 )
-def test_expected_fail_a_duration_that_is_empty_or_never_closes_is_refused(schedule: str, duration: str) -> None:
-    with pytest.raises(render_dial.DialError, match=r"k8s\.disruption\.maintenance_window\.duration"):
+def test_expected_fail_a_duration_that_is_empty_or_never_closes_is_refused(
+    schedule: str, duration: str
+) -> None:
+    with pytest.raises(
+        render_dial.DialError, match=r"k8s\.disruption\.maintenance_window\.duration"
+    ):
         disruption(window(schedule, duration))
 
 
@@ -154,7 +178,14 @@ def _render(tmp_path: Path, text: str) -> subprocess.CompletedProcess:
     dial = tmp_path / "deployment.yaml"
     dial.write_text(text, encoding="utf-8")
     return subprocess.run(
-        [sys.executable, str(SCRIPTS / "render_dial.py"), "--dial", str(dial), "--out", str(tmp_path / "bootstrap.env")],
+        [
+            sys.executable,
+            str(SCRIPTS / "render_dial.py"),
+            "--dial",
+            str(dial),
+            "--out",
+            str(tmp_path / "bootstrap.env"),
+        ],
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -182,16 +213,27 @@ def test_the_render_names_the_window_drift_waits_for(tmp_path: Path) -> None:
     assert "WARNING -- k8s.disruption" not in result.stderr
 
 
-def test_the_render_warns_that_conservative_with_no_window_holds_stateful_drift(tmp_path: Path) -> None:
+def test_the_render_warns_that_conservative_with_no_window_holds_stateful_drift(
+    tmp_path: Path,
+) -> None:
     """A stateful node that never takes its drift is the posture working, and the operator needs telling."""
-    text = EXAMPLE.read_text(encoding="utf-8").replace(EXAMPLE_POSTURE, "    posture: conservative\n")
+    text = EXAMPLE.read_text(encoding="utf-8").replace(
+        EXAMPLE_POSTURE, "    posture: conservative\n"
+    )
     result = _render(tmp_path, text)
     assert result.returncode == 0, result.stderr
-    assert "render_dial: WARNING -- k8s.disruption.posture is conservative and sets no" in result.stderr
+    assert (
+        "render_dial: WARNING -- k8s.disruption.posture is conservative and sets no"
+        in result.stderr
+    )
 
 
-def test_expected_fail_the_render_refuses_a_bad_block_before_the_env_file_exists(tmp_path: Path) -> None:
-    text = EXAMPLE.read_text(encoding="utf-8").replace(EXAMPLE_POSTURE, "    posture: fast\n")
+def test_expected_fail_the_render_refuses_a_bad_block_before_the_env_file_exists(
+    tmp_path: Path,
+) -> None:
+    text = EXAMPLE.read_text(encoding="utf-8").replace(
+        EXAMPLE_POSTURE, "    posture: fast\n"
+    )
     result = _render(tmp_path, text)
     assert result.returncode == 1
     assert "k8s.disruption.posture must be one of" in result.stderr

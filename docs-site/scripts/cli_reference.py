@@ -76,7 +76,9 @@ def render(tag: str, run: Runner) -> str:
         ImageError: docker could not run the image.
         RenderError: the engine in the image did not render the page.
     """
-    done = run(["docker", "run", "--rm", "--entrypoint", "sh", f"{IMAGE}:{tag}", "-c", _SCRIPT])
+    done = run(
+        ["docker", "run", "--rm", "--entrypoint", "sh", f"{IMAGE}:{tag}", "-c", _SCRIPT]
+    )
     if done.returncode >= _DOCKER_EXIT:
         raise ImageError(f"{IMAGE}:{tag}: {_reason(done.stderr)}")
     if done.returncode != 0 or "\n## " not in done.stdout:

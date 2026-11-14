@@ -143,7 +143,9 @@ def refusal(exc: Exception) -> str:
     return f"the console could not: {failure_line(exc)}"
 
 
-def console_outcome(console_detail: str, refused: str, api_detail: str) -> tuple[str, str]:
+def console_outcome(
+    console_detail: str, refused: str, api_detail: str
+) -> tuple[str, str]:
     """The (status, detail) a console-first step records.
 
     The console doing the work is the pass. A control the console does not have
@@ -163,8 +165,15 @@ def console_outcome(console_detail: str, refused: str, api_detail: str) -> tuple
     return "api-fallback", f"{api_detail} ({refused})"
 
 
-def open_console(driver, engine: Engine, admin_user: str, password: str, org: str, first_user: str,
-                 new_password: str = "") -> None:
+def open_console(
+    driver,
+    engine: Engine,
+    admin_user: str,
+    password: str,
+    org: str,
+    first_user: str,
+    new_password: str = "",
+) -> None:
     """Sign in, completing the first-login wizard when the deployment still owes it.
 
     The wizard sits behind the login and holds the console there until it is
@@ -181,8 +190,16 @@ def open_console(driver, engine: Engine, admin_user: str, password: str, org: st
         return
     admin_password = onboarding.walk_wizard(
         driver,
-        wizard.expected_slugs(wizard.engine_steps(status), wizard.pending_steps(status)),
-        org, first_user, password, password, admin_user, password, new_password,
+        wizard.expected_slugs(
+            wizard.engine_steps(status), wizard.pending_steps(status)
+        ),
+        org,
+        first_user,
+        password,
+        password,
+        admin_user,
+        password,
+        new_password,
     )
     # The wizard hands the console to the account it just made; the rest of this
     # run is the admin's, which is who its API calls are. The console sends a
@@ -190,23 +207,36 @@ def open_console(driver, engine: Engine, admin_user: str, password: str, org: st
     driver.page.context.clear_cookies()
     onboarding.sign_in(driver, admin_user, admin_password)
     driver.page.wait_for_url("**/sources", timeout=STEP_TIMEOUT_MS * 2)
-    driver.record("console", "done", f"the console opened for {admin_user} after the setup wizard")
+    driver.record(
+        "console", "done", f"the console opened for {admin_user} after the setup wizard"
+    )
 
 
-def open_console_settled(driver, engine: Engine, admin_user: str, password: str, org: str,
-                         first_user: str, new_password: str = "") -> None:
+def open_console_settled(
+    driver,
+    engine: Engine,
+    admin_user: str,
+    password: str,
+    org: str,
+    first_user: str,
+    new_password: str = "",
+) -> None:
     """``open_console``, once more after Chrome's first-navigation certificate hiccup.
 
     Chrome reconfigures its certificate verifier right after launch and fails
     the first navigation with ERR_CERT_VERIFIER_CHANGED.
     """
     try:
-        open_console(driver, engine, admin_user, password, org, first_user, new_password)
+        open_console(
+            driver, engine, admin_user, password, org, first_user, new_password
+        )
     except Exception as exc:
         if "ERR_CERT_VERIFIER_CHANGED" not in str(exc):
             raise
         driver.page.wait_for_timeout(3000)
-        open_console(driver, engine, admin_user, password, org, first_user, new_password)
+        open_console(
+            driver, engine, admin_user, password, org, first_user, new_password
+        )
 
 
 def sweep_strays(engine: Engine, verify: bool) -> str:
@@ -218,7 +248,9 @@ def sweep_strays(engine: Engine, verify: bool) -> str:
     listing = engine.call("GET", "/sources")
     names = [str(item["name"]) for item in (listing.body or {}).get("items", [])]
     strays = [n for n in names if RUN_NAME.fullmatch(n)]
-    removed = [remove_source(engine.base, verify, engine.token, n, 60.0) for n in strays]
+    removed = [
+        remove_source(engine.base, verify, engine.token, n, 60.0) for n in strays
+    ]
     return "; ".join(removed) if removed else "no strays"
 
 
@@ -235,12 +267,17 @@ def deploy(engine: Engine, name: str) -> dict:
             current = engine.call("GET", f"/sources/{name}")
             if current.status == 200 and current.body.get("deployed_version"):
                 # No topic lists: the read-back cannot say which topics the deploy made.
-                return {"applied": True, "apps_synced": [f"read back after a {reply.status}"]}
+                return {
+                    "applied": True,
+                    "apps_synced": [f"read back after a {reply.status}"],
+                }
             time.sleep(5)
     if reply.status != 200 or not reply.body.get("applied"):
         raise RuntimeError(f"deploy did not apply: {reply.status} {reply.body}")
     if reply.body.get("apps_sync_error"):
-        raise RuntimeError(f"the apps could not follow the source: {reply.body['apps_sync_error']}")
+        raise RuntimeError(
+            f"the apps could not follow the source: {reply.body['apps_sync_error']}"
+        )
     return reply.body
 
 
@@ -279,7 +316,10 @@ def topic_outcome(deployed: dict, bus: bool | None) -> tuple[str, str]:
             f"and the engine log has its reason; topics ensured {ensured}"
         )
     if bus and not ensured:
-        return "failed", "topics ensured []: this deployment carries a bus and the deploy made no topic for the source"
+        return (
+            "failed",
+            "topics ensured []: this deployment carries a bus and the deploy made no topic for the source",
+        )
     return "done", f"topics ensured {ensured}"
 
 
@@ -287,11 +327,17 @@ def record_deploy(driver, engine: Engine, name: str) -> dict:
     """The deploy step, and the body the steps after it read."""
     deployed = deploy(engine, name)
     status, topics = topic_outcome(deployed, carries_bus(engine))
-    driver.record("deploy", status, f"applied; {topics}; apps synced {deployed.get('apps_synced')}")
+    driver.record(
+        "deploy",
+        status,
+        f"applied; {topics}; apps synced {deployed.get('apps_synced')}",
+    )
     return deployed
 
 
-def wait_instance(engine: Engine, service: str, name: str, deadline: float) -> tuple[str, bool]:
+def wait_instance(
+    engine: Engine, service: str, name: str, deadline: float
+) -> tuple[str, bool]:
     """The instance the source owns appears in the apps list.
 
     The outcome comes back beside the line rather than being read back out of
@@ -300,16 +346,23 @@ def wait_instance(engine: Engine, service: str, name: str, deadline: float) -> t
     until = time.monotonic() + deadline
     while True:
         apps = engine.call("GET", "/apps")
-        entry = next((a for a in (apps.body or []) if a.get("service") == service), None)
+        entry = next(
+            (a for a in (apps.body or []) if a.get("service") == service), None
+        )
         instances = [str(i) for i in (entry or {}).get("instances", [])]
         if name in instances:
             return f"{service}/{name} is an instance the engine knows", True
         if time.monotonic() >= until:
-            return f"no {service}/{name} instance after {deadline:.0f}s; instances: {instances}", False
+            return (
+                f"no {service}/{name} instance after {deadline:.0f}s; instances: {instances}",
+                False,
+            )
         time.sleep(5)
 
 
-def wait_reporting(engine: Engine, service: str, name: str, deadline: float) -> tuple[str, dict]:
+def wait_reporting(
+    engine: Engine, service: str, name: str, deadline: float
+) -> tuple[str, dict]:
     """The instance is up and reporting telemetry through the engine.
 
     The status body comes back with the line, because ``reporting`` alone does
@@ -324,7 +377,10 @@ def wait_reporting(engine: Engine, service: str, name: str, deadline: float) -> 
             return f"{service}/{name} reporting after {uptime}s up", dict(reply.body)
         last = f"{reply.status} {reply.body}"
         if time.monotonic() >= until:
-            return f"{service}/{name} not reporting after {deadline:.0f}s; last {last[:160]}", {}
+            return (
+                f"{service}/{name} not reporting after {deadline:.0f}s; last {last[:160]}",
+                {},
+            )
         time.sleep(10)
 
 
@@ -334,8 +390,9 @@ def wait_reporting(engine: Engine, service: str, name: str, deadline: float) -> 
 GAUGE_TABLE = "otel_metrics_gauge"
 
 
-def gauge_samples(store: Datastore, service_name: str, metric: str,
-                  window_seconds: int) -> tuple[int, int | None]:
+def gauge_samples(
+    store: Datastore, service_name: str, metric: str, window_seconds: int
+) -> tuple[int, int | None]:
     """Samples of one gauge for one telemetry name, and seconds since the last."""
     rows = store.query(
         "SELECT count(), toUInt32(dateDiff('second', max(TimeUnix), now())) "
@@ -349,7 +406,9 @@ def gauge_samples(store: Datastore, service_name: str, metric: str,
     return samples, (int(rows[0][1]) if samples else None)
 
 
-def idle_history(store: Datastore, service_name: str, window_seconds: int) -> tuple[int, int | None]:
+def idle_history(
+    store: Datastore, service_name: str, window_seconds: int
+) -> tuple[int, int | None]:
     """How many idle samples the instance published, and how many seconds since the last.
 
     scalo registers ``pipeline_idle`` only while the app has NO work, so the series
@@ -360,8 +419,9 @@ def idle_history(store: Datastore, service_name: str, window_seconds: int) -> tu
     return gauge_samples(store, service_name, "pipeline_idle", window_seconds)
 
 
-def reporting_verdict(store: Datastore, service: str, detail: str, status: dict,
-                      window: int = IDLE_WINDOW) -> tuple[str, str]:
+def reporting_verdict(
+    store: Datastore, service: str, detail: str, status: dict, window: int = IDLE_WINDOW
+) -> tuple[str, str]:
     """The status a reporting wait earns, once the telemetry has been attributed.
 
     An app reports whether or not the instance this run created is doing any of
@@ -397,7 +457,10 @@ def reporting_verdict(store: Datastore, service: str, detail: str, status: dict,
         else telemetry
     )
     if not store.host:
-        return "unproven", f"{detail}; no datastore access in this run, so an idle app reads the same"
+        return (
+            "unproven",
+            f"{detail}; no datastore access in this run, so an idle app reads the same",
+        )
     try:
         if not store.table_exists(GAUGE_TABLE):
             return "unproven", (
@@ -407,7 +470,10 @@ def reporting_verdict(store: Datastore, service: str, detail: str, status: dict,
         seen, _ = gauge_samples(store, telemetry or service, "info", window)
         samples, since = idle_history(store, telemetry or service, window)
     except Exception as exc:  # an unreadable otel table is the finding, not a traceback
-        return "unproven", f"{detail}; the otel tables did not answer: {type(exc).__name__}"
+        return (
+            "unproven",
+            f"{detail}; the otel tables did not answer: {type(exc).__name__}",
+        )
     if not seen:
         # The engine answers `reporting` off max(TimeUnix), which ClickHouse
         # returns as the epoch rather than NULL when nothing matched, so the
@@ -434,9 +500,15 @@ def reporting_verdict(store: Datastore, service: str, detail: str, status: dict,
     )
 
 
-def record_instance_up(driver, engine: Engine, service: str, name: str,
-                       instance_step: str, instance_deadline: float,
-                       reporting_deadline: float) -> tuple[str, dict]:
+def record_instance_up(
+    driver,
+    engine: Engine,
+    service: str,
+    name: str,
+    instance_step: str,
+    instance_deadline: float,
+    reporting_deadline: float,
+) -> tuple[str, dict]:
     """Wait for the instance and for its first telemetry, recording the instance row.
 
     The reporting row is not recorded here. An instance that has had no records
@@ -451,8 +523,14 @@ def record_instance_up(driver, engine: Engine, service: str, name: str,
     return wait_reporting(engine, service, name, reporting_deadline)
 
 
-def record_reporting(driver, store: Datastore, service: str, step: str,
-                     reported: tuple[str, dict], fed_at: float) -> None:
+def record_reporting(
+    driver,
+    store: Datastore,
+    service: str,
+    step: str,
+    reported: tuple[str, dict],
+    fed_at: float,
+) -> None:
     """Record the reporting row from what the instance published since the feed began.
 
     Re-reads until an export shows the instance holding work, or the deadline
@@ -481,21 +559,27 @@ def record_table(driver, store: Datastore, name: str) -> None:
     """The source's own table exists, when this run can read the datastore."""
     exists = store.table_exists(name) if store.host else None
     driver.record(
-        "table", "done" if exists else ("skipped" if exists is None else "failed"),
-        f"dfe.{name} {'exists' if exists else 'is missing'}" if exists is not None else "no datastore access in this run",
+        "table",
+        "done" if exists else ("skipped" if exists is None else "failed"),
+        f"dfe.{name} {'exists' if exists else 'is missing'}"
+        if exists is not None
+        else "no datastore access in this run",
     )
 
 
 # --- feeding and proving -----------------------------------------------------
 
 
-def corpus_lines(engine_repo: Path, corpus_file: Path, per_module: int,
-                 modules: tuple[str, ...] = ()) -> list[str]:
+def corpus_lines(
+    engine_repo: Path, corpus_file: Path, per_module: int, modules: tuple[str, ...] = ()
+) -> list[str]:
     """The raw log lines, unwrapped, for an agent that reads them off disk."""
     sys.path.insert(0, str(engine_repo))
     from tests.e2e import filebeat_corpus as corpus  # type: ignore[import-not-found]
 
-    items = corpus.samples(corpus_file, modules=modules or corpus.MODULES, limit=per_module)
+    items = corpus.samples(
+        corpus_file, modules=modules or corpus.MODULES, limit=per_module
+    )
     return [item.line for item in items]
 
 
@@ -523,7 +607,9 @@ def corpus_datasets(corpus_file: Path) -> dict[str, str]:
                 found.setdefault(parts[0], set()).add(f"{parts[0]}.{parts[1]}")
     split = sorted(module for module, streams in found.items() if len(streams) > 1)
     if split:
-        raise ValueError(f"corpus modules under more than one data stream: {', '.join(split)}")
+        raise ValueError(
+            f"corpus modules under more than one data stream: {', '.join(split)}"
+        )
     return {module: streams.pop() for module, streams in found.items()}
 
 
@@ -557,16 +643,30 @@ def agent_envelope(line: str, tags: list[str], dataset: str) -> dict:
         The body the receiver is posted.
     """
     return {
-        "agent": {"type": beats.AGENT_TYPE, "name": AGENT_NAME, "version": beats.SHIPPER_VERSION},
-        "data_stream": {"dataset": dataset, "namespace": DATA_STREAM_NAMESPACE, "type": "logs"},
+        "agent": {
+            "type": beats.AGENT_TYPE,
+            "name": AGENT_NAME,
+            "version": beats.SHIPPER_VERSION,
+        },
+        "data_stream": {
+            "dataset": dataset,
+            "namespace": DATA_STREAM_NAMESPACE,
+            "type": "logs",
+        },
         "input": {"type": AGENT_INPUT},
         "message": line,
         "tags": tags,
     }
 
 
-def corpus_bodies(engine_repo: Path, corpus_file: Path, run: str, per_module: int,
-                  modules: tuple[str, ...] = (), kind: str = CORPUS) -> list[dict]:
+def corpus_bodies(
+    engine_repo: Path,
+    corpus_file: Path,
+    run: str,
+    per_module: int,
+    modules: tuple[str, ...] = (),
+    kind: str = CORPUS,
+) -> list[dict]:
     """The corpus lines a case feeds, each in the Elastic Agent envelope plus this run's marker.
 
     dfe-engine's wrapper still reads the archive and mints each record's tags.
@@ -576,20 +676,29 @@ def corpus_bodies(engine_repo: Path, corpus_file: Path, run: str, per_module: in
     sys.path.insert(0, str(engine_repo))
     from tests.e2e import filebeat_corpus as corpus  # type: ignore[import-not-found]
 
-    items = corpus.samples(corpus_file, modules=modules or corpus.MODULES, limit=per_module)
+    items = corpus.samples(
+        corpus_file, modules=modules or corpus.MODULES, limit=per_module
+    )
     if not items:
         return []
     datasets = corpus_datasets(corpus_file)
     wrapped = corpus.wrap_all(items, run=run)
     return [
-        {**agent_envelope(item.line, record["tags"], datasets[item.module]),
-         MARKER: run_marker(run, kind)}
+        {
+            **agent_envelope(item.line, record["tags"], datasets[item.module]),
+            MARKER: run_marker(run, kind),
+        }
         for item, record in zip(items, wrapped, strict=True)
     ]
 
 
-def expected_carrying(engine_repo: Path, corpus_file: Path, per_module: int,
-                      modules: tuple[str, ...], dotted: str) -> int:
+def expected_carrying(
+    engine_repo: Path,
+    corpus_file: Path,
+    per_module: int,
+    modules: tuple[str, ...],
+    dotted: str,
+) -> int:
     """How many of the lines a case feeds carry *dotted* in the corpus's own expected output.
 
     Each corpus log ships its expected events beside it, one per non-blank line,
@@ -627,9 +736,16 @@ def expected_carrying(engine_repo: Path, corpus_file: Path, per_module: int,
     return carrying
 
 
-def post_corpus(receiver_url: str, verify: bool, engine_repo: Path, corpus_file: Path,
-                run: str, per_module: int, modules: tuple[str, ...] = (),
-                kind: str = CORPUS) -> int:
+def post_corpus(
+    receiver_url: str,
+    verify: bool,
+    engine_repo: Path,
+    corpus_file: Path,
+    run: str,
+    per_module: int,
+    modules: tuple[str, ...] = (),
+    kind: str = CORPUS,
+) -> int:
     """POST the corpus in the Elastic Agent envelope, one request per record.
 
     ``modules`` narrows the archive to the corpus modules a case's transform
@@ -640,7 +756,9 @@ def post_corpus(receiver_url: str, verify: bool, engine_repo: Path, corpus_file:
 
     for body in bodies:
         request = urllib.request.Request(
-            receiver_url, data=json.dumps(body).encode(), method="POST",
+            receiver_url,
+            data=json.dumps(body).encode(),
+            method="POST",
             headers={"Content-Type": "application/json"},
         )
         # The receiver rolls onto a new rule mid-run, so a dropped connection
@@ -648,25 +766,43 @@ def post_corpus(receiver_url: str, verify: bool, engine_repo: Path, corpus_file:
         until = time.monotonic() + INGEST_RETRY_WINDOW
         while True:
             try:
-                with urllib.request.urlopen(request, timeout=30, context=tls_context(verify)) as response:
+                with urllib.request.urlopen(
+                    request, timeout=30, context=tls_context(verify)
+                ) as response:
                     if response.status >= 300:
-                        raise RuntimeError(f"the receiver refused a record: {response.status}")
+                        raise RuntimeError(
+                            f"the receiver refused a record: {response.status}"
+                        )
                 break
             except urllib.error.HTTPError as exc:
                 if exc.code < 500:
-                    raise RuntimeError(f"the receiver rejected a record: {exc.code} {exc.read()[:200]!r}") from exc
+                    raise RuntimeError(
+                        f"the receiver rejected a record: {exc.code} {exc.read()[:200]!r}"
+                    ) from exc
                 if time.monotonic() >= until:
-                    raise RuntimeError(f"the receiver kept failing for {INGEST_RETRY_WINDOW:.0f}s: {exc.code}") from exc
+                    raise RuntimeError(
+                        f"the receiver kept failing for {INGEST_RETRY_WINDOW:.0f}s: {exc.code}"
+                    ) from exc
             except (urllib.error.URLError, ConnectionError, OSError) as exc:
                 if time.monotonic() >= until:
-                    raise RuntimeError(f"the receiver never answered within {INGEST_RETRY_WINDOW:.0f}s: {exc}") from exc
+                    raise RuntimeError(
+                        f"the receiver never answered within {INGEST_RETRY_WINDOW:.0f}s: {exc}"
+                    ) from exc
             time.sleep(2)
     return len(bodies)
 
 
-def wait_routed(receiver_url: str, verify: bool, engine_repo: Path, corpus_file: Path,
-                store: Datastore, name: str, run: str, deadline: float,
-                modules: tuple[str, ...] = ()) -> str:
+def wait_routed(
+    receiver_url: str,
+    verify: bool,
+    engine_repo: Path,
+    corpus_file: Path,
+    store: Datastore,
+    name: str,
+    run: str,
+    deadline: float,
+    modules: tuple[str, ...] = (),
+) -> str:
     """Probe until one of this run's probes actually reaches the source's table.
 
     Before the receiver has rolled onto the new rule the probes land in the
@@ -681,7 +817,9 @@ def wait_routed(receiver_url: str, verify: bool, engine_repo: Path, corpus_file:
     until = time.monotonic() + deadline
     passes = 0
     while True:
-        post_corpus(receiver_url, verify, engine_repo, corpus_file, run, 1, modules, PROBE)
+        post_corpus(
+            receiver_url, verify, engine_repo, corpus_file, run, 1, modules, PROBE
+        )
         passes += 1
         if store.scalar(f"SELECT count() FROM {name} WHERE {marked(run, PROBE)}"):
             return (
@@ -709,7 +847,11 @@ def probes_in_main(store: Datastore, run_id: str) -> str:
     """How many of this run's probes reached dfe.main, as the routed row's last clause."""
     try:
         return f"{strayed_rows(store, run_id, PROBE)} probe(s) landed in dfe.main"
-    except (RuntimeError, OSError, ValueError) as exc:  # Datastore.query's three ways to fail
+    except (
+        RuntimeError,
+        OSError,
+        ValueError,
+    ) as exc:  # Datastore.query's three ways to fail
         return f"dfe.main could not be read: {type(exc).__name__}"
 
 
@@ -732,12 +874,20 @@ def dataset_outcome(store: Datastore, table: str, dataset: str) -> tuple[str, st
         f"SELECT count() FROM {table} "
         f"WHERE JSONExtractString({RECORD_TEXT}, 'data_stream', 'dataset') = '{dataset}'"
     )
-    detail = f"{carrying} of {total} rows in dfe.{table} carry data_stream.dataset {dataset}"
+    detail = (
+        f"{carrying} of {total} rows in dfe.{table} carry data_stream.dataset {dataset}"
+    )
     return ("done" if total and carrying == total else "failed"), detail
 
 
-def wait_rows(store: Datastore, table: str, wanted: int, deadline: float,
-              where: str = "", interval: float = 5.0) -> int:
+def wait_rows(
+    store: Datastore,
+    table: str,
+    wanted: int,
+    deadline: float,
+    where: str = "",
+    interval: float = 5.0,
+) -> int:
     """Rows in *table* meeting *where*, polled until *wanted* are there or the deadline passes."""
     clause = f" WHERE {where}" if where else ""
     until = time.monotonic() + deadline
@@ -760,12 +910,15 @@ def ceiling_body(run: str, kind: str, size: int) -> bytes:
     shell = {MARKER: run_marker(run, kind), "message": ""}
     framing = len(json.dumps(shell).encode())
     if size < framing:
-        raise ValueError(f"a {size}-byte record cannot hold its own {framing}-byte framing")
+        raise ValueError(
+            f"a {size}-byte record cannot hold its own {framing}-byte framing"
+        )
     return json.dumps({**shell, "message": "x" * (size - framing)}).encode()
 
 
-def post_body(receiver_url: str, verify: bool, body: bytes,
-              window: float = INGEST_RETRY_WINDOW) -> int:
+def post_body(
+    receiver_url: str, verify: bool, body: bytes, window: float = INGEST_RETRY_WINDOW
+) -> int:
     """POST one body at the receiver and return its status, retrying only what is not an answer.
 
     Through curl with ``Expect: 100-continue``, because the receiver refuses an
@@ -780,26 +933,48 @@ def post_body(receiver_url: str, verify: bool, body: bytes,
     """
     curl = shutil.which("curl")
     if curl is None:
-        raise RuntimeError("the record-ceiling step posts through curl, which is not on PATH")
+        raise RuntimeError(
+            "the record-ceiling step posts through curl, which is not on PATH"
+        )
     argv = [
-        curl, "-sS", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", "60",
-        "-X", "POST", "-H", "Content-Type: application/json", "-H", "Expect: 100-continue",
-        "--data-binary", "@-", *([] if verify else ["--insecure"]), receiver_url,
+        curl,
+        "-sS",
+        "-o",
+        "/dev/null",
+        "-w",
+        "%{http_code}",
+        "--max-time",
+        "60",
+        "-X",
+        "POST",
+        "-H",
+        "Content-Type: application/json",
+        "-H",
+        "Expect: 100-continue",
+        "--data-binary",
+        "@-",
+        *([] if verify else ["--insecure"]),
+        receiver_url,
     ]
     until = time.monotonic() + window
     while True:
-        done = subprocess.run(argv, input=body, capture_output=True, check=False, timeout=90)
+        done = subprocess.run(
+            argv, input=body, capture_output=True, check=False, timeout=90
+        )
         status = int(done.stdout or b"0")
         if 0 < status < 500 or (status and time.monotonic() >= until):
             return status
         if time.monotonic() >= until:
             why = done.stderr.decode("utf-8", errors="replace").strip()
-            raise RuntimeError(f"the receiver never answered within {window:.0f}s: {why}")
+            raise RuntimeError(
+                f"the receiver never answered within {window:.0f}s: {why}"
+            )
         time.sleep(2)
 
 
-def ceiling_outcome(door: int, over_status: int, under_status: int,
-                    under_landed: int, over_landed: int) -> tuple[str, str]:
+def ceiling_outcome(
+    door: int, over_status: int, under_status: int, under_landed: int, over_landed: int
+) -> tuple[str, str]:
     """The step result for one record over the receiver's door and one under it.
 
     Over must be refused with 413 and never land. Under must be accepted and land
@@ -817,8 +992,15 @@ def ceiling_outcome(door: int, over_status: int, under_status: int,
     return ("done" if refused and admitted else "failed"), detail
 
 
-def record_ceiling(driver, store: Datastore, receiver_url: str, verify: bool, run: str,
-                   door: int, deadline: float = CEILING_DEADLINE) -> None:
+def record_ceiling(
+    driver,
+    store: Datastore,
+    receiver_url: str,
+    verify: bool,
+    run: str,
+    door: int,
+    deadline: float = CEILING_DEADLINE,
+) -> None:
     """Send one record just over the receiver's door and one just under, and prove where each went.
 
     The under record names no dataset, so it lands in the catch-all whatever
@@ -826,15 +1008,32 @@ def record_ceiling(driver, store: Datastore, receiver_url: str, verify: bool, ru
     out.
     """
     if not receiver_url or door <= 0:
-        why = "no receiver URL" if not receiver_url else "--receiver-door-bytes 0 leaves it out"
+        why = (
+            "no receiver URL"
+            if not receiver_url
+            else "--receiver-door-bytes 0 leaves it out"
+        )
         driver.record("record-ceiling", "skipped", why)
         return
-    over_status = post_body(receiver_url, verify, ceiling_body(run, CEILING_OVER, door + CEILING_MARGIN))
-    under_status = post_body(receiver_url, verify, ceiling_body(run, CEILING_UNDER, door - CEILING_MARGIN))
+    over_status = post_body(
+        receiver_url, verify, ceiling_body(run, CEILING_OVER, door + CEILING_MARGIN)
+    )
+    under_status = post_body(
+        receiver_url, verify, ceiling_body(run, CEILING_UNDER, door - CEILING_MARGIN)
+    )
     wanted = 1 if 200 <= under_status < 300 else 0
-    under_landed = wait_rows(store, "main", wanted, deadline, marked(run, CEILING_UNDER)) if wanted else 0
-    over_landed = store.scalar(f"SELECT count() FROM main WHERE {marked(run, CEILING_OVER)}")
-    driver.record("record-ceiling", *ceiling_outcome(door, over_status, under_status, under_landed, over_landed))
+    under_landed = (
+        wait_rows(store, "main", wanted, deadline, marked(run, CEILING_UNDER))
+        if wanted
+        else 0
+    )
+    over_landed = store.scalar(
+        f"SELECT count() FROM main WHERE {marked(run, CEILING_OVER)}"
+    )
+    driver.record(
+        "record-ceiling",
+        *ceiling_outcome(door, over_status, under_status, under_landed, over_landed),
+    )
 
 
 # --- the archive -------------------------------------------------------------
@@ -850,7 +1049,9 @@ def archiver_runs(engine: Engine) -> bool:
     """
     reply = engine.call("GET", "/apps")
     if reply.status != 200:
-        raise RuntimeError(f"the engine did not list its apps: {reply.status} {reply.body}")
+        raise RuntimeError(
+            f"the engine did not list its apps: {reply.status} {reply.body}"
+        )
     return any(
         entry.get("service") == ARCHIVER_SERVICE and bool(entry.get("instances"))
         for entry in reply.body or []
@@ -882,7 +1083,10 @@ def archive_directory(prefixes: list[list[str]]) -> tuple[str, str]:
         if code != 0 or not out:
             continue
         if not out.startswith("file://"):
-            return "", f"destination {out} is not local disk; this step proves the file path only"
+            return (
+                "",
+                f"destination {out} is not local disk; this step proves the file path only",
+            )
         return out[len("file://") :], ""
     return "", "the archiver names no destination, so it archives nothing"
 
@@ -928,7 +1132,9 @@ def wait_archived(
 def record_archive(driver, archive_exec: list[list[str]], name: str) -> None:
     """The archive step, shared by every case: the source's own landing topic on disk."""
     if not archive_exec:
-        driver.record("archived", "skipped", "no --archive-exec: nothing to look inside")
+        driver.record(
+            "archived", "skipped", "no --archive-exec: nothing to look inside"
+        )
         return
     directory, refused = archive_directory(archive_exec)
     if refused:
@@ -1000,16 +1206,27 @@ def restart_outcome(prefix: list[str], reported: list[str]) -> tuple[str, str]:
     if not hints:
         return "skipped", "the engine reports every write taken where it stands"
     if not prefix:
-        return "failed", f"{len(hints)} app(s) need restarting and this run was given no --restart-exec: {hints}"
+        return (
+            "failed",
+            f"{len(hints)} app(s) need restarting and this run was given no --restart-exec: {hints}",
+        )
     done = []
     for hint in hints:
         service = hinted_service(hint)
         reply = subprocess.run(
-            [*prefix, service], capture_output=True, text=True, encoding="utf-8",
-            errors="replace", check=False,
+            [*prefix, service],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
         )
-        done.append(f"{service} {'restarted' if reply.returncode == 0 else f'REFUSED: {refused_line(reply)}'}")
-    return ("done" if all("restarted" in entry for entry in done) else "failed"), "; ".join(done)
+        done.append(
+            f"{service} {'restarted' if reply.returncode == 0 else f'REFUSED: {refused_line(reply)}'}"
+        )
+    return (
+        "done" if all("restarted" in entry for entry in done) else "failed"
+    ), "; ".join(done)
 
 
 def apply_restarts(driver, prefix: list[str], reported: list[str]) -> None:
@@ -1048,13 +1265,22 @@ def assert_hyperdx_source(engine: Engine, name: str) -> tuple[str, str]:
     if refused:
         return "skipped", refused
     if holding:
-        return "done", f"HyperDX source {name} on {len(holding)} team(s): {', '.join(holding)}"
+        return (
+            "done",
+            f"HyperDX source {name} on {len(holding)} team(s): {', '.join(holding)}",
+        )
     if with_any == 0:
         # A team is created on first HyperDX sign-in and gets its ClickHouse
         # connection with it, so a deployment nobody has signed into has no team
         # for the source to land on and the write had nowhere to go.
-        return "skipped", "no HyperDX team holds any DFE source yet; nobody has signed in"
-    return "failed", f"no HyperDX team carries {name}, though {with_any} hold other DFE sources"
+        return (
+            "skipped",
+            "no HyperDX team holds any DFE source yet; nobody has signed in",
+        )
+    return (
+        "failed",
+        f"no HyperDX team carries {name}, though {with_any} hold other DFE sources",
+    )
 
 
 def assert_hyperdx_source_gone(engine: Engine, name: str) -> tuple[str, str]:
@@ -1102,8 +1328,14 @@ def results_count(results: str) -> int | None:
     return int(found.group(1).replace(",", "")) if found else None
 
 
-def observe_outcome(name: str, frame_url: str, blocked: str, picked: bool, results: str,
-                    marker: str = "") -> tuple[str, str]:
+def observe_outcome(
+    name: str,
+    frame_url: str,
+    blocked: str,
+    picked: bool,
+    results: str,
+    marker: str = "",
+) -> tuple[str, str]:
     """The step result for the console's Observe search over *name*.
 
     Args:
@@ -1118,7 +1350,10 @@ def observe_outcome(name: str, frame_url: str, blocked: str, picked: bool, resul
         The status and detail for ``Driver.record``.
     """
     if not frame_url or frame_url.startswith("chrome-error://"):
-        return "failed", f"the HyperDX frame did not load ({blocked or 'no frame on the page'})"
+        return (
+            "failed",
+            f"the HyperDX frame did not load ({blocked or 'no frame on the page'})",
+        )
     if not picked:
         # A refusal in *results* is the exception that stopped the pick, and it
         # names the cause where "does not offer" alone would hide it.
@@ -1127,7 +1362,10 @@ def observe_outcome(name: str, frame_url: str, blocked: str, picked: bool, resul
     searched = f"{name} for {marker}" if marker else name
     if (results_count(results) or 0) > 0:
         return "done", f"Observe search over {searched}: {results}"
-    return "failed", f"Observe search over {searched} returned {results or 'no results line'}"
+    return (
+        "failed",
+        f"Observe search over {searched} returned {results or 'no results line'}",
+    )
 
 
 def hyperdx_frame(page):
@@ -1171,7 +1409,9 @@ def search_results(frame, name: str, marker: str = "") -> tuple[bool, str]:
         return False, ""
     try:
         return True, run_search(frame, marker)
-    except Exception as exc:  # a timeout after the pick is the search failing, not the picker
+    except (
+        Exception
+    ) as exc:  # a timeout after the pick is the search failing, not the picker
         return True, refusal(exc)
 
 
@@ -1189,7 +1429,9 @@ def pick_source(frame, name: str) -> bool:
         # The dropdown lists nothing until the frame's source list arrives, and a
         # name typed before then filters an empty list.
         try:
-            frame.get_by_role("option").first.wait_for(state="visible", timeout=STEP_TIMEOUT_MS)
+            frame.get_by_role("option").first.wait_for(
+                state="visible", timeout=STEP_TIMEOUT_MS
+            )
         except Exception:  # an empty list is decided by count() below, not this wait
             pass
         picker.fill(name)
@@ -1251,7 +1493,11 @@ def record_observe(driver, name: str, marker: str = "") -> None:
     page.on("console", on_console)
     frame_url, picked, results = "", False, ""
     try:
-        page.goto(f"{driver.ui}/observe/search", wait_until="domcontentloaded", timeout=STEP_TIMEOUT_MS * 2)
+        page.goto(
+            f"{driver.ui}/observe/search",
+            wait_until="domcontentloaded",
+            timeout=STEP_TIMEOUT_MS * 2,
+        )
         frame = hyperdx_frame(page)
         frame_url = frame.url if frame is not None else ""
         if frame is not None and not frame_url.startswith("chrome-error://"):
@@ -1260,4 +1506,7 @@ def record_observe(driver, name: str, marker: str = "") -> None:
         results = refusal(exc)
     finally:
         page.remove_listener("console", on_console)
-    driver.record("observe", *observe_outcome(name, frame_url, "; ".join(blocked), picked, results, marker))
+    driver.record(
+        "observe",
+        *observe_outcome(name, frame_url, "; ".join(blocked), picked, results, marker),
+    )

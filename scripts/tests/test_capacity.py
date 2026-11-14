@@ -99,13 +99,22 @@ def _node(name: str, allocatable: str, ready: bool = True) -> dict:
     }
 
 
-def _pod(node: str, requests: list[str], phase: str = "Running", init: list[str] | None = None) -> dict:
+def _pod(
+    node: str,
+    requests: list[str],
+    phase: str = "Running",
+    init: list[str] | None = None,
+) -> dict:
     return {
         "status": {"phase": phase},
         "spec": {
             "nodeName": node,
-            "containers": [{"resources": {"requests": {"memory": r}}} for r in requests],
-            "initContainers": [{"resources": {"requests": {"memory": r}}} for r in init or []],
+            "containers": [
+                {"resources": {"requests": {"memory": r}}} for r in requests
+            ],
+            "initContainers": [
+                {"resources": {"requests": {"memory": r}}} for r in init or []
+            ],
         },
     }
 
@@ -140,7 +149,9 @@ class TestTheKubernetesReading:
 
     def test_a_cluster_with_no_ready_node_is_refused(self) -> None:
         with pytest.raises(ValueError, match="no node is Ready"):
-            capacity.node_headroom({"items": [_node("a", "16Gi", ready=False)]}, {"items": []})
+            capacity.node_headroom(
+                {"items": [_node("a", "16Gi", ready=False)]}, {"items": []}
+            )
 
     def test_over_requested_headroom_never_goes_negative(self) -> None:
         nodes = {"items": [_node("a", "4Gi")]}

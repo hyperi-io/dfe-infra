@@ -54,22 +54,30 @@ secrets:
 
 
 def test_the_pinned_version_is_read_off_the_dial() -> None:
-    expect("the dial's pin is found", propagate.pinned_in(DIAL) == "2.2.0-rc.11",
-           f"{propagate.pinned_in(DIAL)!r}")
+    expect(
+        "the dial's pin is found",
+        propagate.pinned_in(DIAL) == "2.2.0-rc.11",
+        f"{propagate.pinned_in(DIAL)!r}",
+    )
 
 
 def test_a_track_latest_dial_has_nothing_to_move() -> None:
     """Commenting `pin` out is how a deployment opts into the update daemon;
     writing one back would take it off track-latest without being asked."""
     tracking = DIAL.replace("  pin: 2.2.0-rc.11\n", "  # pin: 2.2.0-rc.11\n")
-    expect("no pin is reported", propagate.pinned_in(tracking) is None,
-           f"{propagate.pinned_in(tracking)!r}")
+    expect(
+        "no pin is reported",
+        propagate.pinned_in(tracking) is None,
+        f"{propagate.pinned_in(tracking)!r}",
+    )
 
 
 def test_the_rewrite_moves_one_number_and_nothing_else() -> None:
     moved = propagate.rewrite(DIAL, "2.2.0-rc.13")
     expect("the pin moved", "  pin: 2.2.0-rc.13\n" in moved, moved)
-    expect("the commented track dial is untouched", "  # track: latest\n" in moved, moved)
+    expect(
+        "the commented track dial is untouched", "  # track: latest\n" in moved, moved
+    )
     expect(
         "and a `pin:` under another block is not the one that moved",
         "  pin: never-touched\n" in moved,
@@ -77,7 +85,12 @@ def test_the_rewrite_moves_one_number_and_nothing_else() -> None:
     )
     expect(
         "only one line differs",
-        sum(1 for a, b in zip(DIAL.splitlines(), moved.splitlines(), strict=True) if a != b) == 1,
+        sum(
+            1
+            for a, b in zip(DIAL.splitlines(), moved.splitlines(), strict=True)
+            if a != b
+        )
+        == 1,
         moved,
     )
 
@@ -92,8 +105,13 @@ def test_a_dial_already_on_current_rewrites_to_itself() -> None:
 def test_it_reads_the_committed_current_pointer() -> None:
     """Guards the failure where the pointer regex stops matching and the tool
     proposes moving a consumer onto an empty string."""
-    version = propagate.current_stack(propagate.VERSIONS_FILE.read_text(encoding="utf-8"))
-    expect("current resolves to a stack version", version.startswith("2."), f"{version!r}")
+    version = propagate.current_stack(
+        propagate.VERSIONS_FILE.read_text(encoding="utf-8")
+    )
+    expect(
+        "current resolves to a stack version", version.startswith("2."), f"{version!r}"
+    )
+
 
 def _fake_gh(files_changed: int, calls: list[list[str]]):
     """A stand-in for `gh` answering each call the --open-pr path makes."""
@@ -123,7 +141,9 @@ def _run_open_pr(tag_cut: bool, files_changed: int) -> tuple[int, list[list[str]
     real_gh, real_git = propagate._gh, propagate._git
     propagate._gh = _fake_gh(files_changed, calls)
     # git ls-remote --exit-code: 0 when the tag exists, 2 when nothing matched.
-    propagate._git = lambda args: subprocess.CompletedProcess(args, 0 if tag_cut else 2, "", "")
+    propagate._git = lambda args: subprocess.CompletedProcess(
+        args, 0 if tag_cut else 2, "", ""
+    )
     try:
         rc = propagate.main(["--open-pr"])
     finally:
@@ -133,13 +153,17 @@ def _run_open_pr(tag_cut: bool, files_changed: int) -> tuple[int, list[list[str]
 
 def test_a_tag_lookup_error_is_not_read_as_uncut() -> None:
     real_git = propagate._git
-    propagate._git = lambda args: subprocess.CompletedProcess(args, 128, "", "fatal: auth failed")
+    propagate._git = lambda args: subprocess.CompletedProcess(
+        args, 128, "", "fatal: auth failed"
+    )
     try:
         propagate.tag_exists("2.2.1-rc.1")
     except propagate.PropagateError as exc:
         expect("an auth failure raises", "auth failed" in str(exc), str(exc))
     else:
-        expect("an auth failure raises", False, "tag_exists returned instead of raising")
+        expect(
+            "an auth failure raises", False, "tag_exists returned instead of raising"
+        )
     finally:
         propagate._git = real_git
 

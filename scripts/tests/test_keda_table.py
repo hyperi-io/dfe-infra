@@ -15,7 +15,9 @@ def test_the_written_table_is_what_the_goldens_render() -> None:
 
 def test_a_wrong_row_fails_the_check(tmp_path: Path, monkeypatch) -> None:
     planted = tmp_path / "keda-table.md"
-    planted.write_text(keda_table.table().replace("| 2-12 |", "| 2-99 |", 1), encoding="utf-8")
+    planted.write_text(
+        keda_table.table().replace("| 2-12 |", "| 2-99 |", 1), encoding="utf-8"
+    )
     monkeypatch.setattr(keda_table, "OUT", planted)
     monkeypatch.setattr(keda_table, "REPO_ROOT", tmp_path)
     assert keda_table.main(["--check"]) == 1
@@ -36,12 +38,23 @@ ON = ("1-3", "70%", "yes", "")
             ["1-3", "1-3", "1-3", "70%", "slim, single, scale", ""],
         ),
         (
-            {"slim": ("off", "", "", ""), "single": ON, "scale": ("2-12", "70%", "no", "")},
+            {
+                "slim": ("off", "", "", ""),
+                "single": ON,
+                "scale": ("2-12", "70%", "no", ""),
+            },
             ["off", "1-3", "2-12", "70%", "single", ""],
         ),
         (
             {"slim": ("1-2", "60%", "no", ""), "single": ON, "scale": ON},
-            ["1-2", "1-3", "1-3", "slim 60%, single 70%, scale 70%", "single, scale", ""],
+            [
+                "1-2",
+                "1-3",
+                "1-3",
+                "slim 60%, single 70%, scale 70%",
+                "single, scale",
+                "",
+            ],
         ),
         (
             {

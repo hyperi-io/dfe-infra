@@ -160,7 +160,9 @@ def _merge_env(env_path: Path, updates: dict[str, str]) -> None:
 
     if remaining:
         out.append("")
-        out.append("## Set by render_dial.py from deployment.yaml -- do not edit by hand.")
+        out.append(
+            "## Set by render_dial.py from deployment.yaml -- do not edit by hand."
+        )
         out.extend(f'{key}="{value}"' for key, value in remaining.items())
 
     private_file.write_private(env_path, "\n".join(out) + "\n")
@@ -171,7 +173,11 @@ def _derived_command(dial: dict[str, object], env_path: Path) -> str:
     mode = _scalar(dial, ("profile",)) or "single"
     stack = _scalar(dial, ("version", "pin")) or ""
     registry = _scalar(dial, ("registry",)) or ""
-    rel_env = env_path.relative_to(REPO_ROOT) if env_path.is_relative_to(REPO_ROOT) else env_path
+    rel_env = (
+        env_path.relative_to(REPO_ROOT)
+        if env_path.is_relative_to(REPO_ROOT)
+        else env_path
+    )
     parts = ["python3 scripts/dfe-ops cycle", f"--mode {mode}"]
     if stack:
         parts.append(f"--stack {stack}")
@@ -195,7 +201,9 @@ class DialError(ValueError):
     """A dial the tofu render cannot turn into a tfvars file."""
 
 
-def _seeds(kafka_provider: str, clickhouse_mode: str = "in_cluster") -> dict[str, dict[str, str]]:
+def _seeds(
+    kafka_provider: str, clickhouse_mode: str = "in_cluster"
+) -> dict[str, dict[str, str]]:
     """The credentials the deploy layer puts in the store, for this broker and datastore.
 
     An empty value is generated -- in the secrets module, or in the root for a
@@ -243,7 +251,9 @@ def _coerce_flag(value: str | None, label: str, default: bool) -> bool:
     raise DialError(f"{label} must be true or false, got {value!r}")
 
 
-def _flag(dial: dict[str, object], path: tuple[str, ...], default: bool = False) -> bool:
+def _flag(
+    dial: dict[str, object], path: tuple[str, ...], default: bool = False
+) -> bool:
     """Read a true/false dial field. The dial writes them as strings, like `steps`."""
     return _coerce_flag(_scalar(dial, path), ".".join(path), default)
 
@@ -270,7 +280,13 @@ _INGEST_DOOR_NOTE: dict[str, str] = {
 _INGEST_RETIRED: dict[tuple[str, ...], str] = {
     ("edge", "ingest", "receiver", "mode"): "edge.groups.ingest.door",
     ("ingest", "mode"): "edge.groups.ingest.door",
-    ("edge", "ingest", "receiver", "public", "loadBalancerSourceRanges"): "edge.groups.ingest.allow",
+    (
+        "edge",
+        "ingest",
+        "receiver",
+        "public",
+        "loadBalancerSourceRanges",
+    ): "edge.groups.ingest.allow",
     ("ingest", "public", "loadBalancerSourceRanges"): "edge.groups.ingest.allow",
 }
 
@@ -295,9 +311,15 @@ def _ingest_door(dial: dict[str, object]) -> str:
     carries it into the deploy repo's infra/common.yaml.
     """
     path = (*INGEST_AT, "door")
-    value = _scalar(dial, path) or _values_ingest_door(_text(dial, ("k8s", "cloud"))) or "loadbalancer"
+    value = (
+        _scalar(dial, path)
+        or _values_ingest_door(_text(dial, ("k8s", "cloud")))
+        or "loadbalancer"
+    )
     if value not in INGEST_DOORS:
-        raise DialError(f"{'.'.join(path)} must be one of {', '.join(INGEST_DOORS)}, got {value!r}")
+        raise DialError(
+            f"{'.'.join(path)} must be one of {', '.join(INGEST_DOORS)}, got {value!r}"
+        )
     return value
 
 
@@ -319,14 +341,22 @@ def _ingest_retired(dial: dict[str, object]) -> None:
 INGEST_TIER2_KEY = "edge.groups.ingest"
 
 
-def ingest_opened(dial: dict[str, object], enums: dict[str, str], flags: dict[str, bool]) -> str:
+def ingest_opened(
+    dial: dict[str, object], enums: dict[str, str], flags: dict[str, bool]
+) -> str:
     """The door the receiver's own load balancer renders on, or "" when none renders."""
     door = enums[".".join((*INGEST_AT, "door"))]
     named = _edge_cidrs(dial, (*INGEST_AT, "allow"))
-    return door if flags[".".join((*INGEST_AT, "enabled"))] and door == "loadbalancer" and named else ""
+    return (
+        door
+        if flags[".".join((*INGEST_AT, "enabled"))] and door == "loadbalancer" and named
+        else ""
+    )
 
 
-def ingest_fence(dial: dict[str, object], door: str, enabled: bool) -> tuple[str, list[str]]:
+def ingest_fence(
+    dial: dict[str, object], door: str, enabled: bool
+) -> tuple[str, list[str]]:
     """What the ingest group opens, as the receiver and gateway charts render it.
 
     Returns:
@@ -347,7 +377,11 @@ def ingest_fence(dial: dict[str, object], door: str, enabled: bool) -> tuple[str
         )
     if not enabled:
         return "off -- no public door", []
-    everything = [cidr for cidr in allow if ipaddress.ip_network(cidr, strict=False).prefixlen == 0]
+    everything = [
+        cidr
+        for cidr in allow
+        if ipaddress.ip_network(cidr, strict=False).prefixlen == 0
+    ]
     warnings = []
     if everything and door != "tunnel":
         warnings.append(
@@ -361,8 +395,14 @@ def ingest_fence(dial: dict[str, object], door: str, enabled: bool) -> tuple[str
     if allow:
         return f"{door} -- {note}, admitting {', '.join(allow)}", warnings
     if door == "loadbalancer":
-        return "loadbalancer -- closed: no load balancer renders until edge.groups.ingest.allow names the senders", []
-    return f"gateway -- {note}, closed on an internet-facing gateway and unfenced elsewhere", []
+        return (
+            "loadbalancer -- closed: no load balancer renders until edge.groups.ingest.allow names the senders",
+            [],
+        )
+    return (
+        f"gateway -- {note}, closed on an internet-facing gateway and unfenced elsewhere",
+        [],
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -405,19 +445,40 @@ _EDGE_ALIASES: dict[tuple[str, ...], tuple[str, ...]] = {
     ("edge", "product", "tls", "min_version"): ("ui", "tls", "min_version"),
     ("edge", "product", "tls", "hsts"): ("ui", "tls", "hsts"),
     ("edge", "admin_uis", "public", "kafbat"): ("ui", "public", "kafbat"),
-    ("edge", "admin_uis", "public", "cruise_control"): ("ui", "public", "cruise_control"),
+    ("edge", "admin_uis", "public", "cruise_control"): (
+        "ui",
+        "public",
+        "cruise_control",
+    ),
     ("edge", "admin_uis", "public", "hyperdx"): ("ui", "public", "hyperdx"),
     ("edge", "admin_uis", "public", "argocd"): ("ui", "public", "argocd"),
     ("edge", "admin_uis", "public", "links"): ("ui", "public", "links"),
-    ("edge", "ingest", "receiver", "public", "serviceType"): ("ingest", "public", "serviceType"),
-    ("edge", "ingest", "receiver", "public", "loadBalancerIP"):
-        ("ingest", "public", "loadBalancerIP"),
-    ("edge", "ingest", "receiver", "public", "loadBalancerClass"):
-        ("ingest", "public", "loadBalancerClass"),
-    ("edge", "ingest", "receiver", "public", "annotations"): ("ingest", "public", "annotations"),
+    ("edge", "ingest", "receiver", "public", "serviceType"): (
+        "ingest",
+        "public",
+        "serviceType",
+    ),
+    ("edge", "ingest", "receiver", "public", "loadBalancerIP"): (
+        "ingest",
+        "public",
+        "loadBalancerIP",
+    ),
+    ("edge", "ingest", "receiver", "public", "loadBalancerClass"): (
+        "ingest",
+        "public",
+        "loadBalancerClass",
+    ),
+    ("edge", "ingest", "receiver", "public", "annotations"): (
+        "ingest",
+        "public",
+        "annotations",
+    ),
     ("edge", "ingest", "receiver", "vpn", "podLabel"): ("ingest", "vpn", "podLabel"),
-    ("edge", "ingest", "receiver", "networkPolicy", "enabled"):
-        ("ingest", "networkPolicy", "enabled"),
+    ("edge", "ingest", "receiver", "networkPolicy", "enabled"): (
+        "ingest",
+        "networkPolicy",
+        "enabled",
+    ),
     ("edge", "ingest", "otel", "enabled"): ("edge", "ingest", "otel", "public"),
 }
 
@@ -456,7 +517,11 @@ _EDGE_BOOL_DEFAULTS: dict[tuple[str, ...], bool] = {
 
 # The flavour each k8s.cloud fact selects, matching the expression
 # argocd/appsets/layer2-edge.yaml uses to pick argocd/values/edge-<flavour>.yaml.
-_CLOUD_FLAVOUR: dict[str, str] = {"local": "onprem", "local-dfe": "onprem", "rancher": "onprem"}
+_CLOUD_FLAVOUR: dict[str, str] = {
+    "local": "onprem",
+    "local-dfe": "onprem",
+    "rancher": "onprem",
+}
 
 EDGE_FLAVOURS = ("aws", "gcp", "azure", "onprem")
 # The gateway's own public-TLS floor; unquoted 1.2 parses as a float and is
@@ -544,26 +609,56 @@ ADMIN_UIS = ("kafbat", "cruise_control", "hyperdx", "argocd", "links", "forgejo"
 # is tier 2 by EXPOSURE rather than by spend -- it opens a door on a hostname the
 # deployment already publishes, and adds no cloud resource at all.
 _EDGE_TIER2: tuple[tuple[str, tuple[object, ...], str, str], ...] = (
-    (INGEST_TIER2_KEY, ("loadbalancer",), "L",
-     "the receiver's own load balancer, billed per GB processed, against terabytes a day of"
-     " ingest"),
-    ("edge.ingest.tunnel.address.mode", ("forwarder",), "XS",
-     "one small instance and one static address, both billed hourly"),
-    ("edge.product.waf.mode", ("cloudfront",), "S",
-     "managed rules billed per request, on a CDN in front of the gateway"),
-    ("edge.aws.cloudfront.mode", ("cloudfront",), "S",
-     "a distribution billed per GB served"),
-    ("edge.engine_api.cli_families_public", (True,), "",
-     "the CLI path families and /openapi.json on the product's own public hostname"),
-    ("edge.engine_api.scim_public", (True,), "",
-     "/api/v1/scim/v2 on the product's own public hostname, for an IdP that"
-     " provisions from outside"),
-    ("edge.ingest.otel.enabled", (True,), "",
-     "OTLP ingest on otel.<domain> from outside the cluster, bearer token only"),
+    (
+        INGEST_TIER2_KEY,
+        ("loadbalancer",),
+        "L",
+        "the receiver's own load balancer, billed per GB processed, against terabytes a day of"
+        " ingest",
+    ),
+    (
+        "edge.ingest.tunnel.address.mode",
+        ("forwarder",),
+        "XS",
+        "one small instance and one static address, both billed hourly",
+    ),
+    (
+        "edge.product.waf.mode",
+        ("cloudfront",),
+        "S",
+        "managed rules billed per request, on a CDN in front of the gateway",
+    ),
+    (
+        "edge.aws.cloudfront.mode",
+        ("cloudfront",),
+        "S",
+        "a distribution billed per GB served",
+    ),
+    (
+        "edge.engine_api.cli_families_public",
+        (True,),
+        "",
+        "the CLI path families and /openapi.json on the product's own public hostname",
+    ),
+    (
+        "edge.engine_api.scim_public",
+        (True,),
+        "",
+        "/api/v1/scim/v2 on the product's own public hostname, for an IdP that"
+        " provisions from outside",
+    ),
+    (
+        "edge.ingest.otel.enabled",
+        (True,),
+        "",
+        "OTLP ingest on otel.<domain> from outside the cluster, bearer token only",
+    ),
 )
 
 
-def _edge_scalar(dial: dict[str, object], path: tuple[str, ...]) -> tuple[str | None, str]:
+def _edge_scalar(
+    dial: dict[str, object], path: tuple[str, ...]
+) -> tuple[str | None, str]:
     """The scalar at an edge path, or its deprecated alias's, with the name used.
 
     The name comes back so a refusal quotes the path the dial actually wrote
@@ -643,7 +738,9 @@ def _edge_enums(dial: dict[str, object]) -> dict[str, str]:
             value, label = _edge_scalar(dial, path)
             value = value or _EDGE_ENUM_DEFAULTS[path]
         if value and value not in choices:
-            raise DialError(f"{label} must be one of {', '.join(choices)}, got {value!r}")
+            raise DialError(
+                f"{label} must be one of {', '.join(choices)}, got {value!r}"
+            )
         out[".".join(path)] = value
     return out
 
@@ -654,7 +751,9 @@ def _edge_refusals(dial: dict[str, object], flags: dict[str, bool]) -> None:
     A dial that asks for one of these is asking for something no chart renders,
     which is worse than an error because it looks applied.
     """
-    families, label = _edge_scalar(dial, ("edge", "engine_api", "private_path_families"))
+    families, label = _edge_scalar(
+        dial, ("edge", "engine_api", "private_path_families")
+    )
     if families is not None:
         raise DialError(
             f"{label} is retired and nothing reads it -- the engine team named the path "
@@ -692,7 +791,9 @@ def _otel_refusals(dial: dict[str, object], flags: dict[str, bool]) -> None:
         )
     port = _scalar(dial, (*OTEL_AT, "port"))
     if port is not None and not (port.isdigit() and 0 < int(port) < 65536):
-        raise DialError(f"edge.ingest.otel.port must be a port number 1-65535, got {port!r}")
+        raise DialError(
+            f"edge.ingest.otel.port must be a port number 1-65535, got {port!r}"
+        )
 
 
 def _edge_bool(dial: dict[str, object], path: tuple[str, ...]) -> bool:
@@ -711,11 +812,15 @@ def _tunnel_address_mode(dial: dict[str, object]) -> str:
     value, label = _edge_scalar(dial, path)
     value = value or _EDGE_ENUM_DEFAULTS[path]
     if value not in ADDRESS_MODES:
-        raise DialError(f"{label} must be one of {', '.join(ADDRESS_MODES)}, got {value!r}")
+        raise DialError(
+            f"{label} must be one of {', '.join(ADDRESS_MODES)}, got {value!r}"
+        )
     return value
 
 
-def _edge_ports(dial: dict[str, object], path: tuple[str, ...], default: tuple[int, ...]) -> list[int]:
+def _edge_ports(
+    dial: dict[str, object], path: tuple[str, ...], default: tuple[int, ...]
+) -> list[int]:
     """A dial list of whole numbers written inline, as `reach: [22, 443]`.
 
     The restricted reader hands a flow list back as its own text, so the
@@ -728,7 +833,9 @@ def _edge_ports(dial: dict[str, object], path: tuple[str, ...], default: tuple[i
     ports: list[int] = []
     for item in split_list(raw.strip().lstrip("[").rstrip("]")):
         if not item.isdigit() or not 0 < int(item) < 65536:
-            raise DialError(f"{label} must be whole port numbers between 1 and 65535, got {item!r}")
+            raise DialError(
+                f"{label} must be whole port numbers between 1 and 65535, got {item!r}"
+            )
         ports.append(int(item))
     return ports
 
@@ -753,7 +860,9 @@ def _edge_cidrs(dial: dict[str, object], path: tuple[str, ...]) -> list[str]:
         # A bare address parses as a /32 here and is refused by the security
         # group API, so the prefix is required where the mistake is still cheap.
         if "/" not in item:
-            raise DialError(f"{label} needs a prefix length on every range, got {item!r}")
+            raise DialError(
+                f"{label} needs a prefix length on every range, got {item!r}"
+            )
         ranges.append(item)
     return ranges
 
@@ -778,7 +887,11 @@ def _proxy_hop_cidrs(dial: dict[str, object]) -> list[str]:
         DialError: An entry is not a CIDR range, or covers every address.
     """
     ranges = _edge_cidrs(dial, PROXY_HOP_PATH)
-    everything = [cidr for cidr in ranges if ipaddress.ip_network(cidr, strict=False).prefixlen == 0]
+    everything = [
+        cidr
+        for cidr in ranges
+        if ipaddress.ip_network(cidr, strict=False).prefixlen == 0
+    ]
     if everything:
         raise DialError(
             f"edge.product.trusted_proxy_cidrs carries {', '.join(everything)}, which trusts "
@@ -819,9 +932,14 @@ def web_fence(cidrs: list[str], flavour: str) -> tuple[str, list[str]]:
     if cidrs:
         return ", ".join(cidrs), []
     if flavour in INTERNET_FACING_FLAVOURS:
-        return ("empty -- the gateway is internet-facing, so every web route answers 403 to "
-                "every address until this names who may reach it"), []
-    return "empty -- this flavour's gateway is not internet-facing, so nothing is fenced", []
+        return (
+            "empty -- the gateway is internet-facing, so every web route answers 403 to "
+            "every address until this names who may reach it"
+        ), []
+    return (
+        "empty -- this flavour's gateway is not internet-facing, so nothing is fenced",
+        [],
+    )
 
 
 def _admin_peer_inert(dial: dict[str, object], at: tuple[str, ...]) -> None:
@@ -855,7 +973,9 @@ def _admin_peer_inert(dial: dict[str, object], at: tuple[str, ...]) -> None:
         )
 
 
-def _no_instance_type(dial: dict[str, object], at: tuple[str, ...], use_case: str) -> None:
+def _no_instance_type(
+    dial: dict[str, object], at: tuple[str, ...], use_case: str
+) -> None:
     """Refuse an instance type written into the dial where a shape_ref now names one.
 
     The shape resolver picks the type under the shape's generation policy, so a
@@ -880,7 +1000,9 @@ def _cidr(dial: dict[str, object], path: tuple[str, ...], default: str) -> str:
     try:
         ipaddress.ip_network(value, strict=True)
     except ValueError as err:
-        raise DialError(f"{'.'.join(path)} must be a CIDR range, got {value!r}") from err
+        raise DialError(
+            f"{'.'.join(path)} must be a CIDR range, got {value!r}"
+        ) from err
     return value
 
 
@@ -908,14 +1030,20 @@ def _edge_tunnel(dial: dict[str, object]) -> dict[str, object]:
         "openvpn": _edge_bool(dial, (*at, "openvpn")),
         "source_ranges": _edge_cidrs(dial, (*at, "loadBalancerSourceRanges")),
         "node_ports": {
-            "wireguard": _optional_number(dial, (*at, "node_ports", "wireguard"), TUNNEL_NODE_PORTS["wireguard"]),
-            "openvpn": _optional_number(dial, (*at, "node_ports", "openvpn"), TUNNEL_NODE_PORTS["openvpn"]),
+            "wireguard": _optional_number(
+                dial, (*at, "node_ports", "wireguard"), TUNNEL_NODE_PORTS["wireguard"]
+            ),
+            "openvpn": _optional_number(
+                dial, (*at, "node_ports", "openvpn"), TUNNEL_NODE_PORTS["openvpn"]
+            ),
         },
         # The reach-back is a security-group rule on the toolbox, so its two
         # fields travel to tofu while the rest of the class stays a chart value.
         "admin_peer": {
             "enabled": _edge_bool(dial, (*at, "admin_peer", "enabled")),
-            "reach": _edge_ports(dial, (*at, "admin_peer", "reach"), TUNNEL_ADMIN_REACH),
+            "reach": _edge_ports(
+                dial, (*at, "admin_peer", "reach"), TUNNEL_ADMIN_REACH
+            ),
         },
     }
 
@@ -936,7 +1064,9 @@ def _edge(dial: dict[str, object]) -> dict[str, object]:
     }
 
 
-def _edge_tier2_on(enums: dict[str, str], flags: dict[str, bool] | None = None) -> list[str]:
+def _edge_tier2_on(
+    enums: dict[str, str], flags: dict[str, bool] | None = None
+) -> list[str]:
     """Each tier-2 key the dial turns on, with its bucket and pricing model.
 
     Enums and booleans are read through one mapping, because a key is tier 2 for
@@ -1170,7 +1300,9 @@ DISRUPTION_AT = ("k8s", "disruption")
 MINUTES_PER_DAY = 1440
 
 # Daily or one weekday only: the drift hold outside any other schedule is not one cron line.
-_WINDOW_SCHEDULE = re.compile(r"^(?P<minute>\d{1,2}) (?P<hour>\d{1,2}) \* \* (?P<weekday>\*|[0-6])$")
+_WINDOW_SCHEDULE = re.compile(
+    r"^(?P<minute>\d{1,2}) (?P<hour>\d{1,2}) \* \* (?P<weekday>\*|[0-6])$"
+)
 # Hours and minutes only, the units a window's length is written in.
 _WINDOW_DURATION = re.compile(r"^(?:(?P<hours>\d+)h)?(?:(?P<minutes>\d+)m)?$")
 
@@ -1235,8 +1367,12 @@ def _maintenance_window(dial: dict[str, object]) -> MaintenanceWindow | None:
         )
     weekday = None if opens["weekday"] == "*" else int(opens["weekday"])
     length = _WINDOW_DURATION.match(duration)
-    minutes = int(length["hours"] or 0) * 60 + int(length["minutes"] or 0) if length else 0
-    window = MaintenanceWindow(int(opens["minute"]), int(opens["hour"]), weekday, minutes)
+    minutes = (
+        int(length["hours"] or 0) * 60 + int(length["minutes"] or 0) if length else 0
+    )
+    window = MaintenanceWindow(
+        int(opens["minute"]), int(opens["hour"]), weekday, minutes
+    )
     if not 0 < minutes < window.period_minutes:
         raise DialError(
             f"{'.'.join(at_window)}.duration must be hours and minutes such as 4h or 3h30m, above "
@@ -1315,10 +1451,19 @@ def _msk_autoscaling(dial: dict[str, object]) -> dict[str, object]:
     step = _scalar(dial, (*at, "step"))
     if step is not None:
         if not step.isdigit():
-            raise DialError(f"kafka.msk.autoscaling.step must be a whole number, got {step!r}")
+            raise DialError(
+                f"kafka.msk.autoscaling.step must be a whole number, got {step!r}"
+            )
         out["step"] = int(step)
-    for field_name in ("max_brokers", "per_broker_capacity_mb_s", "period_seconds", "evaluation_periods"):
-        out[field_name] = _optional_number(dial, (*at, field_name), int(MSK_AUTOSCALING_DEFAULTS[field_name]))
+    for field_name in (
+        "max_brokers",
+        "per_broker_capacity_mb_s",
+        "period_seconds",
+        "evaluation_periods",
+    ):
+        out[field_name] = _optional_number(
+            dial, (*at, field_name), int(MSK_AUTOSCALING_DEFAULTS[field_name])
+        )
     headroom = _scalar(dial, (*at, "headroom"))
     out["headroom"] = MSK_AUTOSCALING_DEFAULTS["headroom"]
     if headroom is not None:
@@ -1331,7 +1476,9 @@ def _msk_autoscaling(dial: dict[str, object]) -> dict[str, object]:
     return out
 
 
-def _optional_number(dial: dict[str, object], path: tuple[str, ...], default: int) -> int:
+def _optional_number(
+    dial: dict[str, object], path: tuple[str, ...], default: int
+) -> int:
     """Read a whole-number dial field, or `default` when absent or blank."""
     raw = _scalar(dial, path)
     if raw is None:
@@ -1366,9 +1513,16 @@ def _confluent_rest_ready(dial: dict[str, object]) -> dict[str, int]:
 # versions: the arm64 SHA256s of the two binaries that ship no signature, and
 # the Kafka release manager key the CLI tarball's signature is checked against.
 _TOOLBOX_TOOLS = (
-    "kubectl", "helm", "argocd-cli", "tofu", "yq", "aws-cli",
+    "kubectl",
+    "helm",
+    "argocd-cli",
+    "tofu",
+    "yq",
+    "aws-cli",
     "aws-session-manager-plugin",
-    "argocd-cli-arm64-sha256", "yq-arm64-sha256", "kafka-cli-signer",
+    "argocd-cli-arm64-sha256",
+    "yq-arm64-sha256",
+    "kafka-cli-signer",
 )
 
 
@@ -1438,7 +1592,11 @@ def _stack_pins(section: str) -> dict[str, str]:
     if current is None:
         return {}
     pins = _node(tree, ("stacks", current, section))
-    return {name: value.strip() for name, value in pins.items() if isinstance(value, str) and value.strip()}
+    return {
+        name: value.strip()
+        for name, value in pins.items()
+        if isinstance(value, str) and value.strip()
+    }
 
 
 # The resolved shape the toolbox instance launches on when the dial names none.
@@ -1660,7 +1818,9 @@ def _kafka(dial: dict[str, object]) -> dict[str, object]:
             "scram_username": _required(dial, (*at, "scram_username")),
             "bootstrap_job": {
                 "namespace": _required(dial, (*at, "bootstrap_job", "namespace")),
-                "service_account": _required(dial, (*at, "bootstrap_job", "service_account")),
+                "service_account": _required(
+                    dial, (*at, "bootstrap_job", "service_account")
+                ),
             },
             "autoscaling": _msk_autoscaling(dial),
         },
@@ -1685,8 +1845,28 @@ EKS_LOG_TYPES_NONE = "none"
 
 # The retention periods CloudWatch Logs accepts, and refuses anything else.
 CLOUDWATCH_RETENTION_DAYS = (
-    1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1096, 1827, 2192, 2557,
-    2922, 3288, 3653,
+    1,
+    3,
+    5,
+    7,
+    14,
+    30,
+    60,
+    90,
+    120,
+    150,
+    180,
+    365,
+    400,
+    545,
+    731,
+    1096,
+    1827,
+    2192,
+    2557,
+    2922,
+    3288,
+    3653,
 )
 
 
@@ -1707,7 +1887,9 @@ def _telemetry(dial: dict[str, object], cloud: str) -> dict[str, object]:
     """
     sink = _text(dial, ("telemetry", cloud, "sink"), "otel")
     if sink not in ("otel", "cloudwatch"):
-        raise DialError(f"telemetry.{cloud}.sink must be otel or cloudwatch, got {sink!r}")
+        raise DialError(
+            f"telemetry.{cloud}.sink must be otel or cloudwatch, got {sink!r}"
+        )
 
     default_retention = 2 if sink == "otel" else 7
     retention_raw = _scalar(dial, ("telemetry", cloud, "retention_days"))
@@ -1716,9 +1898,15 @@ def _telemetry(dial: dict[str, object], cloud: str) -> dict[str, object]:
     elif retention_raw.isdigit():
         retention_days = int(retention_raw)
     else:
-        raise DialError(f"telemetry.{cloud}.retention_days must be a whole number, got {retention_raw!r}")
+        raise DialError(
+            f"telemetry.{cloud}.retention_days must be a whole number, got {retention_raw!r}"
+        )
 
-    forced = _optional_number(dial, ("telemetry", cloud, "forced_retention_days"), TELEMETRY_FORCED_RETENTION_DAYS)
+    forced = _optional_number(
+        dial,
+        ("telemetry", cloud, "forced_retention_days"),
+        TELEMETRY_FORCED_RETENTION_DAYS,
+    )
     if forced not in CLOUDWATCH_RETENTION_DAYS:
         raise DialError(
             f"telemetry.{cloud}.forced_retention_days is {forced}, which CloudWatch Logs refuses -- "
@@ -1773,7 +1961,9 @@ def _clickhouse_mode(dial: dict[str, object]) -> str:
     """clickhouse.mode, in_cluster when the dial names none, refused outside the two modes."""
     mode = _text(dial, ("clickhouse", "mode"), "in_cluster")
     if mode not in CLICKHOUSE_MODES:
-        raise DialError(f"clickhouse.mode must be one of {', '.join(CLICKHOUSE_MODES)}, got {mode!r}")
+        raise DialError(
+            f"clickhouse.mode must be one of {', '.join(CLICKHOUSE_MODES)}, got {mode!r}"
+        )
     return mode
 
 
@@ -1783,7 +1973,9 @@ def _clickhouse_port(dial: dict[str, object], field: str, default: int) -> int:
     if raw is None:
         return default
     if not raw.isdigit() or not 0 < int(raw) < 65536:
-        raise DialError(f"clickhouse.{field} must be a port number 1-65535, got {raw!r}")
+        raise DialError(
+            f"clickhouse.{field} must be a port number 1-65535, got {raw!r}"
+        )
     return int(raw)
 
 
@@ -1808,7 +2000,9 @@ def _clickhouse_host(dial: dict[str, object]) -> str:
             "deployment connects to"
         )
     if not _HOSTNAME.match(host):
-        raise DialError("clickhouse.host must be a bare host name, with no scheme, port, path or space")
+        raise DialError(
+            "clickhouse.host must be a bare host name, with no scheme, port, path or space"
+        )
     if endpoint and endpoint != host:
         raise DialError(
             "endpoints.clickhouse_host and clickhouse.host name different servers -- in external "
@@ -1835,7 +2029,11 @@ def _clickhouse(dial: dict[str, object]) -> dict[str, object]:
         )
     mode = _clickhouse_mode(dial)
     if mode == "in_cluster":
-        stray = [field for field in CLICKHOUSE_EXTERNAL_FIELDS if _scalar(dial, ("clickhouse", field)) is not None]
+        stray = [
+            field
+            for field in CLICKHOUSE_EXTERNAL_FIELDS
+            if _scalar(dial, ("clickhouse", field)) is not None
+        ]
         if stray:
             raise DialError(
                 f"clickhouse.{stray[0]} is read only with clickhouse.mode external, and the dial says "
@@ -1846,7 +2044,9 @@ def _clickhouse(dial: dict[str, object]) -> dict[str, object]:
     return {
         "mode": mode,
         "port": _clickhouse_port(dial, "port", CLICKHOUSE_CLOUD_PORT),
-        "native_port": _clickhouse_port(dial, "native_port", CLICKHOUSE_CLOUD_NATIVE_PORT),
+        "native_port": _clickhouse_port(
+            dial, "native_port", CLICKHOUSE_CLOUD_NATIVE_PORT
+        ),
         "secure": _flag(dial, ("clickhouse", "secure"), default=True),
         "user": _text(dial, ("clickhouse", "user"), CLICKHOUSE_CLOUD_USER),
     }
@@ -1926,7 +2126,11 @@ def _tofu_vars(dial: dict[str, object]) -> tuple[str, dict[str, object]]:
         "profile": _required(dial, ("profile",)),
         "kubernetes_version": _kubernetes_version(dial, cloud),
         **({"eks_addon_versions": _stack_pins("eks-addons")} if cloud == "aws" else {}),
-        **({"lambda_runtimes": _stack_pins("lambda-runtimes")} if cloud == "aws" else {}),
+        **(
+            {"lambda_runtimes": _stack_pins("lambda-runtimes")}
+            if cloud == "aws"
+            else {}
+        ),
         "network": {
             "nat": _required(dial, ("network", "nat")),
             "az_count": az_count,
@@ -1998,7 +2202,9 @@ def main() -> int:
         prog="render_dial.py",
         description="Render the deployment dial's k8s slice into the DFE_* env file.",
     )
-    ap.add_argument("--dial", type=Path, default=DIAL, help="dial path (default: deployment.yaml)")
+    ap.add_argument(
+        "--dial", type=Path, default=DIAL, help="dial path (default: deployment.yaml)"
+    )
     ap.add_argument(
         "--tofu",
         action="store_true",
@@ -2045,7 +2251,8 @@ def main() -> int:
         edge_enums = _edge_enums(dial)
         _edge_refusals(dial, edge_flags)
         fence, fence_warnings = web_fence(
-            _edge_cidrs(dial, ("edge", "product", "allowed_cidrs")), edge_enums["edge.flavour"]
+            _edge_cidrs(dial, ("edge", "product", "allowed_cidrs")),
+            edge_enums["edge.flavour"],
         )
         ingest_door = edge_enums["edge.groups.ingest.door"]
         ingest_on = edge_flags["edge.groups.ingest.enabled"]
@@ -2068,7 +2275,9 @@ def main() -> int:
             )
             return 1
         private_file.write_private(args.out, ENV_TEMPLATE.read_text(encoding="utf-8"))
-        print(f"render_dial: seeded {args.out} from {ENV_TEMPLATE.name}", file=sys.stderr)
+        print(
+            f"render_dial: seeded {args.out} from {ENV_TEMPLATE.name}", file=sys.stderr
+        )
 
     updates = _env_updates(dial)
     if updates:
@@ -2079,15 +2288,20 @@ def main() -> int:
             file=sys.stderr,
         )
     else:
-        print("render_dial: dial set no k8s keys -- env file unchanged", file=sys.stderr)
+        print(
+            "render_dial: dial set no k8s keys -- env file unchanged", file=sys.stderr
+        )
 
     for line in deprecated:
         print(f"render_dial: deprecated -- {line}", file=sys.stderr)
 
     public = ["dfe-ui"] if edge_flags["edge.product.public"] else []
-    public += [name for name in ADMIN_UIS if edge_flags[f"edge.admin_uis.public.{name}"]]
+    public += [
+        name for name in ADMIN_UIS if edge_flags[f"edge.admin_uis.public.{name}"]
+    ]
     tier2 = _edge_tier2_on(
-        {**edge_enums, INGEST_TIER2_KEY: ingest_opened(dial, edge_enums, edge_flags)}, edge_flags
+        {**edge_enums, INGEST_TIER2_KEY: ingest_opened(dial, edge_enums, edge_flags)},
+        edge_flags,
     )
     engine_api = _engine_api_summary(edge_flags)
 
@@ -2108,7 +2322,11 @@ def main() -> int:
     )
     print(
         "  admin UI kill switch (edge.admin_uis.external): "
-        + ("on" if edge_flags["edge.admin_uis.external"] else "off, every infra route is withdrawn"),
+        + (
+            "on"
+            if edge_flags["edge.admin_uis.external"]
+            else "off, every infra route is withdrawn"
+        ),
         file=sys.stderr,
     )
     print(
@@ -2127,17 +2345,22 @@ def main() -> int:
         print(f"render_dial: WARNING -- {line}", file=sys.stderr)
     print(
         "  fleet tunnel (edge.ingest.tunnel.enabled): "
-        + ("on" if edge_flags["edge.ingest.tunnel.enabled"]
-           else "off -- the module offers the tunnel, the deployment turns it on"),
+        + (
+            "on"
+            if edge_flags["edge.ingest.tunnel.enabled"]
+            else "off -- the module offers the tunnel, the deployment turns it on"
+        ),
         file=sys.stderr,
     )
     token_path = _scalar(dial, (*OTEL_AT, "auth", "remoteKey"))
     print(
         "  OTLP ingest from outside the cluster (edge.ingest.otel.enabled): "
-        + (f"on -- bearer token from {token_path}; paste the block under otel.ingress in"
-           " the deploy repo's infra/common.yaml"
-           if edge_flags["edge.ingest.otel.enabled"]
-           else "off -- in-cluster senders use the collector's Service"),
+        + (
+            f"on -- bearer token from {token_path}; paste the block under otel.ingress in"
+            " the deploy repo's infra/common.yaml"
+            if edge_flags["edge.ingest.otel.enabled"]
+            else "off -- in-cluster senders use the collector's Service"
+        ),
         file=sys.stderr,
     )
     print(

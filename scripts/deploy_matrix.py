@@ -130,6 +130,7 @@ def matrix_profiles() -> tuple[str, ...]:
     --set already varies. Running all four would double a live cluster matrix for
     no distinct cell.
     """
+
     def nodes(mode: str) -> int:
         return profiles.capacity(mode)[2]
 
@@ -400,7 +401,11 @@ def wait_ready(cell: Cell) -> tuple[bool, str]:
     """
     # Only cluster+redpanda is operator-managed (a Redpanda CR to wait on). single
     # redpanda is a plain StatefulSet (no CR) -> fall through to the pod check.
-    if cell.chart == "kafka" and _kafka_provider(cell) == "redpanda" and cell.mode == "cluster":
+    if (
+        cell.chart == "kafka"
+        and _kafka_provider(cell) == "redpanda"
+        and cell.mode == "cluster"
+    ):
         waited = _run(
             [
                 "kubectl",
@@ -753,7 +758,9 @@ def run_cell(cell: Cell, *, do_apply: bool) -> CellResult:
 
 def main() -> int:
     p = argparse.ArgumentParser(description="Substrate create-test-teardown matrix.")
-    p.add_argument("--preset", default="default", help="matrix preset named in the report header")
+    p.add_argument(
+        "--preset", default="default", help="matrix preset named in the report header"
+    )
     p.add_argument("--chart", help="filter to one chart")
     p.add_argument("--mode", help="filter to one mode")
     p.add_argument("--profile", help="filter to one profile")
@@ -801,7 +808,9 @@ def main() -> int:
     overall_failures = 0
     for i in range(rounds):
         tag = f" round {i + 1}/{rounds}" if rounds > 1 else ""
-        print(f"Deployment matrix [{args.preset}] -- {mode_label}{tag} -- {len(cells)} cell(s)\n")
+        print(
+            f"Deployment matrix [{args.preset}] -- {mode_label}{tag} -- {len(cells)} cell(s)\n"
+        )
         results = [run_cell(c, do_apply=args.apply) for c in cells]
         failures = [r for r in results if not r.ok]
         overall_failures += len(failures)

@@ -139,13 +139,17 @@ def _python_lists(manifest: dict) -> list[tuple[str, object]]:
     """Every requirement list in a parsed pyproject.toml, as (dotted name, list)."""
     project = manifest.get("project")
     project = project if isinstance(project, dict) else {}
-    lists: list[tuple[str, object]] = [("project.dependencies", project.get("dependencies"))]
+    lists: list[tuple[str, object]] = [
+        ("project.dependencies", project.get("dependencies"))
+    ]
     for section, prefix in (
         (project.get("optional-dependencies"), "project.optional-dependencies"),
         (manifest.get("dependency-groups"), "dependency-groups"),
     ):
         if isinstance(section, dict):
-            lists += [(f"{prefix}.{name}", entries) for name, entries in section.items()]
+            lists += [
+                (f"{prefix}.{name}", entries) for name, entries in section.items()
+            ]
     build = manifest.get("build-system")
     if isinstance(build, dict):
         lists.append(("build-system.requires", build.get("requires")))
@@ -190,7 +194,9 @@ def declarations(text: str, kind: str, package: str) -> list[Declaration]:
     if kind not in PACKAGE_KINDS:
         raise ValueError(f"{kind!r} is not one of {', '.join(PACKAGE_KINDS)}")
     manifest = tomllib.loads(text)
-    return _cargo(manifest, package) if kind == "cargo-dep" else _python(manifest, package)
+    return (
+        _cargo(manifest, package) if kind == "cargo-dep" else _python(manifest, package)
+    )
 
 
 def locked(text: str, kind: str, package: str) -> list[str]:

@@ -27,7 +27,9 @@ RECEIVER_SERVICE = beats.RECEIVER_SERVICE
 class Listener:
     """One listener's switches, and what the overlay held at those paths before the run."""
 
-    def __init__(self, slug: str, switches: Mapping[str, object], env_hint: str) -> None:
+    def __init__(
+        self, slug: str, switches: Mapping[str, object], env_hint: str
+    ) -> None:
         """Name the listener.
 
         Args:
@@ -71,7 +73,9 @@ class Listener:
         driver = run.driver
         route = self._route(run)
         if not route:
-            driver.record(self.slug, "failed", f"the engine lists no {RECEIVER_SERVICE} instance")
+            driver.record(
+                self.slug, "failed", f"the engine lists no {RECEIVER_SERVICE} instance"
+            )
             return None
         current = run.engine.call("GET", route)
         if current.status != 200:
@@ -124,7 +128,9 @@ class Listener:
                 "failed",
                 f"{route} was not put back ({', '.join(refused)}), so the listener may still be open",
             )
-        status, detail = steps.restart_outcome(shlex.split(run.args.restart_exec), hints)
+        status, detail = steps.restart_outcome(
+            shlex.split(run.args.restart_exec), hints
+        )
         return wizard.StepResult(
             restored,
             "failed" if status == "failed" else "done",

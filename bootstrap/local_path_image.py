@@ -49,7 +49,9 @@ def pin(manifest: str, version: str, digest: str) -> str:
     if not DIGEST.fullmatch(digest):
         raise ValueError(f"digest {digest!r} is not sha256:<64 hex>")
     tagged = f"{IMAGE}:{version}"
-    pattern = re.compile(rf"^([ \t]*image:[ \t]*){re.escape(tagged)}[ \t]*$", re.MULTILINE)
+    pattern = re.compile(
+        rf"^([ \t]*image:[ \t]*){re.escape(tagged)}[ \t]*$", re.MULTILINE
+    )
     hits = pattern.findall(manifest)
     if len(hits) != 1:
         raise ValueError(f"manifest names {tagged} {len(hits)} time(s), expected 1")
@@ -69,9 +71,13 @@ def main() -> int:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument(
-        "--version", required=True, help="bootstrap.local-path-provisioner, e.g. v0.0.36"
+        "--version",
+        required=True,
+        help="bootstrap.local-path-provisioner, e.g. v0.0.36",
     )
-    parser.add_argument("--digest", required=True, help="services-digests.local-path-provisioner")
+    parser.add_argument(
+        "--digest", required=True, help="services-digests.local-path-provisioner"
+    )
     args = parser.parse_args()
     try:
         sys.stdout.write(pin(fetch(args.version), args.version, args.digest))

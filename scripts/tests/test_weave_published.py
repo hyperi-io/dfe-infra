@@ -33,7 +33,14 @@ from pathlib import Path
 
 import pytest
 
-from _gate import CELLS, COMPONENTS, golden, object_id, published_render, render_differences
+from _gate import (
+    CELLS,
+    COMPONENTS,
+    golden,
+    object_id,
+    published_render,
+    render_differences,
+)
 from _weave import _anonymous, contract, published_chart
 
 NEEDS_REGISTRY = pytest.mark.skipif(
@@ -55,13 +62,17 @@ def test_the_published_chart_renders_as_its_golden(
     service: str, profile: str, cloud: str, scenario: str
 ) -> None:
     published = published_render(service, profile, cloud, scenario)
-    assert render_differences(golden(service, profile, cloud, scenario), published) == []
+    assert (
+        render_differences(golden(service, profile, cloud, scenario), published) == []
+    )
 
 
 def test_a_registry_pull_is_handed_no_credential() -> None:
     """helm falls back to Docker's config when its own is empty, so both are empty."""
     env = _anonymous()[1]
-    assert json.loads(Path(env["HELM_REGISTRY_CONFIG"]).read_text(encoding="utf-8")) == {}
+    assert (
+        json.loads(Path(env["HELM_REGISTRY_CONFIG"]).read_text(encoding="utf-8")) == {}
+    )
     assert not (Path(env["DOCKER_CONFIG"]) / "config.json").exists()
 
 
@@ -71,7 +82,9 @@ def test_a_registry_pull_is_handed_no_credential() -> None:
 def test_a_moved_leaf_and_an_extra_object_are_caught() -> None:
     """The shape of a published chart running another image beside an object no golden holds."""
     moved = golden("dfe-ui", "scale", "aws")
-    main = next(d for d in moved if d["kind"] == "Deployment")["spec"]["template"]["spec"]
+    main = next(d for d in moved if d["kind"] == "Deployment")["spec"]["template"][
+        "spec"
+    ]
     before = main["containers"][0]["image"]
     main["containers"][0]["image"] = "registry.example.com/elsewhere/dfe-ui:v0"
     stray = {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "stray"}}

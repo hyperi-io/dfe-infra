@@ -54,7 +54,9 @@ COMMON = VALUES / "common.yaml"
 POLICIES = REPO_ROOT / "helm" / "charts" / "network-policies" / "values.yaml"
 APP_LABEL = yaml.safe_load(POLICIES.read_text(encoding="utf-8"))["appLabel"]
 # The apps the manifest declares: deploy.service is the key the appset layers by.
-SERVICES = tuple(yaml.safe_load((REPO_ROOT / "apps.yaml").read_text(encoding="utf-8"))["apps"])
+SERVICES = tuple(
+    yaml.safe_load((REPO_ROOT / "apps.yaml").read_text(encoding="utf-8"))["apps"]
+)
 CLOUDS = ("aws", "azure", "gcp", "local", "local-dfe")
 VALUE_FILES = sorted(VALUES.glob("*.yaml"))
 DIGEST = "sha256:" + "ab" * 32
@@ -87,8 +89,14 @@ SERVICE = pytest.mark.parametrize("service", SERVICES)
 SHAPES = {
     "collector-namespace": ("hyperdx", {"collectorNamespace": "monitoring"}),
     "hyperdx-endpoint": ("hyperdx", {"hyperdxEndpoint": "collector.example.net:4317"}),
-    "receiver-with-scheme": ("receiver", {"receiverEndpoint": "https://rx.example.net:8443"}),
-    "external-with-scheme": ("external", {"externalEndpoint": "https://otlp.example.net:4318"}),
+    "receiver-with-scheme": (
+        "receiver",
+        {"receiverEndpoint": "https://rx.example.net:8443"},
+    ),
+    "external-with-scheme": (
+        "external",
+        {"externalEndpoint": "https://otlp.example.net:4318"},
+    ),
     "external-unset": ("external", {"externalEndpoint": ""}),
 }
 
@@ -153,7 +161,9 @@ def deploy_for(tmp_path_factory: pytest.TempPathFactory) -> Callable[[dict], Pat
         if key not in made:
             repo = root / f"d{len(made)}"
             (repo / "infra").mkdir(parents=True)
-            (repo / "infra" / "common.yaml").write_text(yaml.safe_dump(overlay), encoding="utf-8")
+            (repo / "infra" / "common.yaml").write_text(
+                yaml.safe_dump(overlay), encoding="utf-8"
+            )
             made[key] = repo
         return made[key]
 
@@ -218,10 +228,16 @@ def thin_charts(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Path]:
 
 
 def _render(
-    chart: Path, deploy: Path, service: str, cloud: str = "local", namespace: str = "dfe"
+    chart: Path,
+    deploy: Path,
+    service: str,
+    cloud: str = "local",
+    namespace: str = "dfe",
 ) -> list[dict]:
     target = w.Target(service, "slim", cloud, namespace=namespace)
-    inputs = w.Inputs(appset=appset(), chart=chart, deploy_repo=deploy, extras=False, helm=helm())
+    inputs = w.Inputs(
+        appset=appset(), chart=chart, deploy_repo=deploy, extras=False, helm=helm()
+    )
     return w.render_app(target, inputs).docs
 
 
@@ -262,7 +278,9 @@ def test_every_app_resolves_each_mode_to_its_known_endpoint(
     assert env[ENDPOINT] == _for(service, KNOWN[(mode, tls)])
 
 
-@pytest.mark.parametrize(("mode", "wrong"), [(m, o) for m in MODES for o in MODES if m != o])
+@pytest.mark.parametrize(
+    ("mode", "wrong"), [(m, o) for m in MODES for o in MODES if m != o]
+)
 def test_a_wrong_mode_yields_a_different_endpoint(
     mode: str,
     wrong: str,
@@ -372,7 +390,10 @@ def test_the_thin_receiver_exports_to_its_own_otlp_port_in_the_release_namespace
 ) -> None:
     overlay = _overlay("receiver", tls, {"receiverEndpoint": ""})
     docs = _render(
-        thin_charts["dfe-receiver"], deploy_for(overlay), "dfe-receiver", namespace="acme"
+        thin_charts["dfe-receiver"],
+        deploy_for(overlay),
+        "dfe-receiver",
+        namespace="acme",
     )
     assert _env_values(docs, ENDPOINT) == [_derived("dfe-receiver", tls, "acme")]
 
@@ -385,10 +406,15 @@ def test_the_derived_endpoint_names_a_service_port_the_receiver_serves_once_otlp
         "receiver", False, {"receiverEndpoint": ""}, config={"otlp": {"enabled": True}}
     )
     docs = _render(
-        thin_charts["dfe-receiver"], deploy_for(overlay), "dfe-receiver", namespace="acme"
+        thin_charts["dfe-receiver"],
+        deploy_for(overlay),
+        "dfe-receiver",
+        namespace="acme",
     )
     service = next(
-        d for d in docs if d["kind"] == "Service" and not d["metadata"]["name"].endswith("-public")
+        d
+        for d in docs
+        if d["kind"] == "Service" and not d["metadata"]["name"].endswith("-public")
     )
     (endpoint,) = _env_values(docs, ENDPOINT)
     host, _, port = endpoint.removeprefix("http://").rpartition(":")
@@ -447,7 +473,9 @@ def test_the_cloud_label_is_the_cloud_the_deployment_declares(
 ) -> None:
     """The appset's cloud parameter and the cloud file's global.cloud both name it."""
     service = sorted(thin_charts)[0]
-    docs = _render(thin_charts[service], deploy_for(_overlay("hyperdx", False)), service, cloud)
+    docs = _render(
+        thin_charts[service], deploy_for(_overlay("hyperdx", False)), service, cloud
+    )
     assert _deployment(docs)["metadata"]["labels"]["dfe.hyperi.io/cloud"] == cloud
 
 
@@ -461,7 +489,10 @@ def _placement(data: dict) -> tuple[dict, list]:
 
 def _copy_matches(data: dict) -> bool:
     """Whether a file's top-level nodeSelector and tolerations equal its nodeScheduling."""
-    return (data.get("nodeSelector") or {}, data.get("tolerations") or []) == _placement(data)
+    return (
+        data.get("nodeSelector") or {},
+        data.get("tolerations") or [],
+    ) == _placement(data)
 
 
 @pytest.mark.parametrize("path", VALUE_FILES, ids=lambda p: p.name)
@@ -474,7 +505,9 @@ def test_a_copy_that_differs_from_node_scheduling_is_caught() -> None:
     scheduling = {"nodeSelector": {"dfe.hyperi.io/workload": "dfe"}, "tolerations": []}
     assert _copy_matches({"nodeScheduling": scheduling, **scheduling})
     assert not _copy_matches({"nodeScheduling": scheduling})
-    assert not _copy_matches({"nodeScheduling": scheduling, "nodeSelector": {"other": "dfe"}})
+    assert not _copy_matches(
+        {"nodeScheduling": scheduling, "nodeSelector": {"other": "dfe"}}
+    )
     assert not _copy_matches({"nodeSelector": {"dfe.hyperi.io/workload": "dfe"}})
 
 
@@ -491,7 +524,13 @@ def test_pods_take_the_placement_nodescheduling_gives_their_cloud(
     data = yaml.safe_load((VALUES / f"{cloud}.yaml").read_text(encoding="utf-8")) or {}
     selector, tolerations = _placement(data)
     docs = _render(
-        thin_charts["dfe-receiver"], deploy_for(_overlay("hyperdx", False)), "dfe-receiver", cloud
+        thin_charts["dfe-receiver"],
+        deploy_for(_overlay("hyperdx", False)),
+        "dfe-receiver",
+        cloud,
     )
     pod = _deployment(docs)["spec"]["template"]["spec"]
-    assert (pod.get("nodeSelector") or {}, pod.get("tolerations") or []) == (selector, tolerations)
+    assert (pod.get("nodeSelector") or {}, pod.get("tolerations") or []) == (
+        selector,
+        tolerations,
+    )

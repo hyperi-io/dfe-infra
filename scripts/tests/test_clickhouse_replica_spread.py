@@ -91,14 +91,24 @@ def keeper_pod_labels(keeper: str, replica: int) -> dict[str, str]:
 @cache
 def render(profile: str, sets: tuple[str, ...] = ()) -> tuple[dict, ...]:
     """The chart under the appset's value cascade for one profile."""
-    cmd = ["helm", "template", "clickhouse-cluster", str(chart_dir("clickhouse-cluster"))]
+    cmd = [
+        "helm",
+        "template",
+        "clickhouse-cluster",
+        str(chart_dir("clickhouse-cluster")),
+    ]
     for f in ("common.yaml", "local.yaml", f"profile-{profile}.yaml"):
         cmd += ["-f", str(VALUES / f)]
     cmd += ["--set", "appNamespace=dfe-local"]
     for s in sets:
         cmd += ["--set", s]
     out = subprocess.run(
-        cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False
+        cmd,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
     )
     if out.returncode != 0:
         raise SystemExit(f"helm template failed for {profile} {sets}:\n{out.stderr}")
@@ -127,19 +137,25 @@ def pods_of(docs: tuple[dict, ...]) -> list[Pod]:
     tsc = (spec.get("podTemplate") or {}).get("topologySpreadConstraints") or []
     for shard in range(int(spec["shards"])):
         for replica in range(int(spec["replicas"])):
-            labels = {**(spec.get("labels") or {}),
-                      **server_pod_labels(chc["metadata"]["name"], shard, replica)}
+            labels = {
+                **(spec.get("labels") or {}),
+                **server_pod_labels(chc["metadata"]["name"], shard, replica),
+            }
             pods.append((f"server {shard}-{replica}", labels, tsc))
     kspec = kc["spec"]
     ktsc = (kspec.get("podTemplate") or {}).get("topologySpreadConstraints") or []
     for replica in range(int(kspec["replicas"])):
-        labels = {**(kspec.get("labels") or {}),
-                  **keeper_pod_labels(kc["metadata"]["name"], replica)}
+        labels = {
+            **(kspec.get("labels") or {}),
+            **keeper_pod_labels(kc["metadata"]["name"], replica),
+        }
         pods.append((f"keeper {replica}", labels, ktsc))
     return pods
 
 
-def effective_selector(constraint: dict, incoming: dict[str, str]) -> dict[str, str] | None:
+def effective_selector(
+    constraint: dict, incoming: dict[str, str]
+) -> dict[str, str] | None:
     """The labels a constraint counts, as the scheduler sees them for one pod.
 
     matchLabels, plus the incoming pod's value for each matchLabelKeys key it
@@ -161,8 +177,11 @@ def peers(pod: str, labels: dict[str, str], pods: list[Pod]) -> set[str]:
     """The pods one pod must be kept apart from: its own shard, or every keeper."""
     if pod.startswith("server"):
         shard = labels["clickhouse.com/shard-id"]
-        return {n for n, lab, _ in pods
-                if n.startswith("server") and lab["clickhouse.com/shard-id"] == shard}
+        return {
+            n
+            for n, lab, _ in pods
+            if n.startswith("server") and lab["clickhouse.com/shard-id"] == shard
+        }
     return {n for n, _, _ in pods if n.startswith("keeper")}
 
 
@@ -170,21 +189,30 @@ def check_spread(label: str, docs: tuple[dict, ...]) -> None:
     for kind in ("ClickHouseCluster", "KeeperCluster"):
         template = one(docs, kind)["spec"].get("podTemplate") or {}
         own = sorted({"topologyZoneKey", "nodeHostnameKey"} & set(template))
-        expect(f"{label}: the {kind} asks the operator for no spread of its own", not own,
-               f"podTemplate sets {own}, so the operator adds constraints this test does not see")
+        expect(
+            f"{label}: the {kind} asks the operator for no spread of its own",
+            not own,
+            f"podTemplate sets {own}, so the operator adds constraints this test does not see",
+        )
     pods = pods_of(docs)
     for name, labels, constraints in pods:
         c = hostname_constraint(label, name, constraints)
         if c is None:
             continue
         selector = effective_selector(c, labels)
-        expect(f"{label}: {name} selector is matchLabels only", selector is not None,
-               f"labelSelector {c.get('labelSelector')!r}")
+        expect(
+            f"{label}: {name} selector is matchLabels only",
+            selector is not None,
+            f"labelSelector {c.get('labelSelector')!r}",
+        )
         if selector is not None:
             got = counted(selector, pods)
             want = peers(name, labels, pods)
-            expect(f"{label}: {name} spread counts exactly its peers", got == want,
-                   f"selector {selector} counts {sorted(got)}, peers are {sorted(want)}")
+            expect(
+                f"{label}: {name} spread counts exactly its peers",
+                got == want,
+                f"selector {selector} counts {sorted(got)}, peers are {sorted(want)}",
+            )
         assert_constraint_shape(label, name, c)
 
 
@@ -192,10 +220,12 @@ def test_fixture_matches_the_pinned_operator() -> None:
     """A fixture recorded for one operator is not evidence about the next."""
     doc = yaml.safe_load(VERSIONS.read_text(encoding="utf-8"))
     pinned = doc["stacks"][doc["current"]]["operators"]["clickhouse-operator"]
-    expect("operator pin matches the version the label fixture was read from",
-           pinned == OPERATOR_VERSION,
-           f"versions.yaml pins {pinned}; re-read the pod labels at that tag and update "
-           f"server_pod_labels, keeper_pod_labels and OPERATOR_VERSION")
+    expect(
+        "operator pin matches the version the label fixture was read from",
+        pinned == OPERATOR_VERSION,
+        f"versions.yaml pins {pinned}; re-read the pod labels at that tag and update "
+        f"server_pod_labels, keeper_pod_labels and OPERATOR_VERSION",
+    )
 
 
 def test_cluster_profiles_spread_what_the_operator_labels() -> None:
@@ -213,7 +243,11 @@ def test_spread_off_renders_none() -> None:
     for kind in ("ClickHouseCluster", "KeeperCluster"):
         spec = one(docs, kind)["spec"]
         tsc = (spec.get("podTemplate") or {}).get("topologySpreadConstraints")
-        expect(f"podSpread.enabled=false renders no spread on the {kind}", not tsc, f"got {tsc}")
+        expect(
+            f"podSpread.enabled=false renders no spread on the {kind}",
+            not tsc,
+            f"got {tsc}",
+        )
 
 
 def main() -> int:

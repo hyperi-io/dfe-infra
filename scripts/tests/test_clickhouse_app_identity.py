@@ -38,7 +38,16 @@ from pathlib import Path
 import pytest
 import yaml
 
-from _gate import CELLS, CLOUDS, PROFILES, WORKLOAD_KINDS, golden, object_id, pod_spec, references
+from _gate import (
+    CELLS,
+    CLOUDS,
+    PROFILES,
+    WORKLOAD_KINDS,
+    golden,
+    object_id,
+    pod_spec,
+    references,
+)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 VALUES = REPO_ROOT / "argocd" / "values"
@@ -64,7 +73,11 @@ EXTERNAL = {
         "port": 8443,
         "nativePort": 9440,
         "user": ADMIN_USER,
-        "tls": {"enabled": True, "port": 8443, "ca": {"secretName": "", "configMapName": ""}},
+        "tls": {
+            "enabled": True,
+            "port": 8443,
+            "ca": {"secretName": "", "configMapName": ""},
+        },
         "external": {"host": "ch.example.com", "port": 8443, "user": ADMIN_USER},
     }
 }
@@ -84,14 +97,18 @@ def admin_secret_readers(docs: list[dict]) -> list[str]:
     return sorted(
         where
         for kind, name, _optional, where in references(docs)
-        if kind == "Secret" and name == ADMIN_SECRET and where.split(" ")[0] not in ADMINISTERS
+        if kind == "Secret"
+        and name == ADMIN_SECRET
+        and where.split(" ")[0] not in ADMINISTERS
     )
 
 
 def admin_user_dialers(docs: list[dict]) -> list[str]:
     """Each container outside ADMINISTERS whose env, ConfigMaps included, names the admin user."""
     configmaps = {
-        d["metadata"]["name"]: d.get("data") or {} for d in docs if d["kind"] == "ConfigMap"
+        d["metadata"]["name"]: d.get("data") or {}
+        for d in docs
+        if d["kind"] == "ConfigMap"
     }
     found = []
     for doc in _workloads(docs):
@@ -100,7 +117,9 @@ def admin_user_dialers(docs: list[dict]) -> list[str]:
         for container in _containers(doc):
             env = {}
             for source in container.get("envFrom") or []:
-                env.update(configmaps.get((source.get("configMapRef") or {}).get("name"), {}))
+                env.update(
+                    configmaps.get((source.get("configMapRef") or {}).get("name"), {})
+                )
             env.update({e["name"]: e.get("value") for e in container.get("env") or []})
             found += [
                 f"{object_id(doc)} {container['name']} {name}={env[name]}"
@@ -127,7 +146,9 @@ def test_no_app_dials_as_the_admin_user(
 def test_the_engine_keeps_the_admin_password() -> None:
     """The control: the engine reads it, so the scan above is looking in the right place."""
     docs = golden("dfe-engine", "scale", "aws")
-    named = {(kind, name, where.split(" ")[0]) for kind, name, _o, where in references(docs)}
+    named = {
+        (kind, name, where.split(" ")[0]) for kind, name, _o, where in references(docs)
+    }
     assert ("Secret", ADMIN_SECRET, "Deployment/dfe-engine") in named
 
 
@@ -136,7 +157,10 @@ def test_an_app_reading_the_admin_password_is_caught() -> None:
     loader = next(d for d in docs if object_id(d) == "Deployment/dfe-loader")
     container = loader["spec"]["template"]["spec"]["containers"][0]
     container.setdefault("env", []).append(
-        {"name": "X", "valueFrom": {"secretKeyRef": {"name": ADMIN_SECRET, "key": "password"}}}
+        {
+            "name": "X",
+            "valueFrom": {"secretKeyRef": {"name": ADMIN_SECRET, "key": "password"}},
+        }
     )
     container["env"].append({"name": "CLICKHOUSE_USER", "value": ADMIN_USER})
     assert admin_secret_readers(docs) == ["Deployment/dfe-loader dfe-loader env X"]
@@ -148,20 +172,35 @@ def test_an_app_reading_the_admin_password_is_caught() -> None:
 @pytest.mark.parametrize("kind", ["Job", "CronJob"])
 def test_a_job_reading_the_admin_password_is_caught(kind: str) -> None:
     env = [
-        {"name": "X", "valueFrom": {"secretKeyRef": {"name": ADMIN_SECRET, "key": "password"}}},
+        {
+            "name": "X",
+            "valueFrom": {"secretKeyRef": {"name": ADMIN_SECRET, "key": "password"}},
+        },
         {"name": "CLICKHOUSE_USER", "value": ADMIN_USER},
     ]
-    job = {"template": {"spec": {"containers": [{"name": "probe", "image": "probe", "env": env}]}}}
-    spec = {"schedule": "@hourly", "jobTemplate": {"spec": job}} if kind == "CronJob" else job
+    job = {
+        "template": {
+            "spec": {"containers": [{"name": "probe", "image": "probe", "env": env}]}
+        }
+    }
+    spec = (
+        {"schedule": "@hourly", "jobTemplate": {"spec": job}}
+        if kind == "CronJob"
+        else job
+    )
     docs = [{"kind": kind, "metadata": {"name": "probe"}, "spec": spec}]
     assert admin_secret_readers(docs) == [f"{kind}/probe probe env X"]
-    assert admin_user_dialers(docs) == [f"{kind}/probe probe CLICKHOUSE_USER={ADMIN_USER}"]
+    assert admin_user_dialers(docs) == [
+        f"{kind}/probe probe CLICKHOUSE_USER={ADMIN_USER}"
+    ]
 
 
 # ------------------------------------------------------------ the engine goes first
 
 # The password Secret of each user the engine creates for an app.
-MINTED = {user["passwordSecretName"] for user in COMMON["clickhouse"]["serviceUsers"].values()}
+MINTED = {
+    user["passwordSecretName"] for user in COMMON["clickhouse"]["serviceUsers"].values()
+}
 WAIT = "wait-for-engine"
 
 
@@ -204,7 +243,11 @@ def _chart(
     chart: str, cloud: str, profile: str, namespace: str, overlay: str = ""
 ) -> tuple[dict, ...]:
     """A data-layer chart over the layer2-data cascade, an overlay layered last."""
-    files = [VALUES / "common.yaml", VALUES / f"{cloud}.yaml", VALUES / f"profile-{profile}.yaml"]
+    files = [
+        VALUES / "common.yaml",
+        VALUES / f"{cloud}.yaml",
+        VALUES / f"profile-{profile}.yaml",
+    ]
     with tempfile.TemporaryDirectory() as tmp:
         cmd = ["helm", "template", chart, str(CHARTS / chart), "--namespace", namespace]
         if overlay:
@@ -221,7 +264,12 @@ def _chart(
             "global.registry=registry.example.com/dfe",
         ]
         out = subprocess.run(
-            cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
         )
     assert out.returncode == 0, out.stderr
     return tuple(d for d in yaml.safe_load_all(out.stdout) if d)
@@ -229,7 +277,9 @@ def _chart(
 
 def _gateway_config(docs: tuple[dict, ...]) -> dict:
     configmap = next(
-        d for d in docs if d["kind"] == "ConfigMap" and "gateway-config.yaml" in d.get("data", {})
+        d
+        for d in docs
+        if d["kind"] == "ConfigMap" and "gateway-config.yaml" in d.get("data", {})
     )
     return yaml.safe_load(configmap["data"]["gateway-config.yaml"])
 
@@ -250,8 +300,12 @@ def collector_admin_use(docs: tuple[dict, ...]) -> list[str]:
     return found
 
 
-@pytest.mark.parametrize(("profile", "cloud"), [(p, k) for p in PROFILES for k in CLOUDS])
-def test_the_collector_neither_reads_nor_dials_as_the_admin(profile: str, cloud: str) -> None:
+@pytest.mark.parametrize(
+    ("profile", "cloud"), [(p, k) for p in PROFILES for k in CLOUDS]
+)
+def test_the_collector_neither_reads_nor_dials_as_the_admin(
+    profile: str, cloud: str
+) -> None:
     assert collector_admin_use(_chart("otel-collector", cloud, profile, "otel")) == []
 
 
@@ -260,9 +314,16 @@ def test_the_collector_on_an_external_server_keeps_its_own_user() -> None:
     assert collector_admin_use(docs) == []
 
 
-@pytest.mark.parametrize(("profile", "cloud"), [(p, k) for p in PROFILES for k in CLOUDS])
+@pytest.mark.parametrize(
+    ("profile", "cloud"), [(p, k) for p in PROFILES for k in CLOUDS]
+)
 def test_the_collector_waits_for_the_engine(profile: str, cloud: str) -> None:
-    assert minted_user_without_a_wait(list(_chart("otel-collector", cloud, profile, "otel"))) == []
+    assert (
+        minted_user_without_a_wait(
+            list(_chart("otel-collector", cloud, profile, "otel"))
+        )
+        == []
+    )
 
 
 def test_the_collector_on_an_external_server_waits_for_the_engine() -> None:
@@ -287,12 +348,16 @@ FETCH_LINES = (
 
 def _gateway(docs: tuple[dict, ...]) -> dict:
     return next(
-        d for d in docs if d["kind"] == "Deployment" and d["metadata"]["name"].endswith("-gateway")
+        d
+        for d in docs
+        if d["kind"] == "Deployment" and d["metadata"]["name"].endswith("-gateway")
     )
 
 
 def _wait(doc: dict) -> dict:
-    return next(c for c in pod_spec(doc).get("initContainers") or [] if c["name"] == WAIT)
+    return next(
+        c for c in pod_spec(doc).get("initContainers") or [] if c["name"] == WAIT
+    )
 
 
 def _wait_shape(container: dict) -> dict:
@@ -300,9 +365,14 @@ def _wait_shape(container: dict) -> dict:
     script = container["command"][-1]
     for line in FETCH_LINES:
         script = script.replace(line, "<fetch>")
-    script = re.sub(r"http://dfe-engine\.[a-z0-9-]+\.svc", "http://dfe-engine.<ns>.svc", script)
+    script = re.sub(
+        r"http://dfe-engine\.[a-z0-9-]+\.svc", "http://dfe-engine.<ns>.svc", script
+    )
     shared = ("resources", "securityContext")
-    return {"command": [*container["command"][:-1], script], **{k: container[k] for k in shared}}
+    return {
+        "command": [*container["command"][:-1], script],
+        **{k: container[k] for k in shared},
+    }
 
 
 def test_the_collector_waits_as_the_apps_do() -> None:
@@ -315,7 +385,8 @@ def test_the_collector_waits_as_the_apps_do() -> None:
     gateway = _wait(_gateway(_chart("otel-collector", "aws", "scale", "otel")))
     assert _wait_shape(gateway) == _wait_shape(_wait(shim))
     assert (
-        f"http://dfe-engine.{APP_NAMESPACE}.svc.cluster.local:8000/readyz" in gateway["command"][-1]
+        f"http://dfe-engine.{APP_NAMESPACE}.svc.cluster.local:8000/readyz"
+        in gateway["command"][-1]
     )
     assert FETCH_LINES[1] in gateway["command"][-1]
 
@@ -345,7 +416,11 @@ def _admin_copy_namespaces(docs: tuple[dict, ...]) -> set[str]:
     }
 
 
-@pytest.mark.parametrize("overlay", ["", yaml.safe_dump(EXTERNAL)], ids=["in-cluster", "external"])
-def test_the_admin_password_is_copied_into_the_app_namespace_alone(overlay: str) -> None:
+@pytest.mark.parametrize(
+    "overlay", ["", yaml.safe_dump(EXTERNAL)], ids=["in-cluster", "external"]
+)
+def test_the_admin_password_is_copied_into_the_app_namespace_alone(
+    overlay: str,
+) -> None:
     docs = _chart("clickhouse-cluster", "aws", "scale", "clickhouse", overlay)
     assert _admin_copy_namespaces(docs) == {APP_NAMESPACE}

@@ -44,7 +44,9 @@ ENOUGH_NODES = {
 }
 
 # One node at 2 vCPU / 8 GiB allocatable -- well under DEMAND's 6 vCPU / 24 GiB.
-NOT_ENOUGH_NODES = {"items": [{"status": {"allocatable": {"cpu": "2", "memory": "8Gi"}}}]}
+NOT_ENOUGH_NODES = {
+    "items": [{"status": {"allocatable": {"cpu": "2", "memory": "8Gi"}}}]
+}
 
 
 # ---------------------------------------------------------------------------
@@ -66,7 +68,9 @@ NOT_ENOUGH_NODES = {"items": [{"status": {"allocatable": {"cpu": "2", "memory": 
         ("2.5", 2.5),
     ],
 )
-def test_parse_quantity_reads_every_suffix_kubectl_emits(raw: str, expected: float) -> None:
+def test_parse_quantity_reads_every_suffix_kubectl_emits(
+    raw: str, expected: float
+) -> None:
     assert cnc.parse_quantity(raw) == pytest.approx(expected)
 
 
@@ -110,7 +114,9 @@ def test_total_demand_multiplies_count_by_per_node_and_sums_use_cases() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_read_demand_accepts_what_build_node_requirements_writes(tmp_path: Path) -> None:
+def test_read_demand_accepts_what_build_node_requirements_writes(
+    tmp_path: Path,
+) -> None:
     path = tmp_path / "scale.nodes.json"
     path.write_text(json.dumps(DEMAND), encoding="utf-8")
     assert cnc.read_demand(path) == DEMAND
@@ -118,7 +124,9 @@ def test_read_demand_accepts_what_build_node_requirements_writes(tmp_path: Path)
 
 def test_read_demand_refuses_a_use_case_missing_a_field(tmp_path: Path) -> None:
     path = tmp_path / "scale.nodes.json"
-    path.write_text(json.dumps({"kafka-broker": {"count": 3, "cpu": 2}}), encoding="utf-8")
+    path.write_text(
+        json.dumps({"kafka-broker": {"count": 3, "cpu": 2}}), encoding="utf-8"
+    )
     with pytest.raises(cnc.CapacityError, match="missing one of"):
         cnc.read_demand(path)
 
@@ -141,13 +149,17 @@ def _nodes_file(tmp_path: Path, demand: dict[str, dict[str, float]] = DEMAND) ->
     return path
 
 
-def test_a_missing_nodes_file_is_a_clean_skip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_missing_nodes_file_is_a_clean_skip(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     called = False
 
     def _fail_if_called(*_args: object, **_kwargs: object) -> object:
         nonlocal called
         called = True
-        raise AssertionError("kubectl should never be shelled out to when the nodes file is absent")
+        raise AssertionError(
+            "kubectl should never be shelled out to when the nodes file is absent"
+        )
 
     monkeypatch.setattr(cnc, "kubectl_get_nodes", _fail_if_called)
     status = cnc.main(["--nodes-file", str(tmp_path / "scale.nodes.json")])
@@ -155,7 +167,9 @@ def test_a_missing_nodes_file_is_a_clean_skip(tmp_path: Path, monkeypatch: pytes
     assert not called
 
 
-def test_enough_capacity_exits_clean(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_enough_capacity_exits_clean(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(cnc, "kubectl_get_nodes", lambda _kubeconfig: ENOUGH_NODES)
     nodes_file = _nodes_file(tmp_path)
     assert cnc.main(["--nodes-file", str(nodes_file)]) == 0

@@ -89,6 +89,7 @@ from dfe_suite.ship import SHIP_PY, SHIP_RS, ShipSpec, ship_library
 
 TAG = "dfe-suite"
 
+
 # The read-only signal gather /fixes uses. It ships with hyperi-ai and is
 # REFERENCED, never copied: a second copy here would be 774 lines drifting
 # against the original in another repo under another licence.
@@ -531,8 +532,10 @@ def cmd_signals(args: argparse.Namespace) -> int:
     checked = bool(report["ci"]["checked"])
     total = sum(counts.values())
     headline = ", ".join(
-        "ci warnings not checked" if k == "ci warnings" and not checked
-        else "pins not read" if k == "pin drift" and not pins_read
+        "ci warnings not checked"
+        if k == "ci warnings" and not checked
+        else "pins not read"
+        if k == "pin drift" and not pins_read
         else f"{k} {v}"
         for k, v in counts.items()
     )
@@ -877,16 +880,23 @@ def build_parser() -> argparse.ArgumentParser:
     signals.add_argument("--repos", help="directory holding the member checkouts")
 
     pins = sub.add_parser(
-        "pins", help="every member's backing-service pins at origin/main against versions.yaml"
+        "pins",
+        help="every member's backing-service pins at origin/main against versions.yaml",
     )
     add_shared(pins)
-    pins.add_argument("member", nargs="*", help="members to scan (default: every suite.yaml node)")
+    pins.add_argument(
+        "member", nargs="*", help="members to scan (default: every suite.yaml node)"
+    )
     pins.add_argument("--repos", help="directory holding the member checkouts")
     pins.add_argument(
-        "--no-fetch", action="store_true", help="read origin/main as it stands, without a fetch"
+        "--no-fetch",
+        action="store_true",
+        help="read origin/main as it stands, without a fetch",
     )
     pins.add_argument(
-        "--api", action="store_true", help="read every member's main through gh api, even one checked out here"
+        "--api",
+        action="store_true",
+        help="read every member's main through gh api, even one checked out here",
     )
 
     review = sub.add_parser(

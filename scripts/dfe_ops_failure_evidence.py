@@ -112,7 +112,9 @@ from typing import IO
 from dfe_ops_readiness_report import kubectl_prefix, pod_ready
 
 CAPTURE_TIMEOUT = 30.0  # seconds one kubectl call may take
-BUDGET = 300.0  # seconds for every capture together, so the destroy behind it is not held up
+BUDGET = (
+    300.0  # seconds for every capture together, so the destroy behind it is not held up
+)
 TEXT_BYTES = 1024 * 1024  # bytes one capture file keeps
 JSON_BYTES = 16 * 1024 * 1024  # bytes a read that only steers later captures may hold
 STDERR_BYTES = 8192
@@ -125,7 +127,9 @@ MAX_CONTROLLER_PODS = 4  # load balancer controller pods whose logs are read
 POD_LOG_TAIL = 200  # newest lines read from one container of a stuck or unready pod
 POD_LOG_BYTES = 64 * 1024  # newest bytes kept from one such read
 POD_LOG_TOTAL = 8 * 1024 * 1024  # bytes all such reads of a run may keep together
-POD_LOG_TIMEOUT = 15.0  # seconds one such read may take; a pod on a dead node answers nothing
+POD_LOG_TIMEOUT = (
+    15.0  # seconds one such read may take; a pod on a dead node answers nothing
+)
 # Share of the budget the pod log reads leave for the captures that run after them.
 POD_LOG_KEEP = 0.3
 CHUNK = 65536
@@ -163,7 +167,12 @@ SECRET_COLUMNS = (
 )
 # A container waiting on one of these never starts by itself, and its events carry the reason.
 STUCK_REASONS = frozenset(
-    {"ImagePullBackOff", "ErrImagePull", "CrashLoopBackOff", "CreateContainerConfigError"}
+    {
+        "ImagePullBackOff",
+        "ErrImagePull",
+        "CrashLoopBackOff",
+        "CreateContainerConfigError",
+    }
 )
 WARNINGS = "type=Warning"
 # ESO records a refresh that wrote its Secret as a Normal event (Created, Updated).
@@ -200,7 +209,17 @@ _ASSIGNMENT = re.compile(
     re.IGNORECASE,
 )
 # A line with none of these cannot hold a key above, so the per-key patterns skip it.
-_KEY_HINTS = ("pass", "pwd", "secret", "token", "key", "credential", "auth", "cookie", "bearer")
+_KEY_HINTS = (
+    "pass",
+    "pwd",
+    "secret",
+    "token",
+    "key",
+    "credential",
+    "auth",
+    "cookie",
+    "bearer",
+)
 # A header's value runs to the end of the line: `Authorization: Token abc` is two words.
 _HEADER = re.compile(
     r"""((?:proxy-)?authorization|(?:set-)?cookie)("?[ \t]*[:=][ \t]*)(?!["'\\])[^\n]+""",
@@ -208,7 +227,8 @@ _HEADER = re.compile(
 )
 # The lookahead needs a digit or token punctuation, so prose such as "bearer authentication" stays.
 _BEARER = re.compile(
-    r"\bbearer[ \t]+(?=[A-Za-z0-9._~+/=-]*[0-9._~+/=-])[A-Za-z0-9._~+/=-]{8,}", re.IGNORECASE
+    r"\bbearer[ \t]+(?=[A-Za-z0-9._~+/=-]*[0-9._~+/=-])[A-Za-z0-9._~+/=-]{8,}",
+    re.IGNORECASE,
 )
 # scheme://user:password@host and scheme://token@host
 _USERINFO = re.compile(r"(://)([^\s/@:]*:)?([^\s/]+)@")
@@ -271,7 +291,11 @@ def _mask_value(match: re.Match[str]) -> str:
     """The key and separator of an assignment with its value masked, a closed quote kept."""
     key, value = match[1], match[2]
     for quote in ('\\"', '"', "'"):
-        if len(value) >= 2 * len(quote) and value.startswith(quote) and value.endswith(quote):
+        if (
+            len(value) >= 2 * len(quote)
+            and value.startswith(quote)
+            and value.endswith(quote)
+        ):
             return f"{key}{quote}{MASK}{quote}"
     return f"{key}{MASK}"
 
@@ -326,7 +350,9 @@ class _Drain:
                     self.full.set()
 
 
-def run_bounded(argv: list[str], *, timeout: float, limit: int, tail: bool = False) -> Outcome:
+def run_bounded(
+    argv: list[str], *, timeout: float, limit: int, tail: bool = False
+) -> Outcome:
     """Run `argv`, keep at most `limit` bytes of its output, and stop it at `timeout` seconds.
 
     Args:
@@ -341,7 +367,10 @@ def run_bounded(argv: list[str], *, timeout: float, limit: int, tail: bool = Fal
     """
     try:
         proc = subprocess.Popen(
-            argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+            argv,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
         )
     except OSError as exc:
         return Outcome(error=f"could not start {argv[0]}: {exc.strerror or exc}")
@@ -389,10 +418,16 @@ def verdict(outcome: Outcome | None, budget: float) -> str:
     if outcome.returncode is None:
         return outcome.error
     if outcome.timed_out:
-        kept = f", kept the newest {len(outcome.output)} bytes" if outcome.output else ""
+        kept = (
+            f", kept the newest {len(outcome.output)} bytes" if outcome.output else ""
+        )
         return f"timed out{kept}"
     if outcome.ok:
-        return f"ok, truncated to {len(outcome.output)} bytes" if outcome.truncated else "ok"
+        return (
+            f"ok, truncated to {len(outcome.output)} bytes"
+            if outcome.truncated
+            else "ok"
+        )
     return f"exit {outcome.returncode}: {outcome.error or 'no message'}"
 
 
@@ -412,16 +447,22 @@ def node_condition_lines(nodes: list[dict]) -> list[str]:
             f"kernel {info.get('kernelVersion')} runtime {info.get('containerRuntimeVersion')}"
         )
         for cond in status.get("conditions") or []:
-            why = ": ".join(str(p) for p in (cond.get("reason"), cond.get("message")) if p)
+            why = ": ".join(
+                str(p) for p in (cond.get("reason"), cond.get("message")) if p
+            )
             lines.append(
                 f"  condition {cond.get('type')}={cond.get('status')} {why} "
                 f"(since {cond.get('lastTransitionTime')})"
             )
         for kind in ("capacity", "allocatable"):
             values = status.get(kind) or {}
-            lines.append(f"  {kind} " + " ".join(f"{k}={values[k]}" for k in sorted(values)))
+            lines.append(
+                f"  {kind} " + " ".join(f"{k}={values[k]}" for k in sorted(values))
+            )
         taints = (node.get("spec") or {}).get("taints") or []
-        shown = ",".join(f"{t.get('key')}={t.get('value', '')}:{t.get('effect')}" for t in taints)
+        shown = ",".join(
+            f"{t.get('key')}={t.get('value', '')}:{t.get('effect')}" for t in taints
+        )
         lines.append(f"  taints {shown or '-'}")
     return lines
 
@@ -438,7 +479,11 @@ def not_ready_pods(pods: list[dict]) -> list[str]:
 def _labelled(pods: list[dict], label: tuple[str, str]) -> list[dict]:
     """The pods carrying `label`, ordered by the node each runs on."""
     key, value = label
-    found = [p for p in pods if ((p.get("metadata") or {}).get("labels") or {}).get(key) == value]
+    found = [
+        p
+        for p in pods
+        if ((p.get("metadata") or {}).get("labels") or {}).get(key) == value
+    ]
     return sorted(found, key=lambda p: (p.get("spec") or {}).get("nodeName") or "")
 
 
@@ -470,7 +515,9 @@ def webhook_ca_lines(configs: list[dict]) -> list[str]:
     digests: set[str] = set()
     for config in configs:
         meta = config.get("metadata") or {}
-        lines.append(f"{config.get('kind') or 'WebhookConfiguration'} {meta.get('name')}")
+        lines.append(
+            f"{config.get('kind') or 'WebhookConfiguration'} {meta.get('name')}"
+        )
         injected_from = (meta.get("annotations") or {}).get(INJECT_CA)
         lines.append(f"  {INJECT_CA} {injected_from or '-'}")
         for hook in config.get("webhooks") or []:
@@ -516,7 +563,11 @@ def _identity(pod: dict) -> tuple[str, str]:
 def _sidecars(pod: dict) -> set[str]:
     """Init containers declared `restartPolicy: Always`: they run for the life of the pod."""
     declared = (pod.get("spec") or {}).get("initContainers") or []
-    return {c["name"] for c in declared if c.get("name") and c.get("restartPolicy") == "Always"}
+    return {
+        c["name"]
+        for c in declared
+        if c.get("name") and c.get("restartPolicy") == "Always"
+    }
 
 
 def init_unfinished(pod: dict) -> bool:
@@ -543,14 +594,19 @@ def stuck_pods(pods: list[dict]) -> list[tuple[str, str]]:
             *(status.get("initContainerStatuses") or []),
             *(status.get("containerStatuses") or []),
         ]
-        reasons = {((c.get("state") or {}).get("waiting") or {}).get("reason") for c in containers}
+        reasons = {
+            ((c.get("state") or {}).get("waiting") or {}).get("reason")
+            for c in containers
+        }
         stuck = bool(reasons & STUCK_REASONS) or init_unfinished(pod)
         if stuck and meta.get("namespace") and meta.get("name"):
             found.append((meta["namespace"], meta["name"]))
     return sorted(found)
 
 
-def running_unready_pods(pods: list[dict], skip: Collection[str] = ()) -> list[tuple[str, str]]:
+def running_unready_pods(
+    pods: list[dict], skip: Collection[str] = ()
+) -> list[tuple[str, str]]:
     """(namespace, name) of every Running pod with a container not ready, in no `skip` namespace.
 
     A pod being deleted is left out: its readiness drops as it stops, which says nothing
@@ -559,7 +615,11 @@ def running_unready_pods(pods: list[dict], skip: Collection[str] = ()) -> list[t
     found = []
     for pod in pods:
         meta, status = pod.get("metadata") or {}, pod.get("status") or {}
-        if status.get("phase") != "Running" or pod_ready(pod) or meta.get("deletionTimestamp"):
+        if (
+            status.get("phase") != "Running"
+            or pod_ready(pod)
+            or meta.get("deletionTimestamp")
+        ):
             continue
         if meta.get("namespace") and meta.get("name") and meta["namespace"] not in skip:
             found.append((meta["namespace"], meta["name"]))
@@ -654,7 +714,9 @@ def container_lines(pod: dict) -> list[str]:
         for name in [*declared, *(n for n in reported if n not in declared)]:
             known, seen = declared.get(name) or {}, reported.get(name) or {}
             lines.append(f"  {label} {name}")
-            lines.append(f"    image {_text(known.get('image') or seen.get('image') or '-')}")
+            lines.append(
+                f"    image {_text(known.get('image') or seen.get('image') or '-')}"
+            )
             state = _state_text(seen.get("state") or {})
             lines.append(f"    state {state or 'not reported'}")
             lines.append(f"    restartCount {int(seen.get('restartCount') or 0)}")
@@ -665,15 +727,28 @@ def container_lines(pod: dict) -> list[str]:
 
 def pod_summary_lines(namespace: str, pod: dict) -> list[str]:
     """A pod's node, phase, conditions and containers, as text that holds no env value."""
-    meta, spec, status = pod.get("metadata") or {}, pod.get("spec") or {}, pod.get("status") or {}
-    lines = [f"pod {namespace}/{meta.get('name')}", f"  node {spec.get('nodeName') or '-'}"]
+    meta, spec, status = (
+        pod.get("metadata") or {},
+        pod.get("spec") or {},
+        pod.get("status") or {},
+    )
+    lines = [
+        f"pod {namespace}/{meta.get('name')}",
+        f"  node {spec.get('nodeName') or '-'}",
+    ]
     lines.append(f"  phase {status.get('phase') or '-'}")
     if status.get("reason") or status.get("message"):
-        why = ": ".join(_text(p) for p in (status.get("reason"), status.get("message")) if p)
+        why = ": ".join(
+            _text(p) for p in (status.get("reason"), status.get("message")) if p
+        )
         lines.append(f"  status {why}")
     for cond in status.get("conditions") or []:
-        why = ": ".join(_text(p) for p in (cond.get("reason"), cond.get("message")) if p)
-        lines.append(f"  condition {cond.get('type')}={cond.get('status')} {why}".rstrip())
+        why = ": ".join(
+            _text(p) for p in (cond.get("reason"), cond.get("message")) if p
+        )
+        lines.append(
+            f"  condition {cond.get('type')}={cond.get('status')} {why}".rstrip()
+        )
     return [*lines, *container_lines(pod)]
 
 
@@ -686,7 +761,9 @@ def generator_backed(external_secret: dict) -> bool:
     """True when a dataFrom entry takes its values from a generator, so ESO mints them."""
     entries = (external_secret.get("spec") or {}).get("dataFrom") or []
     sources = [(entry or {}).get("sourceRef") or {} for entry in entries]
-    return any(source.get("generatorRef") or source.get("generator") for source in sources)
+    return any(
+        source.get("generatorRef") or source.get("generator") for source in sources
+    )
 
 
 def target_secret(external_secret: dict) -> tuple[str, str]:
@@ -725,7 +802,9 @@ def external_secret_lines(external_secrets: list[dict]) -> list[str]:
             f"refreshTime {_text(status.get('refreshTime') or '-')}"
         )
         for cond in status.get("conditions") or []:
-            why = ": ".join(_text(p) for p in (cond.get("reason"), cond.get("message")) if p)
+            why = ": ".join(
+                _text(p) for p in (cond.get("reason"), cond.get("message")) if p
+            )
             lines.append(
                 f"  condition {cond.get('type')}={cond.get('status')} {why} "
                 f"(since {cond.get('lastTransitionTime')})"
@@ -812,7 +891,7 @@ class Evidence:
             try:
                 body = json.loads(outcome.output)
                 items = [i for i in body.get("items") or [] if isinstance(i, dict)]
-            except (json.JSONDecodeError, AttributeError):
+            except json.JSONDecodeError, AttributeError:
                 how = "answered with no JSON item list"
         if items is not None:
             self.answered += 1
@@ -843,7 +922,9 @@ class Evidence:
             limit = min(POD_LOG_BYTES, self.pod_log_left)
             outcome = None
             if limit <= 0:
-                how = f"not read: the {POD_LOG_TOTAL} byte limit on pod logs was reached"
+                how = (
+                    f"not read: the {POD_LOG_TOTAL} byte limit on pod logs was reached"
+                )
             else:
                 outcome = self._kubectl(
                     args,
@@ -870,7 +951,9 @@ class Evidence:
             sections.append(f"{title}: {how}\n{text}")
         return "".join(sections)
 
-    def pod_report(self, name: str, namespace: str, pods: list[dict], closing: str = "") -> None:
+    def pod_report(
+        self, name: str, namespace: str, pods: list[dict], closing: str = ""
+    ) -> None:
         """The file `name`: each pod's summary from the pod list, its events, then its logs.
 
         An events or log call that fails is recorded in the file and the index, and the
@@ -878,7 +961,8 @@ class Evidence:
         a failed probe's output is container text. `closing` is a last line for the file.
         """
         self.note(
-            name, f"{len(pods)} pod(s) summarised from the pod list, each with its events and logs"
+            name,
+            f"{len(pods)} pod(s) summarised from the pod list, each with its events and logs",
         )
         sections: list[str] = []
         for pod in pods:
@@ -893,15 +977,23 @@ class Evidence:
             how = verdict(outcome, self.budget)
             self.note(f"{name}, events of {pod_name}", how, args)
             events = outcome.output.decode("utf-8", errors="replace") if outcome else ""
-            summary = "\n".join(pod_summary_lines(namespace, pod)) + f"\n  events: {how}\n{events}"
-            sections.append(redact(summary) + "\n" + self.pod_logs(name, namespace, pod))
+            summary = (
+                "\n".join(pod_summary_lines(namespace, pod))
+                + f"\n  events: {how}\n{events}"
+            )
+            sections.append(
+                redact(summary) + "\n" + self.pod_logs(name, namespace, pod)
+            )
         if closing:
             sections.append(closing + "\n")
         self.write(name, "\n".join(sections).encode("utf-8"))
 
 
 def _capture_logs(
-    evidence: Evidence, directory: str, targets: list[dict], namespace: str = "kube-system"
+    evidence: Evidence,
+    directory: str,
+    targets: list[dict],
+    namespace: str = "kube-system",
 ) -> None:
     """Each container's newest lines in `namespace`, and its previous run if it restarted."""
     bounds = [f"--tail={LOG_TAIL}", f"--limit-bytes={TEXT_BYTES}", "--timestamps"]
@@ -912,26 +1004,39 @@ def _capture_logs(
             logs = ["-n", namespace, "logs", name, "-c", container, *bounds]
             evidence.capture(f"{stem}.log", logs, log=True)
             if restarts:
-                evidence.capture(f"{stem}.previous.log", [*logs, "--previous"], log=True)
+                evidence.capture(
+                    f"{stem}.previous.log", [*logs, "--previous"], log=True
+                )
 
 
-def _capture_load_balancer_controller(evidence: Evidence, pods: list[dict] | None) -> None:
+def _capture_load_balancer_controller(
+    evidence: Evidence, pods: list[dict] | None
+) -> None:
     """The controller's webhook CA digests, then each controller container's newest lines."""
     key, value = CONTROLLER_LABEL
     selector = f"{key}={value}"
     webhook_file = f"{CONTROLLER_DIR}/webhook-ca.txt"
     configs = evidence.read(webhook_file, ["get", WEBHOOK_CONFIGS, "-l", selector])
     if configs:
-        evidence.write(webhook_file, ("\n".join(webhook_ca_lines(configs)) + "\n").encode("utf-8"))
+        evidence.write(
+            webhook_file, ("\n".join(webhook_ca_lines(configs)) + "\n").encode("utf-8")
+        )
     elif configs is not None:
-        evidence.note(webhook_file, f"no webhook configuration carries {selector}, nothing written")
+        evidence.note(
+            webhook_file,
+            f"no webhook configuration carries {selector}, nothing written",
+        )
 
     if pods is None:
-        evidence.note(f"{CONTROLLER_DIR}/", "not run: the kube-system pods were not read")
+        evidence.note(
+            f"{CONTROLLER_DIR}/", "not run: the kube-system pods were not read"
+        )
         return
     targets = controller_pods(pods)[:MAX_CONTROLLER_PODS]
     if not targets:
-        evidence.note(f"{CONTROLLER_DIR}/", f"not run: no kube-system pod carries {selector}")
+        evidence.note(
+            f"{CONTROLLER_DIR}/", f"not run: no kube-system pod carries {selector}"
+        )
         return
     _capture_logs(evidence, CONTROLLER_DIR, targets)
 
@@ -947,11 +1052,23 @@ def _capture_aws_node(evidence: Evidence, targets: list[dict]) -> None:
         for log in CNI_LOGS:
             target = f"aws-node/{safe_name(node)}.{log}"
             kubelet = f"/api/v1/nodes/{node}/proxy/logs/aws-routed-eni/{log}"
-            served = evidence.capture(target, ["get", "--raw", kubelet], tail=True, log=True)
+            served = evidence.capture(
+                target, ["get", "--raw", kubelet], tail=True, log=True
+            )
             if served is None or served.ok:
                 continue
-            inside = ["exec", name, "-c", CNI_CONTAINER, "--", "cat", f"{CNI_LOG_MOUNT}/{log}"]
-            evidence.capture(target, ["-n", "kube-system", *inside], tail=True, log=True)
+            inside = [
+                "exec",
+                name,
+                "-c",
+                CNI_CONTAINER,
+                "--",
+                "cat",
+                f"{CNI_LOG_MOUNT}/{log}",
+            ]
+            evidence.capture(
+                target, ["-n", "kube-system", *inside], tail=True, log=True
+            )
 
 
 def _capture_stuck(evidence: Evidence, covered: Collection[str] = ()) -> None:
@@ -967,11 +1084,15 @@ def _capture_stuck(evidence: Evidence, covered: Collection[str] = ()) -> None:
         ["get", "pods", "-A"],
     )
     if pods is None:
-        evidence.note("stuck-pods/", "not run: the pods in every namespace were not read")
+        evidence.note(
+            "stuck-pods/", "not run: the pods in every namespace were not read"
+        )
         return
     stuck = stuck_pods(pods)
     held = set(stuck)
-    unready = [key for key in running_unready_pods(pods, skip=covered) if key not in held]
+    unready = [
+        key for key in running_unready_pods(pods, skip=covered) if key not in held
+    ]
     if not stuck and not unready:
         waits = ", ".join(sorted(STUCK_REASONS))
         evidence.note(
@@ -981,7 +1102,9 @@ def _capture_stuck(evidence: Evidence, covered: Collection[str] = ()) -> None:
         )
         return
     if len(stuck) > MAX_STUCK:
-        summarised = f"{len(stuck)} pods are stuck, and the first {MAX_STUCK} are summarised"
+        summarised = (
+            f"{len(stuck)} pods are stuck, and the first {MAX_STUCK} are summarised"
+        )
         evidence.note("stuck-pods/", summarised)
     room = max(0, MAX_STUCK - len(stuck))
     skipped = unready[room:]
@@ -999,11 +1122,16 @@ def _capture_stuck(evidence: Evidence, covered: Collection[str] = ()) -> None:
     for number, (namespace, chosen) in enumerate(files):
         last = number == len(files) - 1
         evidence.pod_report(
-            f"stuck-pods/{safe_name(namespace)}.txt", namespace, chosen, closing if last else ""
+            f"stuck-pods/{safe_name(namespace)}.txt",
+            namespace,
+            chosen,
+            closing if last else "",
         )
 
 
-def _capture_generated_secrets(evidence: Evidence, external_secrets: list[dict] | None) -> None:
+def _capture_generated_secrets(
+    evidence: Evidence, external_secrets: list[dict] | None
+) -> None:
     """The creation time, resourceVersion and immutable flag of each Secret a generator writes.
 
     Each call names the SECRET_COLUMNS fields and no others.
@@ -1014,7 +1142,8 @@ def _capture_generated_secrets(evidence: Evidence, external_secrets: list[dict] 
     targets = generated_secrets(external_secrets)
     if not targets:
         evidence.note(
-            f"{GENERATED_DIR}/", "not run: no ExternalSecret takes its values from a generator"
+            f"{GENERATED_DIR}/",
+            "not run: no ExternalSecret takes its values from a generator",
         )
         return
     columns = ",".join(f"{label}:{path}" for label, path in SECRET_COLUMNS)
@@ -1027,7 +1156,9 @@ def _capture_generated_secrets(evidence: Evidence, external_secrets: list[dict] 
     if skipped:
         shown = ", ".join(f"{ns}/{name}" for ns, name in skipped[:10])
         more = f", and {len(skipped) - 10} more" if len(skipped) > 10 else ""
-        evidence.note(f"{GENERATED_DIR}/", f"+{len(skipped)} more, not read: {shown}{more}")
+        evidence.note(
+            f"{GENERATED_DIR}/", f"+{len(skipped)} more, not read: {shown}{more}"
+        )
 
 
 def _capture_external_secrets(evidence: Evidence) -> None:
@@ -1052,7 +1183,9 @@ def _capture_external_secrets(evidence: Evidence) -> None:
         ["get", "pods", "-A", "-l", selector],
     )
     if pods is None:
-        evidence.note(f"{ESO_DIR}/", "not run: the external-secrets controller pods were not read")
+        evidence.note(
+            f"{ESO_DIR}/", "not run: the external-secrets controller pods were not read"
+        )
         return
     chosen = [pod for pod in sorted(pods, key=_identity) if all(_identity(pod))]
     if not chosen:
@@ -1077,14 +1210,25 @@ def collect(evidence: Evidence) -> None:
         ["-n", "kube-system", "get", "pods"],
     )
     if nodes is None and pods is None and not (wide and wide.ok):
-        evidence.note("(the rest)", "not run: the API server answered none of the reads above")
+        evidence.note(
+            "(the rest)", "not run: the API server answered none of the reads above"
+        )
         return
 
     evidence.capture("pods-wide.txt", ["get", "pods", "-A", "-o", "wide"])
     # The newest warnings are the failed stage's own, so a list past the byte cap keeps its end.
     evidence.capture(
         "warning-events.txt",
-        ["get", "events", "-A", "--field-selector", WARNINGS, OLDEST_FIRST, "-o", "wide"],
+        [
+            "get",
+            "events",
+            "-A",
+            "--field-selector",
+            WARNINGS,
+            OLDEST_FIRST,
+            "-o",
+            "wide",
+        ],
         tail=True,
     )
     evidence.capture(
@@ -1095,7 +1239,8 @@ def collect(evidence: Evidence) -> None:
     evidence.capture("services-wide.txt", ["get", "services", "-A", "-o", "wide"])
     evidence.capture("gateways-wide.txt", ["get", GATEWAYS, "-A", "-o", "wide"])
     evidence.capture(
-        "kube-system-certificates.txt", ["-n", "kube-system", "get", CERTIFICATES, "-o", "wide"]
+        "kube-system-certificates.txt",
+        ["-n", "kube-system", "get", CERTIFICATES, "-o", "wide"],
     )
     _capture_external_secrets(evidence)
 
@@ -1107,7 +1252,9 @@ def collect(evidence: Evidence) -> None:
         chosen = [listed[name] for name in unready[:MAX_UNREADY]]
         evidence.pod_report(unready_file, "kube-system", chosen)
     else:
-        evidence.note(unready_file, "not run: every kube-system pod is Running and Ready")
+        evidence.note(
+            unready_file, "not run: every kube-system pod is Running and Ready"
+        )
 
     # The not-Ready kube-system pods are in kube-system-not-ready.txt whenever that list was read.
     _capture_stuck(evidence, covered=() if pods is None else ("kube-system",))
@@ -1130,7 +1277,9 @@ def collect(evidence: Evidence) -> None:
         return
     targets = aws_node_pods(pods)[:MAX_AWS_NODE_PODS]
     if not targets:
-        evidence.note("aws-node/", "not run: no kube-system pod carries k8s-app=aws-node")
+        evidence.note(
+            "aws-node/", "not run: no kube-system pod carries k8s-app=aws-node"
+        )
         return
     _capture_aws_node(evidence, targets)
 
@@ -1144,9 +1293,14 @@ def cmd_failure_evidence(args: argparse.Namespace) -> int:
         header = f"failure evidence, read {stamp}\n"
         (out / INDEX).write_text(header, encoding="utf-8", newline="\n")
     except OSError as exc:
-        print(f"  failure evidence skipped: {out} cannot be written: {exc}", file=sys.stderr)
+        print(
+            f"  failure evidence skipped: {out} cannot be written: {exc}",
+            file=sys.stderr,
+        )
         return 0
-    evidence = Evidence(out, kubectl_prefix(args), args.budget, time.monotonic() + args.budget)
+    evidence = Evidence(
+        out, kubectl_prefix(args), args.budget, time.monotonic() + args.budget
+    )
     collect(evidence)
     print(
         f"failure evidence: {evidence.answered} of {evidence.runs} kubectl calls answered, "
@@ -1188,12 +1342,21 @@ def add_failure_evidence_subparser(sub: argparse._SubParsersAction) -> None:
         "data. Writes nothing to the cluster; exits 0.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    fe.add_argument("--out", required=True, help="directory the captures and index.txt go to")
-    fe.add_argument("--kubeconfig", default="", help="kubeconfig to read; empty is kubectl's own")
     fe.add_argument(
-        "--context", default="", help="kubeconfig context to read; empty is its current one"
+        "--out", required=True, help="directory the captures and index.txt go to"
     )
     fe.add_argument(
-        "--budget", type=float, default=BUDGET, help="seconds every capture together may take"
+        "--kubeconfig", default="", help="kubeconfig to read; empty is kubectl's own"
+    )
+    fe.add_argument(
+        "--context",
+        default="",
+        help="kubeconfig context to read; empty is its current one",
+    )
+    fe.add_argument(
+        "--budget",
+        type=float,
+        default=BUDGET,
+        help="seconds every capture together may take",
     )
     fe.set_defaults(func=cmd_failure_evidence)

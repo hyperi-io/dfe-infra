@@ -163,7 +163,9 @@ def generated() -> dict[str, str]:
         template = appset["spec"]["template"]
         prefix = template["spec"]["sources"][0]["path"].replace(CHART_EXPR, "")
         for element in elements(appset):
-            out[element["app"]] = prefix + element.get("chart", f"charts/{element['app']}")
+            out[element["app"]] = prefix + element.get(
+                "chart", f"charts/{element['app']}"
+            )
     return out
 
 
@@ -188,20 +190,32 @@ def git_paths(appset: dict) -> list[dict]:
 def test_the_application_name_comes_from_app_alone() -> None:
     for name, appset in element_appsets():
         rendered = appset["spec"]["template"]["metadata"]["name"]
-        expect(f"{name} names the Application from .app",
-               rendered == "{{ .app }}-{{ .name }}", rendered)
+        expect(
+            f"{name} names the Application from .app",
+            rendered == "{{ .app }}-{{ .name }}",
+            rendered,
+        )
 
 
 def test_the_chart_path_is_read_with_index_not_a_field_lookup() -> None:
     for name, appset in element_appsets():
         source = appset["spec"]["template"]["spec"]["sources"][0]["path"]
-        expect(f"{name} defaults the chart to the app name", CHART_EXPR in source, source)
-        expect(f"{name} never looks the chart key up as a field",
-               "{{ .chart }}" not in source, source)
+        expect(
+            f"{name} defaults the chart to the app name", CHART_EXPR in source, source
+        )
+        expect(
+            f"{name} never looks the chart key up as a field",
+            "{{ .chart }}" not in source,
+            source,
+        )
 
 
 def test_every_generated_application_name_is_pinned() -> None:
-    expect("the generated names are the pinned set", set(generated()) == NAMES, sorted(generated()))
+    expect(
+        "the generated names are the pinned set",
+        set(generated()) == NAMES,
+        sorted(generated()),
+    )
 
 
 def test_every_generated_chart_path_is_pinned() -> None:
@@ -213,8 +227,11 @@ def test_an_element_stating_no_chart_falls_back_to_its_app_name() -> None:
     platform = appsets("layer2-platform.yaml")[0]
     entry = next(e for e in elements(platform) if e["app"] == "network-policies")
     expect("the element states no chart", "chart" not in entry, entry)
-    expect("and still renders under its own name",
-           generated()["network-policies"] == "helm/charts/network-policies", generated())
+    expect(
+        "and still renders under its own name",
+        generated()["network-policies"] == "helm/charts/network-policies",
+        generated(),
+    )
 
 
 def generated_overlays() -> dict[str, set[str]]:
@@ -225,19 +242,29 @@ def generated_overlays() -> dict[str, set[str]]:
         per_app = [f for f in files if f.startswith("$values/infra/") and "{{" in f]
         for element in elements(appset):
             for template in per_app:
-                rendered = template.replace(OVERLAY_EXPR, element.get("overlay", element["app"]))
-                out.setdefault(element["app"], set()).add(rendered.replace("{{ .app }}", element["app"]))
+                rendered = template.replace(
+                    OVERLAY_EXPR, element.get("overlay", element["app"])
+                )
+                out.setdefault(element["app"], set()).add(
+                    rendered.replace("{{ .app }}", element["app"])
+                )
     return out
 
 
 def test_every_deployer_overlay_is_pinned() -> None:
     """A moved chart must not orphan the `infra/<app>.yaml` a deployer wrote."""
-    expect("the generated overlays are the pinned set", generated_overlays() == OVERLAYS,
-           generated_overlays())
+    expect(
+        "the generated overlays are the pinned set",
+        generated_overlays() == OVERLAYS,
+        generated_overlays(),
+    )
     for name, appset in element_appsets():
         files = appset["spec"]["template"]["spec"]["sources"][0]["helm"]["valueFiles"]
-        expect(f"{name} never looks the overlay key up as a field",
-               not any("{{ .overlay }}" in f for f in files), files)
+        expect(
+            f"{name} never looks the overlay key up as a field",
+            not any("{{ .overlay }}" in f for f in files),
+            files,
+        )
 
 
 def test_every_edge_applicationset_is_gated_on_the_module_switch() -> None:
@@ -246,17 +273,32 @@ def test_every_edge_applicationset_is_gated_on_the_module_switch() -> None:
     expect("the edge file carries both ApplicationSets", len(edge) == 2, len(edge))
     for appset in edge:
         selectors = cluster_selectors(appset)
-        expect(f"{appset['metadata']['name']} selects a cluster", selectors != [], selectors)
+        expect(
+            f"{appset['metadata']['name']} selects a cluster",
+            selectors != [],
+            selectors,
+        )
         for selector in selectors:
             operators = {
-                e["operator"] for e in selector.get("matchExpressions", []) if e["key"] == EDGE_KEY
+                e["operator"]
+                for e in selector.get("matchExpressions", [])
+                if e["key"] == EDGE_KEY
             }
-            expect(f"{appset['metadata']['name']} requires the key to exist",
-                   "Exists" in operators, operators)
-            expect(f"{appset['metadata']['name']} requires it to be true",
-                   any(e["key"] == EDGE_KEY and e["operator"] == "In" and e["values"] == ["true"]
-                       for e in selector.get("matchExpressions", [])),
-                   selector.get("matchExpressions"))
+            expect(
+                f"{appset['metadata']['name']} requires the key to exist",
+                "Exists" in operators,
+                operators,
+            )
+            expect(
+                f"{appset['metadata']['name']} requires it to be true",
+                any(
+                    e["key"] == EDGE_KEY
+                    and e["operator"] == "In"
+                    and e["values"] == ["true"]
+                    for e in selector.get("matchExpressions", [])
+                ),
+                selector.get("matchExpressions"),
+            )
 
 
 def test_every_first_party_chart_is_reachable_through_the_shared_resolver() -> None:
@@ -271,23 +313,36 @@ def test_every_first_party_chart_is_reachable_through_the_shared_resolver() -> N
         # chart of its own here.
         if chart_file.parent.parent.name != "library"
     }
-    expect("every first-party chart sits in a tree _charts sweeps",
-           {d.parent.name for d in on_disk} <= trees,
-           sorted({d.parent.name for d in on_disk} - trees))
+    expect(
+        "every first-party chart sits in a tree _charts sweeps",
+        {d.parent.name for d in on_disk} <= trees,
+        sorted({d.parent.name for d in on_disk} - trees),
+    )
     # The same map is restated in bash, and a chart that moves has to move in
     # both: validate-charts.sh prints [SKIP] rather than failing when a path is wrong.
     validate = (SCRIPTS / "validate-charts.sh").read_text(encoding="utf-8")
     for directory in sorted(on_disk):
-        declared = yaml.safe_load((directory / "Chart.yaml").read_text(encoding="utf-8"))["name"]
-        expect(f"chart_dir({declared!r}) resolves to where it actually lives",
-               chart_dir(declared) == directory, f"{chart_dir(declared)} != {directory}")
+        declared = yaml.safe_load(
+            (directory / "Chart.yaml").read_text(encoding="utf-8")
+        )["name"]
+        expect(
+            f"chart_dir({declared!r}) resolves to where it actually lives",
+            chart_dir(declared) == directory,
+            f"{chart_dir(declared)} != {directory}",
+        )
         if directory.parent.name == "charts":
             continue
         relative = str(directory.relative_to(REPO_ROOT))
-        expect(f"validate-charts.sh resolves {declared} to {relative}",
-               re.search(rf"^\s*{re.escape(declared)}\)\s+echo \"{re.escape(relative)}\"", validate, re.M)
-               is not None,
-               f"no {declared} case naming {relative}")
+        expect(
+            f"validate-charts.sh resolves {declared} to {relative}",
+            re.search(
+                rf"^\s*{re.escape(declared)}\)\s+echo \"{re.escape(relative)}\"",
+                validate,
+                re.M,
+            )
+            is not None,
+            f"no {declared} case naming {relative}",
+        )
 
 
 def test_the_gateway_keeps_the_wave_the_load_balancer_controller_needs() -> None:
@@ -308,27 +363,35 @@ def test_the_gateway_keeps_the_wave_the_load_balancer_controller_needs() -> None
         for element in elements(appset)
         if element.get("chart") == "aws-load-balancer-controller"
     )
-    expect("and the load balancer controller is on an earlier wave",
-           int(controller["wave"]) < int(gateway["wave"]), (controller, gateway))
+    expect(
+        "and the load balancer controller is on an earlier wave",
+        int(controller["wave"]) < int(gateway["wave"]),
+        (controller, gateway),
+    )
 
 
 def test_the_tunnel_keeps_the_name_and_the_wave_layer2_apps_gave_it() -> None:
-    culvert = next(
-        a for a in appsets("layer2-edge.yaml") if any(git_paths(a))
-    )
+    culvert = next(a for a in appsets("layer2-edge.yaml") if any(git_paths(a)))
     template = culvert["spec"]["template"]
-    expect("the tunnel's Application name is unchanged",
-           template["metadata"]["name"] == "{{ .deploy.service }}-{{ .deploy.instance }}-{{ .name }}",
-           template["metadata"]["name"])
-    expect("and stays on wave 7",
-           template["metadata"]["annotations"]["argocd.argoproj.io/sync-wave"] == "7",
-           template["metadata"]["annotations"])
+    expect(
+        "the tunnel's Application name is unchanged",
+        template["metadata"]["name"]
+        == "{{ .deploy.service }}-{{ .deploy.instance }}-{{ .name }}",
+        template["metadata"]["name"],
+    )
+    expect(
+        "and stays on wave 7",
+        template["metadata"]["annotations"]["argocd.argoproj.io/sync-wave"] == "7",
+        template["metadata"]["annotations"],
+    )
     chart = template["spec"]["sources"][0]
-    expect("and renders its own thin chart over OCI",
-           chart["repoURL"].startswith("oci://")
-           and chart["repoURL"].endswith("/charts/{{ .deploy.service }}")
-           and chart["path"] == ".",
-           chart)
+    expect(
+        "and renders its own thin chart over OCI",
+        chart["repoURL"].startswith("oci://")
+        and chart["repoURL"].endswith("/charts/{{ .deploy.service }}")
+        and chart["path"] == ".",
+        chart,
+    )
 
 
 def name_problems(names: dict[str, str]) -> list[str]:
@@ -350,8 +413,11 @@ def test_the_deploy_repo_appsets_name_each_application_per_instance() -> None:
     """A name that changed would delete every object the Application owns, PVCs
     included, and create them again empty."""
     problems = name_problems(deploy_repo_names(APPSETS))
-    expect("each deploy-repo appset names its Application per service, instance and cluster",
-           problems == [], f"{problems}")
+    expect(
+        "each deploy-repo appset names its Application per service, instance and cluster",
+        problems == [],
+        f"{problems}",
+    )
 
 
 def test_a_renamed_application_is_caught() -> None:
@@ -359,13 +425,17 @@ def test_a_renamed_application_is_caught() -> None:
     with tempfile.TemporaryDirectory(prefix="appset-names-") as tmp:
         for name in DEPLOY_REPO_APPSETS:
             text = (APPSETS / name).read_text(encoding="utf-8")
-            renamed = text.replace(DEPLOY_REPO_NAME, "{{ .deploy.service }}-{{ .name }}")
+            renamed = text.replace(
+                DEPLOY_REPO_NAME, "{{ .deploy.service }}-{{ .name }}"
+            )
             (Path(tmp) / name).write_text(renamed, encoding="utf-8", newline="\n")
         found = deploy_repo_names(Path(tmp))
-    expect("a renamed Application is caught",
-           set(found.values()) == {"{{ .deploy.service }}-{{ .name }}"}
-           and len(name_problems(found)) == len(DEPLOY_REPO_SETS),
-           f"{found}")
+    expect(
+        "a renamed Application is caught",
+        set(found.values()) == {"{{ .deploy.service }}-{{ .name }}"}
+        and len(name_problems(found)) == len(DEPLOY_REPO_SETS),
+        f"{found}",
+    )
 
 
 def test_every_component_renders_from_its_thin_chart() -> None:
@@ -374,12 +444,18 @@ def test_every_component_renders_from_its_thin_chart() -> None:
             if not any(git_paths(appset)):
                 continue
             chart = appset["spec"]["template"]["spec"]["sources"][0]
-            expect(f"{appset['metadata']['name']} pulls a thin chart over OCI",
-                   chart["repoURL"].startswith("oci://") and "/charts/" in chart["repoURL"]
-                   and chart["path"] == ".",
-                   chart["repoURL"])
-            expect(f"{appset['metadata']['name']} names no helm/charts directory",
-                   "helm/" not in chart["repoURL"] + chart["path"], chart)
+            expect(
+                f"{appset['metadata']['name']} pulls a thin chart over OCI",
+                chart["repoURL"].startswith("oci://")
+                and "/charts/" in chart["repoURL"]
+                and chart["path"] == ".",
+                chart["repoURL"],
+            )
+            expect(
+                f"{appset['metadata']['name']} names no helm/charts directory",
+                "helm/" not in chart["repoURL"] + chart["path"],
+                chart,
+            )
 
 
 def test_exactly_one_applicationset_fans_out_the_tunnels_values_file() -> None:
@@ -396,13 +472,18 @@ def test_exactly_one_applicationset_fans_out_the_tunnels_values_file() -> None:
             for entry in git_paths(appset):
                 if entry["path"] == CULVERT_GLOB and not entry.get("exclude"):
                     including.append(appset["metadata"]["name"])
-    expect("the tunnel is generated by the edge appset and the bridge, and nothing else",
-           len(including) == 2, including)
+    expect(
+        "the tunnel is generated by the edge appset and the bridge, and nothing else",
+        len(including) == 2,
+        including,
+    )
 
     apps = appsets("layer2-apps.yaml")[0]
-    expect("and layer2-apps still excludes the glob its own wildcard would catch",
-           any(e["path"] == CULVERT_GLOB and e.get("exclude") for e in git_paths(apps)),
-           git_paths(apps))
+    expect(
+        "and layer2-apps still excludes the glob its own wildcard would catch",
+        any(e["path"] == CULVERT_GLOB and e.get("exclude") for e in git_paths(apps)),
+        git_paths(apps),
+    )
 
 
 def test_the_platform_appset_still_bridges_the_gateway() -> None:
@@ -414,8 +495,11 @@ def test_the_platform_appset_still_bridges_the_gateway() -> None:
     """
     platform = appsets("layer2-platform.yaml")[0]
     apps = {e["app"] for e in elements(platform)}
-    expect("layer2-platform still generates the gateway",
-           "envoy-gateway-config" in apps, sorted(apps))
+    expect(
+        "layer2-platform still generates the gateway",
+        "envoy-gateway-config" in apps,
+        sorted(apps),
+    )
     gateway_selectors = [
         selector
         for generator in platform["spec"]["generators"]
@@ -428,16 +512,18 @@ def test_the_platform_appset_still_bridges_the_gateway() -> None:
             for e in sibling.get("list", {}).get("elements", [])
         )
     ]
-    expect("its generator is gated on the switch being absent",
-           gateway_selectors != []
-           and all(
-               any(
-                   term["key"] == EDGE_KEY and term["operator"] == "DoesNotExist"
-                   for term in selector.get("matchExpressions", [])
-               )
-               for selector in gateway_selectors
-           ),
-           gateway_selectors)
+    expect(
+        "its generator is gated on the switch being absent",
+        gateway_selectors != []
+        and all(
+            any(
+                term["key"] == EDGE_KEY and term["operator"] == "DoesNotExist"
+                for term in selector.get("matchExpressions", [])
+            )
+            for selector in gateway_selectors
+        ),
+        gateway_selectors,
+    )
 
 
 def selects(selector: dict, labels: dict[str, str]) -> bool:
@@ -509,8 +595,11 @@ def test_the_module_off_generates_no_door_at_all() -> None:
     """The whole-module switch: off renders no Gateway, no route and no tunnel."""
     off = generated_for({**BASE_LABELS, EDGE_KEY: "false"})
     expect("neither edge Application generates", EDGE_APPS & off == set(), sorted(off))
-    expect("and the platform apps are untouched",
-           {"network-policies-CLUSTER", "dfe-toolbox-CLUSTER"} <= off, sorted(off))
+    expect(
+        "and the platform apps are untouched",
+        {"network-policies-CLUSTER", "dfe-toolbox-CLUSTER"} <= off,
+        sorted(off),
+    )
 
 
 def test_a_cluster_secret_without_the_key_still_gets_both_doors() -> None:
@@ -537,31 +626,48 @@ def test_neither_door_is_generated_twice_for_any_cluster() -> None:
                 for name in generated_by(appset, labels) & EDGE_APPS:
                     owners.setdefault(name, []).append(appset["metadata"]["name"])
         doubled = {name: who for name, who in owners.items() if len(who) > 1}
-        expect(f"edge={label} gives each door at most one generator", doubled == {}, doubled)
+        expect(
+            f"edge={label} gives each door at most one generator",
+            doubled == {},
+            doubled,
+        )
 
 
 def test_the_module_switch_changes_nothing_outside_the_edge() -> None:
     on = generated_for({**BASE_LABELS, EDGE_KEY: "true"})
     off = generated_for({**BASE_LABELS, EDGE_KEY: "false"})
-    expect("the switch moves exactly the two edge Applications",
-           on - off == EDGE_APPS and off - on == set(), sorted(on ^ off))
+    expect(
+        "the switch moves exactly the two edge Applications",
+        on - off == EDGE_APPS and off - on == set(),
+        sorted(on ^ off),
+    )
 
 
 def test_the_dial_carries_the_switch_to_the_bootstrap_env_key() -> None:
     dial = parse_dial("edge:\n  enabled: false\n", source="test")
     updates = render_dial._env_updates(dial)
-    expect("edge.enabled reaches DFE_EDGE_ENABLED",
-           updates.get("DFE_EDGE_ENABLED") == "false", updates.get("DFE_EDGE_ENABLED"))
+    expect(
+        "edge.enabled reaches DFE_EDGE_ENABLED",
+        updates.get("DFE_EDGE_ENABLED") == "false",
+        updates.get("DFE_EDGE_ENABLED"),
+    )
 
 
 def test_the_cluster_secret_carries_the_switch_as_a_label_and_an_annotation() -> None:
     """A cluster selector matches labels only, so the label is the one that gates."""
     body = CLUSTER_SECRET.read_text(encoding="utf-8")
-    expect("the switch is written twice", body.count(f"{EDGE_KEY}: ") == 2, body.count(EDGE_KEY))
+    expect(
+        "the switch is written twice",
+        body.count(f"{EDGE_KEY}: ") == 2,
+        body.count(EDGE_KEY),
+    )
     label_block, _, annotation_block = body.partition("  annotations:")
     expect("once as a label", f"{EDGE_KEY}: " in label_block, "missing from the labels")
-    expect("once as an annotation", f"{EDGE_KEY}: " in annotation_block,
-           "missing from the annotations")
+    expect(
+        "once as an annotation",
+        f"{EDGE_KEY}: " in annotation_block,
+        "missing from the annotations",
+    )
 
 
 def main() -> int:

@@ -40,7 +40,7 @@ from _charts import chart_dir
 
 # Answers the Forgejo contents, raw, repos and hooks calls the Job makes, from a
 # directory standing in for the deploy repo, and logs every write it accepts.
-FAKE_CURL = r'''#!/usr/bin/env python3
+FAKE_CURL = r"""#!/usr/bin/env python3
 import base64
 import json
 import os
@@ -138,7 +138,7 @@ if not discard:
 if write_out == "%{http_code}":
     sys.stdout.write(str(code))
 sys.exit(22 if "-sf" in args and code >= 400 else 0)
-'''
+"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -157,9 +157,14 @@ def rendered_job(seed_apps: tuple[str, ...] = ()) -> dict:
         pytest.skip("helm is not on PATH, so the Job script cannot be rendered")
     out = subprocess.run(
         [
-            "helm", "template", "t", str(chart_dir("forgejo")),
-            "--show-only", "templates/setup-job.yaml",
-            "--set-json", f"deployRepo.seedApps={json.dumps(list(seed_apps))}",
+            "helm",
+            "template",
+            "t",
+            str(chart_dir("forgejo")),
+            "--show-only",
+            "templates/setup-job.yaml",
+            "--set-json",
+            f"deployRepo.seedApps={json.dumps(list(seed_apps))}",
         ],
         capture_output=True,
         text=True,
@@ -226,15 +231,17 @@ def run_job(
     curl.write_text(FAKE_CURL, encoding="utf-8")
     curl.chmod(0o755)
 
-    env.update({
-        "PATH": f"{bindir}{os.pathsep}{os.environ['PATH']}",
-        "FAKE_FORGEJO_STATE": str(state),
-        "FAKE_FORGEJO_REFUSE": refuse,
-        "GITEA_USER": "admin",
-        "GITEA_PASS": "not-a-real-password",
-        "WEBHOOK_SECRET": "",
-        "SIZING_SEED_DIR": str(seed_dir),
-    })
+    env.update(
+        {
+            "PATH": f"{bindir}{os.pathsep}{os.environ['PATH']}",
+            "FAKE_FORGEJO_STATE": str(state),
+            "FAKE_FORGEJO_REFUSE": refuse,
+            "GITEA_USER": "admin",
+            "GITEA_PASS": "not-a-real-password",
+            "WEBHOOK_SECRET": "",
+            "SIZING_SEED_DIR": str(seed_dir),
+        }
+    )
     shell = ["busybox", "sh"] if shutil.which("busybox") else ["/bin/sh"]
     done = subprocess.run(
         [*shell, "-c", script],
@@ -247,5 +254,9 @@ def run_job(
         timeout=60,
     )
     log = state / "writes.jsonl"
-    writes = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()] if log.exists() else []
+    writes = (
+        [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+        if log.exists()
+        else []
+    )
     return JobRun(done.returncode, done.stdout + done.stderr, writes, repo)

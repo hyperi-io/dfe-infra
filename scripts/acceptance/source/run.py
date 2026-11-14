@@ -54,7 +54,12 @@ from acceptance.source import beats, cases, fetcher, steps
 STEP_TABLE = "steps.txt"
 
 
-def walk(run: cases.Run, case: cases.Case, archive_exec: list[list[str]], restart_exec: list[str]) -> None:
+def walk(
+    run: cases.Run,
+    case: cases.Case,
+    archive_exec: list[list[str]],
+    restart_exec: list[str],
+) -> None:
     """Every source's journey, in one order, with the case filling in its own halves."""
     created = case.create(run)
     deployed = steps.record_deploy(run.driver, run.engine, case.name)
@@ -67,15 +72,27 @@ def walk(run: cases.Run, case: cases.Case, archive_exec: list[list[str]], restar
     )
     steps.record_table(run.driver, run.store, case.name)
     reported = steps.record_instance_up(
-        run.driver, run.engine, case.service, case.name,
-        case.instance_step, case.instance_deadline, case.reporting_deadline,
+        run.driver,
+        run.engine,
+        case.service,
+        case.name,
+        case.instance_step,
+        case.instance_deadline,
+        case.reporting_deadline,
     )
     fed_at = time.monotonic()
     case.feed(run)
-    steps.record_reporting(run.driver, run.store, case.service, case.reporting_step, reported, fed_at)
+    steps.record_reporting(
+        run.driver, run.store, case.service, case.reporting_step, reported, fed_at
+    )
     case.prove(run)
     steps.record_ceiling(
-        run.driver, run.store, run.receiver_url, run.verify, run.run_id, run.args.receiver_door_bytes
+        run.driver,
+        run.store,
+        run.receiver_url,
+        run.verify,
+        run.run_id,
+        run.args.receiver_door_bytes,
     )
     if case.archives:
         steps.record_archive(run.driver, archive_exec, case.name)
@@ -96,9 +113,11 @@ def teardown(run: cases.Run, case: cases.Case, api_url: str) -> None:
         try:
             run.driver.results.extend(case.cleanup(run))
         except (OSError, RuntimeError) as exc:
-            run.driver.results.append(wizard.StepResult(
-                "cleanup", "failed", f"{case.name} cleanup did not finish: {exc}"
-            ))
+            run.driver.results.append(
+                wizard.StepResult(
+                    "cleanup", "failed", f"{case.name} cleanup did not finish: {exc}"
+                )
+            )
 
 
 def remove_run_source(run: cases.Run, case: cases.Case, api_url: str) -> None:
@@ -114,20 +133,32 @@ def remove_run_source(run: cases.Run, case: cases.Case, api_url: str) -> None:
         return
     if created and not run.args.keep:
         detail = remove_source(
-            api_url, run.engine.verify, run.engine.token or "", case.name, onboarding.TEARDOWN_DEADLINE
+            api_url,
+            run.engine.verify,
+            run.engine.token or "",
+            case.name,
+            onboarding.TEARDOWN_DEADLINE,
         )
         driver.results.append(
-            wizard.StepResult("teardown", "done" if detail.startswith("removed") else "failed", detail)
+            wizard.StepResult(
+                "teardown", "done" if detail.startswith("removed") else "failed", detail
+            )
         )
         # A delete that leaves the source behind gives every team a view over a
         # table that no longer exists.
         state, detail = steps.assert_hyperdx_source_gone(run.engine, case.name)
-        driver.results.append(wizard.StepResult("hyperdx-source-removed", state, detail))
+        driver.results.append(
+            wizard.StepResult("hyperdx-source-removed", state, detail)
+        )
     elif created:
-        driver.results.append(wizard.StepResult("teardown", "kept", f"{case.name} left deployed (--keep)"))
+        driver.results.append(
+            wizard.StepResult("teardown", "kept", f"{case.name} left deployed (--keep)")
+        )
 
 
-def capture_diagnostics(prefix: list[str], label: str, timeout: float) -> wizard.StepResult:
+def capture_diagnostics(
+    prefix: list[str], label: str, timeout: float
+) -> wizard.StepResult:
     """Run the capture --diagnostics-exec names, labelled *label*, stopped at *timeout* seconds.
 
     Returns:
@@ -149,7 +180,9 @@ def capture_diagnostics(prefix: list[str], label: str, timeout: float) -> wizard
         return wizard.StepResult("diagnostics", "skipped", why)
     if code != 0:
         return wizard.StepResult("diagnostics", "skipped", f"the capture exited {code}")
-    return wizard.StepResult("diagnostics", "done", f"bundle {label} written before the teardown")
+    return wizard.StepResult(
+        "diagnostics", "done", f"bundle {label} written before the teardown"
+    )
 
 
 def close_out(run: cases.Run, case: cases.Case, api_url: str) -> None:
@@ -162,15 +195,21 @@ def close_out(run: cases.Run, case: cases.Case, api_url: str) -> None:
     try:
         if args.diagnostics_exec and wizard.exit_code(driver.results):
             prefix = shlex.split(args.diagnostics_exec)
-            row = capture_diagnostics(prefix, f"source-{case.name}", args.diagnostics_timeout)
+            row = capture_diagnostics(
+                prefix, f"source-{case.name}", args.diagnostics_timeout
+            )
             driver.results.append(row)
     finally:
         teardown(run, case, api_url)
 
 
 def attempt(
-    current: cases.Run, case: cases.Case, archive_exec: list[list[str]], restart_exec: list[str],
-    prepare: Callable[[], None], read: Callable[[], footprint.Footprint],
+    current: cases.Run,
+    case: cases.Case,
+    archive_exec: list[list[str]],
+    restart_exec: list[str],
+    prepare: Callable[[], None],
+    read: Callable[[], footprint.Footprint],
 ) -> footprint.Footprint | None:
     """Sign in, read the deployment, then walk the case, turning any exception into a failed row.
 
@@ -198,8 +237,11 @@ def attempt(
 
 
 def conclude(
-    current: cases.Run, case: cases.Case, api_url: str,
-    before: footprint.Footprint | None, read: Callable[[], footprint.Footprint],
+    current: cases.Run,
+    case: cases.Case,
+    api_url: str,
+    before: footprint.Footprint | None,
+    read: Callable[[], footprint.Footprint],
 ) -> None:
     """Capture and remove what the run made, then diff the deployment against its state before the run."""
     close_out(current, case, api_url)
@@ -214,10 +256,15 @@ def run(args: argparse.Namespace) -> int:
     admin_user = os.environ.get("DFE_E2E_ENGINE_USER", "admin")
     password = os.environ.get("DFE_E2E_ADMIN_PASSWORD", "")
     if args.access_summary:
-        rows = access_summary_file.parse(Path(args.access_summary).read_text(encoding="utf-8"))
+        rows = access_summary_file.parse(
+            Path(args.access_summary).read_text(encoding="utf-8")
+        )
         admin_user, password = rows[access_summary_file.ADMIN_LABEL]
     if not password:
-        print("source: no login; pass --access-summary or run through dfe-ops acceptance", file=sys.stderr)
+        print(
+            "source: no login; pass --access-summary or run through dfe-ops acceptance",
+            file=sys.stderr,
+        )
         return 2
     store = Datastore.from_env(os.environ)
     case = cases.build(args)
@@ -243,7 +290,10 @@ def run(args: argparse.Namespace) -> int:
     # What a fresh deployment's admin is changed to at its forced first-login change.
     new_password = os.environ.get("DFE_E2E_ADMIN_NEW_PASSWORD", "")
     engine = Engine(
-        api_url, admin_user, password, verify or api_url != args.engine_url,
+        api_url,
+        admin_user,
+        password,
+        verify or api_url != args.engine_url,
         new_password=new_password,
     )
     archive_exec = [shlex.split(one) for one in args.archive_exec]
@@ -257,24 +307,46 @@ def run(args: argparse.Namespace) -> int:
 
     with sync_playwright() as play:
         browser = play.chromium.launch(
-            channel=args.channel, headless=not args.headed, args=onboarding.resolver_args(args.resolve)
+            channel=args.channel,
+            headless=not args.headed,
+            args=onboarding.resolver_args(args.resolve),
         )
-        context = browser.new_context(viewport={"width": 1440, "height": 900}, ignore_https_errors=args.insecure)
+        context = browser.new_context(
+            viewport={"width": 1440, "height": 900}, ignore_https_errors=args.insecure
+        )
         driver = onboarding.Driver(context.new_page(), args.ui_url, shots)
         current = cases.Run(
-            driver=driver, engine=engine, store=store, args=args, name=case.name,
-            run_id=f"src-{uuid.uuid4().hex[:12]}", engine_repo=engine_repo,
-            transform_repo=transform_repo, program_repo=program_repo,
-            receiver_url=os.environ.get("DFE_E2E_RECEIVER_URL", ""), verify=verify,
+            driver=driver,
+            engine=engine,
+            store=store,
+            args=args,
+            name=case.name,
+            run_id=f"src-{uuid.uuid4().hex[:12]}",
+            engine_repo=engine_repo,
+            transform_repo=transform_repo,
+            program_repo=program_repo,
+            receiver_url=os.environ.get("DFE_E2E_RECEIVER_URL", ""),
+            verify=verify,
         )
+
         def prepare() -> None:
             if case.console:
                 steps.open_console_settled(
-                    driver, engine, admin_user, password, args.org, args.first_user, new_password
+                    driver,
+                    engine,
+                    admin_user,
+                    password,
+                    args.org,
+                    args.first_user,
+                    new_password,
                 )
             else:
                 engine.login()
-                driver.record("login", "done", f"signed in to the engine API as {admin_user}, no console needed")
+                driver.record(
+                    "login",
+                    "done",
+                    f"signed in to the engine API as {admin_user}, no console needed",
+                )
             driver.record("sweep", "done", steps.sweep_strays(engine, verify))
 
         try:
@@ -292,7 +364,9 @@ def run(args: argparse.Namespace) -> int:
     return wizard.exit_code(driver.results)
 
 
-def report(results: list[wizard.StepResult], shots: Path, secrets: tuple[str, ...] = ()) -> str:
+def report(
+    results: list[wizard.StepResult], shots: Path, secrets: tuple[str, ...] = ()
+) -> str:
     """The step table plus a line naming each failed and each unproven row.
 
     Also written to STEP_TABLE beside the screenshots, so the two travel together
@@ -317,7 +391,9 @@ def report(results: list[wizard.StepResult], shots: Path, secrets: tuple[str, ..
     if unproven:
         # A row that ran and could not decide is neither a pass nor a failure,
         # and is said again here so a long table cannot be read as green.
-        lines.append(f"\nUNPROVEN: {', '.join(unproven)} -- read the detail before claiming the source works")
+        lines.append(
+            f"\nUNPROVEN: {', '.join(unproven)} -- read the detail before claiming the source works"
+        )
     text = wizard.redact("\n".join(lines), secrets)
     shots.mkdir(parents=True, exist_ok=True)
     (shots / STEP_TABLE).write_text(text + "\n", encoding="utf-8")
@@ -332,98 +408,231 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--ui-url", required=True, help="console base URL")
     parser.add_argument("--engine-url", required=True, help="engine API base URL")
-    parser.add_argument("--engine-repo", required=True, help="dfe-engine checkout (the corpus wrapper lives in its e2e tests)")
-    parser.add_argument("--transform-repo", default="", help="checkout holding the corpus archive; every pushed case names dfe-transform-vrl (default: the case's own, beside the engine repo)")
-    parser.add_argument("--program-repo", default="", help="checkout holding the program a case uploads, when its app ships one of its own; only the vector case needs it (default: the corpus checkout above)")
-    parser.add_argument("--access-summary", default="", metavar="FILE", help="the deploy's own summary, for the login when not run through dfe-ops")
-    parser.add_argument("--org", default="acceptance", help="organisation to create when the deployment still owes its setup wizard")
-    parser.add_argument("--first-user", default="operator", help="first user to create when the deployment still owes its setup wizard")
-    parser.add_argument("--archive-exec", action="append", default=[], metavar="PREFIX",
-                        help="command prefix that runs a shell inside one archiver replica, for the "
-                             "archive assertion; repeatable, one per replica (k8s: kubectl -n <ns> "
-                             "exec <pod> --; docker: docker exec dfe-archiver)")
-    parser.add_argument("--restart-exec", default="", metavar="PREFIX",
-                        help="command prefix the runner appends one service name to, for the apps "
-                             "the engine reports it cannot apply where they stand; on Compose it "
-                             "runs the engine hint's own `make apply SERVICES=<service>` in the "
-                             "deployment's checkout, because that also creates a source's own "
-                             "container and a plain restart cannot; unused on Kubernetes, where "
-                             "the controller rolls the pod")
-    parser.add_argument("--case", default="filebeat", choices=tuple(cases.CASES),
-                        help="filebeat pushes real lines at the receiver through the bundled VRL; "
-                             "vector pushes the same lines through the same program run by a "
-                             "supervised Vector; elastic pushes cisco_ios lines at a transform "
-                             "compiled into its app; syslog sends the demo's cisco-asa and fortinet "
-                             "lines to the receiver's syslog listeners; cloudwatch authors a meta "
-                             "schema and lets a fetcher pull an AWS upstream")
-    parser.add_argument("--aws-service", default="cloudwatch_logs", choices=tuple(sorted(fetcher.AWS_CASES)),
-                        help="the AWS service the cloudwatch case's fetcher polls")
-    parser.add_argument("--aws-region", default=os.environ.get("DFE_E2E_AWS_REGION", ""),
-                        help="region the fetcher signs for (default: DFE_E2E_AWS_REGION)")
-    parser.add_argument("--aws-log-group", default=os.environ.get("DFE_E2E_AWS_LOG_GROUP", ""),
-                        help="CloudWatch log group to poll (default: DFE_E2E_AWS_LOG_GROUP)")
-    parser.add_argument("--poll-interval-secs", type=int, default=60,
-                        help="how often the fetcher polls its upstream")
-    parser.add_argument("--per-module", type=int, default=20, help="corpus lines per filebeat module to feed")
-    parser.add_argument("--receiver-door-bytes", type=int, default=steps.RECORD_CAP, metavar="BYTES",
-                        help="the receiver's request body limit, the DFE-wide record cap by default; "
-                             "the record-ceiling step sends one record just over it, which must be "
-                             "refused with 413, and one just under, which must land in dfe.main "
-                             "(0 leaves the step out)")
-    parser.add_argument("--via", default="post", choices=("post", *cases.SHIPPED),
-                        help="how the pushed cases reach the receiver: post wraps each corpus line "
-                             "and POSTs it, logstash stands a real filebeat and logstash pair beside "
-                             "a compose deployment and pushes the envelope a deployment sends, and "
-                             "beats stands a filebeat alone shipping lumberjack straight to the "
-                             "receiver, whose listener the run switches on and puts back")
-    parser.add_argument("--beats-network", default="", metavar="NETWORK",
-                        help="docker network the stack runs on, which the --via logstash and "
-                             "--via beats containers join")
-    parser.add_argument("--beats-receiver-url", default="http://dfe-receiver:8080/ingest",
-                        metavar="URL", help="the receiver's ingest URL as seen from that network")
-    parser.add_argument("--beats-lumberjack", default=f"dfe-receiver:{beats.BEATS_PORT}",
-                        metavar="HOST:PORT",
-                        help="the receiver's lumberjack listener as seen from that network, which "
-                             "--via beats ships to")
-    parser.add_argument("--syslog-host", default="dfe-receiver", metavar="HOST",
-                        help="the receiver as the syslog sender reaches it; the syslog case sends here")
-    parser.add_argument("--syslog-port", type=int, default=514,
-                        help="the receiver's TCP syslog port")
-    parser.add_argument("--syslog-udp-port", type=int, default=514,
-                        help="the receiver's UDP syslog port")
-    parser.add_argument("--syslog-exec", default="", metavar="PREFIX",
-                        help="command prefix that runs bash where the receiver's syslog ports are "
-                             "reachable, as the syslog case's sender (k8s: kubectl -n <ns> exec -i "
-                             "<pod> --; docker: docker exec -i <container>). Empty sends from this machine")
-    parser.add_argument("--syslog-lines", type=int, default=20,
-                        help="lines per vendor each transport sends, from the vendored demo corpus")
-    parser.add_argument("--receiver-metrics-url", default=os.environ.get("DFE_E2E_RECEIVER_METRICS_URL", ""),
-                        metavar="URL", help="the receiver's /metrics, whose syslog counters the syslog case "
-                                            "asserts (default: DFE_E2E_RECEIVER_METRICS_URL)")
-    parser.add_argument("--receiver-metrics-selector", default="", metavar="SELECTOR",
-                        help="label selector of the receiver's pods. With --kubectl, the syslog case "
-                             "sums the counters of every running pod in --namespace instead of "
-                             "reading --receiver-metrics-url")
-    parser.add_argument("--shots-dir", default=".tmp/source", help="where the per-step screenshots go")
-    parser.add_argument("--channel", default="chrome", help="browser channel; chrome is the testing browser")
+    parser.add_argument(
+        "--engine-repo",
+        required=True,
+        help="dfe-engine checkout (the corpus wrapper lives in its e2e tests)",
+    )
+    parser.add_argument(
+        "--transform-repo",
+        default="",
+        help="checkout holding the corpus archive; every pushed case names dfe-transform-vrl (default: the case's own, beside the engine repo)",
+    )
+    parser.add_argument(
+        "--program-repo",
+        default="",
+        help="checkout holding the program a case uploads, when its app ships one of its own; only the vector case needs it (default: the corpus checkout above)",
+    )
+    parser.add_argument(
+        "--access-summary",
+        default="",
+        metavar="FILE",
+        help="the deploy's own summary, for the login when not run through dfe-ops",
+    )
+    parser.add_argument(
+        "--org",
+        default="acceptance",
+        help="organisation to create when the deployment still owes its setup wizard",
+    )
+    parser.add_argument(
+        "--first-user",
+        default="operator",
+        help="first user to create when the deployment still owes its setup wizard",
+    )
+    parser.add_argument(
+        "--archive-exec",
+        action="append",
+        default=[],
+        metavar="PREFIX",
+        help="command prefix that runs a shell inside one archiver replica, for the "
+        "archive assertion; repeatable, one per replica (k8s: kubectl -n <ns> "
+        "exec <pod> --; docker: docker exec dfe-archiver)",
+    )
+    parser.add_argument(
+        "--restart-exec",
+        default="",
+        metavar="PREFIX",
+        help="command prefix the runner appends one service name to, for the apps "
+        "the engine reports it cannot apply where they stand; on Compose it "
+        "runs the engine hint's own `make apply SERVICES=<service>` in the "
+        "deployment's checkout, because that also creates a source's own "
+        "container and a plain restart cannot; unused on Kubernetes, where "
+        "the controller rolls the pod",
+    )
+    parser.add_argument(
+        "--case",
+        default="filebeat",
+        choices=tuple(cases.CASES),
+        help="filebeat pushes real lines at the receiver through the bundled VRL; "
+        "vector pushes the same lines through the same program run by a "
+        "supervised Vector; elastic pushes cisco_ios lines at a transform "
+        "compiled into its app; syslog sends the demo's cisco-asa and fortinet "
+        "lines to the receiver's syslog listeners; cloudwatch authors a meta "
+        "schema and lets a fetcher pull an AWS upstream",
+    )
+    parser.add_argument(
+        "--aws-service",
+        default="cloudwatch_logs",
+        choices=tuple(sorted(fetcher.AWS_CASES)),
+        help="the AWS service the cloudwatch case's fetcher polls",
+    )
+    parser.add_argument(
+        "--aws-region",
+        default=os.environ.get("DFE_E2E_AWS_REGION", ""),
+        help="region the fetcher signs for (default: DFE_E2E_AWS_REGION)",
+    )
+    parser.add_argument(
+        "--aws-log-group",
+        default=os.environ.get("DFE_E2E_AWS_LOG_GROUP", ""),
+        help="CloudWatch log group to poll (default: DFE_E2E_AWS_LOG_GROUP)",
+    )
+    parser.add_argument(
+        "--poll-interval-secs",
+        type=int,
+        default=60,
+        help="how often the fetcher polls its upstream",
+    )
+    parser.add_argument(
+        "--per-module",
+        type=int,
+        default=20,
+        help="corpus lines per filebeat module to feed",
+    )
+    parser.add_argument(
+        "--receiver-door-bytes",
+        type=int,
+        default=steps.RECORD_CAP,
+        metavar="BYTES",
+        help="the receiver's request body limit, the DFE-wide record cap by default; "
+        "the record-ceiling step sends one record just over it, which must be "
+        "refused with 413, and one just under, which must land in dfe.main "
+        "(0 leaves the step out)",
+    )
+    parser.add_argument(
+        "--via",
+        default="post",
+        choices=("post", *cases.SHIPPED),
+        help="how the pushed cases reach the receiver: post wraps each corpus line "
+        "and POSTs it, logstash stands a real filebeat and logstash pair beside "
+        "a compose deployment and pushes the envelope a deployment sends, and "
+        "beats stands a filebeat alone shipping lumberjack straight to the "
+        "receiver, whose listener the run switches on and puts back",
+    )
+    parser.add_argument(
+        "--beats-network",
+        default="",
+        metavar="NETWORK",
+        help="docker network the stack runs on, which the --via logstash and "
+        "--via beats containers join",
+    )
+    parser.add_argument(
+        "--beats-receiver-url",
+        default="http://dfe-receiver:8080/ingest",
+        metavar="URL",
+        help="the receiver's ingest URL as seen from that network",
+    )
+    parser.add_argument(
+        "--beats-lumberjack",
+        default=f"dfe-receiver:{beats.BEATS_PORT}",
+        metavar="HOST:PORT",
+        help="the receiver's lumberjack listener as seen from that network, which "
+        "--via beats ships to",
+    )
+    parser.add_argument(
+        "--syslog-host",
+        default="dfe-receiver",
+        metavar="HOST",
+        help="the receiver as the syslog sender reaches it; the syslog case sends here",
+    )
+    parser.add_argument(
+        "--syslog-port", type=int, default=514, help="the receiver's TCP syslog port"
+    )
+    parser.add_argument(
+        "--syslog-udp-port",
+        type=int,
+        default=514,
+        help="the receiver's UDP syslog port",
+    )
+    parser.add_argument(
+        "--syslog-exec",
+        default="",
+        metavar="PREFIX",
+        help="command prefix that runs bash where the receiver's syslog ports are "
+        "reachable, as the syslog case's sender (k8s: kubectl -n <ns> exec -i "
+        "<pod> --; docker: docker exec -i <container>). Empty sends from this machine",
+    )
+    parser.add_argument(
+        "--syslog-lines",
+        type=int,
+        default=20,
+        help="lines per vendor each transport sends, from the vendored demo corpus",
+    )
+    parser.add_argument(
+        "--receiver-metrics-url",
+        default=os.environ.get("DFE_E2E_RECEIVER_METRICS_URL", ""),
+        metavar="URL",
+        help="the receiver's /metrics, whose syslog counters the syslog case "
+        "asserts (default: DFE_E2E_RECEIVER_METRICS_URL)",
+    )
+    parser.add_argument(
+        "--receiver-metrics-selector",
+        default="",
+        metavar="SELECTOR",
+        help="label selector of the receiver's pods. With --kubectl, the syslog case "
+        "sums the counters of every running pod in --namespace instead of "
+        "reading --receiver-metrics-url",
+    )
+    parser.add_argument(
+        "--shots-dir", default=".tmp/source", help="where the per-step screenshots go"
+    )
+    parser.add_argument(
+        "--channel",
+        default="chrome",
+        help="browser channel; chrome is the testing browser",
+    )
     parser.add_argument("--headed", action="store_true", help="show the browser")
     parser.add_argument("--keep", action="store_true", help="leave the source deployed")
-    parser.add_argument("--kubectl", default="", metavar="PREFIX",
-                        help="kubectl and the flags that aim it at the deployment's cluster, as one string. "
-                             "Given, the run reads the receiver's ConfigMaps, the Deployments and the "
-                             "harness namespaces before and after, and fails on any difference. Without "
-                             "it only the engine's sources and the receiver overlay are compared")
-    parser.add_argument("--namespace", default="dfe", help="the app namespace --kubectl reads")
-    parser.add_argument("--diagnostics-exec", default="", metavar="PREFIX",
-                        help="command the runner appends `--label source-<name>` to and runs "
-                             "once, when a step failed and before the teardown removes the "
-                             "source and its transform pods (k8s: dfe-ops diagnostics --dir DIR "
-                             "<kubectl flags>). Empty captures nothing")
-    parser.add_argument("--diagnostics-timeout", type=float, default=360.0, metavar="SECONDS",
-                        help="seconds the capture runs before it is stopped")
-    parser.add_argument("--insecure", action="store_true", help="accept a certificate this machine does not trust")
-    parser.add_argument("--resolve", action="append", default=[], metavar="HOST:IP", type=onboarding._host_ip,
-                        help="resolve HOST to IP inside the browser (repeatable)")
+    parser.add_argument(
+        "--kubectl",
+        default="",
+        metavar="PREFIX",
+        help="kubectl and the flags that aim it at the deployment's cluster, as one string. "
+        "Given, the run reads the receiver's ConfigMaps, the Deployments and the "
+        "harness namespaces before and after, and fails on any difference. Without "
+        "it only the engine's sources and the receiver overlay are compared",
+    )
+    parser.add_argument(
+        "--namespace", default="dfe", help="the app namespace --kubectl reads"
+    )
+    parser.add_argument(
+        "--diagnostics-exec",
+        default="",
+        metavar="PREFIX",
+        help="command the runner appends `--label source-<name>` to and runs "
+        "once, when a step failed and before the teardown removes the "
+        "source and its transform pods (k8s: dfe-ops diagnostics --dir DIR "
+        "<kubectl flags>). Empty captures nothing",
+    )
+    parser.add_argument(
+        "--diagnostics-timeout",
+        type=float,
+        default=360.0,
+        metavar="SECONDS",
+        help="seconds the capture runs before it is stopped",
+    )
+    parser.add_argument(
+        "--insecure",
+        action="store_true",
+        help="accept a certificate this machine does not trust",
+    )
+    parser.add_argument(
+        "--resolve",
+        action="append",
+        default=[],
+        metavar="HOST:IP",
+        type=onboarding._host_ip,
+        help="resolve HOST to IP inside the browser (repeatable)",
+    )
     return parser
 
 

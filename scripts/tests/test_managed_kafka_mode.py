@@ -54,7 +54,11 @@ CLUSTER_SECRET = REPO_ROOT / "bootstrap" / "templates" / "cluster-secret.yaml.tp
 AWS_ROOT = REPO_ROOT / "terraform" / "environments" / "aws"
 
 # The valueFiles order every layer2 appset uses, before any overlay.
-BASE_CASCADE = [VALUES / "common.yaml", VALUES / "aws.yaml", VALUES / "profile-scale.yaml"]
+BASE_CASCADE = [
+    VALUES / "common.yaml",
+    VALUES / "aws.yaml",
+    VALUES / "profile-scale.yaml",
+]
 
 # What the appsets render into their `values` block when the cluster secret
 # carries a managed broker's facts. A placeholder endpoint (RFC 2606), never a
@@ -89,7 +93,9 @@ MANAGED_ANNOTATIONS = {
 APP_CELL = ("scale", "aws")
 
 
-def render(chart: str, *, values: list[Path] | None = None, sets: tuple[str, ...] = ()) -> list[dict]:
+def render(
+    chart: str, *, values: list[Path] | None = None, sets: tuple[str, ...] = ()
+) -> list[dict]:
     cmd = ["helm", "template", chart, str(CHARTS / chart)]
     for path in values or BASE_CASCADE:
         cmd += ["-f", str(path)]
@@ -126,57 +132,95 @@ def kafka_egress(docs: list[dict]) -> list[dict]:
 def test_the_profile_default_stays_cluster_for_an_in_cluster_broker() -> None:
     """Nothing here moves a Strimzi deployment: it still gets the Kafka CR."""
     docs = render("kafka")
-    expect("the scale profile still renders the Strimzi Kafka CR", "Kafka" in kinds(docs),
-           f"got {sorted(kinds(docs))}")
-    expect("and no MSK bootstrap Job", "Job" not in kinds(docs), f"got {sorted(kinds(docs))}")
-    expect("and the network policies open no broker egress",
-           kafka_egress(render("network-policies")) == [])
+    expect(
+        "the scale profile still renders the Strimzi Kafka CR",
+        "Kafka" in kinds(docs),
+        f"got {sorted(kinds(docs))}",
+    )
+    expect(
+        "and no MSK bootstrap Job",
+        "Job" not in kinds(docs),
+        f"got {sorted(kinds(docs))}",
+    )
+    expect(
+        "and the network policies open no broker egress",
+        kafka_egress(render("network-policies")) == [],
+    )
 
 
 def test_the_managed_overlay_renders_the_msk_bootstrap_job() -> None:
     """mode external plus provider msk plus an IAM endpoint is the Job's gate."""
     docs = with_managed("kafka")
-    expect("a managed broker renders the bootstrap Job", "Job" in kinds(docs),
-           f"got {sorted(kinds(docs))}")
-    expect("and no in-cluster Kafka CR", "Kafka" not in kinds(docs), f"got {sorted(kinds(docs))}")
+    expect(
+        "a managed broker renders the bootstrap Job",
+        "Job" in kinds(docs),
+        f"got {sorted(kinds(docs))}",
+    )
+    expect(
+        "and no in-cluster Kafka CR",
+        "Kafka" not in kinds(docs),
+        f"got {sorted(kinds(docs))}",
+    )
     job = next(d for d in docs if d.get("kind") == "Job")
     script = job["spec"]["template"]["spec"]["containers"][0]["command"][-1]
-    expect("the Job bootstraps against the IAM endpoint", MANAGED_IAM in script,
-           "the IAM endpoint never reached the Job's command")
+    expect(
+        "the Job bootstraps against the IAM endpoint",
+        MANAGED_IAM in script,
+        "the IAM endpoint never reached the Job's command",
+    )
 
 
 def test_the_managed_overlay_points_the_apps_at_the_broker() -> None:
     """The profile's bootstrapServers names a Service a managed deploy never creates."""
-    rendered = yaml.safe_load((VALUES / "profile-scale.yaml").read_text(encoding="utf-8"))
-    expect("the profile still defaults to the in-cluster bootstrap",
-           rendered["kafka"]["mode"] == "cluster"
-           and rendered["kafka"]["bootstrapServers"].endswith(".svc.cluster.local:9092"),
-           f"got {rendered['kafka']}")
+    rendered = yaml.safe_load(
+        (VALUES / "profile-scale.yaml").read_text(encoding="utf-8")
+    )
+    expect(
+        "the profile still defaults to the in-cluster bootstrap",
+        rendered["kafka"]["mode"] == "cluster"
+        and rendered["kafka"]["bootstrapServers"].endswith(".svc.cluster.local:9092"),
+        f"got {rendered['kafka']}",
+    )
     docs = render_app("dfe-loader", *APP_CELL, annotations=MANAGED_ANNOTATIONS)
     env = effective_env(docs, "Deployment/dfe-loader")
     brokers = [v for k, v in env.items() if "BROKER" in k or "BOOTSTRAP" in k]
-    expect("the loader dials the managed broker", MANAGED_BOOTSTRAP in brokers,
-           f"got {brokers}")
+    expect(
+        "the loader dials the managed broker",
+        MANAGED_BOOTSTRAP in brokers,
+        f"got {brokers}",
+    )
     in_cluster = effective_env(golden("dfe-loader", *APP_CELL), "Deployment/dfe-loader")
-    expect("and an in-cluster deploy keeps the profile's broker",
-           in_cluster.get("DFE_LOADER_KAFKA_BROKERS") == rendered["kafka"]["bootstrapServers"],
-           f"got {in_cluster.get('DFE_LOADER_KAFKA_BROKERS')!r}")
+    expect(
+        "and an in-cluster deploy keeps the profile's broker",
+        in_cluster.get("DFE_LOADER_KAFKA_BROKERS")
+        == rendered["kafka"]["bootstrapServers"],
+        f"got {in_cluster.get('DFE_LOADER_KAFKA_BROKERS')!r}",
+    )
 
 
 def test_the_managed_overlay_opens_the_broker_egress() -> None:
     """The half the live cycle proved missing: policy, not an AWS control."""
     policies = kafka_egress(with_managed("network-policies"))
-    expect("a managed broker opens the broker egress", policies != [], "no policy rendered")
+    expect(
+        "a managed broker opens the broker egress", policies != [], "no policy rendered"
+    )
     namespaces = {p["metadata"]["namespace"] for p in policies}
-    expect("including the namespace the bootstrap Job runs in", "strimzi" in namespaces,
-           f"got {sorted(namespaces)}")
+    expect(
+        "including the namespace the bootstrap Job runs in",
+        "strimzi" in namespaces,
+        f"got {sorted(namespaces)}",
+    )
     ports = {
         port["port"]
         for p in policies
         for rule in p["spec"]["egress"]
         for port in rule.get("ports", [])
     }
-    expect("on the SCRAM and IAM listeners both", {9096, 9098} <= ports, f"got {sorted(ports)}")
+    expect(
+        "on the SCRAM and IAM listeners both",
+        {9096, 9098} <= ports,
+        f"got {sorted(ports)}",
+    )
 
 
 def test_the_engine_reaches_a_managed_broker() -> None:
@@ -187,18 +231,28 @@ def test_the_engine_reaches_a_managed_broker() -> None:
         for d in render_extras("dfe-engine", *APP_CELL, annotations=MANAGED_ANNOTATIONS)
         if object_id(d) == "ConfigMap/dfe-engine-env"
     )["data"]
-    expect("the engine is pointed at the managed broker",
-           env.get("DFE_ENGINE_KAFKA_BOOTSTRAP_SERVERS") == MANAGED_BOOTSTRAP,
-           f"got {env.get('DFE_ENGINE_KAFKA_BOOTSTRAP_SERVERS')!r}")
+    expect(
+        "the engine is pointed at the managed broker",
+        env.get("DFE_ENGINE_KAFKA_BOOTSTRAP_SERVERS") == MANAGED_BOOTSTRAP,
+        f"got {env.get('DFE_ENGINE_KAFKA_BOOTSTRAP_SERVERS')!r}",
+    )
     engine = [
         p
         for p in kafka_egress(with_managed("network-policies"))
         if p["spec"]["podSelector"].get("matchLabels", {}).get("app.kubernetes.io/name")
         == "dfe-engine"
     ]
-    ports = {port["port"] for p in engine for rule in p["spec"]["egress"] for port in rule["ports"]}
-    expect("so the network policies open the SCRAM listener to the engine", 9096 in ports,
-           f"engine policies: {[p['metadata']['name'] for p in engine]}")
+    ports = {
+        port["port"]
+        for p in engine
+        for rule in p["spec"]["egress"]
+        for port in rule["ports"]
+    }
+    expect(
+        "so the network policies open the SCRAM listener to the engine",
+        9096 in ports,
+        f"engine policies: {[p['metadata']['name'] for p in engine]}",
+    )
 
 
 def test_bootstrap_sets_external_for_exactly_the_managed_providers() -> None:
@@ -209,11 +263,17 @@ def test_bootstrap_sets_external_for_exactly_the_managed_providers() -> None:
     body = case.group(1) if case else ""
     arm = re.search(r'^\s*([a-z|-]+)\)\s*DFE_KAFKA_MODE="external"', body, re.M)
     named = set(arm.group(1).split("|")) if arm else set()
-    expect("exactly the managed providers resolve to external", named == set(MANAGED_PROVIDERS),
-           f"got {sorted(named)}")
+    expect(
+        "exactly the managed providers resolve to external",
+        named == set(MANAGED_PROVIDERS),
+        f"got {sorted(named)}",
+    )
     for provider in IN_CLUSTER_PROVIDERS:
-        expect(f"{provider} keeps the profile's own mode", provider not in named,
-               f"named in: {sorted(named)}")
+        expect(
+            f"{provider} keeps the profile's own mode",
+            provider not in named,
+            f"named in: {sorted(named)}",
+        )
 
 
 PROTOCOL_ENV = "DFE_KAFKA_SECURITY_PROTOCOL"
@@ -233,7 +293,10 @@ def derived(provider: str) -> tuple[str, str] | None:
     bash = shutil.which("bash")
     if start < 0 or end < start or bash is None:
         return None
-    snippet = script[start:end] + f'printf "%s|%s" "$DFE_KAFKA_MODE" "${{{PROTOCOL_ENV}:-}}"\n'
+    snippet = (
+        script[start:end]
+        + f'printf "%s|%s" "$DFE_KAFKA_MODE" "${{{PROTOCOL_ENV}:-}}"\n'
+    )
     out = subprocess.run(
         [bash, "-c", snippet],
         env={"DFE_KAFKA_PROVIDER": provider},
@@ -244,7 +307,9 @@ def derived(provider: str) -> tuple[str, str] | None:
         check=False,
     )
     if out.returncode != 0:
-        raise SystemExit(f"bootstrap.sh's derivation failed for {provider!r}:\n{out.stderr}")
+        raise SystemExit(
+            f"bootstrap.sh's derivation failed for {provider!r}:\n{out.stderr}"
+        )
     mode, _, protocol = out.stdout.partition("|")
     return mode, protocol
 
@@ -254,46 +319,66 @@ def test_bootstrap_derives_tls_for_exactly_the_managed_providers() -> None:
     brokers' plain listener -- so a managed deploy left on it cannot connect."""
     for provider in MANAGED_PROVIDERS:
         got = derived(provider)
-        expect(f"bootstrap.sh derives external + SASL_SSL for {provider}",
-               got == ("external", "SASL_SSL"), f"got {got!r}")
+        expect(
+            f"bootstrap.sh derives external + SASL_SSL for {provider}",
+            got == ("external", "SASL_SSL"),
+            f"got {got!r}",
+        )
     for provider in (*IN_CLUSTER_PROVIDERS, ""):
         got = derived(provider)
-        expect(f"{provider or 'no provider'} derives no protocol, so common.yaml's stands",
-               got == ("", ""), f"got {got!r}")
+        expect(
+            f"{provider or 'no provider'} derives no protocol, so common.yaml's stands",
+            got == ("", ""),
+            f"got {got!r}",
+        )
 
 
 def test_the_cluster_secret_carries_the_protocol() -> None:
     template = CLUSTER_SECRET.read_text(encoding="utf-8")
-    expect(f"the cluster secret carries {PROTOCOL_ANNOTATION}",
-           f'{PROTOCOL_ANNOTATION}: "${{{PROTOCOL_ENV}}}"' in template,
-           "annotation missing from the cluster-secret template")
+    expect(
+        f"the cluster secret carries {PROTOCOL_ANNOTATION}",
+        f'{PROTOCOL_ANNOTATION}: "${{{PROTOCOL_ENV}}}"' in template,
+        "annotation missing from the cluster-secret template",
+    )
 
 
 def test_the_redpanda_operator_selector_matches_a_label_bootstrap_sets() -> None:
     """layer-scale installs the Redpanda operator by cluster LABEL, which bootstrap must write."""
     appset = (APPSETS / "layer-scale.yaml").read_text(encoding="utf-8")
-    expect("the Redpanda operator appset selects on the provider label",
-           "dfe.hyperi.io/kafka-provider: redpanda" in appset,
-           "selector changed: update the label this test checks")
+    expect(
+        "the Redpanda operator appset selects on the provider label",
+        "dfe.hyperi.io/kafka-provider: redpanda" in appset,
+        "selector changed: update the label this test checks",
+    )
     labels = CLUSTER_SECRET.read_text(encoding="utf-8").split("  annotations:")[0]
-    expect("the cluster secret labels the provider",
-           'dfe.hyperi.io/kafka-provider: "${DFE_KAFKA_PROVIDER}"' in labels,
-           "label missing from the cluster-secret template's labels block")
+    expect(
+        "the cluster secret labels the provider",
+        'dfe.hyperi.io/kafka-provider: "${DFE_KAFKA_PROVIDER}"' in labels,
+        "label missing from the cluster-secret template's labels block",
+    )
 
 
 def test_every_appset_reads_the_mode_back() -> None:
     """A fact on the cluster secret that no appset reads is a fact nothing uses."""
     for name in ("layer2-apps.yaml", "layer2-data.yaml", "layer2-platform.yaml"):
         body = (APPSETS / name).read_text(encoding="utf-8")
-        expect(f"{name} reads the kafka_mode annotation",
-               'dfe.hyperi.io/kafka_mode' in body, f"not found in {name}")
-        expect(f"{name} lands it on kafka.mode",
-               re.search(r"kafka:\n\s+(\{\{-.*\n\s+)*mode: ", body) is not None,
-               f"no kafka.mode block in {name}")
+        expect(
+            f"{name} reads the kafka_mode annotation",
+            "dfe.hyperi.io/kafka_mode" in body,
+            f"not found in {name}",
+        )
+        expect(
+            f"{name} lands it on kafka.mode",
+            re.search(r"kafka:\n\s+(\{\{-.*\n\s+)*mode: ", body) is not None,
+            f"no kafka.mode block in {name}",
+        )
     for name in ("layer2-apps.yaml", "layer2-data.yaml"):
         body = (APPSETS / name).read_text(encoding="utf-8")
-        expect(f"{name} reads the broker endpoint too",
-               'dfe.hyperi.io/kafka_bootstrap"' in body, f"not found in {name}")
+        expect(
+            f"{name} reads the broker endpoint too",
+            'dfe.hyperi.io/kafka_bootstrap"' in body,
+            f"not found in {name}",
+        )
 
 
 MESSAGE_SIZE_ENV = "DFE_KAFKA_MESSAGE_MAX_BYTES"
@@ -307,7 +392,9 @@ def test_the_root_hands_on_the_size_each_managed_body_was_given() -> None:
     main_tf = (AWS_ROOT / "main.tf").read_text(encoding="utf-8")
     outputs = (AWS_ROOT / "outputs.tf").read_text(encoding="utf-8")
     block = re.search(rf'output "{MESSAGE_SIZE_ENV}" \{{\n(.*?)\n\}}', outputs, re.S)
-    expect(f"the aws root emits {MESSAGE_SIZE_ENV}", block is not None, "no such output")
+    expect(
+        f"the aws root emits {MESSAGE_SIZE_ENV}", block is not None, "no such output"
+    )
     body = block.group(1) if block else ""
     for module, source in (
         ("kafka", "var.kafka.msk.message_max_bytes"),
@@ -315,32 +402,55 @@ def test_the_root_hands_on_the_size_each_managed_body_was_given() -> None:
     ):
         module_block = re.search(rf'module "{module}" \{{\n(.*?)\n\}}', main_tf, re.S)
         passed = module_block is not None and re.search(
-            rf"^\s*message_max_bytes\s*=\s*{re.escape(source)}\s*$", module_block.group(1), re.M
+            rf"^\s*message_max_bytes\s*=\s*{re.escape(source)}\s*$",
+            module_block.group(1),
+            re.M,
         )
-        expect(f"module {module} is given {source}", bool(passed), "the root passes something else")
+        expect(
+            f"module {module} is given {source}",
+            bool(passed),
+            "the root passes something else",
+        )
         expect(f"and the output reads {source}", source in body, body)
-    expect("the output reads var.kafka.message_max_bytes for redpanda-cloud too",
-           '"redpanda-cloud"' in body and "var.kafka.message_max_bytes" in body, body)
-    expect("an in-cluster broker gets an empty value", re.search(r':\s*""\s*\)', body) is not None, body)
+    expect(
+        "the output reads var.kafka.message_max_bytes for redpanda-cloud too",
+        '"redpanda-cloud"' in body and "var.kafka.message_max_bytes" in body,
+        body,
+    )
+    expect(
+        "an in-cluster broker gets an empty value",
+        re.search(r':\s*""\s*\)', body) is not None,
+        body,
+    )
 
 
 def test_the_size_travels_bootstrap_to_the_engine_chart() -> None:
     """Each hop spells the fact on its own, and a miss renders empty: the engine
     then creates its topics at its own default, above a managed ceiling."""
     script = BOOTSTRAP.read_text(encoding="utf-8")
-    expect(f"bootstrap.sh defaults {MESSAGE_SIZE_ENV} empty",
-           f'export {MESSAGE_SIZE_ENV}="${{{MESSAGE_SIZE_ENV}:-}}"' in script)
+    expect(
+        f"bootstrap.sh defaults {MESSAGE_SIZE_ENV} empty",
+        f'export {MESSAGE_SIZE_ENV}="${{{MESSAGE_SIZE_ENV}:-}}"' in script,
+    )
     template = CLUSTER_SECRET.read_text(encoding="utf-8")
-    expect(f"the cluster secret carries {MESSAGE_SIZE_ANNOTATION}",
-           f'{MESSAGE_SIZE_ANNOTATION}: "${{{MESSAGE_SIZE_ENV}}}"' in template)
+    expect(
+        f"the cluster secret carries {MESSAGE_SIZE_ANNOTATION}",
+        f'{MESSAGE_SIZE_ANNOTATION}: "${{{MESSAGE_SIZE_ENV}}}"' in template,
+    )
     doc = yaml.safe_load((APPSETS / "layer2-apps.yaml").read_text(encoding="utf-8"))
     values_block = doc["spec"]["template"]["spec"]["sources"][0]["helm"]["values"]
-    expect("layer2-apps reads the annotation",
-           f'$kafkaMessageMaxBytes := index .metadata.annotations "{MESSAGE_SIZE_ANNOTATION}"'
-           in values_block, values_block)
-    expect("and lands it on kafka.messageMaxBytes under the managed block",
-           "messageMaxBytes: {{ $kafkaMessageMaxBytes | quote }}" in values_block
-           and len(re.findall(r"^kafka:", values_block, re.M)) == 1, values_block)
+    expect(
+        "layer2-apps reads the annotation",
+        f'$kafkaMessageMaxBytes := index .metadata.annotations "{MESSAGE_SIZE_ANNOTATION}"'
+        in values_block,
+        values_block,
+    )
+    expect(
+        "and lands it on kafka.messageMaxBytes under the managed block",
+        "messageMaxBytes: {{ $kafkaMessageMaxBytes | quote }}" in values_block
+        and len(re.findall(r"^kafka:", values_block, re.M)) == 1,
+        values_block,
+    )
 
 
 def test_the_managed_overlay_gives_the_engine_the_topic_size() -> None:
@@ -352,9 +462,11 @@ def test_the_managed_overlay_gives_the_engine_the_topic_size() -> None:
     facts = {**MANAGED_ANNOTATIONS, MESSAGE_SIZE_ANNOTATION: "8388608"}
     docs = render_extras("dfe-engine", *APP_CELL, annotations=facts)
     env = next(d for d in docs if object_id(d) == "ConfigMap/dfe-engine-env")["data"]
-    expect("the engine creates its topics at the managed size",
-           env.get("DFE_ENGINE_KAFKA_TOPIC_MAX_MESSAGE_BYTES") == "8388608",
-           f"got {env.get('DFE_ENGINE_KAFKA_TOPIC_MAX_MESSAGE_BYTES')!r}")
+    expect(
+        "the engine creates its topics at the managed size",
+        env.get("DFE_ENGINE_KAFKA_TOPIC_MAX_MESSAGE_BYTES") == "8388608",
+        f"got {env.get('DFE_ENGINE_KAFKA_TOPIC_MAX_MESSAGE_BYTES')!r}",
+    )
 
 
 RETENTION_ENV = "DFE_KAFKA_RETENTION_MS"
@@ -369,28 +481,45 @@ def test_the_root_hands_on_the_dials_retention() -> None:
     expect(f"the aws root emits {RETENTION_ENV}", block is not None, "no such output")
     body = block.group(1) if block else ""
     expect("msk reads its own block", "var.kafka.msk.log_retention_ms" in body, body)
-    expect("both SaaS bodies read the top-level value",
-           '"confluent-cloud", "redpanda-cloud"' in body and "var.kafka.log_retention_ms" in body,
-           body)
-    expect("an in-cluster broker gets an empty value", re.search(r':\s*""\s*\)', body) is not None, body)
+    expect(
+        "both SaaS bodies read the top-level value",
+        '"confluent-cloud", "redpanda-cloud"' in body
+        and "var.kafka.log_retention_ms" in body,
+        body,
+    )
+    expect(
+        "an in-cluster broker gets an empty value",
+        re.search(r':\s*""\s*\)', body) is not None,
+        body,
+    )
 
 
 def test_the_retention_travels_bootstrap_to_the_engine_chart() -> None:
     """Each hop spells the fact on its own, and a miss renders empty: the engine
     then leaves its topics at the broker's default retention."""
     script = BOOTSTRAP.read_text(encoding="utf-8")
-    expect(f"bootstrap.sh defaults {RETENTION_ENV} empty",
-           f'export {RETENTION_ENV}="${{{RETENTION_ENV}:-}}"' in script)
+    expect(
+        f"bootstrap.sh defaults {RETENTION_ENV} empty",
+        f'export {RETENTION_ENV}="${{{RETENTION_ENV}:-}}"' in script,
+    )
     template = CLUSTER_SECRET.read_text(encoding="utf-8")
-    expect(f"the cluster secret carries {RETENTION_ANNOTATION}",
-           f'{RETENTION_ANNOTATION}: "${{{RETENTION_ENV}}}"' in template)
+    expect(
+        f"the cluster secret carries {RETENTION_ANNOTATION}",
+        f'{RETENTION_ANNOTATION}: "${{{RETENTION_ENV}}}"' in template,
+    )
     doc = yaml.safe_load((APPSETS / "layer2-apps.yaml").read_text(encoding="utf-8"))
     values_block = doc["spec"]["template"]["spec"]["sources"][0]["helm"]["values"]
-    expect("layer2-apps reads the annotation",
-           f'$kafkaRetentionMs := index .metadata.annotations "{RETENTION_ANNOTATION}"'
-           in values_block, values_block)
-    expect("and lands it on kafka.topicRetentionMs",
-           "topicRetentionMs: {{ $kafkaRetentionMs | quote }}" in values_block, values_block)
+    expect(
+        "layer2-apps reads the annotation",
+        f'$kafkaRetentionMs := index .metadata.annotations "{RETENTION_ANNOTATION}"'
+        in values_block,
+        values_block,
+    )
+    expect(
+        "and lands it on kafka.topicRetentionMs",
+        "topicRetentionMs: {{ $kafkaRetentionMs | quote }}" in values_block,
+        values_block,
+    )
 
 
 def test_the_managed_overlay_gives_the_engine_the_topic_retention() -> None:
@@ -398,12 +527,17 @@ def test_the_managed_overlay_gives_the_engine_the_topic_retention() -> None:
     facts = {**MANAGED_ANNOTATIONS, RETENTION_ANNOTATION: "259200000"}
     docs = render_extras("dfe-engine", *APP_CELL, annotations=facts)
     env = next(d for d in docs if object_id(d) == "ConfigMap/dfe-engine-env")["data"]
-    expect("the engine creates its topics with the dial's retention",
-           env.get("DFE_ENGINE_KAFKA_TOPIC_RETENTION_MS") == "259200000",
-           f"got {env.get('DFE_ENGINE_KAFKA_TOPIC_RETENTION_MS')!r}")
+    expect(
+        "the engine creates its topics with the dial's retention",
+        env.get("DFE_ENGINE_KAFKA_TOPIC_RETENTION_MS") == "259200000",
+        f"got {env.get('DFE_ENGINE_KAFKA_TOPIC_RETENTION_MS')!r}",
+    )
     in_cluster = effective_env(golden("dfe-engine", *APP_CELL), "Deployment/dfe-engine")
-    expect("an in-cluster broker leaves the engine's default",
-           "DFE_ENGINE_KAFKA_TOPIC_MAX_MESSAGE_BYTES" not in in_cluster, "the variable was rendered")
+    expect(
+        "an in-cluster broker leaves the engine's default",
+        "DFE_ENGINE_KAFKA_TOPIC_MAX_MESSAGE_BYTES" not in in_cluster,
+        "the variable was rendered",
+    )
 
 
 TOPIC_RF_ENV = "DFE_ENGINE_KAFKA_TOPIC_REPLICATION_FACTOR"
@@ -420,12 +554,22 @@ def test_a_managed_broker_gets_source_topics_at_three_replicas() -> None:
     for provider in MANAGED_PROVIDERS:
         facts = {**MANAGED_ANNOTATIONS, "dfe.hyperi.io/kafka_provider": provider}
         docs = render_extras("dfe-engine", "single", "aws", annotations=facts)
-        env = next(d for d in docs if object_id(d) == "ConfigMap/dfe-engine-env")["data"]
-        expect(f"{provider}: the engine creates source topics at {MANAGED_TOPIC_RF} replicas",
-               env.get(TOPIC_RF_ENV) == MANAGED_TOPIC_RF, f"got {env.get(TOPIC_RF_ENV)!r}")
-    in_cluster = effective_env(golden("dfe-engine", "single", "aws"), "Deployment/dfe-engine")
-    expect("one in-cluster broker leaves the factor to the engine",
-           TOPIC_RF_ENV not in in_cluster, f"got {in_cluster.get(TOPIC_RF_ENV)!r}")
+        env = next(d for d in docs if object_id(d) == "ConfigMap/dfe-engine-env")[
+            "data"
+        ]
+        expect(
+            f"{provider}: the engine creates source topics at {MANAGED_TOPIC_RF} replicas",
+            env.get(TOPIC_RF_ENV) == MANAGED_TOPIC_RF,
+            f"got {env.get(TOPIC_RF_ENV)!r}",
+        )
+    in_cluster = effective_env(
+        golden("dfe-engine", "single", "aws"), "Deployment/dfe-engine"
+    )
+    expect(
+        "one in-cluster broker leaves the factor to the engine",
+        TOPIC_RF_ENV not in in_cluster,
+        f"got {in_cluster.get(TOPIC_RF_ENV)!r}",
+    )
 
 
 def test_the_managed_factor_rides_the_managed_block_alone() -> None:
@@ -437,8 +581,11 @@ def test_the_managed_factor_rides_the_managed_block_alone() -> None:
             r'\{\{- if eq \$kafkaMode "external" \}\}\n(?:\s*#.*\n)*\s*topicReplicationFactor: 3\n',
             block,
         )
-        expect(f"source {index} sets the factor under kafka_mode external", managed is not None,
-               "no topicReplicationFactor under the managed block")
+        expect(
+            f"source {index} sets the factor under kafka_mode external",
+            managed is not None,
+            "no topicReplicationFactor under the managed block",
+        )
 
 
 def main() -> int:

@@ -66,8 +66,14 @@ DATA_NS = "clickhouse"
 PRESENT = "clickhouse.tls.internalCA.present"
 EDGE_OFF = ("--set", f"{PRESENT}=false")
 BYO_ISSUER = ("--set", "clickhouse.tls.issuerRef.name=estate-pki")
-EXTERNAL = ("--set", "clickhouse.mode=external", "--set", "clickhouse.host=abc.clickhouse.cloud",
-            "--set", "clickhouse.tls.ca.secretName=")
+EXTERNAL = (
+    "--set",
+    "clickhouse.mode=external",
+    "--set",
+    "clickhouse.host=abc.clickhouse.cloud",
+    "--set",
+    "clickhouse.tls.ca.secretName=",
+)
 
 # Each client's deploy.service and the workload its connection is read off.
 CLIENT_WORKLOADS = {
@@ -98,9 +104,22 @@ SHAPES: dict[str, dict] = {
 
 @functools.cache
 def render(chart: str, *args: str, namespace: str = APP_NS) -> tuple[dict, ...]:
-    cmd = ["helm", "template", chart, str(chart_dir(chart)), "--namespace", namespace, *args]
+    cmd = [
+        "helm",
+        "template",
+        chart,
+        str(chart_dir(chart)),
+        "--namespace",
+        namespace,
+        *args,
+    ]
     out = subprocess.run(
-        cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False
+        cmd,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
     )
     if out.returncode != 0:
         raise SystemExit(f"helm template failed for {chart} {args}:\n{out.stderr}")
@@ -111,28 +130,50 @@ def refusal(chart: str, *args: str) -> str:
     """The render's stderr, or empty when it rendered."""
     cmd = ["helm", "template", chart, str(chart_dir(chart)), *args]
     out = subprocess.run(
-        cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False
+        cmd,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
     )
     return out.stderr if out.returncode != 0 else ""
 
 
 def cascade(tier: str) -> tuple[str, ...]:
-    return ("-f", str(VALUES / "common.yaml"), "-f", str(VALUES / f"profile-{tier}.yaml"))
+    return (
+        "-f",
+        str(VALUES / "common.yaml"),
+        "-f",
+        str(VALUES / f"profile-{tier}.yaml"),
+    )
 
 
 def dialled_host(tier: str) -> str:
-    profile = yaml.safe_load((VALUES / f"profile-{tier}.yaml").read_text(encoding="utf-8"))
+    profile = yaml.safe_load(
+        (VALUES / f"profile-{tier}.yaml").read_text(encoding="utf-8")
+    )
     return (profile.get("clickhouse") or {}).get("host") or COMMON["clickhouse"]["host"]
 
 
 def server(tier: str, *extra: str) -> tuple[dict, ...]:
-    return render("clickhouse-cluster", *cascade(tier), "--set", f"appNamespace={APP_NS}", *extra,
-                  namespace=DATA_NS)
+    return render(
+        "clickhouse-cluster",
+        *cascade(tier),
+        "--set",
+        f"appNamespace={APP_NS}",
+        *extra,
+        namespace=DATA_NS,
+    )
 
 
 def one(docs: tuple[dict, ...], kind: str, name: str | None = None) -> dict | None:
     return next(
-        (d for d in docs if d.get("kind") == kind and (name is None or d["metadata"]["name"] == name)),
+        (
+            d
+            for d in docs
+            if d.get("kind") == kind and (name is None or d["metadata"]["name"] == name)
+        ),
         None,
     )
 
@@ -180,16 +221,22 @@ def mounted_file(pod: dict, container: dict, path: str) -> dict | None:
     for mount in container.get("volumeMounts") or []:
         root = mount["mountPath"].rstrip("/") + "/"
         if path.startswith(root) and "subPath" not in mount:
-            return next((v for v in pod.get("volumes") or [] if v["name"] == mount["name"]), None)
+            return next(
+                (v for v in pod.get("volumes") or [] if v["name"] == mount["name"]),
+                None,
+            )
     return None
 
 
 def ca_volume_holds(volume: dict | None) -> bool:
-    return bool(volume) and volume.get("secret", {}).get("secretName") == TLS["ca"]["secretName"]
+    return (
+        bool(volume)
+        and volume.get("secret", {}).get("secretName") == TLS["ca"]["secretName"]
+    )
 
 
 def client_scheme(chart: str, docs: tuple[dict, ...]) -> str:
-    """"https" or "http", as the client's deployed render dials ClickHouse."""
+    """ "https" or "http", as the client's deployed render dials ClickHouse."""
     env = workload_env(docs, CLIENT_WORKLOADS[chart])
     if chart == "dfe-engine":
         return "https" if env.get("DFE_ENGINE_CLICKHOUSE_SECURE") == "true" else "http"
@@ -203,13 +250,27 @@ def client_scheme(chart: str, docs: tuple[dict, ...]) -> str:
 
 
 def test_the_cascade_turns_tls_on_where_the_internal_ca_is() -> None:
-    expect("common.yaml turns ClickHouse TLS on", TLS["enabled"] is True, f"got {TLS['enabled']!r}")
-    expect("signing with the internal CA unless an issuer is named",
-           TLS["issuerRef"]["name"] == "" and TLS["internalCA"]["issuerName"] == "dfe-internal-ca",
-           f"got {TLS!r}")
-    expect("which bootstrap's default edge-on deploys", TLS["internalCA"]["present"] is True,
-           f"got {TLS['internalCA']!r}")
-    expect("with the plaintext ports still open", TLS["required"] is False, f"got {TLS['required']!r}")
+    expect(
+        "common.yaml turns ClickHouse TLS on",
+        TLS["enabled"] is True,
+        f"got {TLS['enabled']!r}",
+    )
+    expect(
+        "signing with the internal CA unless an issuer is named",
+        TLS["issuerRef"]["name"] == ""
+        and TLS["internalCA"]["issuerName"] == "dfe-internal-ca",
+        f"got {TLS!r}",
+    )
+    expect(
+        "which bootstrap's default edge-on deploys",
+        TLS["internalCA"]["present"] is True,
+        f"got {TLS['internalCA']!r}",
+    )
+    expect(
+        "with the plaintext ports still open",
+        TLS["required"] is False,
+        f"got {TLS['required']!r}",
+    )
 
 
 # --- the server --------------------------------------------------------------
@@ -218,15 +279,22 @@ def test_the_cascade_turns_tls_on_where_the_internal_ca_is() -> None:
 def test_the_certificate_names_the_host_each_tier_dials() -> None:
     for tier in TIERS:
         cert = one(server(tier), "Certificate")
-        expect(f"{tier} renders the server certificate", cert is not None, "none rendered")
+        expect(
+            f"{tier} renders the server certificate", cert is not None, "none rendered"
+        )
         if cert is None:
             continue
         host = dialled_host(tier)
-        expect(f"{tier} certificate covers {host}", host in cert["spec"]["dnsNames"],
-               f"got {cert['spec']['dnsNames']}")
-        expect(f"{tier} certificate comes from the internal CA",
-               cert["spec"]["issuerRef"]["name"] == TLS["internalCA"]["issuerName"],
-               f"got {cert['spec']['issuerRef']!r}")
+        expect(
+            f"{tier} certificate covers {host}",
+            host in cert["spec"]["dnsNames"],
+            f"got {cert['spec']['dnsNames']}",
+        )
+        expect(
+            f"{tier} certificate comes from the internal CA",
+            cert["spec"]["issuerRef"]["name"] == TLS["internalCA"]["issuerName"],
+            f"got {cert['spec']['issuerRef']!r}",
+        )
 
 
 def test_cluster_mode_hands_the_certificate_to_the_operator() -> None:
@@ -235,11 +303,17 @@ def test_cluster_mode_hands_the_certificate_to_the_operator() -> None:
         cr = one(docs, "ClickHouseCluster")
         cert = one(docs, "Certificate")
         tls = (cr or {}).get("spec", {}).get("settings", {}).get("tls")
-        expect(f"{tier} operator TLS is on and optional",
-               tls is not None and tls["enabled"] is True and tls["required"] is False, f"got {tls!r}")
+        expect(
+            f"{tier} operator TLS is on and optional",
+            tls is not None and tls["enabled"] is True and tls["required"] is False,
+            f"got {tls!r}",
+        )
         if tls and cert:
-            expect(f"{tier} operator reads the Secret the certificate writes",
-                   tls["serverCertSecret"]["name"] == cert["spec"]["secretName"], f"got {tls!r}")
+            expect(
+                f"{tier} operator reads the Secret the certificate writes",
+                tls["serverCertSecret"]["name"] == cert["spec"]["secretName"],
+                f"got {tls!r}",
+            )
 
 
 def test_single_mode_serves_https_from_the_certificate() -> None:
@@ -249,14 +323,24 @@ def test_single_mode_serves_https_from_the_certificate() -> None:
         cert = one(docs, "Certificate")
         service = one(docs, "Service", "dfe-clickhouse")
         config = one(docs, "ConfigMap", "dfe-clickhouse-custom-config")
-        expect(f"{tier} renders the single-node server", sts is not None and cert is not None, "")
+        expect(
+            f"{tier} renders the single-node server",
+            sts is not None and cert is not None,
+            "",
+        )
         if not (sts and cert and service and config):
             continue
         container = sts["containers"][0]
-        expect(f"{tier} container exposes 8443",
-               any(p["containerPort"] == 8443 for p in container["ports"]), f"{container['ports']}")
-        expect(f"{tier} Service exposes 8443",
-               any(p["port"] == 8443 for p in service["spec"]["ports"]), f"{service['spec']['ports']}")
+        expect(
+            f"{tier} container exposes 8443",
+            any(p["containerPort"] == 8443 for p in container["ports"]),
+            f"{container['ports']}",
+        )
+        expect(
+            f"{tier} Service exposes 8443",
+            any(p["port"] == 8443 for p in service["spec"]["ports"]),
+            f"{service['spec']['ports']}",
+        )
         tls_xml = config["data"].get("dfe-tls.xml", "")
         # A protocol with its own host: https_port binds listen_host, which is loopback.
         # The chart's own render, not outside input.
@@ -266,14 +350,22 @@ def test_single_mode_serves_https_from_the_certificate() -> None:
             for p in root.iterfind("protocols/*")
             if p.findtext("host") not in ("127.0.0.1", "::1")
         }
-        expect(f"{tier} config.d serves https on 8443 beyond loopback", ("tls", "8443") in wide,
-               tls_xml)
+        expect(
+            f"{tier} config.d serves https on 8443 beyond loopback",
+            ("tls", "8443") in wide,
+            tls_xml,
+        )
         for leaf in ("tls.crt", "tls.key"):
             path = f"/etc/clickhouse-server/tls/{leaf}"
             volume = mounted_file(sts, container, path)
-            expect(f"{tier} {leaf} comes from the certificate's Secret, mounted as a directory",
-                   volume is not None and volume.get("secret", {}).get("secretName")
-                   == cert["spec"]["secretName"] and path in tls_xml, f"got {volume!r}")
+            expect(
+                f"{tier} {leaf} comes from the certificate's Secret, mounted as a directory",
+                volume is not None
+                and volume.get("secret", {}).get("secretName")
+                == cert["spec"]["secretName"]
+                and path in tls_xml,
+                f"got {volume!r}",
+            )
 
 
 # --- the keypair stays in its namespace ---------------------------------------
@@ -281,14 +373,21 @@ def test_single_mode_serves_https_from_the_certificate() -> None:
 
 def role_secrets(docs: tuple[dict, ...], role: str) -> set[str]:
     found = one(docs, "Role", role)
-    return {n for rule in (found or {}).get("rules", []) for n in rule.get("resourceNames", [])}
+    return {
+        n
+        for rule in (found or {}).get("rules", [])
+        for n in rule.get("resourceNames", [])
+    }
 
 
 def store_role(docs: tuple[dict, ...], store: dict) -> str | None:
     """The Role bound to the ServiceAccount a store authenticates as."""
     account = store["spec"]["provider"]["kubernetes"]["auth"]["serviceAccount"]["name"]
     for binding in every(docs, "RoleBinding"):
-        if any(s["kind"] == "ServiceAccount" and s["name"] == account for s in binding["subjects"]):
+        if any(
+            s["kind"] == "ServiceAccount" and s["name"] == account
+            for s in binding["subjects"]
+        ):
             return binding["roleRef"]["name"]
     return None
 
@@ -299,48 +398,99 @@ def test_no_cluster_scoped_store_can_read_the_keypair() -> None:
     for tier in TIERS:
         docs = server(tier)
         cluster_stores = every(docs, "ClusterSecretStore")
-        expect(f"{tier} renders the cross-namespace store", bool(cluster_stores), "none rendered")
+        expect(
+            f"{tier} renders the cross-namespace store",
+            bool(cluster_stores),
+            "none rendered",
+        )
         for store in cluster_stores:
             names = role_secrets(docs, store_role(docs, store) or "")
-            expect(f"{tier} {store['metadata']['name']} cannot read {KEYPAIR}",
-                   KEYPAIR not in names and CA_ONLY in names, f"its Role names {sorted(names)}")
+            expect(
+                f"{tier} {store['metadata']['name']} cannot read {KEYPAIR}",
+                KEYPAIR not in names and CA_ONLY in names,
+                f"its Role names {sorted(names)}",
+            )
 
 
 def test_the_keypair_has_one_reader_and_it_is_namespaced() -> None:
     for tier in TIERS:
         docs = server(tier)
-        readers = [r["metadata"]["name"] for r in every(docs, "Role")
-                   if any(KEYPAIR in rule.get("resourceNames", []) for rule in r["rules"])]
-        expect(f"{tier} exactly one Role names {KEYPAIR}", len(readers) == 1, f"got {readers}")
-        stores = [s for s in every(docs, "SecretStore") + every(docs, "ClusterSecretStore")
-                  if store_role(docs, s) in readers]
-        expect(f"{tier} and only a namespaced SecretStore uses it",
-               [s["kind"] for s in stores] == ["SecretStore"], f"got {[s['kind'] for s in stores]}")
+        readers = [
+            r["metadata"]["name"]
+            for r in every(docs, "Role")
+            if any(KEYPAIR in rule.get("resourceNames", []) for rule in r["rules"])
+        ]
+        expect(
+            f"{tier} exactly one Role names {KEYPAIR}",
+            len(readers) == 1,
+            f"got {readers}",
+        )
+        stores = [
+            s
+            for s in every(docs, "SecretStore") + every(docs, "ClusterSecretStore")
+            if store_role(docs, s) in readers
+        ]
+        expect(
+            f"{tier} and only a namespaced SecretStore uses it",
+            [s["kind"] for s in stores] == ["SecretStore"],
+            f"got {[s['kind'] for s in stores]}",
+        )
         copy = one(docs, "ExternalSecret", CA_ONLY)
-        expect(f"{tier} which copies ca.crt alone into {CA_ONLY}",
-               copy is not None and copy["spec"]["target"]["name"] == CA_ONLY
-               and copy["spec"]["data"] == [{"secretKey": "ca.crt",
-                                             "remoteRef": {"key": KEYPAIR, "property": "ca.crt"}}],
-               f"got {copy!r}")
+        expect(
+            f"{tier} which copies ca.crt alone into {CA_ONLY}",
+            copy is not None
+            and copy["spec"]["target"]["name"] == CA_ONLY
+            and copy["spec"]["data"]
+            == [
+                {
+                    "secretKey": "ca.crt",
+                    "remoteRef": {"key": KEYPAIR, "property": "ca.crt"},
+                }
+            ],
+            f"got {copy!r}",
+        )
 
 
 def test_the_ca_copy_lands_where_the_clients_read_it() -> None:
     docs = server("scale")
-    copy = next((d for d in every(docs, "ClusterExternalSecret")
-                 if d["spec"]["externalSecretName"] == TLS["ca"]["secretName"]), None)
-    expect("the server chart copies the CA into the app namespace", copy is not None, "no copy")
+    copy = next(
+        (
+            d
+            for d in every(docs, "ClusterExternalSecret")
+            if d["spec"]["externalSecretName"] == TLS["ca"]["secretName"]
+        ),
+        None,
+    )
+    expect(
+        "the server chart copies the CA into the app namespace",
+        copy is not None,
+        "no copy",
+    )
     if copy:
         spec = copy["spec"]["externalSecretSpec"]
-        expect("from the CA-only Secret, never the keypair",
-               spec["data"] == [{"secretKey": TLS["ca"]["dataKey"],
-                                 "remoteRef": {"key": CA_ONLY, "property": "ca.crt"}}],
-               f"got {spec['data']!r}")
-        expect("into the Secret common.yaml points every client at",
-               spec["target"]["name"] == TLS["ca"]["secretName"], f"got {spec['target']!r}")
+        expect(
+            "from the CA-only Secret, never the keypair",
+            spec["data"]
+            == [
+                {
+                    "secretKey": TLS["ca"]["dataKey"],
+                    "remoteRef": {"key": CA_ONLY, "property": "ca.crt"},
+                }
+            ],
+            f"got {spec['data']!r}",
+        )
+        expect(
+            "into the Secret common.yaml points every client at",
+            spec["target"]["name"] == TLS["ca"]["secretName"],
+            f"got {spec['target']!r}",
+        )
 
 
 def selected(copy: dict) -> set[str]:
-    return {s["matchLabels"]["kubernetes.io/metadata.name"] for s in copy["spec"]["namespaceSelectors"]}
+    return {
+        s["matchLabels"]["kubernetes.io/metadata.name"]
+        for s in copy["spec"]["namespaceSelectors"]
+    }
 
 
 def test_the_store_serves_only_the_namespaces_it_copies_into() -> None:
@@ -350,12 +500,20 @@ def test_the_store_serves_only_the_namespaces_it_copies_into() -> None:
             name = store["metadata"]["name"]
             conditions = store["spec"].get("conditions") or []
             allowed = {n for c in conditions for n in c.get("namespaces", [])}
-            copies = [c for c in every(docs, "ClusterExternalSecret")
-                      if c["spec"]["externalSecretSpec"]["secretStoreRef"]["name"] == name]
+            copies = [
+                c
+                for c in every(docs, "ClusterExternalSecret")
+                if c["spec"]["externalSecretSpec"]["secretStoreRef"]["name"] == name
+            ]
             targets = set().union(*(selected(c) for c in copies)) if copies else set()
-            expect(f"{name} carries namespace conditions {extra}", bool(conditions), "none")
-            expect(f"{name} admits exactly the namespaces its copies land in {extra}",
-                   allowed == targets and bool(targets), f"conditions {allowed}, copies {targets}")
+            expect(
+                f"{name} carries namespace conditions {extra}", bool(conditions), "none"
+            )
+            expect(
+                f"{name} admits exactly the namespaces its copies land in {extra}",
+                allowed == targets and bool(targets),
+                f"conditions {allowed}, copies {targets}",
+            )
 
 
 # --- the clients -------------------------------------------------------------
@@ -374,17 +532,25 @@ def test_every_engine_pod_dials_tls_and_verifies_with_the_ca() -> None:
                     continue
                 container = pod["containers"][0]
                 env = workload_env(docs, name)
-                expect(f"{where} {name} dials HTTPS on the TLS port",
-                       env.get("DFE_ENGINE_CLICKHOUSE_SECURE") == "true"
-                       and env.get("DFE_ENGINE_CLICKHOUSE_PORT") == str(TLS["port"]),
-                       f"got {env.get('DFE_ENGINE_CLICKHOUSE_SECURE')!r} "
-                       f"{env.get('DFE_ENGINE_CLICKHOUSE_PORT')!r}")
-                expect(f"{where} {name} verifies", env.get("DFE_ENGINE_CLICKHOUSE_VERIFY") == "true",
-                       f"got {env.get('DFE_ENGINE_CLICKHOUSE_VERIFY')!r}")
+                expect(
+                    f"{where} {name} dials HTTPS on the TLS port",
+                    env.get("DFE_ENGINE_CLICKHOUSE_SECURE") == "true"
+                    and env.get("DFE_ENGINE_CLICKHOUSE_PORT") == str(TLS["port"]),
+                    f"got {env.get('DFE_ENGINE_CLICKHOUSE_SECURE')!r} "
+                    f"{env.get('DFE_ENGINE_CLICKHOUSE_PORT')!r}",
+                )
+                expect(
+                    f"{where} {name} verifies",
+                    env.get("DFE_ENGINE_CLICKHOUSE_VERIFY") == "true",
+                    f"got {env.get('DFE_ENGINE_CLICKHOUSE_VERIFY')!r}",
+                )
                 ca = str(env.get("DFE_ENGINE_CLICKHOUSE_CA_CERT", ""))
-                expect(f"{where} {name} names a CA file the ClickHouse CA Secret supplies",
-                       ca.endswith("/" + TLS["ca"]["dataKey"]) and ca_volume_holds(
-                           mounted_file(pod, container, ca)), f"got {ca!r}")
+                expect(
+                    f"{where} {name} names a CA file the ClickHouse CA Secret supplies",
+                    ca.endswith("/" + TLS["ca"]["dataKey"])
+                    and ca_volume_holds(mounted_file(pod, container, ca)),
+                    f"got {ca!r}",
+                )
 
 
 def test_the_loader_dials_8443_through_a_merged_trust_store() -> None:
@@ -396,22 +562,42 @@ def test_the_loader_dials_8443_through_a_merged_trust_store() -> None:
             continue
         container = pod["containers"][0]
         env = workload_env(docs, "dfe-loader")
-        expect(f"{tier} loader dials the TLS port",
-               env.get("DFE_LOADER_CLICKHOUSE_HOSTS") == f"{dialled_host(tier)}:{TLS['port']}",
-               f"got {env.get('DFE_LOADER_CLICKHOUSE_HOSTS')!r}")
+        expect(
+            f"{tier} loader dials the TLS port",
+            env.get("DFE_LOADER_CLICKHOUSE_HOSTS")
+            == f"{dialled_host(tier)}:{TLS['port']}",
+            f"got {env.get('DFE_LOADER_CLICKHOUSE_HOSTS')!r}",
+        )
         bundle = str(env.get("SSL_CERT_FILE", ""))
-        init = next((c for c in pod.get("initContainers") or []
-                     if c["name"] == "clickhouse-ca-bundle"), None)
+        init = next(
+            (
+                c
+                for c in pod.get("initContainers") or []
+                if c["name"] == "clickhouse-ca-bundle"
+            ),
+            None,
+        )
         script = " ".join((init or {}).get("command") or [])
-        expect(f"{tier} the init container writes the file SSL_CERT_FILE names",
-               bool(bundle) and f"> {bundle}" in script, f"SSL_CERT_FILE={bundle!r}")
-        expect(f"{tier} from the image's own roots plus the ClickHouse CA",
-               "/etc/ssl/certs/ca-certificates.crt" in script
-               and any(ca_volume_holds(mounted_file(pod, init, part))
-                       for part in script.split() if part.startswith("/etc/dfe-clickhouse-ca/")),
-               script)
-        expect(f"{tier} and the loader mounts that file",
-               mounted_file(pod, container, bundle) is not None, f"no mount for {bundle!r}")
+        expect(
+            f"{tier} the init container writes the file SSL_CERT_FILE names",
+            bool(bundle) and f"> {bundle}" in script,
+            f"SSL_CERT_FILE={bundle!r}",
+        )
+        expect(
+            f"{tier} from the image's own roots plus the ClickHouse CA",
+            "/etc/ssl/certs/ca-certificates.crt" in script
+            and any(
+                ca_volume_holds(mounted_file(pod, init, part))
+                for part in script.split()
+                if part.startswith("/etc/dfe-clickhouse-ca/")
+            ),
+            script,
+        )
+        expect(
+            f"{tier} and the loader mounts that file",
+            mounted_file(pod, container, bundle) is not None,
+            f"no mount for {bundle!r}",
+        )
 
 
 def test_hyperdx_adds_the_ca_to_node_and_rolls_on_a_new_one() -> None:
@@ -423,18 +609,29 @@ def test_hyperdx_adds_the_ca_to_node_and_rolls_on_a_new_one() -> None:
             continue
         container = pod["containers"][0]
         path = str(workload_env(docs, "dfe-hyperdx").get("NODE_EXTRA_CA_CERTS", ""))
-        expect(f"{tier} hyperdx trusts the ClickHouse CA",
-               ca_volume_holds(mounted_file(pod, container, path)), f"got {path!r}")
-        annotations = one(docs, "Deployment", "dfe-hyperdx")["metadata"].get("annotations") or {}
-        expect(f"{tier} and Reloader restarts it when that Secret changes",
-               annotations.get("reloader.stakater.com/auto") == "true", f"got {annotations}")
+        expect(
+            f"{tier} hyperdx trusts the ClickHouse CA",
+            ca_volume_holds(mounted_file(pod, container, path)),
+            f"got {path!r}",
+        )
+        annotations = (
+            one(docs, "Deployment", "dfe-hyperdx")["metadata"].get("annotations") or {}
+        )
+        expect(
+            f"{tier} and Reloader restarts it when that Secret changes",
+            annotations.get("reloader.stakater.com/auto") == "true",
+            f"got {annotations}",
+        )
 
 
 HYPERDX_CA_GATE = "wait-for-clickhouse-ca"
 
 
 def hyperdx_ca_gate(pod: dict) -> dict | None:
-    return next((c for c in pod.get("initContainers") or [] if c["name"] == HYPERDX_CA_GATE), None)
+    return next(
+        (c for c in pod.get("initContainers") or [] if c["name"] == HYPERDX_CA_GATE),
+        None,
+    )
 
 
 def test_hyperdx_starts_node_only_once_the_ca_is_there() -> None:
@@ -472,7 +669,8 @@ def test_hyperdx_starts_node_only_once_the_ca_is_there() -> None:
             )
             expect(
                 f"{where} the gate waits on that variable",
-                '[ -s "${NODE_EXTRA_CA_CERTS}" ]' in " ".join(gate.get("command") or []),
+                '[ -s "${NODE_EXTRA_CA_CERTS}" ]'
+                in " ".join(gate.get("command") or []),
                 "",
             )
 
@@ -498,7 +696,9 @@ def run_ca_gate(
 
 
 def test_the_hyperdx_ca_gate_passes_only_once_the_file_is_there() -> None:
-    gate = hyperdx_ca_gate(pods(tuple(golden("dfe-hyperdx", "scale", "aws")))["dfe-hyperdx"])
+    gate = hyperdx_ca_gate(
+        pods(tuple(golden("dfe-hyperdx", "scale", "aws")))["dfe-hyperdx"]
+    )
     expect("scale/aws renders the hyperdx CA gate", gate is not None, "")
     if gate is None:
         return
@@ -507,7 +707,9 @@ def test_the_hyperdx_ca_gate_passes_only_once_the_file_is_there() -> None:
         ca = Path(scratch) / "ca.crt"
         quick = {"WAIT_TIMEOUT_SECONDS": "1", "WAIT_INTERVAL_SECONDS": "1"}
         unset = run_ca_gate(command, quick)
-        expect("no CA named: the gate lets Node start", unset.returncode == 0, unset.stderr)
+        expect(
+            "no CA named: the gate lets Node start", unset.returncode == 0, unset.stderr
+        )
         missing = run_ca_gate(command, {**quick, "NODE_EXTRA_CA_CERTS": str(ca)})
         expect(
             "a CA that never lands fails the gate, naming the file and the Secret",
@@ -544,19 +746,42 @@ def test_hyperdx_names_the_clickhouse_host_as_a_url() -> None:
         value = str(workload_env(docs, "dfe-hyperdx").get("CLICKHOUSE_HOST", ""))
         url = urllib.parse.urlsplit(value)
         host = dialled_host(tier)
-        expect(f"{tier} hyperdx CLICKHOUSE_HOST is http://{host}:{port}",
-               url.scheme == "http" and url.hostname == host and url.port == port,
-               f"got {value!r}")
+        expect(
+            f"{tier} hyperdx CLICKHOUSE_HOST is http://{host}:{port}",
+            url.scheme == "http" and url.hostname == host and url.port == port,
+            f"got {value!r}",
+        )
 
 
 def test_app_egress_reaches_the_tls_ports() -> None:
-    policy = one(render("network-policies", "-f", str(VALUES / "common.yaml"),
-                        "--set", "dfeNamespaces={dfe}"), "NetworkPolicy", "allow-dfe-backing-egress")
-    rule = next((r for r in (policy or {}).get("spec", {}).get("egress", [])
-                 if r["to"][0]["namespaceSelector"]["matchLabels"].get(
-                     "kubernetes.io/metadata.name") == DATA_NS), None)
+    policy = one(
+        render(
+            "network-policies",
+            "-f",
+            str(VALUES / "common.yaml"),
+            "--set",
+            "dfeNamespaces={dfe}",
+        ),
+        "NetworkPolicy",
+        "allow-dfe-backing-egress",
+    )
+    rule = next(
+        (
+            r
+            for r in (policy or {}).get("spec", {}).get("egress", [])
+            if r["to"][0]["namespaceSelector"]["matchLabels"].get(
+                "kubernetes.io/metadata.name"
+            )
+            == DATA_NS
+        ),
+        None,
+    )
     ports = {p["port"] for p in (rule or {}).get("ports", [])}
-    expect("apps may reach ClickHouse on 8443 and 9440", {8443, 9440} <= ports, f"got {ports}")
+    expect(
+        "apps may reach ClickHouse on 8443 and 9440",
+        {8443, 9440} <= ports,
+        f"got {ports}",
+    )
 
 
 # --- edge on, edge off, and a named issuer ------------------------------------
@@ -574,19 +799,32 @@ def execute(template: str, labels: dict[str, str]) -> str:
     with tempfile.TemporaryDirectory() as tmp:
         chart = Path(tmp) / "appset"
         (chart / "templates").mkdir(parents=True)
-        (chart / "Chart.yaml").write_text("apiVersion: v2\nname: appset\nversion: 0.0.0\n",
-                                          encoding="utf-8", newline="\n")
+        (chart / "Chart.yaml").write_text(
+            "apiVersion: v2\nname: appset\nversion: 0.0.0\n",
+            encoding="utf-8",
+            newline="\n",
+        )
         # Wrapped in a ConfigMap, because Helm parses whatever it renders as a manifest.
         (chart / "templates" / "out.yaml").write_text(
             "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: appset\ndata:\n"
             '  value: "{{- with .Values }}' + template + '{{- end }}"\n',
-            encoding="utf-8", newline="\n")
+            encoding="utf-8",
+            newline="\n",
+        )
         values = Path(tmp) / "labels.yaml"
-        values.write_text(yaml.safe_dump({"metadata": {"labels": labels}}), encoding="utf-8",
-                          newline="\n")
-        out = subprocess.run(["helm", "template", "appset", str(chart), "-f", str(values)],
-                             capture_output=True, text=True, encoding="utf-8", errors="replace",
-                             check=False)
+        values.write_text(
+            yaml.safe_dump({"metadata": {"labels": labels}}),
+            encoding="utf-8",
+            newline="\n",
+        )
+        out = subprocess.run(
+            ["helm", "template", "appset", str(chart), "-f", str(values)],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
     if out.returncode != 0:
         raise SystemExit(f"appset expression failed: {out.stderr}")
     return next(d for d in yaml.safe_load_all(out.stdout) if d)["data"]["value"]
@@ -598,115 +836,211 @@ def test_both_appsets_derive_the_internal_ca_from_the_edge_label() -> None:
     data = appset_parameter("layer2-data.yaml", PRESENT)
     apps = appset_parameter("layer2-apps.yaml", PRESENT)
     expect("layer2-data hands clickhouse-cluster the fact", bool(data), "no parameter")
-    expect("layer2-apps hands the clients the same expression", data == apps and bool(apps),
-           f"data={data!r} apps={apps!r}")
-    for labels, want in (({"dfe.hyperi.io/edge": "true"}, "true"),
-                         ({"dfe.hyperi.io/edge": "false"}, "false"),
-                         ({}, "true")):
+    expect(
+        "layer2-apps hands the clients the same expression",
+        data == apps and bool(apps),
+        f"data={data!r} apps={apps!r}",
+    )
+    for labels, want in (
+        ({"dfe.hyperi.io/edge": "true"}, "true"),
+        ({"dfe.hyperi.io/edge": "false"}, "false"),
+        ({}, "true"),
+    ):
         got = execute(data, labels)
-        expect(f"edge label {labels or 'absent'} means the internal CA present={want}",
-               got == want, f"got {got!r}")
+        expect(
+            f"edge label {labels or 'absent'} means the internal CA present={want}",
+            got == want,
+            f"got {got!r}",
+        )
 
 
 def test_edge_on_serves_and_dials_tls() -> None:
     for tier in ("slim", "scale"):
-        expect(f"{tier} edge on issues the certificate", one(server(tier), "Certificate") is not None, "")
+        expect(
+            f"{tier} edge on issues the certificate",
+            one(server(tier), "Certificate") is not None,
+            "",
+        )
         for chart in CLIENTS:
-            expect(f"{tier} edge on: {chart} dials https",
-                   client_scheme(chart, client(chart, tier)) == "https", "")
+            expect(
+                f"{tier} edge on: {chart} dials https",
+                client_scheme(chart, client(chart, tier)) == "https",
+                "",
+            )
 
 
 def test_edge_off_with_nothing_named_stays_on_http() -> None:
     """No CA means HTTP: no Certificate to wait on, and every client on 8123."""
     for tier in ("slim", "scale"):
         docs = server(tier, *EDGE_OFF)
-        expect(f"{tier} edge off issues no certificate", one(docs, "Certificate") is None, "")
-        expect(f"{tier} edge off renders no keypair reader or CA copy",
-               one(docs, "SecretStore") is None and one(docs, "ExternalSecret", CA_ONLY) is None
-               and not any(c["spec"]["externalSecretName"] == TLS["ca"]["secretName"]
-                           for c in every(docs, "ClusterExternalSecret")), "")
+        expect(
+            f"{tier} edge off issues no certificate",
+            one(docs, "Certificate") is None,
+            "",
+        )
+        expect(
+            f"{tier} edge off renders no keypair reader or CA copy",
+            one(docs, "SecretStore") is None
+            and one(docs, "ExternalSecret", CA_ONLY) is None
+            and not any(
+                c["spec"]["externalSecretName"] == TLS["ca"]["secretName"]
+                for c in every(docs, "ClusterExternalSecret")
+            ),
+            "",
+        )
         cr = one(docs, "ClickHouseCluster")
-        expect(f"{tier} edge off gives the operator no TLS",
-               cr is None or "tls" not in cr["spec"]["settings"], "")
+        expect(
+            f"{tier} edge off gives the operator no TLS",
+            cr is None or "tls" not in cr["spec"]["settings"],
+            "",
+        )
         sts = pods(docs).get("dfe-clickhouse")
-        expect(f"{tier} edge off opens no 8443",
-               sts is None or not any(p["containerPort"] == 8443 for p in sts["containers"][0]["ports"]),
-               "")
+        expect(
+            f"{tier} edge off opens no 8443",
+            sts is None
+            or not any(
+                p["containerPort"] == 8443 for p in sts["containers"][0]["ports"]
+            ),
+            "",
+        )
         for chart in CLIENTS:
-            expect(f"{tier} edge off: {chart} dials http",
-                   client_scheme(chart, client(chart, tier, "edge-off")) == "http", "")
+            expect(
+                f"{tier} edge off: {chart} dials http",
+                client_scheme(chart, client(chart, tier, "edge-off")) == "http",
+                "",
+            )
 
 
 def test_edge_off_with_a_named_issuer_serves_tls() -> None:
     for tier in ("slim", "scale"):
         cert = one(server(tier, *EDGE_OFF, *BYO_ISSUER), "Certificate")
-        expect(f"{tier} edge off with an issuer requests from that issuer",
-               cert is not None and cert["spec"]["issuerRef"]["name"] == "estate-pki",
-               f"got {cert and cert['spec']['issuerRef']}")
+        expect(
+            f"{tier} edge off with an issuer requests from that issuer",
+            cert is not None and cert["spec"]["issuerRef"]["name"] == "estate-pki",
+            f"got {cert and cert['spec']['issuerRef']}",
+        )
         for chart in CLIENTS:
-            expect(f"{tier} edge off with an issuer: {chart} dials https",
-                   client_scheme(chart, client(chart, tier, "edge-off-issuer")) == "https", "")
+            expect(
+                f"{tier} edge off with an issuer: {chart} dials https",
+                client_scheme(chart, client(chart, tier, "edge-off-issuer")) == "https",
+                "",
+            )
 
 
 def test_an_external_server_brings_its_own_certificate() -> None:
     docs = server("scale", *EXTERNAL)
     expect("external mode issues nothing", one(docs, "Certificate") is None, "")
     # The one ClusterExternalSecret external mode renders copies the password, never a CA.
-    expect("and copies no CA",
-           not any(c["spec"]["externalSecretName"] == TLS["ca"]["secretName"]
-                   for c in every(docs, "ClusterExternalSecret")), "")
+    expect(
+        "and copies no CA",
+        not any(
+            c["spec"]["externalSecretName"] == TLS["ca"]["secretName"]
+            for c in every(docs, "ClusterExternalSecret")
+        ),
+        "",
+    )
     for shape in ("external", "external-edge-off"):
         engine = workload_env(client("dfe-engine", "scale", shape), "dfe-engine")
-        expect(f"the engine dials it over TLS ({shape})",
-               engine.get("DFE_ENGINE_CLICKHOUSE_SECURE") == "true", f"{engine}")
-        expect(f"against system roots ({shape})", "DFE_ENGINE_CLICKHOUSE_CA_CERT" not in engine,
-               f"{engine}")
+        expect(
+            f"the engine dials it over TLS ({shape})",
+            engine.get("DFE_ENGINE_CLICKHOUSE_SECURE") == "true",
+            f"{engine}",
+        )
+        expect(
+            f"against system roots ({shape})",
+            "DFE_ENGINE_CLICKHOUSE_CA_CERT" not in engine,
+            f"{engine}",
+        )
         loader_docs = client("dfe-loader", "scale", shape)
         literal = one(loader_docs, "ConfigMap", "dfe-loader-env")["data"]
         # The bundle init container reads SSL_CERT_FILE from the same ConfigMap and
         # writes nothing without it.
-        expect(f"and the loader keeps its system store ({shape})",
-               "SSL_CERT_FILE" not in workload_env(loader_docs, "dfe-loader")
-               and "SSL_CERT_FILE" not in literal, f"{literal}")
+        expect(
+            f"and the loader keeps its system store ({shape})",
+            "SSL_CERT_FILE" not in workload_env(loader_docs, "dfe-loader")
+            and "SSL_CERT_FILE" not in literal,
+            f"{literal}",
+        )
 
 
 def test_a_render_with_no_ca_stays_plaintext() -> None:
     """The server chart's own default, and a deployment that turns TLS off or has no CA."""
-    docs = render("clickhouse-cluster", "--set", f"appNamespace={APP_NS}", namespace=DATA_NS)
+    docs = render(
+        "clickhouse-cluster", "--set", f"appNamespace={APP_NS}", namespace=DATA_NS
+    )
     expect("no certificate", one(docs, "Certificate") is None, "")
-    expect("no operator TLS", "tls" not in one(docs, "ClickHouseCluster")["spec"]["settings"], "")
+    expect(
+        "no operator TLS",
+        "tls" not in one(docs, "ClickHouseCluster")["spec"]["settings"],
+        "",
+    )
     for chart in CLIENTS:
         plaintext = tuple(golden(chart, "slim", "local", "clickhouse-plaintext"))
-        expect(f"TLS off: {chart} dials http", client_scheme(chart, plaintext) == "http", "")
+        expect(
+            f"TLS off: {chart} dials http",
+            client_scheme(chart, plaintext) == "http",
+            "",
+        )
     enabled_alone = ("--set", "clickhouse.tls.enabled=true")
-    no_ca = one(render("clickhouse-cluster", *enabled_alone, namespace=DATA_NS), "Certificate")
+    no_ca = one(
+        render("clickhouse-cluster", *enabled_alone, namespace=DATA_NS), "Certificate"
+    )
     expect("enabled with no CA issues nothing", no_ca is None, "")
     for chart in CLIENTS:
-        expect(f"enabled with no CA: {chart} dials http",
-               client_scheme(chart, client(chart, "scale", "edge-off")) == "http", "")
+        expect(
+            f"enabled with no CA: {chart} dials http",
+            client_scheme(chart, client(chart, "scale", "edge-off")) == "http",
+            "",
+        )
 
 
 def test_a_setting_a_client_cannot_honour_fails_the_render() -> None:
     server_cases = (
-        ((*cascade("scale"), *EDGE_OFF, "--set", "clickhouse.tls.required=true"),
-         "clickhouse.tls.required"),
-        ((*cascade("slim"), "--set", "clickhouse.tls.required=true"), "clickhouse.tls.required"),
+        (
+            (*cascade("scale"), *EDGE_OFF, "--set", "clickhouse.tls.required=true"),
+            "clickhouse.tls.required",
+        ),
+        (
+            (*cascade("slim"), "--set", "clickhouse.tls.required=true"),
+            "clickhouse.tls.required",
+        ),
     )
     for args, key in server_cases:
         err = refusal("clickhouse-cluster", *args)
-        expect(f"clickhouse-cluster {args[-1]} is refused naming {key}", key in err,
-               f"stderr={err[-300:]!r}")
+        expect(
+            f"clickhouse-cluster {args[-1]} is refused naming {key}",
+            key in err,
+            f"stderr={err[-300:]!r}",
+        )
     client_cases = (
-        ("dfe-loader", {"infra": {"clickhouse": {"tls": {"verify": False}}}},
-         "clickhouse.tls.verify"),
-        ("dfe-loader", {"infra": {"clickhouse": {"tls": {"port": 443}}}}, "clickhouse.tls.port"),
-        ("dfe-engine", {"overlay": {"clickhouse": {"secure": True}}}, "clickhouse.tls.enabled"),
-        ("dfe-engine", {"infra": {"clickhouse": {"tls": {"ca": {"configMapName": "corp-ca"}}}}},
-         "clickhouse.tls.ca"),
+        (
+            "dfe-loader",
+            {"infra": {"clickhouse": {"tls": {"verify": False}}}},
+            "clickhouse.tls.verify",
+        ),
+        (
+            "dfe-loader",
+            {"infra": {"clickhouse": {"tls": {"port": 443}}}},
+            "clickhouse.tls.port",
+        ),
+        (
+            "dfe-engine",
+            {"overlay": {"clickhouse": {"secure": True}}},
+            "clickhouse.tls.enabled",
+        ),
+        (
+            "dfe-engine",
+            {"infra": {"clickhouse": {"tls": {"ca": {"configMapName": "corp-ca"}}}}},
+            "clickhouse.tls.ca",
+        ),
     )
     for chart, options, key in client_cases:
         err = client_refusal(chart, "scale", **options)
-        expect(f"{chart} {options} is refused naming {key}", key in err, f"refusal={err[-300:]!r}")
+        expect(
+            f"{chart} {options} is refused naming {key}",
+            key in err,
+            f"refusal={err[-300:]!r}",
+        )
 
 
 def main() -> int:

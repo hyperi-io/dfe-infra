@@ -50,7 +50,9 @@ from stack_images import block_span  # noqa: E402
 
 def _load_dfe_stack():
     # dfe-stack has no .py suffix, so the loader is told it is source.
-    loader = importlib.machinery.SourceFileLoader("dfe_stack_freeze", str(SCRIPTS / "dfe-stack"))
+    loader = importlib.machinery.SourceFileLoader(
+        "dfe_stack_freeze", str(SCRIPTS / "dfe-stack")
+    )
     spec = importlib.util.spec_from_loader(loader.name, loader)
     module = importlib.util.module_from_spec(spec)
     sys.modules[loader.name] = module
@@ -75,7 +77,9 @@ LEGACY_EDITED = frozenset(
 
 def _git_show(spec: str) -> bytes | None:
     """The file at `<tag>:<path>` in this checkout, or None when the tag lacks it."""
-    done = subprocess.run(["git", "-C", str(REPO_ROOT), "show", spec], capture_output=True)
+    done = subprocess.run(
+        ["git", "-C", str(REPO_ROOT), "show", spec], capture_output=True
+    )
     return done.stdout if done.returncode == 0 else None
 
 
@@ -128,7 +132,9 @@ def _recut_rewrites(declared: list[str], stack: str, then: dict, now: dict) -> s
                 continue
             if recut is None or dfe.is_withdrawn(recut):
                 continue
-            after = tuple(dfe.previous_without(names, gone, dfe.stack_previous(record), stack))
+            after = tuple(
+                dfe.previous_without(names, gone, dfe.stack_previous(record), stack)
+            )
             if after not in reached:
                 reached.add(after)
                 todo.append(list(after))
@@ -159,7 +165,10 @@ def _equals_tag_bar_recut(stack: str, at_tag: str, now: str) -> bool:
     index = dfe._scalar_line(then_lines, "stack", "previous")
     if index is None or len(then_lines) != len(now_lines):
         return False
-    if then_lines[:index] != now_lines[:index] or then_lines[index + 1 :] != now_lines[index + 1 :]:
+    if (
+        then_lines[:index] != now_lines[:index]
+        or then_lines[index + 1 :] != now_lines[index + 1 :]
+    ):
         return False
     old = _PREVIOUS.match(then_lines[index])
     new = _PREVIOUS.match(now_lines[index])
@@ -178,7 +187,9 @@ def _edits_since_tag(stack: str) -> tuple[str, ...]:
     differs = []
     now = (REPO_ROOT / "versions.yaml").read_text(encoding="utf-8")
     at_tag = _git_show(f"{stack}:versions.yaml")
-    if at_tag is None or not _equals_tag_bar_recut(stack, at_tag.decode("utf-8", "replace"), now):
+    if at_tag is None or not _equals_tag_bar_recut(
+        stack, at_tag.decode("utf-8", "replace"), now
+    ):
         differs.append("block")
     constraints = REPO_ROOT / "constraints" / f"{stack}.yaml"
     current = constraints.read_bytes() if constraints.exists() else None
@@ -277,11 +288,15 @@ def _after_recut(text: str, gone: str) -> str:
     return "".join(lines) + _RECUT.replace("9.9.0:", f"{gone}:", 1)
 
 
-@pytest.mark.parametrize("previous", ["9.9.0, 9.9.0-rc.1", "9.9.0", "9.9.0-rc.0, 9.9.0"])
+@pytest.mark.parametrize(
+    "previous", ["9.9.0, 9.9.0-rc.1", "9.9.0", "9.9.0-rc.0, 9.9.0"]
+)
 def test_the_re_cut_writers_own_output_passes(previous):
     tagged = _versions(previous)
     recut = _after_recut(tagged, _WITHDRAWN)
-    assert _block(recut, _RELEASED) != _block(tagged, _RELEASED), "the writer left the line alone"
+    assert _block(recut, _RELEASED) != _block(tagged, _RELEASED), (
+        "the writer left the line alone"
+    )
     assert _equals_tag_bar_recut(_RELEASED, tagged, recut)
 
 
@@ -297,7 +312,9 @@ def test_a_re_cut_of_two_withdrawn_stacks_passes():
 def test_an_untouched_block_passes_whatever_happens_to_the_withdrawn_stack():
     tagged = _versions("9.9.0, 9.9.0-rc.1")
     assert _equals_tag_bar_recut(_RELEASED, tagged, tagged)
-    assert _equals_tag_bar_recut(_RELEASED, tagged, _versions("9.9.0, 9.9.0-rc.1", "standard"))
+    assert _equals_tag_bar_recut(
+        _RELEASED, tagged, _versions("9.9.0, 9.9.0-rc.1", "standard")
+    )
 
 
 @pytest.mark.parametrize(
@@ -318,12 +335,16 @@ def test_any_other_change_to_previous_fails(previous):
 
 def test_a_withdrawn_stack_left_in_place_is_not_a_re_cut():
     tagged = _versions("9.9.0, 9.9.0-rc.1")
-    assert not _equals_tag_bar_recut(_RELEASED, tagged, _versions("9.9.0-rc.1", "withdrawn"))
+    assert not _equals_tag_bar_recut(
+        _RELEASED, tagged, _versions("9.9.0-rc.1", "withdrawn")
+    )
 
 
 def test_a_stack_that_was_not_withdrawn_at_the_tag_is_not_removable():
     tagged = _versions("9.9.0, 9.9.0-rc.1", "standard")
-    assert not _equals_tag_bar_recut(_RELEASED, tagged, _versions("9.9.0-rc.1", "standard"))
+    assert not _equals_tag_bar_recut(
+        _RELEASED, tagged, _versions("9.9.0-rc.1", "standard")
+    )
 
 
 def test_a_withdrawn_stack_deleted_instead_of_cut_again_fails():
@@ -344,10 +365,22 @@ def test_a_withdrawn_stack_deleted_instead_of_cut_again_fails():
     "edit",
     [
         ('dfe-engine: "v1.0.0"', 'dfe-engine: "v1.0.1"'),  # a pin moves
-        ("# The release an environment", "# The stack an environment"),  # a comment moves
-        ('upgrade-order: "dfe-engine"\n', 'upgrade-order: "dfe-engine"\n      extra: "x"\n'),
-        ("   # cut from the withdrawn release", "   # re-cut"),  # the previous line's own note
-        ("    maturity: rc\n    support: standard\n    apps:", "    maturity: beta\n    support: standard\n    apps:"),
+        (
+            "# The release an environment",
+            "# The stack an environment",
+        ),  # a comment moves
+        (
+            'upgrade-order: "dfe-engine"\n',
+            'upgrade-order: "dfe-engine"\n      extra: "x"\n',
+        ),
+        (
+            "   # cut from the withdrawn release",
+            "   # re-cut",
+        ),  # the previous line's own note
+        (
+            "    maturity: rc\n    support: standard\n    apps:",
+            "    maturity: beta\n    support: standard\n    apps:",
+        ),
     ],
 )
 @pytest.mark.parametrize("previous", ["9.9.0, 9.9.0-rc.1", "9.9.0-rc.1"])
@@ -369,10 +402,19 @@ def test_a_file_with_no_such_block_fails():
 def _git(repo: Path, *args: str) -> None:
     subprocess.run(
         [
-            "git", "-C", str(repo),
-            "-c", "user.name=test", "-c", "user.email=test@example.invalid",
-            "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false",
-            "-c", "core.hooksPath=/dev/null",
+            "git",
+            "-C",
+            str(repo),
+            "-c",
+            "user.name=test",
+            "-c",
+            "user.email=test@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "tag.gpgsign=false",
+            "-c",
+            "core.hooksPath=/dev/null",
             *args,
         ],
         check=True,
@@ -413,7 +455,12 @@ stacks:
 
 
 def _refresh(
-    monkeypatch, repo: Path, digest: str, check: bool = False, skip_released: bool = False, budgets: list | None = None
+    monkeypatch,
+    repo: Path,
+    digest: str,
+    check: bool = False,
+    skip_released: bool = False,
+    budgets: list | None = None,
 ) -> int:
     monkeypatch.setattr(dfe, "REPO_ROOT", repo)
 
@@ -423,17 +470,25 @@ def _refresh(
         return digest, ""
 
     monkeypatch.setattr(dfe.registry_pins, "ref_digest", resolve)
-    return dfe.cmd_refresh_digests(argparse.Namespace(stack=None, check=check, skip_released=skip_released))
+    return dfe.cmd_refresh_digests(
+        argparse.Namespace(stack=None, check=check, skip_released=skip_released)
+    )
 
 
-def test_refresh_digests_refuses_to_move_a_digest_in_a_released_stack(tmp_path, monkeypatch):
+def test_refresh_digests_refuses_to_move_a_digest_in_a_released_stack(
+    tmp_path, monkeypatch
+):
     repo = _repo(tmp_path / "repo", _REFRESH, "9.9.0-rc.2")
-    with pytest.raises(SystemExit, match=r"stack 9\.9\.0-rc\.2 is released.*dfe-stack cut"):
+    with pytest.raises(
+        SystemExit, match=r"stack 9\.9\.0-rc\.2 is released.*dfe-stack cut"
+    ):
         _refresh(monkeypatch, repo, "sha256:new")
     assert (repo / "versions.yaml").read_text(encoding="utf-8") == _REFRESH
 
 
-def test_refresh_digests_skip_released_leaves_a_released_stack_and_says_so(tmp_path, monkeypatch, capsys):
+def test_refresh_digests_skip_released_leaves_a_released_stack_and_says_so(
+    tmp_path, monkeypatch, capsys
+):
     repo = _repo(tmp_path / "repo", _REFRESH, "9.9.0-rc.2")
     assert _refresh(monkeypatch, repo, "sha256:new", skip_released=True) == 0
     assert (repo / "versions.yaml").read_text(encoding="utf-8") == _REFRESH
@@ -441,10 +496,21 @@ def test_refresh_digests_skip_released_leaves_a_released_stack_and_says_so(tmp_p
 
 
 @pytest.mark.parametrize("skip_released", [False, True])
-def test_refresh_digests_writes_when_the_tag_is_not_cut_yet(tmp_path, monkeypatch, skip_released):
+def test_refresh_digests_writes_when_the_tag_is_not_cut_yet(
+    tmp_path, monkeypatch, skip_released
+):
     repo = _repo(tmp_path / "repo", _REFRESH, "9.9.0-rc.1")
     budgets: list = []
-    assert _refresh(monkeypatch, repo, "sha256:new", skip_released=skip_released, budgets=budgets) == 0
+    assert (
+        _refresh(
+            monkeypatch,
+            repo,
+            "sha256:new",
+            skip_released=skip_released,
+            budgets=budgets,
+        )
+        == 0
+    )
     text = (repo / "versions.yaml").read_text(encoding="utf-8")
     assert text.split("9.9.0-rc.2:")[1].count('"sha256:new"') == 1
     assert text.split("9.9.0-rc.2:")[0].count("sha256:new") == 0
@@ -455,13 +521,17 @@ def test_refresh_digests_writes_when_the_tag_is_not_cut_yet(tmp_path, monkeypatc
     assert budgets[0].waits == dfe.registry_pins.PATIENT_WAITS
 
 
-def test_refresh_digests_leaves_a_released_stack_alone_when_nothing_moved(tmp_path, monkeypatch):
+def test_refresh_digests_leaves_a_released_stack_alone_when_nothing_moved(
+    tmp_path, monkeypatch
+):
     repo = _repo(tmp_path / "repo", _REFRESH, "9.9.0-rc.2")
     assert _refresh(monkeypatch, repo, "sha256:aaa") == 0
     assert (repo / "versions.yaml").read_text(encoding="utf-8") == _REFRESH
 
 
-def test_refresh_digests_check_reports_a_released_stack_without_refusing(tmp_path, monkeypatch):
+def test_refresh_digests_check_reports_a_released_stack_without_refusing(
+    tmp_path, monkeypatch
+):
     repo = _repo(tmp_path / "repo", _REFRESH, "9.9.0-rc.2")
     assert _refresh(monkeypatch, repo, "sha256:new", check=True) == 1
     assert (repo / "versions.yaml").read_text(encoding="utf-8") == _REFRESH
@@ -488,9 +558,15 @@ def _bump(
 ) -> int:
     """bump-app over `repo`, recording every registry read. No chart is published."""
     monkeypatch.setattr(dfe, "REPO_ROOT", repo)
-    monkeypatch.setattr(dfe.registry_pins, "tag_digest", lambda *a, **k: reads.append(a))
+    monkeypatch.setattr(
+        dfe.registry_pins, "tag_digest", lambda *a, **k: reads.append(a)
+    )
     args = argparse.Namespace(
-        app="dfe-new", version="v0.2.0", stack=stack, dry_run=dry_run, registry="ghcr.io/hyperi-io"
+        app="dfe-new",
+        version="v0.2.0",
+        stack=stack,
+        dry_run=dry_run,
+        registry="ghcr.io/hyperi-io",
     )
     return dfe.cmd_bump_app(args)
 
@@ -499,7 +575,9 @@ def _bump(
 def test_bump_app_refuses_a_released_current(tmp_path, monkeypatch, dry_run):
     repo = _repo(tmp_path / "repo", _BUMP, "9.9.0-rc.3")
     reads: list = []
-    with pytest.raises(SystemExit, match=r"stack 9\.9\.0-rc\.3 is released.*dfe-stack cut"):
+    with pytest.raises(
+        SystemExit, match=r"stack 9\.9\.0-rc\.3 is released.*dfe-stack cut"
+    ):
         _bump(monkeypatch, repo, None, reads, dry_run)
     assert (repo / "versions.yaml").read_text(encoding="utf-8") == _BUMP
     assert not reads
@@ -517,7 +595,9 @@ def test_bump_app_refuses_an_older_released_stack_named_by_flag(tmp_path, monkey
 def test_bump_app_writes_when_only_an_older_stack_is_released(tmp_path, monkeypatch):
     repo = _repo(tmp_path / "repo", _BUMP, "9.9.0-rc.2")
     assert _bump(monkeypatch, repo, None, []) == 0
-    older, current = (repo / "versions.yaml").read_text(encoding="utf-8").split("  9.9.0-rc.3:")
+    older, current = (
+        (repo / "versions.yaml").read_text(encoding="utf-8").split("  9.9.0-rc.3:")
+    )
     assert 'dfe-new: "v0.2.0"' in current
     assert 'dfe-new: "v0.2.0"' not in older
 
@@ -545,15 +625,24 @@ def _pin_write(monkeypatch, repo: Path) -> int:
     monkeypatch.setattr(resolve_pins, "VERSIONS", repo / "versions.yaml")
     monkeypatch.setattr(resolve_pins, "resolve_rows", lambda *args, **kwargs: [stale])
     args = argparse.Namespace(
-        version=None, app=[], check=False, write=True, stack=None,
-        org="hyperi-io", registry="ghcr.io/hyperi-io", cooldown_days=7, allow_fresh=True,
+        version=None,
+        app=[],
+        check=False,
+        write=True,
+        stack=None,
+        org="hyperi-io",
+        registry="ghcr.io/hyperi-io",
+        cooldown_days=7,
+        allow_fresh=True,
     )
     return resolve_pins.cmd_pin(args)
 
 
 def test_resolve_pins_write_refuses_a_released_stack(tmp_path, monkeypatch):
     repo = _repo(tmp_path / "repo", _RESOLVE, "9.9.0-rc.1")
-    with pytest.raises(SystemExit, match=r"stack 9\.9\.0-rc\.1 is released.*dfe-stack cut"):
+    with pytest.raises(
+        SystemExit, match=r"stack 9\.9\.0-rc\.1 is released.*dfe-stack cut"
+    ):
         _pin_write(monkeypatch, repo)
     assert (repo / "versions.yaml").read_text(encoding="utf-8") == _RESOLVE
 
@@ -561,4 +650,6 @@ def test_resolve_pins_write_refuses_a_released_stack(tmp_path, monkeypatch):
 def test_resolve_pins_write_writes_when_the_tag_is_not_cut_yet(tmp_path, monkeypatch):
     repo = _repo(tmp_path / "repo", _RESOLVE, None)
     assert _pin_write(monkeypatch, repo) == 0
-    assert 'dfe-engine: "sha256:new"' in (repo / "versions.yaml").read_text(encoding="utf-8")
+    assert 'dfe-engine: "sha256:new"' in (repo / "versions.yaml").read_text(
+        encoding="utf-8"
+    )

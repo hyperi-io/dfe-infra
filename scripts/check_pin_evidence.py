@@ -53,7 +53,9 @@ VERSIONS_FILE = REPO_ROOT / "versions.yaml"
 
 # `key: "value"` with an optional trailing comment. Only quoted scalars are
 # pins; an unquoted value in this file is structure, not a version.
-_PIN = re.compile(r'^(?P<indent>\s*)(?P<key>[A-Za-z0-9_.-]+):\s*"(?P<value>[^"]*)"\s*(?:#(?P<note>.*))?$')
+_PIN = re.compile(
+    r'^(?P<indent>\s*)(?P<key>[A-Za-z0-9_.-]+):\s*"(?P<value>[^"]*)"\s*(?:#(?P<note>.*))?$'
+)
 _MAP = re.compile(r"^(?P<indent>\s*)(?P<key>[A-Za-z0-9_.-]+):\s*$")
 _COMMENT = re.compile(r"^\s*#(?P<text>.*)$")
 
@@ -61,7 +63,14 @@ _COMMENT = re.compile(r"^\s*#(?P<text>.*)$")
 # are the immutable half of a pin somewhere else and carry the image ref rather
 # than a justification, so a digest moving with its tag is not a detachment.
 PIN_SECTIONS = (
-    "bootstrap", "operators", "services", "apps", "content", "providers", "toolbox", "eks-addons",
+    "bootstrap",
+    "operators",
+    "services",
+    "apps",
+    "content",
+    "providers",
+    "toolbox",
+    "eks-addons",
     "lambda-runtimes",
 )
 
@@ -131,7 +140,9 @@ def read_pins(text: str) -> dict[str, dict[str, Pin]]:
     return stacks
 
 
-def detached(previous: dict[str, Pin], current: dict[str, Pin]) -> list[tuple[str, Pin, str]]:
+def detached(
+    previous: dict[str, Pin], current: dict[str, Pin]
+) -> list[tuple[str, Pin, str]]:
     """Pins whose value moved between two stacks while their evidence did not.
 
     A pin the previous stack does not carry is new: there is no evidence to
@@ -166,7 +177,9 @@ def _previous_of(text: str, stack: str) -> str | None:
     return first or None
 
 
-def report(pairs: list[tuple[str, str]], stacks: dict[str, dict[str, Pin]]) -> list[str]:
+def report(
+    pairs: list[tuple[str, str]], stacks: dict[str, dict[str, Pin]]
+) -> list[str]:
     """One line per detachment, naming the file line so it can be repaired."""
     problems = []
     for previous, current in pairs:
@@ -195,9 +208,14 @@ def main(argv: list[str] | None = None) -> int:
         print("FAIL -- versions.yaml yielded no pins; the reader and the file disagree")
         return 1
 
-    current = args.stack or (re.search(r'^current:\s*"([^"]+)"', text, re.MULTILINE) or [None, None])[1]
+    current = (
+        args.stack
+        or (re.search(r'^current:\s*"([^"]+)"', text, re.MULTILINE) or [None, None])[1]
+    )
     if current not in stacks:
-        raise SystemExit(f"versions.yaml: stack {current!r} not found ({', '.join(stacks)})")
+        raise SystemExit(
+            f"versions.yaml: stack {current!r} not found ({', '.join(stacks)})"
+        )
 
     if args.all:
         pairs = [
@@ -208,7 +226,9 @@ def main(argv: list[str] | None = None) -> int:
     else:
         previous = _previous_of(text, current)
         if not previous or previous not in stacks:
-            print(f"OK -- {current} names no predecessor in this file; nothing to compare")
+            print(
+                f"OK -- {current} names no predecessor in this file; nothing to compare"
+            )
             return 0
         pairs = [(previous, current)]
 
@@ -216,7 +236,9 @@ def main(argv: list[str] | None = None) -> int:
     for line in problems:
         print(f"{'REPORT' if args.all else 'FAIL  '}{line}")
     if args.all:
-        print(f"\nreported {len(problems)} detached comment(s) across {len(pairs)} stack pair(s)")
+        print(
+            f"\nreported {len(problems)} detached comment(s) across {len(pairs)} stack pair(s)"
+        )
         return 0
     if problems:
         print(
@@ -227,8 +249,10 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
     audited = len(stacks[current])
-    print(f"OK -- every pin {current} moved from {pairs[0][0]} carries its own evidence "
-          f"({audited} pin(s) compared)")
+    print(
+        f"OK -- every pin {current} moved from {pairs[0][0]} carries its own evidence "
+        f"({audited} pin(s) compared)"
+    )
     return 0
 
 

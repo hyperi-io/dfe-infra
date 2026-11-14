@@ -33,7 +33,15 @@ def is_tagged(stack: str, repo_root: Path) -> bool:
         True when `refs/tags/<stack>` resolves, the test release.yml cuts on.
     """
     done = subprocess.run(
-        ["git", "-C", str(repo_root), "rev-parse", "-q", "--verify", f"refs/tags/{stack}"],
+        [
+            "git",
+            "-C",
+            str(repo_root),
+            "rev-parse",
+            "-q",
+            "--verify",
+            f"refs/tags/{stack}",
+        ],
         capture_output=True,
         encoding="utf-8",
         errors="replace",

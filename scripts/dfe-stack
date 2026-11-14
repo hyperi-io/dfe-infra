@@ -137,7 +137,9 @@ def parse_simple_yaml(text: str) -> dict:
         if not raw.strip() or raw.lstrip().startswith("#"):
             continue
         indent = len(raw) - len(raw.lstrip())
-        m = re.match(r'^([A-Za-z0-9_.-]+):\s*(?:"([^"]*)"|([^#]*?))?\s*(?:#.*)?$', raw.strip())
+        m = re.match(
+            r'^([A-Za-z0-9_.-]+):\s*(?:"([^"]*)"|([^#]*?))?\s*(?:#.*)?$', raw.strip()
+        )
         if not m:
             continue
         key = m.group(1)
@@ -163,7 +165,9 @@ def load_root(tag: str | None = None) -> dict:
         return parse_simple_yaml((REPO_ROOT / "versions.yaml").read_text())
     out = _run(["git", "-C", str(REPO_ROOT), "show", f"{tag}:versions.yaml"])
     if out.returncode != 0:
-        raise SystemExit(f"error: cannot read versions.yaml at tag {tag!r}: {out.stderr.strip()}")
+        raise SystemExit(
+            f"error: cannot read versions.yaml at tag {tag!r}: {out.stderr.strip()}"
+        )
     return parse_simple_yaml(out.stdout)
 
 
@@ -202,7 +206,7 @@ def semver_key(v: str):
 def stack_names(root: dict) -> list[str]:
     """The stack version keys, ascending by SemVer precedence."""
     names = list(root.get("stacks", {}).keys())
-    return sorted(names, key=lambda s: (semver_key(s) or (0, 0, 0, 0, ())))
+    return sorted(names, key=lambda s: semver_key(s) or (0, 0, 0, 0, ()))
 
 
 # `support: withdrawn` marks a stack pulled after its tag was cut: environments may
@@ -223,7 +227,11 @@ def upgrade_targets(root: dict) -> list[str]:
 
 def stack_previous(v: dict) -> list[str]:
     """The stacks a block names in its comma-separated `stack.previous`, in order."""
-    return [p.strip() for p in v.get("stack", {}).get("previous", "").split(",") if p.strip()]
+    return [
+        p.strip()
+        for p in v.get("stack", {}).get("previous", "").split(",")
+        if p.strip()
+    ]
 
 
 def stack_pins(root: dict, stack: str | None = None) -> tuple[str, dict]:
@@ -231,13 +239,19 @@ def stack_pins(root: dict, stack: str | None = None) -> tuple[str, dict]:
     stacks = root.get("stacks", {})
     name = stack or root.get("current")
     if not name:
-        raise SystemExit("error: no `current` pointer in versions.yaml and no --stack given")
+        raise SystemExit(
+            "error: no `current` pointer in versions.yaml and no --stack given"
+        )
     if name not in stacks:
         # tolerate a v-prefix mismatch on an explicit --stack
-        match = next((n for n in stacks if _norm_version(n) == _norm_version(name)), None)
+        match = next(
+            (n for n in stacks if _norm_version(n) == _norm_version(name)), None
+        )
         if match is None:
             have = ", ".join(stack_names(root)) or "none"
-            raise SystemExit(f"error: stack {name!r} not in versions.yaml stacks: (have: {have})")
+            raise SystemExit(
+                f"error: stack {name!r} not in versions.yaml stacks: (have: {have})"
+            )
         name = match
     return name, stacks[name]
 
@@ -315,11 +329,19 @@ def native_finding(ref: str, label: str, have: str) -> tuple[str, str, str]:
     if builders is None:
         return "ERROR", label, f"{have} -- provenance unreadable: {err}"
     if NATIVE_PLATFORM not in builders:
-        return "FAIL", label, f"{have} -- no {NATIVE_PLATFORM} provenance to show a native build"
+        return (
+            "FAIL",
+            label,
+            f"{have} -- no {NATIVE_PLATFORM} provenance to show a native build",
+        )
     built_on = builders[NATIVE_PLATFORM]
     if built_on != NATIVE_PLATFORM:
         builder = built_on or "a builder its provenance does not name"
-        return "FAIL", label, f"{have} -- {NATIVE_PLATFORM} built on {builder}, not natively"
+        return (
+            "FAIL",
+            label,
+            f"{have} -- {NATIVE_PLATFORM} built on {builder}, not natively",
+        )
     return "ok", label, f"{have} -- {NATIVE_PLATFORM} built natively"
 
 
@@ -344,7 +366,13 @@ def platform_findings(v: dict, registry: str) -> list[tuple[str, str, str]]:
         else:
             findings.append(native_finding(ref, label, have))
     for name in untagged_digests(v):
-        findings.append(("ERROR", name, "digest pinned with no tag under apps:, content: or a family pin"))
+        findings.append(
+            (
+                "ERROR",
+                name,
+                "digest pinned with no tag under apps:, content: or a family pin",
+            )
+        )
     return findings
 
 
@@ -361,11 +389,23 @@ def platform_findings(v: dict, registry: str) -> list[tuple[str, str, str]]:
 _DOCKER_THIRDPARTY = [
     ("clickhouse-version", "CLICKHOUSE_VERSION", "clickhouse/clickhouse-server"),
     ("kafka-version", "APACHE_KAFKA_VERSION", "apache/kafka"),
-    ("redpanda-version", "REDPANDA_VERSION", "docker.redpanda.com/redpandadata/redpanda"),
+    (
+        "redpanda-version",
+        "REDPANDA_VERSION",
+        "docker.redpanda.com/redpandadata/redpanda",
+    ),
     ("kafbat", "KAFBAT_VERSION", "ghcr.io/kafbat/kafka-ui"),
-    ("documentdb-local", "HYPERDX_DOCUMENTDB_VERSION", "ghcr.io/documentdb/documentdb/documentdb-local"),
+    (
+        "documentdb-local",
+        "HYPERDX_DOCUMENTDB_VERSION",
+        "ghcr.io/documentdb/documentdb/documentdb-local",
+    ),
     ("envoy-proxy", "DFE_PROXY_VERSION", "envoyproxy/envoy"),
-    ("otel-collector", "DFE_OTEL_COLLECTOR_VERSION", "otel/opentelemetry-collector-contrib"),
+    (
+        "otel-collector",
+        "DFE_OTEL_COLLECTOR_VERSION",
+        "otel/opentelemetry-collector-contrib",
+    ),
 ]
 
 
@@ -401,17 +441,23 @@ def render_docker(v: dict, registry: str, label: str) -> str:
         ver = services.get(logical)
         digest = edig.get(logical)
         if not ver:
-            lines.append(f"# {var} -- versions.yaml services.{logical} missing; NOT rendered")
+            lines.append(
+                f"# {var} -- versions.yaml services.{logical} missing; NOT rendered"
+            )
             continue
         if not digest:
-            lines.append(f"# {var} -- services-digests.{logical} missing; NOT rendered (would run unpinned)")
+            lines.append(
+                f"# {var} -- services-digests.{logical} missing; NOT rendered (would run unpinned)"
+            )
             continue
         lines.append(f"{var}={ver}@{digest}  # {image}")
 
     lines.append("")
     unp = unpublished_apps(v)
     if unp:
-        lines.append(f"# NOT YET PUBLISHED (excluded): {', '.join(_docker_app_var(n) for n in unp)}")
+        lines.append(
+            f"# NOT YET PUBLISHED (excluded): {', '.join(_docker_app_var(n) for n in unp)}"
+        )
 
     # The HyperDX fork is versioned under content:, so the apps loop misses it,
     # and dfe-docker's compose fails loud on the missing variable.
@@ -425,8 +471,11 @@ def render_docker(v: dict, registry: str, label: str) -> str:
         )
     else:
         hx_digest = digests.get("dfe-hyperdx", "")
-        lines.append(f"DFE_HYPERDX_VERSION={hx}@{hx_digest}" if hx_digest
-                     else f"DFE_HYPERDX_VERSION={hx}")
+        lines.append(
+            f"DFE_HYPERDX_VERSION={hx}@{hx_digest}"
+            if hx_digest
+            else f"DFE_HYPERDX_VERSION={hx}"
+        )
     return "\n".join(lines) + "\n"
 
 
@@ -502,7 +551,9 @@ def render_docker_profile(mode: str) -> str:
     kafbat = _truthy(values.get("kafbat", {}).get("enabled", "true"))
 
     deployed = composition.default_apps(profile)
-    footprint = {DOCKER_FOOTPRINT_KEYS[a] for a in deployed if a in DOCKER_FOOTPRINT_KEYS}
+    footprint = {
+        DOCKER_FOOTPRINT_KEYS[a] for a in deployed if a in DOCKER_FOOTPRINT_KEYS
+    }
     services = [a for a in deployed if a not in DOCKER_FOOTPRINT_KEYS]
 
     lines = [
@@ -530,7 +581,11 @@ def render_docker_profile(mode: str) -> str:
 
 def render_manifest(v: dict, registry: str, label: str) -> str:
     """The certified k8s manifest for a stack (the readable pin set)."""
-    prev = [p.strip() for p in v.get("stack", {}).get("previous", "").split(",") if p.strip()]
+    prev = [
+        p.strip()
+        for p in v.get("stack", {}).get("previous", "").split(",")
+        if p.strip()
+    ]
     lines: list[str] = []
     lines.append("# DFE stack manifest -- rendered by scripts/dfe-stack render")
     lines.append(f"# Source: dfe-infra versions.yaml @ {label}")
@@ -575,7 +630,11 @@ def cmd_render(args: argparse.Namespace) -> int:
     name, v = stack_pins(root, args.stack)
     label = args.tag or name
     target = args.target or "k8s"
-    text = render_docker(v, args.registry, label) if target == "docker" else render_manifest(v, args.registry, label)
+    text = (
+        render_docker(v, args.registry, label)
+        if target == "docker"
+        else render_manifest(v, args.registry, label)
+    )
     if args.out:
         Path(args.out).write_text(text)
         print(f"{target} pin set written to {args.out}")
@@ -671,7 +730,9 @@ def cmd_suite(args: argparse.Namespace) -> int:
         if fails:
             return 1
         text = page.read_text(encoding="utf-8", errors="replace")
-        print(f"{page.name}: {len(suite_graph.doc_block_names(text))} diagram(s) in sync")
+        print(
+            f"{page.name}: {len(suite_graph.doc_block_names(text))} diagram(s) in sync"
+        )
         return 0
     if args.render_docs:
         text = page.read_text(encoding="utf-8", errors="replace")
@@ -681,12 +742,16 @@ def cmd_suite(args: argparse.Namespace) -> int:
             print(f"error: {exc}", file=sys.stderr)
             return 1
         page.write_text(fresh, encoding="utf-8", newline="\n")
-        print(f"{page.name}: {len(suite_graph.doc_block_names(text))} diagram(s) rendered")
+        print(
+            f"{page.name}: {len(suite_graph.doc_block_names(text))} diagram(s) rendered"
+        )
         return 0
     if args.cycles:
         for row in suite_graph.cycle_table(graph):
             print(f"{row['producer']} -> {', '.join(row['consumers'])}")
-            print(f"    {row['kind']} ({row['type']}); gates: {', '.join(row['gates'])}")
+            print(
+                f"    {row['kind']} ({row['type']}); gates: {', '.join(row['gates'])}"
+            )
             print(f"    check: {row['check']}")
         return 0
     if args.mermaid:
@@ -732,7 +797,9 @@ def cmd_check_upgrade(args: argparse.Namespace) -> int:
     # permissive sequential rule.
     root = load_root()
     stacks = root.get("stacks", {})
-    to_name = next((n for n in stacks if _norm_version(n) == _norm_version(args.to)), None)
+    to_name = next(
+        (n for n in stacks if _norm_version(n) == _norm_version(args.to)), None
+    )
     if to_name and is_withdrawn(stacks[to_name]):
         print(f"{args.frm} -> {args.to}: NOT A VERIFIED PATH ({args.to} is withdrawn)")
         return 1
@@ -791,7 +858,9 @@ def cmd_resolve(args: argparse.Namespace) -> int:
         ]
         for oname, ref in sorted(overrides.items()):
             lines.append("")
-            lines.append(f"# ---- merge into: values/{oname}-<instance>-values.yaml ----")
+            lines.append(
+                f"# ---- merge into: values/{oname}-<instance>-values.yaml ----"
+            )
             tag, _, digest = ref.partition("@")
             lines.append("image:")
             lines.append(f'  tag: "{tag}"')
@@ -808,7 +877,9 @@ def cmd_resolve(args: argparse.Namespace) -> int:
         print(f"{oname}: {ref}")
     if drift:
         print("\nSUPPORT-DRIFT: this environment runs an UNTESTED combination.")
-        print("The following components are off the certified set (operator-owned risk):")
+        print(
+            "The following components are off the certified set (operator-owned risk):"
+        )
         for line in drift:
             print(line)
         return 2
@@ -837,7 +908,9 @@ def chart_pins(v: dict) -> list[tuple[str, str, str, str]]:
     return rows
 
 
-def _rewrite_chart_pin(block: list[str], service: str, digest: str, version: str) -> bool:
+def _rewrite_chart_pin(
+    block: list[str], service: str, digest: str, version: str
+) -> bool:
     """Set chart-digests.<service> to digest, its trailing note to the chart version."""
     i = _scalar_line(block, "chart-digests", service)
     if i is None:
@@ -871,7 +944,9 @@ def repin_charts(
     """
     pins = next(iter(parse_simple_yaml("".join(block)).values()), {})
     moved: list[str] = []
-    for service, chart, version, current in chart_pins(pins if isinstance(pins, dict) else {}):
+    for service, chart, version, current in chart_pins(
+        pins if isinstance(pins, dict) else {}
+    ):
         if only is not None and service != only:
             continue
         ref = f"{host}/{org}/charts/{chart}:{version}"
@@ -880,7 +955,9 @@ def repin_charts(
                 f"error: chart-digests.{service} is pinned, but nothing in the stack tags {chart}"
             )
         try:
-            digest = registry_pins.tag_digest(org, f"charts/{chart}", version, registry=host)
+            digest = registry_pins.tag_digest(
+                org, f"charts/{chart}", version, registry=host
+            )
         except registry_pins.RegistryError as exc:
             raise SystemExit(f"error: cannot read {ref}: {exc}") from exc
         if digest is None:
@@ -902,7 +979,9 @@ def repin_charts(
     return moved
 
 
-def _pin_matches(label: str, org: str, package: str, tag: str, digest: str, host: str) -> bool:
+def _pin_matches(
+    label: str, org: str, package: str, tag: str, digest: str, host: str
+) -> bool:
     """Read one tag's digest from the registry and print ok, DRIFT or ERROR against the pin."""
     try:
         actual = registry_pins.tag_digest(org, package, tag, registry=host)
@@ -910,7 +989,9 @@ def _pin_matches(label: str, org: str, package: str, tag: str, digest: str, host
         print(f"ERROR {label}: {exc}")
         return False
     if actual != digest:
-        print(f"DRIFT {label}: versions.yaml {digest} != registry {actual or '(tag not found)'}")
+        print(
+            f"DRIFT {label}: versions.yaml {digest} != registry {actual or '(tag not found)'}"
+        )
         return False
     print(f"ok    {label}: {tag}@{digest[:19]}...")
     return True
@@ -952,12 +1033,16 @@ def cmd_verify(args: argparse.Namespace) -> int:
     _, v = stack_pins(load_root(), args.stack)
     host, _, org = args.registry.partition("/")
     if not org:
-        raise SystemExit(f"error: --registry {args.registry!r} names no org (want <host>/<org>)")
+        raise SystemExit(
+            f"error: --registry {args.registry!r} names no org (want <host>/<org>)"
+        )
     bad = 0
     for name, digest in sorted(v.get("digests", {}).items()):
         tag = image_tag(v, name)
         if not tag:
-            print(f"ERROR {name}: digest pinned with no tag under apps:, content: or a family pin")
+            print(
+                f"ERROR {name}: digest pinned with no tag under apps:, content: or a family pin"
+            )
             bad += 1
             continue
         if not _pin_matches(name, org, name, tag, digest, host):
@@ -965,7 +1050,9 @@ def cmd_verify(args: argparse.Namespace) -> int:
     for name, (section, key) in sorted(_FAMILY_UNPINNED.items()):
         tag = v.get(section, {}).get(key, "")
         if not tag:
-            print(f"skip  {name}: this stack pins no {section}.{key}, so it ships no {name}")
+            print(
+                f"skip  {name}: this stack pins no {section}.{key}, so it ships no {name}"
+            )
             continue
         if not _family_image_published(name, org, tag, host):
             bad += 1
@@ -973,10 +1060,14 @@ def cmd_verify(args: argparse.Namespace) -> int:
     for service, chart, version, digest in chart_pins(v):
         label = f"chart {chart}"
         if digest == UNPUBLISHED_CHART:
-            print(f"skip  {label}: chart-digests.{service} is {digest!r}, so nothing is published")
+            print(
+                f"skip  {label}: chart-digests.{service} is {digest!r}, so nothing is published"
+            )
             continue
         if not version:
-            print(f"ERROR {label}: chart-digests.{service} is pinned, but nothing tags {chart}")
+            print(
+                f"ERROR {label}: chart-digests.{service} is pinned, but nothing tags {chart}"
+            )
             bad += 1
             continue
         if not _pin_matches(label, org, f"charts/{chart}", version, digest, host):
@@ -992,6 +1083,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
 # Compatibility constraints (dfe-stack compat-check) -- validate the inter-
 # component locks declared in the stack's constraints file (guard + requirement).
 # ---------------------------------------------------------------------------
+
 
 def flatten_pins(v: dict) -> dict[str, str]:
     """Pin sections -> dotted keys (operators.keda, services.kafka-version)."""
@@ -1063,6 +1155,7 @@ def _waiver_expired(w: dict) -> bool:
 # in place.
 # ---------------------------------------------------------------------------
 
+
 def rewrite_digests(
     text: str, stack: str, changes: list[tuple[str, str]]
 ) -> tuple[str, list[str], list[tuple[str, str]]]:
@@ -1107,8 +1200,12 @@ def cmd_refresh_digests(args: argparse.Namespace) -> int:
     path = REPO_ROOT / "versions.yaml"
     text = path.read_text(encoding="utf-8")
     name, pins = stack_pins(parse_simple_yaml(text), args.stack)
-    if getattr(args, "skip_released", False) and stack_freeze.is_tagged(name, REPO_ROOT):
-        print(f"skip  stack {name} is released (git tag {name} exists): digest moves wait for the next cut")
+    if getattr(args, "skip_released", False) and stack_freeze.is_tagged(
+        name, REPO_ROOT
+    ):
+        print(
+            f"skip  stack {name} is released (git tag {name} exists): digest moves wait for the next cut"
+        )
         return 0
     recorded = pins.get("services-digests", {})
     # Annotations from the TARGET stack's block: each stack carries its own
@@ -1158,7 +1255,9 @@ def cmd_refresh_digests(args: argparse.Namespace) -> int:
         text, written, refused = rewrite_digests(text, name, changes)
         if written:
             path.write_text(text, encoding="utf-8", newline="\n")
-            print(f"\n{len(written)} digest(s) rewritten in versions.yaml (stack {name})")
+            print(
+                f"\n{len(written)} digest(s) rewritten in versions.yaml (stack {name})"
+            )
         for key, why in refused:
             print(f"ERROR {key}: {why}", file=sys.stderr)
         stalled += [key for key, _ in refused]
@@ -1183,10 +1282,14 @@ def cmd_compat_check(args: argparse.Namespace) -> int:
         return 0
     cfile = REPO_ROOT / cpath
     if not cfile.exists():
-        raise SystemExit(f"error: constraints file {cpath} not found (referenced by stack {name})")
+        raise SystemExit(
+            f"error: constraints file {cpath} not found (referenced by stack {name})"
+        )
     con = parse_simple_yaml(cfile.read_text())
     if con.get("stack") and con["stack"] != name:
-        raise SystemExit(f"error: {cpath} declares stack {con['stack']!r} != referencing stack {name!r}")
+        raise SystemExit(
+            f"error: {cpath} declares stack {con['stack']!r} != referencing stack {name!r}"
+        )
     pins = flatten_pins(v)
     rules = con.get("rules", {})
     waivers = con.get("waivers", {})
@@ -1197,15 +1300,19 @@ def cmd_compat_check(args: argparse.Namespace) -> int:
             print(f"waived {rid}: {waivers[rid].get('reason', '')}")
             continue
         if rid in waivers:  # waiver present but EXPIRED -> rule re-activates
-            print(f"WAIVER EXPIRED {rid}: {waivers[rid].get('expires')} -- rule re-activated")
+            print(
+                f"WAIVER EXPIRED {rid}: {waivers[rid].get('expires')} -- rule re-activated"
+            )
         sev = rule.get("severity", "error")
         if not _guard_holds(rule, pins):
             # An error-severity rule whose guard cannot match is inert, and an
             # inert rule reads as a passing one -- so --strict counts it.
             if sev == "error":
-                print(f"DEAD   {rid}: guard {_guard_text(rule)} does not match "
-                      f"{rule.get('when-key')} = {pins.get(rule.get('when-key'))} -- "
-                      f"the rule can never fire; re-point or delete it")
+                print(
+                    f"DEAD   {rid}: guard {_guard_text(rule)} does not match "
+                    f"{rule.get('when-key')} = {pins.get(rule.get('when-key'))} -- "
+                    f"the rule can never fire; re-point or delete it"
+                )
                 dead += 1
             else:
                 print(f"n/a    {rid}: guard not met (skipped)")
@@ -1214,23 +1321,38 @@ def cmd_compat_check(args: argparse.Namespace) -> int:
         if ok:
             print(f"ok     {rid}: {rule.get('require-key')} = {actual}")
             continue
-        bound = rule.get("require-range") or rule.get("require-equals") or rule.get("require-matches") or "present"
-        print(f"{'FAIL ' if sev == 'error' else 'WARN '} {rid}: {rule.get('require-key')} = {actual} violates {bound}")
+        bound = (
+            rule.get("require-range")
+            or rule.get("require-equals")
+            or rule.get("require-matches")
+            or "present"
+        )
+        print(
+            f"{'FAIL ' if sev == 'error' else 'WARN '} {rid}: {rule.get('require-key')} = {actual} violates {bound}"
+        )
         print(f"       reason: {rule.get('reason', '')}")
         print(f"       source: {rule.get('source', '')}")
         if sev == "error":
             failures += 1
     for wid, w in sorted(waivers.items()):
         if w.get("expires"):
-            print(f"waiver {wid}: expires {w['expires']} ({w.get('scope', w.get('reason', ''))})")
+            print(
+                f"waiver {wid}: expires {w['expires']} ({w.get('scope', w.get('reason', ''))})"
+            )
     if (failures or dead) and args.strict:
         if failures:
             print(f"\n{failures} error-severity constraint(s) violated ({name})")
         if dead:
-            print(f"\n{dead} error-severity rule(s) can never fire ({name}) -- a guard "
-                  f"that matches nothing reports as a pass")
+            print(
+                f"\n{dead} error-severity rule(s) can never fire ({name}) -- a guard "
+                f"that matches nothing reports as a pass"
+            )
         return 1
-    tail = " (strict: no error violations or dead guards)" if args.strict else " (advisory)"
+    tail = (
+        " (strict: no error violations or dead guards)"
+        if args.strict
+        else " (advisory)"
+    )
     print(f"\ncompat-check {name}: {len(rules)} rule(s) checked{tail}")
     return 0
 
@@ -1305,7 +1427,9 @@ def cmd_bump_app(args: argparse.Namespace) -> int:
     # the oldest stack -- and silently corrupts a shipped, immutable record.
     stack = args.stack or load_root().get("current")
     if not stack:
-        raise SystemExit("error: no --stack given and no `current:` pointer to fall back on")
+        raise SystemExit(
+            "error: no --stack given and no `current:` pointer to fall back on"
+        )
     stack_freeze.refuse_if_tagged(stack, REPO_ROOT, "bump-app")
     block_start, block_end = _block_span(lines, stack)
     # Narrow again to `apps:`. A stack repeats every app name under `digests:`
@@ -1313,7 +1437,9 @@ def cmd_bump_app(args: argparse.Namespace) -> int:
     start, end = _sub_block_span(lines, block_start, block_end, "apps")
 
     matches = [
-        i for i in range(start, end) if re.match(rf'^\s+{re.escape(name)}:\s*"[^"]*"', lines[i])
+        i
+        for i in range(start, end)
+        if re.match(rf'^\s+{re.escape(name)}:\s*"[^"]*"', lines[i])
     ]
     if len(matches) != 1:
         raise SystemExit(
@@ -1326,7 +1452,9 @@ def cmd_bump_app(args: argparse.Namespace) -> int:
     )
 
     block = lines[block_start:block_end]
-    pinned = next(iter(parse_simple_yaml("".join(block)).values()), {}).get("chart-digests", {})
+    pinned = next(iter(parse_simple_yaml("".join(block)).values()), {}).get(
+        "chart-digests", {}
+    )
     service = next((s for s in pinned if _CHART_NAMES.get(s, s) == name), None)
     if service is None:
         raise SystemExit(
@@ -1335,7 +1463,9 @@ def cmd_bump_app(args: argparse.Namespace) -> int:
         )
     host, _, org = args.registry.partition("/")
     if not org:
-        raise SystemExit(f"error: --registry {args.registry!r} names no org (want <host>/<org>)")
+        raise SystemExit(
+            f"error: --registry {args.registry!r} names no org (want <host>/<org>)"
+        )
     held: list[str] = []
     moved = repin_charts(block, org, host, held, only=service)
     lines[block_start:block_end] = block
@@ -1390,7 +1520,10 @@ def schemas_lock_finding(v: dict, org: str) -> tuple[str, str]:
     """
     engine = v.get("apps", {}).get(SCHEMAS_LOCKER, "")
     if not engine:
-        return "skip", f"no apps.{SCHEMAS_LOCKER} pin, so no {SCHEMAS_PACKAGE} lock to compare"
+        return (
+            "skip",
+            f"no apps.{SCHEMAS_LOCKER} pin, so no {SCHEMAS_PACKAGE} lock to compare",
+        )
     where = f"{SCHEMAS_LOCKER} {engine} uv.lock"
     try:
         lock = registry_pins.repo_file(org, SCHEMAS_LOCKER, engine, "uv.lock")
@@ -1408,9 +1541,15 @@ def schemas_lock_finding(v: dict, org: str) -> tuple[str, str]:
         )
     if len(locked) > 1:
         held = ", ".join(locked)
-        return "FAIL", f"{where} locks versions {held}, so {key} {pinned or '(unpinned)'} matches nothing"
+        return (
+            "FAIL",
+            f"{where} locks versions {held}, so {key} {pinned or '(unpinned)'} matches nothing",
+        )
     if _norm_version(pinned) == locked[0]:
-        return "ok", f"{key} {pinned} is the {SCHEMAS_PACKAGE} {SCHEMAS_LOCKER} {engine} locks"
+        return (
+            "ok",
+            f"{key} {pinned} is the {SCHEMAS_PACKAGE} {SCHEMAS_LOCKER} {engine} locks",
+        )
     fix = f'set {key} to "v{locked[0]}"'
     if pinned:
         fix += f", or pin a {SCHEMAS_LOCKER} that locks {_norm_version(pinned)}"
@@ -1426,7 +1565,7 @@ DEPLOY_REPO = "dfe-deploy"
 def deploy_step(name: str) -> str:
     """The two steps that point the deploy-repo template at stack `name`."""
     return (
-        f"set {DEPLOY_REPO} pins.yaml `base.dfe-infra` to \"{name}\" (and `channel` to the "
+        f'set {DEPLOY_REPO} pins.yaml `base.dfe-infra` to "{name}" (and `channel` to the '
         f"stack's maturity) and merge it, which tags a release; then set "
         f"content.{DEPLOY_REPO} in stack {name} to that tag"
     )
@@ -1441,7 +1580,10 @@ def deploy_pin_finding(name: str, v: dict, org: str) -> tuple[str, str]:
     """
     pinned = v.get("content", {}).get(DEPLOY_REPO, "")
     if not pinned:
-        return "skip", f"no content.{DEPLOY_REPO} pin, so no template pins.yaml to compare"
+        return (
+            "skip",
+            f"no content.{DEPLOY_REPO} pin, so no template pins.yaml to compare",
+        )
     where = f"{DEPLOY_REPO} {pinned} pins.yaml"
     try:
         text = registry_pins.repo_file(org, DEPLOY_REPO, pinned, "pins.yaml")
@@ -1504,7 +1646,9 @@ def cmd_release_gate(args: argparse.Namespace) -> int:
     findings = platform_findings(v, args.registry)
     for status, image, detail in findings:
         if status != "ok":
-            print(f"release-gate FAIL: {name} {image} {status}: {detail}", file=sys.stderr)
+            print(
+                f"release-gate FAIL: {name} {image} {status}: {detail}", file=sys.stderr
+            )
             failed = True
     if failed:
         return 1
@@ -1516,10 +1660,16 @@ def cmd_release_gate(args: argparse.Namespace) -> int:
     return 0
 
 
-def _sub_block_span(lines: list[str], start: int, end: int, key: str) -> tuple[int, int]:
+def _sub_block_span(
+    lines: list[str], start: int, end: int, key: str
+) -> tuple[int, int]:
     """Line span of a `key:` map nested inside an already-bounded block."""
     head = next(
-        (i for i in range(start, end) if re.match(rf"^(\s+){re.escape(key)}:\s*$", lines[i])),
+        (
+            i
+            for i in range(start, end)
+            if re.match(rf"^(\s+){re.escape(key)}:\s*$", lines[i])
+        ),
         None,
     )
     if head is None:
@@ -1549,9 +1699,13 @@ def _latest_published(org: str, app: str) -> tuple[str, str] | None:
         digest = registry_pins.resolve_digest(org, app, best)
     except registry_pins.RegistryError as exc:
         # A network failure must not read as "unpublished".
-        raise SystemExit(f"error: cannot read {org}/{app} from the registry: {exc}") from exc
+        raise SystemExit(
+            f"error: cannot read {org}/{app} from the registry: {exc}"
+        ) from exc
     if digest is None:
-        raise SystemExit(f"error: {org}/{app} lists {best} but serves no manifest for it")
+        raise SystemExit(
+            f"error: {org}/{app} lists {best} but serves no manifest for it"
+        )
     return best, digest
 
 
@@ -1615,7 +1769,9 @@ def _carry_constraints(root: dict, from_name: str, new: str) -> str | None:
 _GIT_SHA = re.compile(r"^[0-9a-f]{40}$")
 
 
-def _stamp_git_content(block: list[str], from_pins: dict, org: str, held: list[str]) -> list[str]:
+def _stamp_git_content(
+    block: list[str], from_pins: dict, org: str, held: list[str]
+) -> list[str]:
     """Re-resolve every content entry whose value is a git commit, not a tag.
 
     A content repo that cuts a tag per stack release (dfe-schemas, dfe-deploy,
@@ -1653,7 +1809,9 @@ def _stamp_git_content(block: list[str], from_pins: dict, org: str, held: list[s
     return moved
 
 
-def _restate_ref_evidence(block: list[str], key: str, sha: str, subject: str, date: str) -> None:
+def _restate_ref_evidence(
+    block: list[str], key: str, sha: str, subject: str, date: str
+) -> None:
     """Replace the comment on a moved `content.<key>` ref with evidence for `sha`.
 
     The comment is the run of comment lines directly above the pin plus any
@@ -1675,7 +1833,9 @@ def _restate_ref_evidence(block: list[str], key: str, sha: str, subject: str, da
     block[first : i + 1] = [evidence, *annotations, f"{pin.group(1)}{pin.group(2)}\n"]
 
 
-def _set_stack_field(block: list[str], key: str, value: str | None, keep_note: bool) -> None:
+def _set_stack_field(
+    block: list[str], key: str, value: str | None, keep_note: bool
+) -> None:
     """Rewrite a stack block's own `key:` line; a value of None keeps the current one.
 
     keep_note=False drops the trailing comment, which describes the stack the block
@@ -1689,7 +1849,9 @@ def _set_stack_field(block: list[str], key: str, value: str | None, keep_note: b
             return
 
 
-def previous_without(declared: list[str], gone: str, inherited: list[str], name: str) -> list[str]:
+def previous_without(
+    declared: list[str], gone: str, inherited: list[str], name: str
+) -> list[str]:
     """A block's `stack.previous` with a withdrawn stack replaced by its own predecessors.
 
     Args:
@@ -1737,7 +1899,9 @@ def _drop_withdrawn(
     changes: list[tuple[str, str, str]] = []
     for name in stack_names(root):
         declared = stack_previous(stacks[name])
-        if name == gone or all(_norm_version(p) != _norm_version(gone) for p in declared):
+        if name == gone or all(
+            _norm_version(p) != _norm_version(gone) for p in declared
+        ):
             continue
         merged = previous_without(declared, gone, inherited, name)
         start, end = _block_span(lines, name)
@@ -1747,7 +1911,11 @@ def _drop_withdrawn(
         lines[start:end] = block
         old = stacks[name]["stack"]["previous"]
         changes.append(
-            ("rewrote", "rewrite", f'{name} stack.previous: "{old}" -> "{", ".join(merged)}"')
+            (
+                "rewrote",
+                "rewrite",
+                f'{name} stack.previous: "{old}" -> "{", ".join(merged)}"',
+            )
         )
 
     start, end = _block_span(lines, gone)
@@ -1808,7 +1976,9 @@ def cmd_cut(args: argparse.Namespace) -> int:
         raise SystemExit(f"error: stack {new} already exists -- pick an unused version")
     if replace:
         if new not in stacks:
-            raise SystemExit(f"error: --replace-withdrawn has nothing to replace: no stack {new}")
+            raise SystemExit(
+                f"error: --replace-withdrawn has nothing to replace: no stack {new}"
+            )
         if not is_withdrawn(stacks[new]):
             support = stacks[new].get("support") or "unset"
             raise SystemExit(
@@ -1846,7 +2016,9 @@ def cmd_cut(args: argparse.Namespace) -> int:
 
     # The block was cloned from from_name, so from_name is the new predecessor.
     if not _rewrite_scalar(block, "stack", "previous", from_name):
-        raise SystemExit(f"error: no stack.previous in {from_name} to re-point at the source")
+        raise SystemExit(
+            f"error: no stack.previous in {from_name} to re-point at the source"
+        )
 
     _, from_pins = stack_pins(root, from_name)
     wanted = set(args.apps.split(",")) if args.apps else None
@@ -1872,7 +2044,7 @@ def cmd_cut(args: argparse.Namespace) -> int:
         if not _rewrite_scalar(block, "digests", app, digest):
             raise SystemExit(
                 f"error: no digests.{app} key in {from_name} to rewrite -- {app} has "
-                f"published now, so add `{app}: \"{digest}\"` to that stack's digests "
+                f'published now, so add `{app}: "{digest}"` to that stack\'s digests '
                 f"block and re-run"
             )
         moved.append(f"{app} {current} -> {tag}")
@@ -1890,7 +2062,9 @@ def cmd_cut(args: argparse.Namespace) -> int:
     for line in held:
         print(f"  held   {line}")
     if not moved:
-        print("  nothing moved -- every app was already at its latest published release")
+        print(
+            "  nothing moved -- every app was already at its latest published release"
+        )
 
     if args.dry_run:
         for _, todo, what in replacing:
@@ -1907,7 +2081,9 @@ def cmd_cut(args: argparse.Namespace) -> int:
     text = "".join(body)
     text, n = re.subn(r'(?m)^(current:\s*)"[^"]*"', rf'\1"{new}"', text, count=1)
     if n != 1:
-        raise SystemExit("error: no `current:` pointer to move -- refusing a half-written cut")
+        raise SystemExit(
+            "error: no `current:` pointer to move -- refusing a half-written cut"
+        )
     path.write_text(text)
 
     if gone_rules is not None:
@@ -1920,12 +2096,16 @@ def cmd_cut(args: argparse.Namespace) -> int:
 
     print(f"  current -> {new}")
     print(f"  next: {deploy_step(new)}")
-    print("  next: dfe-stack compat-check; check_versions_drift.py --fix; dfe-stack release-gate")
+    print(
+        "  next: dfe-stack compat-check; check_versions_drift.py --fix; dfe-stack release-gate"
+    )
     return 0
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(prog="dfe-stack", description=__doc__.split("\n")[0])
+    parser = argparse.ArgumentParser(
+        prog="dfe-stack", description=__doc__.split("\n")[0]
+    )
     parser.add_argument(
         "--registry",
         default=DEFAULT_REGISTRY,
@@ -1933,12 +2113,21 @@ def main() -> int:
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    p = sub.add_parser("render", help="render the k8s manifest or the docker .env pin set")
-    p.add_argument("--target", choices=["k8s", "docker"], default="k8s",
-                   help="k8s = certified manifest (default); docker = dfe-docker .env fragment")
-    p.add_argument("--docker-profile", choices=list(DOCKER_PROFILES),
-                   help="project a k8s profile into dfe-docker's service_profiles.yaml block "
-                        "(ignores --target/--stack: profiles are not versioned pins)")
+    p = sub.add_parser(
+        "render", help="render the k8s manifest or the docker .env pin set"
+    )
+    p.add_argument(
+        "--target",
+        choices=["k8s", "docker"],
+        default="k8s",
+        help="k8s = certified manifest (default); docker = dfe-docker .env fragment",
+    )
+    p.add_argument(
+        "--docker-profile",
+        choices=list(DOCKER_PROFILES),
+        help="project a k8s profile into dfe-docker's service_profiles.yaml block "
+        "(ignores --target/--stack: profiles are not versioned pins)",
+    )
     p.add_argument("--stack", help="stack version to render (default: `current`)")
     p.add_argument("--tag", help="git tag to render from (git show versions.yaml@tag)")
     p.add_argument("--out", help="write to a file instead of stdout")
@@ -1961,13 +2150,33 @@ def main() -> int:
     p.set_defaults(func=cmd_graph)
 
     p = sub.add_parser("suite", help="suite.yaml: membership and build-cycle edges")
-    p.add_argument("--cycles", action="store_true", help="print the build-cycle table (producer -> consumers, check, gates)")
+    p.add_argument(
+        "--cycles",
+        action="store_true",
+        help="print the build-cycle table (producer -> consumers, check, gates)",
+    )
     p.add_argument("--producer", help="JSON slice: this producer and its out-edges")
-    p.add_argument("--consumer", help="JSON slice: this consumer and the in-edges that reach it")
-    p.add_argument("--lane", help="JSON slice: one lane's members and the edges among them")
-    p.add_argument("--mermaid", metavar="BLOCK", help="print one diagram: overview or producer:<node>")
-    p.add_argument("--render-docs", action="store_true", help="rewrite the marked diagram blocks in docs/suite-graph.md")
-    p.add_argument("--check-docs", action="store_true", help="exit 1 if those blocks differ from suite.yaml")
+    p.add_argument(
+        "--consumer", help="JSON slice: this consumer and the in-edges that reach it"
+    )
+    p.add_argument(
+        "--lane", help="JSON slice: one lane's members and the edges among them"
+    )
+    p.add_argument(
+        "--mermaid",
+        metavar="BLOCK",
+        help="print one diagram: overview or producer:<node>",
+    )
+    p.add_argument(
+        "--render-docs",
+        action="store_true",
+        help="rewrite the marked diagram blocks in docs/suite-graph.md",
+    )
+    p.add_argument(
+        "--check-docs",
+        action="store_true",
+        help="exit 1 if those blocks differ from suite.yaml",
+    )
     p.set_defaults(func=cmd_suite)
 
     p = sub.add_parser("check-upgrade", help="verdict on an upgrade path")
@@ -1977,7 +2186,10 @@ def main() -> int:
 
     p = sub.add_parser("resolve", help="effective set for a customer pins.yaml")
     p.add_argument("--pins", required=True, help="path to the deploy repo's pins.yaml")
-    p.add_argument("--stack", help="manifest stack version (default: pins.yaml's base.dfe-infra, else `current`)")
+    p.add_argument(
+        "--stack",
+        help="manifest stack version (default: pins.yaml's base.dfe-infra, else `current`)",
+    )
     p.add_argument("--tag", help="manifest git tag (git show versions.yaml@tag)")
     p.add_argument(
         "--emit-values",
@@ -2016,15 +2228,21 @@ def main() -> int:
     )
     p.set_defaults(func=cmd_refresh_digests)
 
-    p = sub.add_parser("compat-check", help="validate the stack's interdependency constraints")
+    p = sub.add_parser(
+        "compat-check", help="validate the stack's interdependency constraints"
+    )
     p.add_argument("--stack", help="stack version (default: `current`)")
-    p.add_argument("--strict", action="store_true", help="exit 1 on any error-severity violation")
+    p.add_argument(
+        "--strict", action="store_true", help="exit 1 on any error-severity violation"
+    )
     p.set_defaults(func=cmd_compat_check)
 
     p = sub.add_parser("current", help="print the `current` stack version pointer")
     p.set_defaults(func=cmd_current)
 
-    p = sub.add_parser("maturity", help="print a stack's maturity (alpha|beta|rc|release)")
+    p = sub.add_parser(
+        "maturity", help="print a stack's maturity (alpha|beta|rc|release)"
+    )
     p.add_argument("--stack", help="stack version (default: `current`)")
     p.set_defaults(func=cmd_maturity)
 
@@ -2032,7 +2250,9 @@ def main() -> int:
     p.add_argument("--stack", help="stack version (default: `current`)")
     p.set_defaults(func=cmd_title)
 
-    p = sub.add_parser("set-latest", help="set the top-level `latest:` pointer to a version")
+    p = sub.add_parser(
+        "set-latest", help="set the top-level `latest:` pointer to a version"
+    )
     p.add_argument("version")
     p.set_defaults(func=cmd_set_latest)
 
@@ -2040,23 +2260,40 @@ def main() -> int:
         "bump-app",
         help="pin an app to a new image version and its thin chart's digest at that version",
     )
-    p.add_argument("app", help="app name, e.g. dfe-engine (the versions.yaml apps.<name> key)")
-    p.add_argument("version", help='image version, e.g. v1.10.6')
+    p.add_argument(
+        "app", help="app name, e.g. dfe-engine (the versions.yaml apps.<name> key)"
+    )
+    p.add_argument("version", help="image version, e.g. v1.10.6")
     p.add_argument(
         "--stack",
         help="stack to bump in (default: the `current` pointer). Refused when its git tag exists: a released stack is a shipped record.",
     )
-    p.add_argument("--dry-run", action="store_true", help="show what would change; write nothing")
+    p.add_argument(
+        "--dry-run", action="store_true", help="show what would change; write nothing"
+    )
     p.set_defaults(func=cmd_bump_app)
 
-    p = sub.add_parser("cut", help="cut a new stack version from the current latest app builds")
+    p = sub.add_parser(
+        "cut", help="cut a new stack version from the current latest app builds"
+    )
     p.add_argument("version", help="new stack version, e.g. 2.2.0-rc.7")
-    p.add_argument("--from", dest="from_stack", default=None,
-                   help="stack to clone the shape from (default: `current`)")
-    p.add_argument("--maturity", default=None, choices=["alpha", "beta", "rc", "release"],
-                   help="maturity for the new stack (default: inherit from --from)")
-    p.add_argument("--apps", default=None,
-                   help="comma-separated apps to move; the rest hold at their --from pins")
+    p.add_argument(
+        "--from",
+        dest="from_stack",
+        default=None,
+        help="stack to clone the shape from (default: `current`)",
+    )
+    p.add_argument(
+        "--maturity",
+        default=None,
+        choices=["alpha", "beta", "rc", "release"],
+        help="maturity for the new stack (default: inherit from --from)",
+    )
+    p.add_argument(
+        "--apps",
+        default=None,
+        help="comma-separated apps to move; the rest hold at their --from pins",
+    )
     p.add_argument("--org", default="hyperi-io", help="GH org owning the packages")
     p.add_argument(
         "--replace-withdrawn",
@@ -2066,7 +2303,9 @@ def main() -> int:
             "out, re-point every stack.previous naming it, and replace its constraints file"
         ),
     )
-    p.add_argument("--dry-run", action="store_true", help="print the plan; write nothing")
+    p.add_argument(
+        "--dry-run", action="store_true", help="print the plan; write nothing"
+    )
     p.set_defaults(func=cmd_cut)
 
     p = sub.add_parser(
@@ -2074,7 +2313,9 @@ def main() -> int:
         help="fail a dfe-schemas pin the engine does not lock, or a release with a gap",
     )
     p.add_argument("--stack", help="stack version (default: `current`)")
-    p.add_argument("--org", default="hyperi-io", help="GH org owning the engine repository")
+    p.add_argument(
+        "--org", default="hyperi-io", help="GH org owning the engine repository"
+    )
     p.set_defaults(func=cmd_release_gate)
 
     args = parser.parse_args()

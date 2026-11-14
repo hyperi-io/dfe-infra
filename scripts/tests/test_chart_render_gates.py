@@ -77,7 +77,9 @@ def render_error(chart: Path, *sets: str, values: Path | None = None) -> str:
     return out.stderr if out.returncode != 0 else ""
 
 
-def _helm(chart: Path, *sets: str, values: Path | None) -> subprocess.CompletedProcess[str]:
+def _helm(
+    chart: Path, *sets: str, values: Path | None
+) -> subprocess.CompletedProcess[str]:
     cmd = ["helm", "template", chart.name, str(chart)]
     if values is not None:
         cmd += ["-f", str(values)]
@@ -100,7 +102,9 @@ def target_names(policy: dict) -> list[str]:
 def test_two_providers_render_one_policy_per_route() -> None:
     """The defect: a second provider added a second policy on the same route."""
     docs = render(GATEWAY, *TWO_PROVIDERS, values=COMMON)
-    targeted = [(p["metadata"]["namespace"], t) for p in policies(docs) for t in target_names(p)]
+    targeted = [
+        (p["metadata"]["namespace"], t) for p in policies(docs) for t in target_names(p)
+    ]
     expect(
         "no HTTPRoute is targeted by more than one SecurityPolicy",
         len(targeted) == len(set(targeted)),
@@ -119,41 +123,67 @@ def test_the_designated_provider_owns_the_login() -> None:
         f"got {sorted(issuers)}",
     )
     clients = {p["spec"]["oidc"]["clientID"] for p in policies(docs)}
-    expect("and carries that provider's client", clients == {"entra-client"}, f"got {clients}")
+    expect(
+        "and carries that provider's client",
+        clients == {"entra-client"},
+        f"got {clients}",
+    )
 
 
 def test_an_unset_designation_takes_the_first_provider() -> None:
     docs = render(GATEWAY, *TWO_PROVIDERS, values=COMMON)
     issuers = {p["spec"]["oidc"]["provider"]["issuer"] for p in policies(docs)}
-    expect("an empty loginProvider takes the first entry", issuers == {"https://okta.example.com"},
-           f"got {sorted(issuers)}")
+    expect(
+        "an empty loginProvider takes the first entry",
+        issuers == {"https://okta.example.com"},
+        f"got {sorted(issuers)}",
+    )
 
 
 def test_a_designation_naming_nothing_fails_the_render() -> None:
     """Silently falling back is what this whole issue is about."""
-    err = render_error(GATEWAY, *TWO_PROVIDERS, "oidc.loginProvider=nosuch", values=COMMON)
-    expect("an unknown loginProvider refuses to render", "nosuch" in err, f"got {err!r}")
-    expect("and the message names what is configured", "okta" in err and "entra" in err,
-           f"got {err!r}")
+    err = render_error(
+        GATEWAY, *TWO_PROVIDERS, "oidc.loginProvider=nosuch", values=COMMON
+    )
+    expect(
+        "an unknown loginProvider refuses to render", "nosuch" in err, f"got {err!r}"
+    )
+    expect(
+        "and the message names what is configured",
+        "okta" in err and "entra" in err,
+        f"got {err!r}",
+    )
 
 
 def test_every_provider_still_validates_on_the_infra_policy() -> None:
     """Folding the extras in is what stops the second provider being dropped."""
     docs = render(GATEWAY, *TWO_PROVIDERS, values=COMMON)
     admin = [p for p in policies(docs) if p["metadata"]["name"].endswith("-admin")]
-    expect("the infra routes render admin policies", len(admin) >= 1, f"got {len(admin)}")
+    expect(
+        "the infra routes render admin policies", len(admin) >= 1, f"got {len(admin)}"
+    )
     for p in admin:
         name = p["metadata"]["name"]
         jwt_names = [j["name"] for j in p["spec"]["jwt"]["providers"]]
-        expect(f"{name}: every provider is a JWT issuer", jwt_names == ["okta", "entra"],
-               f"got {jwt_names}")
-        rule_providers = [r["principal"]["jwt"]["provider"] for r in
-                          p["spec"]["authorization"]["rules"]]
-        expect(f"{name}: every provider gets an Allow rule", rule_providers == ["okta", "entra"],
-               f"got {rule_providers}")
-        expect(f"{name}: unmatched requests are still denied",
-               p["spec"]["authorization"]["defaultAction"] == "Deny",
-               f"got {p['spec']['authorization']['defaultAction']}")
+        expect(
+            f"{name}: every provider is a JWT issuer",
+            jwt_names == ["okta", "entra"],
+            f"got {jwt_names}",
+        )
+        rule_providers = [
+            r["principal"]["jwt"]["provider"]
+            for r in p["spec"]["authorization"]["rules"]
+        ]
+        expect(
+            f"{name}: every provider gets an Allow rule",
+            rule_providers == ["okta", "entra"],
+            f"got {rule_providers}",
+        )
+        expect(
+            f"{name}: unmatched requests are still denied",
+            p["spec"]["authorization"]["defaultAction"] == "Deny",
+            f"got {p['spec']['authorization']['defaultAction']}",
+        )
 
 
 # --- #297: the Redpanda licence gate ---------------------------------------
@@ -163,19 +193,35 @@ def test_external_mode_renders_with_a_leftover_redpanda_provider() -> None:
     """mode: external deploys no broker, so the licence has nothing to cover."""
     docs = render(KAFKA, "kafka.mode=external", "kafka.provider=redpanda")
     kinds = {d.get("kind") for d in docs}
-    expect("external mode renders without acceptLicense", "Redpanda" not in kinds, f"got {kinds}")
-    expect("and still renders its external credentials", "ExternalSecret" in kinds, f"got {kinds}")
+    expect(
+        "external mode renders without acceptLicense",
+        "Redpanda" not in kinds,
+        f"got {kinds}",
+    )
+    expect(
+        "and still renders its external credentials",
+        "ExternalSecret" in kinds,
+        f"got {kinds}",
+    )
 
 
 def test_cluster_mode_still_refuses_without_the_licence() -> None:
     err = render_error(KAFKA, "kafka.mode=cluster", "kafka.provider=redpanda")
-    expect("cluster mode refuses without acceptLicense", "acceptLicense" in err, f"got {err!r}")
+    expect(
+        "cluster mode refuses without acceptLicense",
+        "acceptLicense" in err,
+        f"got {err!r}",
+    )
 
 
 def test_single_mode_still_refuses_without_the_licence() -> None:
     """Single deploys the Redpanda StatefulSet from kafka-single.yaml, which owns this check."""
     err = render_error(KAFKA, "kafka.mode=single", "kafka.provider=redpanda")
-    expect("single mode refuses without acceptLicense", "acceptLicense" in err, f"got {err!r}")
+    expect(
+        "single mode refuses without acceptLicense",
+        "acceptLicense" in err,
+        f"got {err!r}",
+    )
 
 
 def test_accepting_the_licence_renders_the_redpanda_cluster() -> None:
@@ -188,18 +234,26 @@ def test_accepting_the_licence_renders_the_redpanda_cluster() -> None:
         "kafka.redpanda.acceptLicense=true",
         "appNamespace=dfe-local",
     )
-    expect("cluster mode renders the Redpanda CR once accepted",
-           any(d.get("kind") == "Redpanda" for d in docs),
-           f"got {sorted({d.get('kind') for d in docs})}")
+    expect(
+        "cluster mode renders the Redpanda CR once accepted",
+        any(d.get("kind") == "Redpanda" for d in docs),
+        f"got {sorted({d.get('kind') for d in docs})}",
+    )
 
 
 def test_the_kafka_provider_is_untouched_by_the_gate() -> None:
     """The gate is Redpanda's licence, not a mode check: Strimzi must be unaffected."""
     # The Strimzi path renders a KafkaUser credential, which needs the namespace
     # the appset passes; the gate under test is upstream of that.
-    docs = render(KAFKA, "kafka.mode=cluster", "kafka.provider=strimzi", "appNamespace=dfe-local")
+    docs = render(
+        KAFKA, "kafka.mode=cluster", "kafka.provider=strimzi", "appNamespace=dfe-local"
+    )
     kinds = {d.get("kind") for d in docs}
-    expect("a strimzi cluster renders with no licence value", "Redpanda" not in kinds, f"got {kinds}")
+    expect(
+        "a strimzi cluster renders with no licence value",
+        "Redpanda" not in kinds,
+        f"got {kinds}",
+    )
 
 
 def main() -> int:

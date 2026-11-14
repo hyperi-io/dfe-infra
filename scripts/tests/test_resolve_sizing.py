@@ -119,7 +119,13 @@ def _dial(
     if extra:
         lines.extend(extra.splitlines())
     lines.append("  spend_warn_usd_month: 5000")
-    lines += ["retention:", "  default_ttl_days: 90", "k8s:", "  env: test", f"  cloud: {cloud}"]
+    lines += [
+        "retention:",
+        "  default_ttl_days: 90",
+        "k8s:",
+        "  env: test",
+        f"  cloud: {cloud}",
+    ]
     path = tmp_path / "deployment.yaml"
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return path
@@ -153,20 +159,27 @@ def _summary(out: Path, status: int, tier: str = "scale") -> dict[str, object]:
         # 0 clean, 1 a fatal assertion. A4 is fatal only at focus performance, so
         # this is where the warn-versus-fatal split shows up in the diff.
         "status": status,
-        "values": [line for line in values.splitlines() if line and not line.startswith("##")],
+        "values": [
+            line for line in values.splitlines() if line and not line.startswith("##")
+        ],
         "partitions": re.search(r"Partitions: \*\*(\d+)\*\*", report)[1],
         "assertions": sorted(
             f"{rule} {use_case}"
-            for rule, use_case in re.findall(r"^\| (A\d)(?: \(warn\))? \| ([\w-]+) \|", report, re.M)
+            for rule, use_case in re.findall(
+                r"^\| (A\d)(?: \(warn\))? \| ([\w-]+) \|", report, re.M
+            )
         ),
     }
     tfvars = out / "sizing.auto.tfvars.json"
     if tfvars.is_file():
         doc = json.loads(tfvars.read_text(encoding="utf-8"))
         snapshot["shapes"] = {
-            name: body["instance_types"][0] for name, body in doc["resolved_shapes"].items()
+            name: body["instance_types"][0]
+            for name, body in doc["resolved_shapes"].items()
         }
-        snapshot["pool_sizes"] = {name: body["desired_size"] for name, body in doc["node_pools"].items()}
+        snapshot["pool_sizes"] = {
+            name: body["desired_size"] for name, body in doc["node_pools"].items()
+        }
     return snapshot
 
 
@@ -186,7 +199,9 @@ OVERRIDE_BLOCK = """  overrides:
 
 
 def _cases() -> list[tuple[str, str, int | None]]:
-    return [(cloud, focus, band) for cloud in CLOUDS for focus in FOCUSES for band in BANDS]
+    return [
+        (cloud, focus, band) for cloud in CLOUDS for focus in FOCUSES for band in BANDS
+    ]
 
 
 def _case_name(cloud: str, focus: str, band: int | None) -> str:
@@ -213,13 +228,26 @@ def _matrix_cases() -> dict[str, dict[str, object]]:
     case added here reaches both snapshots.
     """
     cases: dict[str, dict[str, object]] = {
-        _case_name(cloud, focus, band): {"cloud": cloud, "focus": focus, "estimate": band}
+        _case_name(cloud, focus, band): {
+            "cloud": cloud,
+            "focus": focus,
+            "estimate": band,
+        }
         for cloud, focus, band in _cases()
     }
     cases[OVERRIDE_CASE] = {"cloud": "aws", "estimate": 10000, "extra": OVERRIDE_BLOCK}
-    cases[TRANSFORMED_CASE] = {"cloud": "aws", "estimate": 10000, "extra": "  transformed_share: 1"}
+    cases[TRANSFORMED_CASE] = {
+        "cloud": "aws",
+        "estimate": 10000,
+        "extra": "  transformed_share: 1",
+    }
     for name, provider in PROVIDER_AXIS_CASES.items():
-        cases[name] = {"cloud": "aws", "focus": "economy", "estimate": 10000, "provider": provider}
+        cases[name] = {
+            "cloud": "aws",
+            "focus": "economy",
+            "estimate": 10000,
+            "provider": provider,
+        }
     return cases
 
 
@@ -237,15 +265,24 @@ def matrix(tmp_path_factory) -> dict[str, object]:
 def test_the_matrix_matches_its_snapshots(matrix: dict[str, object]) -> None:
     """The deployment matrix IS the test matrix -- see the module docstring."""
     if WRITE_GOLDEN:
-        GOLDEN.write_text(json.dumps(matrix, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        GOLDEN.write_text(
+            json.dumps(matrix, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
         pytest.skip("golden matrix rewritten -- review the diff before committing it")
     expected = json.loads(GOLDEN.read_text(encoding="utf-8"))
     assert matrix == expected
 
 
-def test_every_case_in_the_matrix_produced_a_snapshot(matrix: dict[str, object]) -> None:
+def test_every_case_in_the_matrix_produced_a_snapshot(
+    matrix: dict[str, object],
+) -> None:
     assert sorted(matrix) == sorted(
-        [*(_case_name(*case) for case in _cases()), OVERRIDE_CASE, TRANSFORMED_CASE, *PROVIDER_AXIS_CASES]
+        [
+            *(_case_name(*case) for case in _cases()),
+            OVERRIDE_CASE,
+            TRANSFORMED_CASE,
+            *PROVIDER_AXIS_CASES,
+        ]
     )
 
 
@@ -257,7 +294,9 @@ def test_the_fixed_tiers_are_refused(tmp_path: Path, tier: str, capsys) -> None:
     assert "scale tier only" in capsys.readouterr().err
 
 
-def test_above_the_cap_the_resolver_refuses_rather_than_extrapolating(tmp_path: Path, capsys) -> None:
+def test_above_the_cap_the_resolver_refuses_rather_than_extrapolating(
+    tmp_path: Path, capsys
+) -> None:
     dial = _dial(tmp_path, estimate=150000)
     assert _run(dial, tmp_path) == resolve_sizing.EXIT_REFUSED
     err = capsys.readouterr().err
@@ -265,7 +304,9 @@ def test_above_the_cap_the_resolver_refuses_rather_than_extrapolating(tmp_path: 
     assert "100,000 GB/day" in err
 
 
-def test_the_refusal_names_the_provider_whose_ceiling_binds(tmp_path: Path, capsys) -> None:
+def test_the_refusal_names_the_provider_whose_ceiling_binds(
+    tmp_path: Path, capsys
+) -> None:
     """MSK Express caps at 95,040 GB/day, below the generator, so its name prints."""
     dial = _dial(tmp_path, estimate=96000, provider="msk")
     assert _run(dial, tmp_path) == resolve_sizing.EXIT_REFUSED
@@ -274,7 +315,9 @@ def test_the_refusal_names_the_provider_whose_ceiling_binds(tmp_path: Path, caps
     assert "95,040 GB/day" in err
 
 
-def test_no_estimate_reports_the_carried_throughput_rather_than_targeting_it(tmp_path: Path) -> None:
+def test_no_estimate_reports_the_carried_throughput_rather_than_targeting_it(
+    tmp_path: Path,
+) -> None:
     dial = _dial(tmp_path, estimate=None)
     _run(dial, tmp_path)
     report = (tmp_path / "sizing" / "scale.report.md").read_text(encoding="utf-8")
@@ -320,7 +363,10 @@ def test_economy_never_trades_the_durability_floor(tmp_path: Path) -> None:
     controllers. The dial asks for a separate controller pool because that is
     the only mode with a controller pool to count -- a combined quorum runs on
     those same three brokers."""
-    _run(_dial(tmp_path, focus="economy", estimate=None, controller_pool="separate"), tmp_path)
+    _run(
+        _dial(tmp_path, focus="economy", estimate=None, controller_pool="separate"),
+        tmp_path,
+    )
     doc = json.loads((tmp_path / "sizing.auto.tfvars.json").read_text(encoding="utf-8"))
     for pool in ("kafka-broker", "kraft-controller", "clickhouse", "keeper"):
         assert doc["node_pools"][pool]["desired_size"] >= 3
@@ -333,7 +379,9 @@ def test_headroom_rises_with_focus(tmp_path: Path) -> None:
         out.mkdir()
         _run(_dial(out, focus=focus), out)
         report = (out / "sizing" / "scale.report.md").read_text(encoding="utf-8")
-        required.append(float(re.search(r"built for ([\d,.]+) MB/s", report)[1].replace(",", "")))
+        required.append(
+            float(re.search(r"built for ([\d,.]+) MB/s", report)[1].replace(",", ""))
+        )
     assert required == sorted(required)
 
 
@@ -372,11 +420,15 @@ def catalogue() -> resolve_sizing.Catalogue:
 
 
 def test_fetch_fixtures_refuses_an_uncaptured_region_by_name() -> None:
-    with pytest.raises(resolve_sizing.ResolveError, match="capture --region ap-southeast-2"):
+    with pytest.raises(
+        resolve_sizing.ResolveError, match="capture --region ap-southeast-2"
+    ):
         resolve_sizing.fetch_fixtures(FIXTURES, "ap-southeast-2")
 
 
-def test_a_resolve_writes_the_resolved_shapes_file_keyed_by_region(tmp_path: Path) -> None:
+def test_a_resolve_writes_the_resolved_shapes_file_keyed_by_region(
+    tmp_path: Path,
+) -> None:
     """One region's Graviton availability is never committed under another's name."""
     _run(_dial(tmp_path), tmp_path)
     resolved = tmp_path / "shapes" / "resolved"
@@ -387,22 +439,48 @@ def test_a_resolve_writes_the_resolved_shapes_file_keyed_by_region(tmp_path: Pat
 def test_a1_catches_iops_above_what_the_volume_size_allows(catalogue) -> None:
     """gp3 gives 500 IOPS a GiB; asking past it is rejected at CreateVolume."""
     choice = _choice(
-        volumes={"data": {"type": "gp3", "size_gib": 20, "iops": 16000, "throughput_mib_s": 125}}
+        volumes={
+            "data": {
+                "type": "gp3",
+                "size_gib": 20,
+                "iops": 16000,
+                "throughput_mib_s": 125,
+            }
+        }
     )
-    rules = {f.rule for f in resolve_sizing.assert_caps(choice, {}, catalogue, 0, gp3_usd_per_gib_month=0.08)}
+    rules = {
+        f.rule
+        for f in resolve_sizing.assert_caps(
+            choice, {}, catalogue, 0, gp3_usd_per_gib_month=0.08
+        )
+    }
     assert "A1" in rules
 
 
 def test_a2_catches_throughput_the_provisioned_iops_cannot_carry(catalogue) -> None:
     """gp3 gives 0.25 MiB/s an IOPS, so 1,000 MiB/s needs 4,000 provisioned IOPS."""
     choice = _choice(
-        volumes={"data": {"type": "gp3", "size_gib": 4000, "iops": 3000, "throughput_mib_s": 1000}}
+        volumes={
+            "data": {
+                "type": "gp3",
+                "size_gib": 4000,
+                "iops": 3000,
+                "throughput_mib_s": 1000,
+            }
+        }
     )
-    rules = {f.rule for f in resolve_sizing.assert_caps(choice, {}, catalogue, 0, gp3_usd_per_gib_month=0.08)}
+    rules = {
+        f.rule
+        for f in resolve_sizing.assert_caps(
+            choice, {}, catalogue, 0, gp3_usd_per_gib_month=0.08
+        )
+    }
     assert "A2" in rules
 
 
-def test_a3_catches_the_workloads_demand_summed_past_the_instance_baseline(catalogue) -> None:
+def test_a3_catches_the_workloads_demand_summed_past_the_instance_baseline(
+    catalogue,
+) -> None:
     """The attached instance caps every volume behind it, and says nothing.
 
     A3 sums `demand_iops` / `demand_throughput_mib_s`, never the plain
@@ -434,7 +512,9 @@ def test_a3_catches_the_workloads_demand_summed_past_the_instance_baseline(catal
             },
         },
     )
-    findings = resolve_sizing.assert_caps(choice, {}, catalogue, 0, gp3_usd_per_gib_month=0.08)
+    findings = resolve_sizing.assert_caps(
+        choice, {}, catalogue, 0, gp3_usd_per_gib_month=0.08
+    )
     assert any(f.rule == "A3" for f in findings)
     assert any("the instance is the ceiling" in f.message for f in findings)
 
@@ -474,7 +554,9 @@ def test_a3_ignores_a_provisioned_ceiling_the_workload_never_demands(catalogue) 
     )
     findings = [
         f
-        for f in resolve_sizing.assert_caps(choice, {}, catalogue, 0, gp3_usd_per_gib_month=0.08)
+        for f in resolve_sizing.assert_caps(
+            choice, {}, catalogue, 0, gp3_usd_per_gib_month=0.08
+        )
         if f.rule == "A3"
     ]
     assert not findings, findings
@@ -493,11 +575,20 @@ def test_a4_is_fatal_only_where_the_focus_promises_the_sustained_maximum(
         baseline_throughput_mib_s=750.0,
         maximum_iops=48000,
         maximum_throughput_mib_s=1500.0,
-        volumes={"root": {"type": "gp3", "size_gib": 40, "iops": 3000, "throughput_mib_s": 125}},
+        volumes={
+            "root": {
+                "type": "gp3",
+                "size_gib": 40,
+                "iops": 3000,
+                "throughput_mib_s": 125,
+            }
+        },
     )
     findings = [
         f
-        for f in resolve_sizing.assert_caps(choice, {}, catalogue, 0, focus, gp3_usd_per_gib_month=0.08)
+        for f in resolve_sizing.assert_caps(
+            choice, {}, catalogue, 0, focus, gp3_usd_per_gib_month=0.08
+        )
         if f.rule == "A4"
     ]
     assert findings
@@ -505,15 +596,30 @@ def test_a4_is_fatal_only_where_the_focus_promises_the_sustained_maximum(
     assert findings[0].fatal is fatal
 
 
-def test_a4_leaves_a_burstable_size_alone_when_the_workload_is_not_sustained(catalogue) -> None:
+def test_a4_leaves_a_burstable_size_alone_when_the_workload_is_not_sustained(
+    catalogue,
+) -> None:
     choice = _choice(
         use_case="ci-burst",
         instance_type="c9g.4xlarge",
         baseline_iops=24000,
         maximum_iops=48000,
-        volumes={"root": {"type": "gp3", "size_gib": 40, "iops": 3000, "throughput_mib_s": 125}},
+        volumes={
+            "root": {
+                "type": "gp3",
+                "size_gib": 40,
+                "iops": 3000,
+                "throughput_mib_s": 125,
+            }
+        },
     )
-    assert not [f for f in resolve_sizing.assert_caps(choice, {}, catalogue, 0, gp3_usd_per_gib_month=0.08) if f.rule == "A4"]
+    assert not [
+        f
+        for f in resolve_sizing.assert_caps(
+            choice, {}, catalogue, 0, gp3_usd_per_gib_month=0.08
+        )
+        if f.rule == "A4"
+    ]
 
 
 def test_a4_honours_a_sustained_field_on_the_shape_entry(catalogue) -> None:
@@ -523,7 +629,14 @@ def test_a4_honours_a_sustained_field_on_the_shape_entry(catalogue) -> None:
         instance_type="c9g.4xlarge",
         baseline_iops=24000,
         maximum_iops=48000,
-        volumes={"root": {"type": "gp3", "size_gib": 40, "iops": 3000, "throughput_mib_s": 125}},
+        volumes={
+            "root": {
+                "type": "gp3",
+                "size_gib": 40,
+                "iops": 3000,
+                "throughput_mib_s": 125,
+            }
+        },
     )
     findings = resolve_sizing.assert_caps(
         choice, {"sustained": "true"}, catalogue, 0, gp3_usd_per_gib_month=0.08
@@ -533,11 +646,20 @@ def test_a4_honours_a_sustained_field_on_the_shape_entry(catalogue) -> None:
 
 def test_a5_warns_on_spend_without_failing_the_resolve(catalogue) -> None:
     choice = _choice(
-        volumes={"data": {"type": "gp3", "size_gib": 100000, "iops": 3000, "throughput_mib_s": 500}}
+        volumes={
+            "data": {
+                "type": "gp3",
+                "size_gib": 100000,
+                "iops": 3000,
+                "throughput_mib_s": 500,
+            }
+        }
     )
     findings = [
         f
-        for f in resolve_sizing.assert_caps(choice, {}, catalogue, 1000, gp3_usd_per_gib_month=0.08)
+        for f in resolve_sizing.assert_caps(
+            choice, {}, catalogue, 1000, gp3_usd_per_gib_month=0.08
+        )
         if f.rule == "A5"
     ]
     assert findings
@@ -551,10 +673,21 @@ def test_a5_prices_storage_at_the_regions_own_rate_not_a_flat_08(catalogue) -> N
     one threshold each region lands on rather than two messages differing.
     """
     choice = _choice(
-        volumes={"data": {"type": "gp3", "size_gib": 100000, "iops": 3000, "throughput_mib_s": 500}}
+        volumes={
+            "data": {
+                "type": "gp3",
+                "size_gib": 100000,
+                "iops": 3000,
+                "throughput_mib_s": 500,
+            }
+        }
     )
-    cheap = resolve_sizing.assert_caps(choice, {}, catalogue, 10000, gp3_usd_per_gib_month=0.01)
-    dear = resolve_sizing.assert_caps(choice, {}, catalogue, 10000, gp3_usd_per_gib_month=1.00)
+    cheap = resolve_sizing.assert_caps(
+        choice, {}, catalogue, 10000, gp3_usd_per_gib_month=0.01
+    )
+    dear = resolve_sizing.assert_caps(
+        choice, {}, catalogue, 10000, gp3_usd_per_gib_month=1.00
+    )
     assert not [f for f in cheap if f.rule == "A5"]
     assert [f for f in dear if f.rule == "A5"]
 
@@ -562,11 +695,20 @@ def test_a5_prices_storage_at_the_regions_own_rate_not_a_flat_08(catalogue) -> N
 def test_a5_states_no_amount_at_all(catalogue) -> None:
     """The report carries no cost figure, the deployer's own threshold included."""
     choice = _choice(
-        volumes={"data": {"type": "gp3", "size_gib": 100000, "iops": 3000, "throughput_mib_s": 500}}
+        volumes={
+            "data": {
+                "type": "gp3",
+                "size_gib": 100000,
+                "iops": 3000,
+                "throughput_mib_s": 500,
+            }
+        }
     )
     finding = next(
         f
-        for f in resolve_sizing.assert_caps(choice, {}, catalogue, 1000, gp3_usd_per_gib_month=0.08)
+        for f in resolve_sizing.assert_caps(
+            choice, {}, catalogue, 1000, gp3_usd_per_gib_month=0.08
+        )
         if f.rule == "A5"
     )
     assert "$" not in finding.message
@@ -585,7 +727,9 @@ def test_a_regions_missing_storage_price_is_refused_by_name() -> None:
         resolve_sizing._gp3_price_per_gib_month(shapes, "aws", "ap-southeast-2")
 
 
-def test_a7_catches_a_demand_above_what_the_volume_is_provisioned_for(catalogue) -> None:
+def test_a7_catches_a_demand_above_what_the_volume_is_provisioned_for(
+    catalogue,
+) -> None:
     """A demand above the provisioned ceiling is refused BY NAME, never
     silently raised the way an earlier pass here used to (gate-3 remedy 2):
     it names the exact override the deployer has to raise."""
@@ -603,7 +747,9 @@ def test_a7_catches_a_demand_above_what_the_volume_is_provisioned_for(catalogue)
     )
     findings = [
         f
-        for f in resolve_sizing.assert_caps(choice, {}, catalogue, 0, gp3_usd_per_gib_month=0.08)
+        for f in resolve_sizing.assert_caps(
+            choice, {}, catalogue, 0, gp3_usd_per_gib_month=0.08
+        )
         if f.rule == "A7"
     ]
     assert findings
@@ -647,7 +793,9 @@ def test_an_override_above_demand_lifts_the_demand(catalogue) -> None:
     assert choice.volumes["data"]["demand_throughput_mib_s"] == 900
     assert not [
         f
-        for f in resolve_sizing.assert_caps(choice, {}, catalogue, 0, gp3_usd_per_gib_month=0.08)
+        for f in resolve_sizing.assert_caps(
+            choice, {}, catalogue, 0, gp3_usd_per_gib_month=0.08
+        )
         if f.rule == "A7"
     ]
 
@@ -655,16 +803,30 @@ def test_an_override_above_demand_lifts_the_demand(catalogue) -> None:
 def test_a6_catches_a_storage_class_that_leaves_throughput_unset(catalogue) -> None:
     """Unset, the EBS CSI driver takes 125 MiB/s whatever the volume size."""
     choice = _choice(
-        volumes={"data": {"type": "gp3", "size_gib": 500, "iops": 3000, "throughput_mib_s": 0}}
+        volumes={
+            "data": {
+                "type": "gp3",
+                "size_gib": 500,
+                "iops": 3000,
+                "throughput_mib_s": 0,
+            }
+        }
     )
-    rules = {f.rule for f in resolve_sizing.assert_caps(choice, {}, catalogue, 0, gp3_usd_per_gib_month=0.08)}
+    rules = {
+        f.rule
+        for f in resolve_sizing.assert_caps(
+            choice, {}, catalogue, 0, gp3_usd_per_gib_month=0.08
+        )
+    }
     assert "A6" in rules
 
 
 def test_the_emitted_storage_classes_never_use_iops_per_gb(tmp_path: Path) -> None:
     """iopsPerGB is silently clamped and allowAutoIOPSPerGBIncrease is silently dearer."""
     _run(_dial(tmp_path), tmp_path)
-    body = (tmp_path / "shapes" / "resolved" / "aws-us-west-2.json").read_text(encoding="utf-8")
+    body = (tmp_path / "shapes" / "resolved" / "aws-us-west-2.json").read_text(
+        encoding="utf-8"
+    )
     assert "iopsPerGB" not in body
     assert "allowAutoIOPSPerGBIncrease" not in body
     doc = json.loads(body)
@@ -681,7 +843,9 @@ def test_the_emitted_storage_classes_never_use_iops_per_gb(tmp_path: Path) -> No
 # ---------------------------------------------------------------------------
 
 
-def test_a_candidate_with_no_price_fails_the_selection(catalogue, tmp_path: Path) -> None:
+def test_a_candidate_with_no_price_fails_the_selection(
+    catalogue, tmp_path: Path
+) -> None:
     """An unpriced candidate must fail loudly rather than win by default."""
     stripped = resolve_sizing.Catalogue(
         region=catalogue.region,
@@ -756,10 +920,16 @@ def test_too_many_unreadable_type_names_fail_the_selection_loudly(catalogue) -> 
         )
 
 
-def test_the_chosen_type_is_offered_in_every_availability_zone(tmp_path: Path, catalogue) -> None:
+def test_the_chosen_type_is_offered_in_every_availability_zone(
+    tmp_path: Path, catalogue
+) -> None:
     """AZs diverge inside one region, and a type missing from one cannot place."""
     _run(_dial(tmp_path), tmp_path)
-    doc = json.loads((tmp_path / "shapes" / "resolved" / "aws-us-west-2.json").read_text(encoding="utf-8"))
+    doc = json.loads(
+        (tmp_path / "shapes" / "resolved" / "aws-us-west-2.json").read_text(
+            encoding="utf-8"
+        )
+    )
     for use_case, entry in doc.items():
         if use_case.startswith("_"):
             continue
@@ -767,10 +937,16 @@ def test_the_chosen_type_is_offered_in_every_availability_zone(tmp_path: Path, c
             assert catalogue.offered_everywhere(name), (use_case, name)
 
 
-def test_the_resolved_answer_records_the_generation_the_pricing_api_names(tmp_path: Path) -> None:
+def test_the_resolved_answer_records_the_generation_the_pricing_api_names(
+    tmp_path: Path,
+) -> None:
     """EC2's ProcessorInfo carries no generation; physicalProcessor is the only source."""
     _run(_dial(tmp_path), tmp_path)
-    doc = json.loads((tmp_path / "shapes" / "resolved" / "aws-us-west-2.json").read_text(encoding="utf-8"))
+    doc = json.loads(
+        (tmp_path / "shapes" / "resolved" / "aws-us-west-2.json").read_text(
+            encoding="utf-8"
+        )
+    )
     assert "Graviton" in doc["kafka-broker"]["physical_processor"]
     # The Pricing API supplies the rate as well as the generation, and only the
     # generation is written down.
@@ -780,7 +956,11 @@ def test_the_resolved_answer_records_the_generation_the_pricing_api_names(tmp_pa
 def test_the_clickhouse_shape_keeps_its_local_nvme(tmp_path: Path) -> None:
     """The cache wants local NVMe, so the generation policy may not drop the d modifier."""
     _run(_dial(tmp_path), tmp_path)
-    doc = json.loads((tmp_path / "shapes" / "resolved" / "aws-us-west-2.json").read_text(encoding="utf-8"))
+    doc = json.loads(
+        (tmp_path / "shapes" / "resolved" / "aws-us-west-2.json").read_text(
+            encoding="utf-8"
+        )
+    )
     assert "d" in doc["clickhouse"]["instance_types"][0].split(".")[0]
     assert doc["clickhouse"]["instance_store_gb"] > 0
 
@@ -799,7 +979,9 @@ def _clickhouse_core() -> resolve_sizing.Core:
         required_mb_s=0.0,
         carried_mb_s=0.0,
     )
-    core.nodes["clickhouse"] = resolve_sizing.Node("clickhouse", 3, 8, 32, 200, 0, 0, "test")
+    core.nodes["clickhouse"] = resolve_sizing.Node(
+        "clickhouse", 3, 8, 32, 200, 0, 0, "test"
+    )
     return core
 
 
@@ -814,7 +996,13 @@ def test_the_cache_volume_follows_the_shapes_instance_store() -> None:
         use_case="clickhouse",
         instance_type="r9gd.2xlarge",
         instance_store_gb=474,
-        volumes={"cache": {"type": "nvme-instance-store", "size_gib": 474, "source": "instance-provided"}},
+        volumes={
+            "cache": {
+                "type": "nvme-instance-store",
+                "size_gib": 474,
+                "source": "instance-provided",
+            }
+        },
     )
     values = resolve_sizing.build_values(core, "strimzi", {"clickhouse": r9gd}, None)
     assert values["clickhouse"]["objectStore"] == {
@@ -822,8 +1010,15 @@ def test_the_cache_volume_follows_the_shapes_instance_store() -> None:
         "cacheSize": "474Gi",
     }
 
-    ebs_only = _choice(use_case="clickhouse", instance_type="r9g.2xlarge", instance_store_gb=0, volumes={})
-    values = resolve_sizing.build_values(core, "strimzi", {"clickhouse": ebs_only}, None)
+    ebs_only = _choice(
+        use_case="clickhouse",
+        instance_type="r9g.2xlarge",
+        instance_store_gb=0,
+        volumes={},
+    )
+    values = resolve_sizing.build_values(
+        core, "strimzi", {"clickhouse": ebs_only}, None
+    )
     assert values["clickhouse"]["objectStore"] == {"cache": {"volume": "pvc"}}
 
 
@@ -835,13 +1030,21 @@ def test_the_cache_takes_its_share_of_the_instance_store() -> None:
         use_case="clickhouse",
         instance_type="r9gd.2xlarge",
         instance_store_gb=474,
-        volumes={"cache": {"type": "nvme-instance-store", "size_gib": 474, "source": "instance-provided"}},
+        volumes={
+            "cache": {
+                "type": "nvme-instance-store",
+                "size_gib": 474,
+                "source": "instance-provided",
+            }
+        },
     )
     values = resolve_sizing.build_values(core, "strimzi", {"clickhouse": r9gd}, None)
     assert values["clickhouse"]["objectStore"]["cacheSize"] == "379Gi"
 
 
-@pytest.mark.parametrize(("vcpu", "reserved"), [(1, 60), (2, 70), (4, 80), (8, 90), (16, 110)])
+@pytest.mark.parametrize(
+    ("vcpu", "reserved"), [(1, 60), (2, 70), (4, 80), (8, 90), (16, 110)]
+)
 def test_kube_reserved_cpu_follows_nodeadm(vcpu: int, reserved: int) -> None:
     """6% of the first core, 1% of the second, 0.5% of the next two, 0.25% above."""
     assert resolve_sizing._kube_reserved_cpu_m(vcpu) == reserved
@@ -852,8 +1055,12 @@ def test_a_clickhouse_request_the_size_of_its_node_is_held_to_what_schedules() -
     core = _clickhouse_core()
     core.nodes["clickhouse"].vcpu = 2
     core.daemonset_cpu_m = 300
-    r8gd = _choice(use_case="clickhouse", instance_type="r8gd.large", vcpu=2, memory_gib=16.0)
-    resources = resolve_sizing.build_values(core, "strimzi", {"clickhouse": r8gd}, None)["clickhouse"]["resources"]
+    r8gd = _choice(
+        use_case="clickhouse", instance_type="r8gd.large", vcpu=2, memory_gib=16.0
+    )
+    resources = resolve_sizing.build_values(
+        core, "strimzi", {"clickhouse": r8gd}, None
+    )["clickhouse"]["resources"]
     assert resources["requests"]["cpu"] == "1630m"
     assert resources["limits"]["cpu"] == "2"
 
@@ -861,20 +1068,28 @@ def test_a_clickhouse_request_the_size_of_its_node_is_held_to_what_schedules() -
 def test_a_clickhouse_request_that_fits_its_node_is_left_whole() -> None:
     core = _clickhouse_core()
     core.daemonset_cpu_m = 300
-    big = _choice(use_case="clickhouse", instance_type="r8gd.4xlarge", vcpu=16, memory_gib=128.0)
-    resources = resolve_sizing.build_values(core, "strimzi", {"clickhouse": big}, None)["clickhouse"]["resources"]
+    big = _choice(
+        use_case="clickhouse", instance_type="r8gd.4xlarge", vcpu=16, memory_gib=128.0
+    )
+    resources = resolve_sizing.build_values(core, "strimzi", {"clickhouse": big}, None)[
+        "clickhouse"
+    ]["resources"]
     assert resources["requests"]["cpu"] == "8"
 
 
 def test_an_unresolved_shape_leaves_the_request_at_the_sized_vcpu() -> None:
     """On-prem the resolver chose no shape, so there is no node to hold the request to."""
-    resources = resolve_sizing.build_values(_clickhouse_core(), "strimzi", None, None)["clickhouse"]["resources"]
+    resources = resolve_sizing.build_values(_clickhouse_core(), "strimzi", None, None)[
+        "clickhouse"
+    ]["resources"]
     assert resources["requests"]["cpu"] == "8"
 
 
 def test_only_a_decided_storage_rides_the_cluster_secret() -> None:
     """A pvc cache is the chart's default, not a decision, so a deploy-repo overlay may still place it."""
-    instance_store = {"objectStore": {"cache": {"volume": "instance-store"}, "cacheSize": "87Gi"}}
+    instance_store = {
+        "objectStore": {"cache": {"volume": "instance-store"}, "cacheSize": "87Gi"}
+    }
     assert resolve_sizing.clickhouse_storage({"clickhouse": instance_store}) == {
         **instance_store,
         "storageModel": "cached-object",
@@ -884,18 +1099,26 @@ def test_only_a_decided_storage_rides_the_cluster_secret() -> None:
     pvc = {"objectStore": {"cache": {"volume": "pvc"}}}
     assert resolve_sizing.clickhouse_storage({"clickhouse": pvc}) == {}
     local = {"storageModel": "local", "objectStore": {"cache": {"volume": "pvc"}}}
-    assert resolve_sizing.clickhouse_storage({"clickhouse": local}) == {"storageModel": "local"}
+    assert resolve_sizing.clickhouse_storage({"clickhouse": local}) == {
+        "storageModel": "local"
+    }
     assert resolve_sizing.clickhouse_storage({}) == {}
 
 
-def test_a_shape_that_wants_its_instance_store_tells_its_node_group(tmp_path: Path) -> None:
+def test_a_shape_that_wants_its_instance_store_tells_its_node_group(
+    tmp_path: Path,
+) -> None:
     """Both node paths read one predicate, so a managed group and a Karpenter pool agree."""
     _run(_dial(tmp_path), tmp_path)
-    shapes = json.loads((tmp_path / "sizing.auto.tfvars.json").read_text(encoding="utf-8"))["resolved_shapes"]
+    shapes = json.loads(
+        (tmp_path / "sizing.auto.tfvars.json").read_text(encoding="utf-8")
+    )["resolved_shapes"]
     pools = _pools(tmp_path)
     for use_case, shape in shapes.items():
         node_class = (pools.get(use_case) or {}).get("aws", {}).get("nodeClass", {})
-        assert shape.get("instance_store_policy") == node_class.get("instanceStorePolicy"), use_case
+        assert shape.get("instance_store_policy") == node_class.get(
+            "instanceStorePolicy"
+        ), use_case
     assert shapes["clickhouse"]["instance_store_policy"] == "RAID0"
 
 
@@ -908,25 +1131,47 @@ def test_a_shape_that_wants_its_instance_store_tells_its_node_group(tmp_path: Pa
 
 def test_storage_model_auto_omits_the_key_regardless_of_the_cache_choice() -> None:
     core = _clickhouse_core()
-    no_cache = _choice(use_case="clickhouse", instance_type="r9g.2xlarge", instance_store_gb=0, volumes={})
-    values = resolve_sizing.build_values(core, "strimzi", {"clickhouse": no_cache}, None, "auto")
+    no_cache = _choice(
+        use_case="clickhouse",
+        instance_type="r9g.2xlarge",
+        instance_store_gb=0,
+        volumes={},
+    )
+    values = resolve_sizing.build_values(
+        core, "strimzi", {"clickhouse": no_cache}, None, "auto"
+    )
     assert "storageModel" not in values["clickhouse"]
 
     r9gd = _choice(
         use_case="clickhouse",
         instance_type="r9gd.2xlarge",
         instance_store_gb=474,
-        volumes={"cache": {"type": "nvme-instance-store", "size_gib": 474, "source": "instance-provided"}},
+        volumes={
+            "cache": {
+                "type": "nvme-instance-store",
+                "size_gib": 474,
+                "source": "instance-provided",
+            }
+        },
     )
-    values = resolve_sizing.build_values(core, "strimzi", {"clickhouse": r9gd}, None, "auto")
+    values = resolve_sizing.build_values(
+        core, "strimzi", {"clickhouse": r9gd}, None, "auto"
+    )
     assert "storageModel" not in values["clickhouse"]
     assert values["clickhouse"]["objectStore"]["cache"]["volume"] == "instance-store"
 
 
 def test_storage_model_explicit_cached_object_is_written_through() -> None:
     core = _clickhouse_core()
-    no_cache = _choice(use_case="clickhouse", instance_type="r9g.2xlarge", instance_store_gb=0, volumes={})
-    values = resolve_sizing.build_values(core, "strimzi", {"clickhouse": no_cache}, None, "cached-object")
+    no_cache = _choice(
+        use_case="clickhouse",
+        instance_type="r9g.2xlarge",
+        instance_store_gb=0,
+        volumes={},
+    )
+    values = resolve_sizing.build_values(
+        core, "strimzi", {"clickhouse": no_cache}, None, "cached-object"
+    )
     assert values["clickhouse"]["storageModel"] == "cached-object"
 
 
@@ -939,9 +1184,17 @@ def test_storage_model_explicit_local_overrides_an_nvme_cache_choice() -> None:
         use_case="clickhouse",
         instance_type="r9gd.2xlarge",
         instance_store_gb=474,
-        volumes={"cache": {"type": "nvme-instance-store", "size_gib": 474, "source": "instance-provided"}},
+        volumes={
+            "cache": {
+                "type": "nvme-instance-store",
+                "size_gib": 474,
+                "source": "instance-provided",
+            }
+        },
     )
-    values = resolve_sizing.build_values(core, "strimzi", {"clickhouse": r9gd}, None, "local")
+    values = resolve_sizing.build_values(
+        core, "strimzi", {"clickhouse": r9gd}, None, "local"
+    )
     assert values["clickhouse"]["storageModel"] == "local"
     assert values["clickhouse"]["objectStore"] == {"cache": {"volume": "pvc"}}
 
@@ -993,20 +1246,28 @@ def _controller_core() -> resolve_sizing.Core:
         carried_mb_s=0.0,
         partitions=12,
     )
-    core.nodes["kafka-broker"] = resolve_sizing.Node("kafka-broker", 3, 2, 8, 100, 0, 0, "test")
-    core.nodes["kraft-controller"] = resolve_sizing.Node("kraft-controller", 3, 1, 4, 64, 0, 0, "test")
+    core.nodes["kafka-broker"] = resolve_sizing.Node(
+        "kafka-broker", 3, 2, 8, 100, 0, 0, "test"
+    )
+    core.nodes["kraft-controller"] = resolve_sizing.Node(
+        "kraft-controller", 3, 1, 4, 64, 0, 0, "test"
+    )
     return core
 
 
 def test_controller_pool_combined_writes_no_chart_key_at_all() -> None:
     core = _controller_core()
-    values = resolve_sizing.build_values(core, "strimzi", None, None, "auto", "combined")
+    values = resolve_sizing.build_values(
+        core, "strimzi", None, None, "auto", "combined"
+    )
     assert "controllerPool" not in values["kafka"]
 
 
 def test_controller_pool_separate_enables_the_pool_and_sizes_it() -> None:
     core = _controller_core()
-    values = resolve_sizing.build_values(core, "strimzi", None, None, "auto", "separate")
+    values = resolve_sizing.build_values(
+        core, "strimzi", None, None, "auto", "separate"
+    )
     pool = values["kafka"]["controllerPool"]
     assert pool["enabled"] is True
     assert pool["replicas"] == 3
@@ -1031,7 +1292,9 @@ def test_dial_controller_pool_defaults_to_combined(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("value", ["combined", "separate", "SEPARATE"])
-def test_dial_controller_pool_reads_an_explicit_value(tmp_path: Path, value: str) -> None:
+def test_dial_controller_pool_reads_an_explicit_value(
+    tmp_path: Path, value: str
+) -> None:
     dial = resolve_sizing.read_dial(_dial(tmp_path, controller_pool=value))
     assert dial.controller_pool == value.lower()
 
@@ -1061,7 +1324,9 @@ def test_combined_sizes_no_controller_node_pool_or_shape(tmp_path: Path) -> None
 def test_separate_sizes_the_controller_node_pool_and_shape(tmp_path: Path) -> None:
     """The opt-in is what makes the controller a real node class, so every
     artefact the combined dial leaves out is back."""
-    assert _run(_dial(tmp_path, estimate=1000, controller_pool="separate"), tmp_path) == 0
+    assert (
+        _run(_dial(tmp_path, estimate=1000, controller_pool="separate"), tmp_path) == 0
+    )
     doc = json.loads((tmp_path / "sizing.auto.tfvars.json").read_text(encoding="utf-8"))
     assert doc["node_pools"]["kraft-controller"]["desired_size"] == 3
     assert doc["resolved_shapes"]["kraft-controller"]["instance_types"]
@@ -1070,7 +1335,9 @@ def test_separate_sizes_the_controller_node_pool_and_shape(tmp_path: Path) -> No
     assert "| kraft-controller |" in report
 
 
-def test_combined_refuses_a_node_override_on_the_controller(tmp_path: Path, capsys) -> None:
+def test_combined_refuses_a_node_override_on_the_controller(
+    tmp_path: Path, capsys
+) -> None:
     """The override has nothing to replace once the node is gone, so it is
     refused by name rather than accepted and silently dropped."""
     extra = "  overrides:\n    kraft-controller:\n      cpu: 8"
@@ -1080,7 +1347,9 @@ def test_combined_refuses_a_node_override_on_the_controller(tmp_path: Path, caps
     assert "no derived node to override" in err
 
 
-def test_a_controller_pool_change_is_refused_without_migrate(tmp_path: Path, capsys) -> None:
+def test_a_controller_pool_change_is_refused_without_migrate(
+    tmp_path: Path, capsys
+) -> None:
     """find_locked_changes compares resolved.yaml entries, so the lock fires
     only on a field the resolve itself records."""
     first = tmp_path / "first"
@@ -1090,7 +1359,11 @@ def test_a_controller_pool_change_is_refused_without_migrate(tmp_path: Path, cap
 
     second = tmp_path / "second"
     second.mkdir()
-    status = _run(_dial(second, estimate=1000, controller_pool="separate"), second, previous=previous)
+    status = _run(
+        _dial(second, estimate=1000, controller_pool="separate"),
+        second,
+        previous=previous,
+    )
 
     assert status == resolve_sizing.EXIT_LOCKED_CHANGE
     err = capsys.readouterr().err
@@ -1103,7 +1376,12 @@ def test_a_resolve_preserves_an_entry_it_did_not_size(tmp_path: Path) -> None:
     resolved = tmp_path / "shapes" / "resolved"
     resolved.mkdir(parents=True)
     (resolved / "aws-us-west-2.json").write_text(
-        json.dumps({"_provenance": "hand-written", "msk-broker": {"instance_types": ["express.m7g.large"]}}),
+        json.dumps(
+            {
+                "_provenance": "hand-written",
+                "msk-broker": {"instance_types": ["express.m7g.large"]},
+            }
+        ),
         encoding="utf-8",
     )
     _run(_dial(tmp_path), tmp_path)
@@ -1124,32 +1402,52 @@ def test_the_tfvars_names_only_variables_the_root_declares(tmp_path: Path) -> No
     declared = set(
         re.findall(
             r'^variable "([a-z_]+)"',
-            (REPO_ROOT / "terraform" / "environments" / "aws" / "variables.tf").read_text(
-                encoding="utf-8"
-            ),
+            (
+                REPO_ROOT / "terraform" / "environments" / "aws" / "variables.tf"
+            ).read_text(encoding="utf-8"),
             re.M,
         )
     )
     assert set(doc) <= declared
 
 
-def test_the_node_pool_objects_carry_every_attribute_the_variable_type_demands(tmp_path: Path) -> None:
+def test_the_node_pool_objects_carry_every_attribute_the_variable_type_demands(
+    tmp_path: Path,
+) -> None:
     _run(_dial(tmp_path), tmp_path)
     doc = json.loads((tmp_path / "sizing.auto.tfvars.json").read_text(encoding="utf-8"))
-    demanded = {"shape_ref", "min_size", "max_size", "desired_size", "capacity_type", "disk_gb", "labels", "taints"}
+    demanded = {
+        "shape_ref",
+        "min_size",
+        "max_size",
+        "desired_size",
+        "capacity_type",
+        "disk_gb",
+        "labels",
+        "taints",
+    }
     for pool in doc["node_pools"].values():
         assert set(pool) == demanded
     for shape in doc["resolved_shapes"].values():
-        assert {"instance_types", "arch"} <= set(shape) <= {
-            "instance_types",
-            "arch",
-            "root_volume",
-            "instance_store_policy",
+        assert (
+            {"instance_types", "arch"}
+            <= set(shape)
+            <= {
+                "instance_types",
+                "arch",
+                "root_volume",
+                "instance_store_policy",
+            }
+        )
+        assert set(shape.get("root_volume", {"type": "", "size_gib": 0})) == {
+            "type",
+            "size_gib",
         }
-        assert set(shape.get("root_volume", {"type": "", "size_gib": 0})) == {"type", "size_gib"}
 
 
-def test_every_shape_with_a_root_volume_carries_its_type_and_size(tmp_path: Path) -> None:
+def test_every_shape_with_a_root_volume_carries_its_type_and_size(
+    tmp_path: Path,
+) -> None:
     """The toolbox and the forwarder size their root volume from this, never from a literal."""
     shapes = resolve_sizing._load(resolve_sizing.SHAPES_FILE)
     _run(_dial(tmp_path), tmp_path)
@@ -1159,10 +1457,15 @@ def test_every_shape_with_a_root_volume_carries_its_type_and_size(tmp_path: Path
         if root is None:
             assert "root_volume" not in shape, use_case
             continue
-        assert shape["root_volume"] == {"type": root["type"], "size_gib": int(root["size_gib"])}, use_case
+        assert shape["root_volume"] == {
+            "type": root["type"],
+            "size_gib": int(root["size_gib"]),
+        }, use_case
 
 
-def test_the_toolbox_resolves_into_resolved_shapes_and_nowhere_else(tmp_path: Path) -> None:
+def test_the_toolbox_resolves_into_resolved_shapes_and_nowhere_else(
+    tmp_path: Path,
+) -> None:
     """An on-demand instance is a shape tofu reads, never a pool that stands up nodes."""
     assert _run(_dial(tmp_path), tmp_path) == 0
     doc = json.loads((tmp_path / "sizing.auto.tfvars.json").read_text(encoding="utf-8"))
@@ -1171,8 +1474,15 @@ def test_the_toolbox_resolves_into_resolved_shapes_and_nowhere_else(tmp_path: Pa
     assert "toolbox" not in _pools(tmp_path)
     report = (tmp_path / "sizing" / "scale.report.md").read_text(encoding="utf-8")
     assert "| toolbox |" not in report
-    resolved = json.loads((tmp_path / "shapes" / "resolved" / "aws-us-west-2.json").read_text(encoding="utf-8"))
-    assert resolved["toolbox"]["instance_types"] == doc["resolved_shapes"]["toolbox"]["instance_types"]
+    resolved = json.loads(
+        (tmp_path / "shapes" / "resolved" / "aws-us-west-2.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert (
+        resolved["toolbox"]["instance_types"]
+        == doc["resolved_shapes"]["toolbox"]["instance_types"]
+    )
 
 
 def test_a_toolbox_override_is_the_type_tofu_launches(tmp_path: Path) -> None:
@@ -1182,7 +1492,9 @@ def test_a_toolbox_override_is_the_type_tofu_launches(tmp_path: Path) -> None:
     assert doc["resolved_shapes"]["toolbox"]["instance_types"] == ["t4g.medium"]
 
 
-def test_expected_fail_a_toolbox_override_absent_from_the_region_is_refused(tmp_path: Path, capsys) -> None:
+def test_expected_fail_a_toolbox_override_absent_from_the_region_is_refused(
+    tmp_path: Path, capsys
+) -> None:
     extra = "  overrides:\n    toolbox:\n      instance_type: t99g.small"
     assert _run(_dial(tmp_path, extra=extra), tmp_path) == 1
     assert "sizing.overrides.toolbox.instance_type" in capsys.readouterr().err
@@ -1244,7 +1556,9 @@ def test_the_values_overlay_names_only_keys_the_charts_declare(tmp_path: Path) -
     _run(_dial(tmp_path), tmp_path)
     emitted = (tmp_path / "sizing" / "scale.values.yaml").read_text(encoding="utf-8")
     charts = "\n".join(
-        (REPO_ROOT / "helm" / "charts" / chart / "values.yaml").read_text(encoding="utf-8")
+        (REPO_ROOT / "helm" / "charts" / chart / "values.yaml").read_text(
+            encoding="utf-8"
+        )
         for chart in ("kafka", "clickhouse-cluster")
     )
     declared = set(re.findall(r"^\s*([A-Za-z][A-Za-z0-9]*):", charts, re.M))
@@ -1259,7 +1573,11 @@ def test_the_values_overlay_names_only_keys_the_charts_declare(tmp_path: Path) -
         key = line.split(":", 1)[0].strip()
         # Under pools.classes, the key IS the use case (eks-system,
         # kafka-broker, ...) -- a map keyed by name, not a chart-declared field.
-        assert key in declared or key in POOL_VALUES_FIELDS or key in resolve_sizing.USE_CASES, key
+        assert (
+            key in declared
+            or key in POOL_VALUES_FIELDS
+            or key in resolve_sizing.USE_CASES
+        ), key
 
 
 def _classes(values: str) -> str:
@@ -1267,7 +1585,9 @@ def _classes(values: str) -> str:
     return values.split("\npools:", 1)[1].split("\n  classes:", 1)[1]
 
 
-def test_every_pool_class_carries_every_field_the_chart_guard_requires(tmp_path: Path) -> None:
+def test_every_pool_class_carries_every_field_the_chart_guard_requires(
+    tmp_path: Path,
+) -> None:
     """Mirrors the render guard in helm/charts/node-pools/templates/karpenter/_karpenter.tpl."""
     _run(_dial(tmp_path), tmp_path)
     values = (tmp_path / "sizing" / "scale.values.yaml").read_text(encoding="utf-8")
@@ -1296,21 +1616,38 @@ def test_every_aws_only_field_sits_under_the_class_aws_block(tmp_path: Path) -> 
     """The chart refuses an AWS field beside the shared ones, so the resolver never writes one there."""
     _run(_dial(tmp_path), tmp_path)
     for name, body in _pools(tmp_path).items():
-        assert not {"families", "generationGt", "generationIn", "nodeClass"} & set(body), name
-        assert set(body["aws"]) <= {"families", "generationGt", "generationIn", "nodeClass"}, name
+        assert not {"families", "generationGt", "generationIn", "nodeClass"} & set(
+            body
+        ), name
+        assert set(body["aws"]) <= {
+            "families",
+            "generationGt",
+            "generationIn",
+            "nodeClass",
+        }, name
 
 
-def test_the_dedicated_node_groups_are_tainted_and_the_shared_ones_are_not(tmp_path: Path) -> None:
+def test_the_dedicated_node_groups_are_tainted_and_the_shared_ones_are_not(
+    tmp_path: Path,
+) -> None:
     """An untainted dedicated group is what let cnpg, dfe-ui and forgejo take the
     CPU ClickHouse and Kafka were sized for. The dial asks for a separate
     controller pool so every dedicated use case has a group to check."""
     _run(_dial(tmp_path, controller_pool="separate"), tmp_path)
-    pools = json.loads((tmp_path / "sizing.auto.tfvars.json").read_text(encoding="utf-8"))["node_pools"]
+    pools = json.loads(
+        (tmp_path / "sizing.auto.tfvars.json").read_text(encoding="utf-8")
+    )["node_pools"]
     for use_case in resolve_sizing.DEDICATED_USE_CASES:
         assert pools[use_case]["taints"] == [
-            {"key": resolve_sizing.WORKLOAD_LABEL, "value": use_case, "effect": "NO_SCHEDULE"}
+            {
+                "key": resolve_sizing.WORKLOAD_LABEL,
+                "value": use_case,
+                "effect": "NO_SCHEDULE",
+            }
         ], use_case
-        assert pools[use_case]["labels"] == {resolve_sizing.WORKLOAD_LABEL: use_case}, use_case
+        assert pools[use_case]["labels"] == {resolve_sizing.WORKLOAD_LABEL: use_case}, (
+            use_case
+        )
     for use_case, body in pools.items():
         if use_case not in resolve_sizing.DEDICATED_USE_CASES:
             assert body["taints"] == [], use_case
@@ -1325,14 +1662,20 @@ def test_every_dedicated_karpenter_pool_carries_the_same_taint(tmp_path: Path) -
     pools = _pools(tmp_path)
     for use_case in resolve_sizing.DEDICATED_USE_CASES:
         assert pools[use_case]["taints"] == [
-            {"key": resolve_sizing.WORKLOAD_LABEL, "value": use_case, "effect": "NoSchedule"}
+            {
+                "key": resolve_sizing.WORKLOAD_LABEL,
+                "value": use_case,
+                "effect": "NoSchedule",
+            }
         ], use_case
     for use_case, body in pools.items():
         if use_case not in resolve_sizing.DEDICATED_USE_CASES:
             assert "taints" not in body, use_case
 
 
-def test_the_pool_classes_are_written_where_bootstrap_can_read_them(tmp_path: Path) -> None:
+def test_the_pool_classes_are_written_where_bootstrap_can_read_them(
+    tmp_path: Path,
+) -> None:
     """bootstrap.sh ships no YAML parser, and the values overlay only reaches a
     cluster through a deploy repo -- so the renderer and classes are written
     again as one line of JSON for the cluster-secret annotation."""
@@ -1348,14 +1691,18 @@ def test_the_pool_classes_are_written_where_bootstrap_can_read_them(tmp_path: Pa
     assert "'" not in body, "a single quote would break the annotation's own quoting"
 
 
-def test_the_report_cites_a_source_and_a_confidence_for_every_ratio(tmp_path: Path) -> None:
+def test_the_report_cites_a_source_and_a_confidence_for_every_ratio(
+    tmp_path: Path,
+) -> None:
     """A number nobody can check later is how a wrong cluster gets built confidently."""
     _run(_dial(tmp_path), tmp_path)
     report = (tmp_path / "sizing" / "scale.report.md").read_text(encoding="utf-8")
     rows = re.findall(r"^\| `([\w.]+)` \| .+ \| ([\w-]+) \| (\S+) ", report, re.M)
     assert len(rows) > 20
     for path, confidence, source in rows:
-        assert confidence in resolve_sizing.__dict__.get("CONFIDENCE", ()) or confidence in (
+        assert confidence in resolve_sizing.__dict__.get(
+            "CONFIDENCE", ()
+        ) or confidence in (
             "vendor-documented",
             "benchmark-named-hardware",
             "rule-of-thumb",
@@ -1363,7 +1710,10 @@ def test_the_report_cites_a_source_and_a_confidence_for_every_ratio(tmp_path: Pa
             "measured",
             "measure-only",
         ), path
-        assert source.startswith(("http", "sizing/", "helm/", "docs/", "dfe-")), (path, source)
+        assert source.startswith(("http", "sizing/", "helm/", "docs/", "dfe-")), (
+            path,
+            source,
+        )
 
 
 def test_the_report_states_where_the_ceiling_is(tmp_path: Path) -> None:
@@ -1387,7 +1737,7 @@ def test_onprem_emits_the_node_requirements_table(tmp_path: Path) -> None:
 
 
 def test_onprem_states_the_override_and_its_warning(tmp_path: Path) -> None:
-    dial = _dial(tmp_path, cloud="onprem", extra="  allow_undersized: \"true\"")
+    dial = _dial(tmp_path, cloud="onprem", extra='  allow_undersized: "true"')
     _run(dial, tmp_path, cloud="onprem")
     report = (tmp_path / "sizing" / "scale.report.md").read_text(encoding="utf-8")
     assert "OVERRIDES the refusal" in report
@@ -1425,7 +1775,9 @@ def test_an_override_still_runs_through_the_assertions(tmp_path: Path) -> None:
     assert "60,000 IOPS" in report
 
 
-def test_an_override_naming_a_type_a_zone_does_not_offer_is_refused(tmp_path: Path, capsys) -> None:
+def test_an_override_naming_a_type_a_zone_does_not_offer_is_refused(
+    tmp_path: Path, capsys
+) -> None:
     """AZs diverge inside one region, and a node pool cannot place in the gap."""
     extra = "  overrides:\n    kafka-broker:\n      instance_type: a1.xlarge"
     assert _run(_dial(tmp_path, extra=extra), tmp_path) == 1
@@ -1465,7 +1817,11 @@ def test_the_committed_dial_template_parses_with_no_overrides(tmp_path: Path) ->
 
 def test_the_msk_path_resolves_a_broker_shape(tmp_path: Path) -> None:
     _run(_dial(tmp_path, provider="msk", estimate=1000), tmp_path)
-    doc = json.loads((tmp_path / "shapes" / "resolved" / "aws-us-west-2.json").read_text(encoding="utf-8"))
+    doc = json.loads(
+        (tmp_path / "shapes" / "resolved" / "aws-us-west-2.json").read_text(
+            encoding="utf-8"
+        )
+    )
     entry = doc["msk-broker"]
     assert entry["instance_types"][0].startswith("express.m7g.")
     assert "price_usd_hour" not in entry
@@ -1497,7 +1853,13 @@ def test_an_msk_family_with_no_price_fails_the_selection(catalogue) -> None:
         )
 
 
-MSK_NEWEST = {"family": "m", "generation_policy": "newest", "generation_pin": "", "size": "large", "volumes": {}}
+MSK_NEWEST = {
+    "family": "m",
+    "generation_policy": "newest",
+    "generation_pin": "",
+    "size": "large",
+    "volumes": {},
+}
 
 
 def _msk_catalogue(
@@ -1521,7 +1883,9 @@ def _msk_catalogue(
         types[name] = dataclasses.replace(
             catalogue.types[f"m7g.{size}"], name=name, generation=generation
         )
-        prices[f"express.{name}" if express else name] = catalogue.msk_prices[f"express.m7g.{size}"]
+        prices[f"express.{name}" if express else name] = catalogue.msk_prices[
+            f"express.m7g.{size}"
+        ]
     return dataclasses.replace(
         catalogue, types=types, msk_prices=prices, msk_families=tuple(sorted(prices))
     )
@@ -1532,11 +1896,18 @@ def _select_msk(
 ) -> resolve_sizing.Choice:
     demand = resolve_sizing.Node("msk-broker", 3, vcpu, 8, 0, 0, 0, "test")
     return resolve_sizing.select_msk_shape(
-        "msk-broker", entry, demand, catalogue, ROOT_VOLUME_DEMAND_MIB_S, ROOT_VOLUME_DEMAND_IOPS
+        "msk-broker",
+        entry,
+        demand,
+        catalogue,
+        ROOT_VOLUME_DEMAND_MIB_S,
+        ROOT_VOLUME_DEMAND_IOPS,
     )
 
 
-def test_newest_resolves_the_msk_broker_to_the_generation_the_pricing_api_lists(catalogue) -> None:
+def test_newest_resolves_the_msk_broker_to_the_generation_the_pricing_api_lists(
+    catalogue,
+) -> None:
     """The captured catalogue prices Express at m7g only, as the live Pricing API does in every region."""
     chosen = _select_msk(catalogue, MSK_NEWEST)
     assert (chosen.instance_type, chosen.generation) == ("express.m7g.large", 7)
@@ -1550,7 +1921,9 @@ def test_newest_takes_an_express_generation_the_day_msk_prices_it(catalogue) -> 
     assert chosen.fallbacks == ["express.m8g.xlarge", "express.m8g.2xlarge"]
 
 
-def test_newest_does_not_mistake_a_provisioned_generation_for_an_express_one(catalogue) -> None:
+def test_newest_does_not_mistake_a_provisioned_generation_for_an_express_one(
+    catalogue,
+) -> None:
     """MSK Provisioned lists m8g.large with no `express.` prefix, and builds a Standard cluster."""
     provisioned = _msk_catalogue(catalogue, 8, ("large",), express=False)
     assert _select_msk(provisioned, MSK_NEWEST).instance_type == "express.m7g.large"
@@ -1562,24 +1935,37 @@ def test_newest_skips_an_express_generation_that_is_not_graviton(catalogue) -> N
     assert _select_msk(x86, MSK_NEWEST).instance_type == "express.m7g.large"
 
 
-def test_newest_does_not_undersize_a_demand_the_new_generation_cannot_yet_carry(catalogue) -> None:
+def test_newest_does_not_undersize_a_demand_the_new_generation_cannot_yet_carry(
+    catalogue,
+) -> None:
     """A generation priced for its small sizes first would otherwise cap a 16 vCPU broker at its largest."""
     partial = _msk_catalogue(catalogue, 8, ("large", "xlarge"))
     assert _select_msk(partial, MSK_NEWEST, vcpu=2).instance_type == "express.m8g.large"
-    assert _select_msk(partial, MSK_NEWEST, vcpu=16).instance_type == "express.m7g.4xlarge"
+    assert (
+        _select_msk(partial, MSK_NEWEST, vcpu=16).instance_type == "express.m7g.4xlarge"
+    )
 
 
-def test_a_pinned_msk_shape_stays_on_its_generation_when_a_newer_one_is_priced(catalogue) -> None:
+def test_a_pinned_msk_shape_stays_on_its_generation_when_a_newer_one_is_priced(
+    catalogue,
+) -> None:
     both = _msk_catalogue(catalogue, 8, ("large",))
     pinned = {**MSK_NEWEST, "generation_policy": "pinned", "generation_pin": "7"}
     assert _select_msk(both, pinned).instance_type == "express.m7g.large"
 
 
-def test_an_msk_shape_names_the_pin_it_cannot_find_and_refuses_a_policy_it_cannot_apply(catalogue) -> None:
+def test_an_msk_shape_names_the_pin_it_cannot_find_and_refuses_a_policy_it_cannot_apply(
+    catalogue,
+) -> None:
     with pytest.raises(resolve_sizing.ResolveError, match=r"lists no express\.m9g"):
-        _select_msk(catalogue, {**MSK_NEWEST, "generation_policy": "pinned", "generation_pin": "9"})
+        _select_msk(
+            catalogue,
+            {**MSK_NEWEST, "generation_policy": "pinned", "generation_pin": "9"},
+        )
     with pytest.raises(resolve_sizing.ResolveError, match="newest or pinned"):
-        _select_msk(catalogue, {**MSK_NEWEST, "generation_policy": "newest-with-modifiers"})
+        _select_msk(
+            catalogue, {**MSK_NEWEST, "generation_policy": "newest-with-modifiers"}
+        )
 
 
 def test_the_shipped_msk_broker_follows_the_newest_generation_in_every_cloud() -> None:
@@ -1587,16 +1973,25 @@ def test_the_shipped_msk_broker_follows_the_newest_generation_in_every_cloud() -
     shapes = resolve_sizing._load(resolve_sizing.SHAPES_FILE)
     for cloud in ("aws", "gcp", "azure", "onprem"):
         entry = resolve_sizing._at(shapes, "clouds", cloud, "use_cases", "msk-broker")
-        assert (entry["generation_policy"], str(entry["generation_pin"])) == ("newest", ""), cloud
+        assert (entry["generation_policy"], str(entry["generation_pin"])) == (
+            "newest",
+            "",
+        ), cloud
 
 
-def test_the_msk_broker_reads_the_same_demand_the_self_hosted_broker_would(tmp_path: Path) -> None:
+def test_the_msk_broker_reads_the_same_demand_the_self_hosted_broker_would(
+    tmp_path: Path,
+) -> None:
     """A managed broker is the same requirement, asked of a vendor."""
     for band, smallest in ((1000, "express.m7g.large"), (10000, "express.m7g.4xlarge")):
         out = tmp_path / str(band)
         out.mkdir()
         _run(_dial(out, provider="msk", estimate=band), out)
-        doc = json.loads((out / "shapes" / "resolved" / "aws-us-west-2.json").read_text(encoding="utf-8"))
+        doc = json.loads(
+            (out / "shapes" / "resolved" / "aws-us-west-2.json").read_text(
+                encoding="utf-8"
+            )
+        )
         assert doc["msk-broker"]["instance_types"][0] == smallest, band
 
 
@@ -1626,24 +2021,40 @@ def test_the_broker_disk_holds_a_load_copy_only_for_what_a_transform_rewrites(
     0.75 headroom is 12418 GiB for the land copy alone."""
     extra = f"  transformed_share: {share}" if share is not None else ""
     _run(_dial(tmp_path, estimate=10000, extra=extra), tmp_path)
-    values = yaml.safe_load((tmp_path / "sizing" / "scale.values.yaml").read_text(encoding="utf-8"))
+    values = yaml.safe_load(
+        (tmp_path / "sizing" / "scale.values.yaml").read_text(encoding="utf-8")
+    )
     assert values["kafka"]["replicas"] == 3
     assert values["kafka"]["storage"]["size"] == size
 
 
 @pytest.mark.parametrize("share", ["-0.1", "1.5"])
-def test_expected_fail_a_transformed_share_outside_0_and_1_is_refused(tmp_path: Path, share: str, capsys) -> None:
-    assert _run(_dial(tmp_path, estimate=10000, extra=f"  transformed_share: {share}"), tmp_path) != 0
+def test_expected_fail_a_transformed_share_outside_0_and_1_is_refused(
+    tmp_path: Path, share: str, capsys
+) -> None:
+    assert (
+        _run(
+            _dial(tmp_path, estimate=10000, extra=f"  transformed_share: {share}"),
+            tmp_path,
+        )
+        != 0
+    )
     assert "sizing.transformed_share" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize(("estimate", "brokers"), [(1000, 3), (90000, 9)])
-def test_the_msk_broker_count_reaches_tofu_with_its_shape(tmp_path: Path, estimate: int, brokers: int) -> None:
+def test_the_msk_broker_count_reaches_tofu_with_its_shape(
+    tmp_path: Path, estimate: int, brokers: int
+) -> None:
     """The broker size is chosen for a broker count, so that count is what MSK must build."""
     _run(_dial(tmp_path, provider="msk", estimate=estimate), tmp_path)
     doc = json.loads((tmp_path / "sizing.auto.tfvars.json").read_text(encoding="utf-8"))
     assert doc["resolved_shapes"]["msk-broker"]["count"] == brokers
-    assert all("count" not in shape for name, shape in doc["resolved_shapes"].items() if name != "msk-broker")
+    assert all(
+        "count" not in shape
+        for name, shape in doc["resolved_shapes"].items()
+        if name != "msk-broker"
+    )
 
 
 def test_the_msk_path_sizes_no_broker_pvc_or_controller_pool(tmp_path: Path) -> None:
@@ -1660,7 +2071,9 @@ def test_the_msk_path_sizes_no_broker_pvc_or_controller_pool(tmp_path: Path) -> 
 # ---------------------------------------------------------------------------
 
 
-def test_the_instance_steps_up_until_it_sustains_its_own_volumes(tmp_path: Path) -> None:
+def test_the_instance_steps_up_until_it_sustains_its_own_volumes(
+    tmp_path: Path,
+) -> None:
     """A3 fires only when no size in the family can carry the DEMANDED IO.
 
     gate-3 remedy 2: this used to assert `sum(provisioned) <= baseline` read
@@ -1677,7 +2090,11 @@ def test_the_instance_steps_up_until_it_sustains_its_own_volumes(tmp_path: Path)
     """
     dial_path = _dial(tmp_path)
     _run(dial_path, tmp_path)
-    doc = json.loads((tmp_path / "shapes" / "resolved" / "aws-us-west-2.json").read_text(encoding="utf-8"))
+    doc = json.loads(
+        (tmp_path / "shapes" / "resolved" / "aws-us-west-2.json").read_text(
+            encoding="utf-8"
+        )
+    )
 
     sizing = resolve_sizing._load(resolve_sizing.SIZING_FILE)
     shapes = resolve_sizing._load(resolve_sizing.SHAPES_FILE)
@@ -1695,7 +2112,11 @@ def test_the_instance_steps_up_until_it_sustains_its_own_volumes(tmp_path: Path)
             resolve_sizing.BROKER_DEMAND.get(use_case, use_case)
         ) or resolve_sizing.Node(use_case, 1, 0, 0, 0, 0, 0, "cluster overhead")
         built = resolve_sizing._resolve_volumes(
-            shape_entry, demand, chosen, core.root_volume_demand_mib_s, core.root_volume_demand_iops
+            shape_entry,
+            demand,
+            chosen,
+            core.root_volume_demand_mib_s,
+            core.root_volume_demand_iops,
         )
         assert resolve_sizing._volumes_fit(built, chosen), use_case
 
@@ -1740,7 +2161,9 @@ def test_the_step_up_is_reported_with_its_price_delta(catalogue) -> None:
     # m9g.large's own baseline is 3,600 IOPS; m9g.xlarge's is 6,000. 5,000
     # demanded plus root's 300 is 5,300 -- above large, comfortably under
     # xlarge, so exactly one step.
-    demand = resolve_sizing.Node("keeper", 3, 1, 3, 20, 5000, 0, "test demand above the floor size's baseline")
+    demand = resolve_sizing.Node(
+        "keeper", 3, 1, 3, 20, 5000, 0, "test demand above the floor size's baseline"
+    )
     notes: list[str] = []
     choice = resolve_sizing.select_shape(
         "keeper",
@@ -1760,7 +2183,11 @@ def test_the_step_up_is_reported_with_its_price_delta(catalogue) -> None:
 def test_a_root_volume_takes_what_the_instance_has_left_to_give(tmp_path: Path) -> None:
     """A fixed 125 MiB/s root on a size whose baseline is 95 is a silent clamp."""
     _run(_dial(tmp_path), tmp_path)
-    doc = json.loads((tmp_path / "shapes" / "resolved" / "aws-us-west-2.json").read_text(encoding="utf-8"))
+    doc = json.loads(
+        (tmp_path / "shapes" / "resolved" / "aws-us-west-2.json").read_text(
+            encoding="utf-8"
+        )
+    )
     root = doc["kafka-broker"]["volumes"]["root"]
     assert root["source"] == "instance-baseline"
     assert root["throughput_mib_s"] >= 125
@@ -1791,7 +2218,12 @@ def test_locked_change_detection_skips_a_field_missing_from_either_document() ->
     """A resolved.yaml written before a field was recorded carries no entry for
     it, so there is nothing to diff it against and it is skipped rather than
     reported as a change."""
-    sizing = {"locked": {"controller_mode": "the quorum re-forms", "cloud_token": "a new deployment"}}
+    sizing = {
+        "locked": {
+            "controller_mode": "the quorum re-forms",
+            "cloud_token": "a new deployment",
+        }
+    }
     previous = {"locked": {"cloud_token": "aws"}}
     resolved = {"locked": {"controller_mode": "combined", "cloud_token": "gcp"}}
     changes = resolve_sizing.find_locked_changes(sizing, previous, resolved)
@@ -1801,7 +2233,9 @@ def test_locked_change_detection_skips_a_field_missing_from_either_document() ->
     assert changes[0].reason == "a new deployment"
 
 
-def test_the_storage_model_is_recorded_so_the_lock_on_it_can_fire(tmp_path: Path) -> None:
+def test_the_storage_model_is_recorded_so_the_lock_on_it_can_fire(
+    tmp_path: Path,
+) -> None:
     """The resolver derives clickhouse.storageModel from sizing.storage_model, so
     the field sizing.yaml locks has to appear in resolved.yaml to be compared --
     moving parts between the PVC and the object store is a data migration."""
@@ -1811,7 +2245,9 @@ def test_the_storage_model_is_recorded_so_the_lock_on_it_can_fire(tmp_path: Path
     assert doc["locked"]["storage_model"] == "auto"
 
 
-def test_a_storage_model_change_is_refused_without_migrate(tmp_path: Path, capsys) -> None:
+def test_a_storage_model_change_is_refused_without_migrate(
+    tmp_path: Path, capsys
+) -> None:
     first = tmp_path / "first"
     first.mkdir()
     _run(_dial(first, provider="strimzi", estimate=1000), first)
@@ -1819,7 +2255,9 @@ def test_a_storage_model_change_is_refused_without_migrate(tmp_path: Path, capsy
 
     second = tmp_path / "second"
     second.mkdir()
-    dial = _dial(second, provider="strimzi", estimate=1000, extra="  storage_model: local")
+    dial = _dial(
+        second, provider="strimzi", estimate=1000, extra="  storage_model: local"
+    )
     status = _run(dial, second, previous=previous)
 
     assert status == resolve_sizing.EXIT_LOCKED_CHANGE
@@ -1836,7 +2274,9 @@ def test_the_compute_bucket_is_the_reports_own_total_row(tmp_path: Path) -> None
     doc = resolve_sizing._load(tmp_path / "sizing" / "resolved.yaml")
     report = (tmp_path / "sizing" / "scale.report.md").read_text(encoding="utf-8")
 
-    total_row = next(line for line in report.splitlines() if "**total compute**" in line)
+    total_row = next(
+        line for line in report.splitlines() if "**total compute**" in line
+    )
     assert total_row.split("|")[-2].strip().strip("*") == doc["compute_bucket"]
     assert doc["compute_bucket"] in {"XS", "S", "M", "L", "XL"}
     assert "compute_usd_per_hour" not in doc
@@ -1846,20 +2286,42 @@ def _priced_choice(
     use_case: str, price: float, count: int, vcpu: int = 2
 ) -> resolve_sizing.Choice:
     return resolve_sizing.Choice(
-        use_case=use_case, instance_type=f"{use_case}.large", fallbacks=[], vcpu=vcpu,
-        memory_gib=8.0, generation=9, generation_policy="floor", price_policy="on-demand",
-        price_usd_hour=price, physical_processor="Graviton", instance_store_gb=0,
-        baseline_iops=3000, baseline_throughput_mib_s=125.0, maximum_iops=48000,
-        maximum_throughput_mib_s=1500.0, volumes={}, count=count,
+        use_case=use_case,
+        instance_type=f"{use_case}.large",
+        fallbacks=[],
+        vcpu=vcpu,
+        memory_gib=8.0,
+        generation=9,
+        generation_policy="floor",
+        price_policy="on-demand",
+        price_usd_hour=price,
+        physical_processor="Graviton",
+        instance_store_gb=0,
+        baseline_iops=3000,
+        baseline_throughput_mib_s=125.0,
+        maximum_iops=48000,
+        maximum_throughput_mib_s=1500.0,
+        volumes={},
+        count=count,
     )
 
 
-def test_a_shape_resolving_to_zero_adds_nothing_to_the_compute_bucket(tmp_path: Path) -> None:
+def test_a_shape_resolving_to_zero_adds_nothing_to_the_compute_bucket(
+    tmp_path: Path,
+) -> None:
     """A Karpenter pool holding no node stands up no vCPU, so it must not push
     the deployment a rung up the ladder."""
     core = resolve_sizing.Core(
-        tier="scale", focus="economy", headroom=0.0, estimated=True, ingest_gb_per_day=0.0,
-        avg_mb_s=0.0, peak_mb_s=0.0, peak_factor=1.0, required_mb_s=0.0, carried_mb_s=0.0,
+        tier="scale",
+        focus="economy",
+        headroom=0.0,
+        estimated=True,
+        ingest_gb_per_day=0.0,
+        avg_mb_s=0.0,
+        peak_mb_s=0.0,
+        peak_factor=1.0,
+        required_mb_s=0.0,
+        carried_mb_s=0.0,
     )
     dial = resolve_sizing.read_dial(_dial(tmp_path))
     choices = {
@@ -1906,7 +2368,9 @@ def test_a_locked_change_is_refused_without_migrate(tmp_path: Path, capsys) -> N
     assert "--migrate" in err
 
 
-def test_a_locked_change_is_accepted_and_written_with_migrate(tmp_path: Path, capsys) -> None:
+def test_a_locked_change_is_accepted_and_written_with_migrate(
+    tmp_path: Path, capsys
+) -> None:
     first = tmp_path / "first"
     first.mkdir()
     _run(_dial(first, provider="strimzi", estimate=1000), first)
@@ -1970,7 +2434,9 @@ TARGET_OVERLAY_NAMES = (
 
 
 @pytest.mark.parametrize("name", TARGET_OVERLAY_NAMES)
-def test_every_target_overlay_parses_and_every_dial_carries_a_state_and_reason(name: str) -> None:
+def test_every_target_overlay_parses_and_every_dial_carries_a_state_and_reason(
+    name: str,
+) -> None:
     path = resolve_sizing.TARGETS_DIR / f"{name}.yaml"
     assert path.is_file(), path
     tree = resolve_sizing._load(path)
@@ -2043,8 +2509,14 @@ def test_karpenter_admits_the_window_cheapest_of_compared() -> None:
         fallbacks=["c9gd.4xlarge", "c7gd.4xlarge"],
         price_policy="cheapest-of",
     )
-    cloud_entry = {"use_cases": {"ci-burst": {"price_policy": "cheapest-of", "price_generations": 2}}}
-    pool = resolve_sizing.build_pool_classes({"ci-burst": choice}, cloud_entry)["ci-burst"]
+    cloud_entry = {
+        "use_cases": {
+            "ci-burst": {"price_policy": "cheapest-of", "price_generations": 2}
+        }
+    }
+    pool = resolve_sizing.build_pool_classes({"ci-burst": choice}, cloud_entry)[
+        "ci-burst"
+    ]
     assert pool["aws"]["families"] == ["c8gd", "c9gd"]
     assert pool["aws"]["generationGt"] == "7"
 
@@ -2055,7 +2527,9 @@ def test_expected_fail_a_family_with_no_generation_digit_is_refused() -> None:
         resolve_sizing.build_pool_classes({"general": choice}, {})
 
 
-def test_pool_generation_floor_with_one_family_is_its_own_generation_minus_one() -> None:
+def test_pool_generation_floor_with_one_family_is_its_own_generation_minus_one() -> (
+    None
+):
     choice = _choice(use_case="clickhouse", instance_type="r9gd.2xlarge", fallbacks=[])
     pools = resolve_sizing.build_pool_classes({"clickhouse": choice}, {})
     assert pools["clickhouse"]["aws"]["families"] == ["r9gd"]
@@ -2064,12 +2538,16 @@ def test_pool_generation_floor_with_one_family_is_its_own_generation_minus_one()
 
 def test_karpenter_places_nothing_for_msk_broker() -> None:
     """MSK runs its own brokers -- there is no EC2 instance to place."""
-    choice = _choice(use_case="msk-broker", instance_type="express.m7g.large", fallbacks=[])
+    choice = _choice(
+        use_case="msk-broker", instance_type="express.m7g.large", fallbacks=[]
+    )
     assert resolve_sizing.build_pool_classes({"msk-broker": choice}, {}) == {}
 
 
 def test_karpenter_ci_burst_pool_is_spot_first() -> None:
-    choice = _choice(use_case="ci-burst", instance_type="c9gd.4xlarge", fallbacks=["c8gd.4xlarge"])
+    choice = _choice(
+        use_case="ci-burst", instance_type="c9gd.4xlarge", fallbacks=["c8gd.4xlarge"]
+    )
     pool = resolve_sizing.build_pool_classes({"ci-burst": choice}, {})["ci-burst"]
     assert pool["capacityTypes"] == ["spot", "on-demand"]
     assert pool["budgets"] == [{"nodes": "100%"}]
@@ -2081,10 +2559,14 @@ def test_karpenter_ci_burst_pool_is_spot_first() -> None:
 
 # Karpenter's three budget reasons, in the order every pool lists them.
 BUDGET_REASONS = ("Underutilized", "Empty", "Drifted")
-DAILY_0200_4H = render_dial.MaintenanceWindow(minute=0, hour=2, weekday=None, minutes=240)
+DAILY_0200_4H = render_dial.MaintenanceWindow(
+    minute=0, hour=2, weekday=None, minutes=240
+)
 
 
-def _budgets(use_case: str, disruption: render_dial.Disruption | None = None) -> list[dict]:
+def _budgets(
+    use_case: str, disruption: render_dial.Disruption | None = None
+) -> list[dict]:
     """The budgets build_pool_classes gives one pool of `use_case`."""
     choice = _choice(use_case=use_case, instance_type="m9g.large", fallbacks=[])
     pools = resolve_sizing.build_pool_classes({use_case: choice}, {}, None, disruption)
@@ -2097,7 +2579,9 @@ def _per_reason(budgets: list[dict]) -> dict[str, str]:
 
 
 @pytest.mark.parametrize("use_case", resolve_sizing.STATEFUL_USE_CASES)
-def test_a_stateful_pool_never_consolidates_and_moves_one_node_at_a_time(use_case: str) -> None:
+def test_a_stateful_pool_never_consolidates_and_moves_one_node_at_a_time(
+    use_case: str,
+) -> None:
     assert _budgets(use_case) == [
         {"nodes": "0", "reasons": ["Underutilized"]},
         {"nodes": "1", "reasons": ["Empty"]},
@@ -2119,7 +2603,9 @@ def test_an_elastic_pool_drifts_slower_than_it_consolidates(use_case: str) -> No
 def test_ci_burst_keeps_one_budget_for_every_reason_whatever_the_dial(
     posture: str, window: render_dial.MaintenanceWindow | None
 ) -> None:
-    assert _budgets("ci-burst", render_dial.Disruption(posture, window)) == [{"nodes": "100%"}]
+    assert _budgets("ci-burst", render_dial.Disruption(posture, window)) == [
+        {"nodes": "100%"}
+    ]
 
 
 @pytest.mark.parametrize("use_case", ["clickhouse", "keeper", "general", "eks-system"])
@@ -2137,16 +2623,37 @@ def test_every_pool_names_every_reason_in_an_always_on_budget(
     ("window", "schedule", "duration"),
     [
         (DAILY_0200_4H, "0 6 * * *", "20h"),
-        (render_dial.MaintenanceWindow(minute=0, hour=22, weekday=None, minutes=240), "0 2 * * *", "20h"),
-        (render_dial.MaintenanceWindow(minute=30, hour=22, weekday=6, minutes=210), "0 2 * * 0", "164h30m"),
-        (render_dial.MaintenanceWindow(minute=0, hour=0, weekday=0, minutes=60), "0 1 * * 0", "167h"),
-        (render_dial.MaintenanceWindow(minute=45, hour=23, weekday=None, minutes=1), "46 23 * * *", "23h59m"),
+        (
+            render_dial.MaintenanceWindow(minute=0, hour=22, weekday=None, minutes=240),
+            "0 2 * * *",
+            "20h",
+        ),
+        (
+            render_dial.MaintenanceWindow(minute=30, hour=22, weekday=6, minutes=210),
+            "0 2 * * 0",
+            "164h30m",
+        ),
+        (
+            render_dial.MaintenanceWindow(minute=0, hour=0, weekday=0, minutes=60),
+            "0 1 * * 0",
+            "167h",
+        ),
+        (
+            render_dial.MaintenanceWindow(minute=45, hour=23, weekday=None, minutes=1),
+            "46 23 * * *",
+            "23h59m",
+        ),
     ],
 )
 def test_a_window_adds_a_drift_hold_from_its_close_to_its_next_open(
     window: render_dial.MaintenanceWindow, schedule: str, duration: str
 ) -> None:
-    hold = {"nodes": "0", "reasons": ["Drifted"], "schedule": schedule, "duration": duration}
+    hold = {
+        "nodes": "0",
+        "reasons": ["Drifted"],
+        "schedule": schedule,
+        "duration": duration,
+    }
     for use_case in ("clickhouse", "general"):
         budgets = _budgets(use_case, render_dial.Disruption("balanced", window))
         assert budgets[-1] == hold, use_case
@@ -2176,7 +2683,9 @@ def _karpenter_active(schedule: str, duration: str, minute: int) -> bool:
         render_dial.MaintenanceWindow(minute=59, hour=23, weekday=0, minutes=10079),
     ],
 )
-def test_the_drift_hold_is_active_exactly_when_the_window_is_closed(window: render_dial.MaintenanceWindow) -> None:
+def test_the_drift_hold_is_active_exactly_when_the_window_is_closed(
+    window: render_dial.MaintenanceWindow,
+) -> None:
     """Swept minute by minute over two weeks against Karpenter's own activity rule."""
     hold = _budgets("clickhouse", render_dial.Disruption("balanced", window))[-1]
     opens = f"{window.minute} {window.hour} * * {'*' if window.weekday is None else window.weekday}"
@@ -2184,45 +2693,67 @@ def test_the_drift_hold_is_active_exactly_when_the_window_is_closed(window: rend
     wrong = [
         minute
         for minute in range(2 * 7 * 1440)
-        if _karpenter_active(hold["schedule"], hold["duration"], minute) == _karpenter_active(opens, length, minute)
+        if _karpenter_active(hold["schedule"], hold["duration"], minute)
+        == _karpenter_active(opens, length, minute)
     ]
-    assert not wrong, f"{len(wrong)} minutes where the hold and the window agree, first at {wrong[0]}"
+    assert not wrong, (
+        f"{len(wrong)} minutes where the hold and the window agree, first at {wrong[0]}"
+    )
 
 
 def test_conservative_halves_elastic_consolidation_and_nothing_else_there() -> None:
-    conservative = _per_reason(_budgets("general", render_dial.Disruption("conservative", None)))
+    conservative = _per_reason(
+        _budgets("general", render_dial.Disruption("conservative", None))
+    )
     assert conservative == {"Underutilized": "12%", "Empty": "25%", "Drifted": "10%"}
 
 
 def test_conservative_with_no_window_holds_stateful_drift_altogether() -> None:
     """With no window there is no inside, so a stateful node only moves when an operator moves it."""
-    held = _per_reason(_budgets("kafka-broker", render_dial.Disruption("conservative", None)))
+    held = _per_reason(
+        _budgets("kafka-broker", render_dial.Disruption("conservative", None))
+    )
     assert held == {"Underutilized": "0", "Empty": "1", "Drifted": "0"}
 
 
 def test_conservative_with_a_window_lets_stateful_drift_inside_it() -> None:
-    budgets = _budgets("kafka-broker", render_dial.Disruption("conservative", DAILY_0200_4H))
-    assert budgets == _budgets("kafka-broker", render_dial.Disruption("balanced", DAILY_0200_4H))
+    budgets = _budgets(
+        "kafka-broker", render_dial.Disruption("conservative", DAILY_0200_4H)
+    )
+    assert budgets == _budgets(
+        "kafka-broker", render_dial.Disruption("balanced", DAILY_0200_4H)
+    )
     assert _per_reason(budgets)["Drifted"] == "1"
 
 
 def _with_disruption(dial: Path, block: str) -> Path:
     """Append a k8s.disruption block -- k8s is the last section `_dial` writes."""
-    dial.write_text(dial.read_text(encoding="utf-8") + "  disruption:\n" + block, encoding="utf-8")
+    dial.write_text(
+        dial.read_text(encoding="utf-8") + "  disruption:\n" + block, encoding="utf-8"
+    )
     return dial
 
 
-def test_the_dial_window_and_posture_reach_the_pools_bootstrap_carries(tmp_path: Path) -> None:
+def test_the_dial_window_and_posture_reach_the_pools_bootstrap_carries(
+    tmp_path: Path,
+) -> None:
     block = '    posture: conservative\n    maintenance_window:\n      schedule: "0 2 * * 6"\n      duration: "4h"\n'
     assert _run(_with_disruption(_dial(tmp_path), block), tmp_path) == 0
     pools = _pools(tmp_path)
-    hold = {"nodes": "0", "reasons": ["Drifted"], "schedule": "0 6 * * 6", "duration": "164h"}
+    hold = {
+        "nodes": "0",
+        "reasons": ["Drifted"],
+        "schedule": "0 6 * * 6",
+        "duration": "164h",
+    }
     assert pools["clickhouse"]["budgets"][-1] == hold
     assert _per_reason(pools["general"]["budgets"])["Underutilized"] == "12%"
     assert pools["ci-burst"]["budgets"] == [{"nodes": "100%"}]
 
 
-def test_expected_fail_a_disruption_block_the_dial_refuses_fails_the_resolve(tmp_path: Path, capsys) -> None:
+def test_expected_fail_a_disruption_block_the_dial_refuses_fails_the_resolve(
+    tmp_path: Path, capsys
+) -> None:
     assert _run(_with_disruption(_dial(tmp_path), "    posture: fast\n"), tmp_path) == 1
     assert "k8s.disruption.posture must be one of" in capsys.readouterr().err
 
@@ -2236,14 +2767,24 @@ def test_karpenter_a_pinned_policy_emits_generation_in_not_generation_gt() -> No
         generation_policy="pinned",
     )
     cloud_entry = {
-        "use_cases": {"general": {"generation_policy": "pinned", "generation_pin": "7", "arch": "arm64"}}
+        "use_cases": {
+            "general": {
+                "generation_policy": "pinned",
+                "generation_pin": "7",
+                "arch": "arm64",
+            }
+        }
     }
-    pool = resolve_sizing.build_pool_classes({"general": choice}, cloud_entry)["general"]
+    pool = resolve_sizing.build_pool_classes({"general": choice}, cloud_entry)[
+        "general"
+    ]
     assert pool["aws"]["generationIn"] == ["7"]
     assert "generationGt" not in pool["aws"]
 
 
-def test_karpenter_a_pinned_pool_follows_an_instance_type_override_off_the_pin() -> None:
+def test_karpenter_a_pinned_pool_follows_an_instance_type_override_off_the_pin() -> (
+    None
+):
     """The chart refuses a family outside generationIn, so the pin alone would leave the pool unrenderable."""
     choice = _choice(
         use_case="kafka-broker",
@@ -2253,20 +2794,35 @@ def test_karpenter_a_pinned_pool_follows_an_instance_type_override_off_the_pin()
         generation_policy="pinned",
     )
     cloud_entry = {
-        "use_cases": {"kafka-broker": {"generation_policy": "pinned", "generation_pin": "8", "arch": "arm64"}}
+        "use_cases": {
+            "kafka-broker": {
+                "generation_policy": "pinned",
+                "generation_pin": "8",
+                "arch": "arm64",
+            }
+        }
     }
-    pool = resolve_sizing.build_pool_classes({"kafka-broker": choice}, cloud_entry)["kafka-broker"]
+    pool = resolve_sizing.build_pool_classes({"kafka-broker": choice}, cloud_entry)[
+        "kafka-broker"
+    ]
     assert pool["aws"]["families"] == ["m9g"]
     assert pool["aws"]["generationIn"] == ["9"]
 
 
-def test_the_tofu_descriptions_name_the_graviton4_pin_only_while_the_shapes_carry_it() -> None:
+def test_the_tofu_descriptions_name_the_graviton4_pin_only_while_the_shapes_carry_it() -> (
+    None
+):
     """The resolved_shapes descriptions state the pin's reason, so lifting it must lift them too."""
     reason = "aws-network-policy-agent #686"
     pinned = reason in resolve_sizing.SHAPES_FILE.read_text(encoding="utf-8")
     for path in (
         REPO_ROOT / "terraform" / "environments" / "aws" / "variables.tf",
-        REPO_ROOT / "terraform" / "modules" / "kubernetes-cluster" / "aws" / "variables.tf",
+        REPO_ROOT
+        / "terraform"
+        / "modules"
+        / "kubernetes-cluster"
+        / "aws"
+        / "variables.tf",
     ):
         assert (reason in path.read_text(encoding="utf-8")) == pinned, path
 
@@ -2276,14 +2832,23 @@ def test_karpenter_root_volume_carries_raid0_only_where_the_shape_asks_for_it() 
         use_case="clickhouse",
         instance_type="r9gd.2xlarge",
         fallbacks=[],
-        volumes={"root": {"type": "gp3", "size_gib": 40, "iops": 3000, "throughput_mib_s": 250}},
+        volumes={
+            "root": {
+                "type": "gp3",
+                "size_gib": 40,
+                "iops": 3000,
+                "throughput_mib_s": 250,
+            }
+        },
     )
     cloud_entry = {
         "use_cases": {
             "clickhouse": {"volumes": {"cache": {"instance_store": "required"}}},
         }
     }
-    pool = resolve_sizing.build_pool_classes({"clickhouse": choice}, cloud_entry)["clickhouse"]
+    pool = resolve_sizing.build_pool_classes({"clickhouse": choice}, cloud_entry)[
+        "clickhouse"
+    ]
     assert pool["aws"]["nodeClass"]["instanceStorePolicy"] == "RAID0"
     assert pool["aws"]["nodeClass"]["rootVolume"]["sizeGi"] == 40
 
@@ -2297,7 +2862,9 @@ def test_karpenter_a_pool_demand_above_the_sized_fleet_raises_both_limits() -> N
     sized_only = resolve_sizing.build_pool_classes({"general": choice}, {})["general"]
     assert sized_only["limits"] == {"cpu": "8", "memory": "32Gi"}
     # 11.2 vCPU is three 4-vCPU nodes, and the pool may hold twice that.
-    demanded = resolve_sizing.build_pool_classes({"general": choice}, {}, {"general": 11.2})
+    demanded = resolve_sizing.build_pool_classes(
+        {"general": choice}, {}, {"general": 11.2}
+    )
     assert demanded["general"]["limits"] == {"cpu": "24", "memory": "96Gi"}
     # A demand the sized fleet already covers changes nothing.
     small = resolve_sizing.build_pool_classes({"general": choice}, {}, {"general": 2.0})
@@ -2341,7 +2908,11 @@ def test_msk_plus_ci_burst_carries_exactly_five_pool_classes(msk_case: Path) -> 
 
 
 def test_msk_broker_keeps_its_ec2_shape_out_of_the_pools(msk_case: Path) -> None:
-    doc = json.loads((msk_case / "shapes" / "resolved" / "aws-us-west-2.json").read_text(encoding="utf-8"))
+    doc = json.loads(
+        (msk_case / "shapes" / "resolved" / "aws-us-west-2.json").read_text(
+            encoding="utf-8"
+        )
+    )
     assert doc["msk-broker"]["instance_types"][0].startswith("express.")
     values = (msk_case / "sizing" / "scale.values.yaml").read_text(encoding="utf-8")
     assert "msk-broker" not in values.split("\npools:", 1)[1]
@@ -2354,7 +2925,9 @@ def test_msk_broker_keeps_its_ec2_shape_out_of_the_pools(msk_case: Path) -> None
 
 def test_onprem_writes_the_nodes_json_artefact(tmp_path: Path) -> None:
     _run(_dial(tmp_path, cloud="onprem"), tmp_path, cloud="onprem")
-    doc = json.loads((tmp_path / "sizing" / "scale.nodes.json").read_text(encoding="utf-8"))
+    doc = json.loads(
+        (tmp_path / "sizing" / "scale.nodes.json").read_text(encoding="utf-8")
+    )
     assert set(doc) >= {"kafka-broker", "clickhouse", "keeper"}
     for use_case, body in doc.items():
         assert set(body) == {"count", "cpu", "memory_gib", "disk_gb"}, use_case
@@ -2384,14 +2957,19 @@ CHARTS_DIR = REPO_ROOT / "helm" / "charts"
 # the resolver's job to fill in: it derives sizing, not bucket URLs or IAM
 # ARNs.
 CHART_RENDER_BASES: dict[str, dict[str, object]] = {
-    "kafka": {"appNamespace": "dfe", "kafka": {"mode": "cluster", "provider": "strimzi"}},
+    "kafka": {
+        "appNamespace": "dfe",
+        "kafka": {"mode": "cluster", "provider": "strimzi"},
+    },
     "clickhouse-cluster": {
         "appNamespace": "dfe",
         "clickhouse": {
             "mode": "cluster",
             "replicas": 3,
             "shardsCount": 1,
-            "objectStore": {"endpoint": "https://s3.us-west-2.amazonaws.com/dfe-clickhouse-test/"},
+            "objectStore": {
+                "endpoint": "https://s3.us-west-2.amazonaws.com/dfe-clickhouse-test/"
+            },
         },
     },
     "node-pools": {
@@ -2441,7 +3019,12 @@ def _helm_template(
         overlay_path.write_text(json.dumps(overlay), encoding="utf-8")
         cmd += ["-f", str(overlay_path)]
     return subprocess.run(
-        cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False
+        cmd,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
     )
 
 
@@ -2506,13 +3089,17 @@ def _readiness_timeout_s() -> int:
     """The deploy readiness gate's own default bound, read off the gate."""
     text = READINESS_GATE.read_text(encoding="utf-8")
     match = re.search(r'TIMEOUT="\$\{READINESS_TIMEOUT:-(\d+)\}"', text)
-    assert match, "bootstrap/smoke-test-readiness.sh no longer states its READINESS_TIMEOUT default"
+    assert match, (
+        "bootstrap/smoke-test-readiness.sh no longer states its READINESS_TIMEOUT default"
+    )
     return int(match[1])
 
 
 def _pools(out: Path) -> dict:
     """The pool classes bootstrap carries onto the cluster secret, by name."""
-    return json.loads((out / "sizing" / "scale.pools.json").read_text(encoding="utf-8"))["classes"]
+    return json.loads(
+        (out / "sizing" / "scale.pools.json").read_text(encoding="utf-8")
+    )["classes"]
 
 
 def test_the_app_set_figures_match_the_scale_profile() -> None:
@@ -2523,7 +3110,9 @@ def test_the_app_set_figures_match_the_scale_profile() -> None:
     # Engine and hyperdx run replicaCount, the KEDA-scaled apps their floor.
     assert defaults["app_replicas"][0] == profile["replicaCount"]
     assert defaults["app_replicas"][0] == profile["keda"]["minReplicaCount"]
-    assert defaults["app_vcpu_request"][0] == _cpu(profile["resources"]["requests"]["cpu"])
+    assert defaults["app_vcpu_request"][0] == _cpu(
+        profile["resources"]["requests"]["cpu"]
+    )
 
 
 def test_the_general_pool_holds_the_default_app_set_twice_over(tmp_path: Path) -> None:
@@ -2536,13 +3125,18 @@ def test_the_general_pool_holds_the_default_app_set_twice_over(tmp_path: Path) -
     assert int(limits["cpu"]) >= 2 * floor, (limits, floor)
 
 
-def test_the_general_memory_limit_follows_its_cpu_limit(tmp_path: Path, catalogue) -> None:
+def test_the_general_memory_limit_follows_its_cpu_limit(
+    tmp_path: Path, catalogue
+) -> None:
     _run(_dial(tmp_path, estimate=None), tmp_path)
     limits = _pools(tmp_path)["general"]["limits"]
     doc = json.loads((tmp_path / "sizing.auto.tfvars.json").read_text(encoding="utf-8"))
     shape = catalogue.types[doc["resolved_shapes"]["general"]["instance_types"][0]]
     nodes = int(limits["cpu"]) / shape.vcpu
-    assert limits["memory"] == f"{round(shape.memory_gib * nodes)}Gi", (limits, shape.name)
+    assert limits["memory"] == f"{round(shape.memory_gib * nodes)}Gi", (
+        limits,
+        shape.name,
+    )
 
 
 @pytest.mark.parametrize("focus", ["balanced", "performance"])
@@ -2558,7 +3152,9 @@ def test_the_focus_dial_moves_the_general_limit(tmp_path: Path, focus: str) -> N
     )
 
 
-def test_shared_pools_hold_still_through_a_deploys_readiness_window(tmp_path: Path) -> None:
+def test_shared_pools_hold_still_through_a_deploys_readiness_window(
+    tmp_path: Path,
+) -> None:
     """consolidateAfter restarts on every pod bind or removal, so a node the
     deploy filled is replaceable that long after its last pod landed. Inside
     the readiness bound, that replacement evicts pods the gate is waiting on."""
@@ -2582,7 +3178,9 @@ def test_the_general_nodepool_renders_its_sized_limit_and_consolidation_delay(
     assert result.returncode == 0, result.stderr
     docs = [d for d in yaml.safe_load_all(result.stdout) if d]
     nodepool = next(
-        d for d in docs if d["kind"] == "NodePool" and d["metadata"]["name"] == "general"
+        d
+        for d in docs
+        if d["kind"] == "NodePool" and d["metadata"]["name"] == "general"
     )
     assert nodepool["spec"]["limits"] == _pools(out)["general"]["limits"]
     assert int(nodepool["spec"]["limits"]["cpu"]) >= 2 * _scale_app_set_vcpu()
@@ -2717,7 +3315,9 @@ def _required_tf_variables(path: Path) -> set[str]:
     return required
 
 
-def test_the_two_tfvars_producers_compose_with_no_variable_defined_twice(tmp_path: Path) -> None:
+def test_the_two_tfvars_producers_compose_with_no_variable_defined_twice(
+    tmp_path: Path,
+) -> None:
     """OpenTofu auto-loads every *.auto.tfvars.json in the root directory in
     ALPHABETICAL ORDER, and a later file replaces a top-level key WHOLESALE
     rather than merging it -- gate-3-correctness.md P1-3, where
@@ -2755,7 +3355,9 @@ def test_the_two_tfvars_producers_compose_with_no_variable_defined_twice(tmp_pat
         )
     dial_vars = _render_dial_tofu_vars()
     _run(dial_path, tmp_path, cloud="aws")
-    sizing_vars = json.loads((tmp_path / "sizing.auto.tfvars.json").read_text(encoding="utf-8"))
+    sizing_vars = json.loads(
+        (tmp_path / "sizing.auto.tfvars.json").read_text(encoding="utf-8")
+    )
 
     overlap = set(dial_vars) & set(sizing_vars)
     assert not overlap, (
@@ -2784,7 +3386,9 @@ def test_the_two_tfvars_producers_compose_with_no_variable_defined_twice(tmp_pat
 # ---------------------------------------------------------------------------
 
 
-def test_the_no_estimate_floor_does_not_size_up_on_a_fixed_volume_profile(tmp_path: Path) -> None:
+def test_the_no_estimate_floor_does_not_size_up_on_a_fixed_volume_profile(
+    tmp_path: Path,
+) -> None:
     """Q27/Q29: 3 brokers, 3 ClickHouse replicas plus Keeper, economy, the
     smallest shape that does not OOM.
 
@@ -2837,7 +3441,11 @@ def test_the_no_estimate_floor_does_not_size_up_on_a_fixed_volume_profile(tmp_pa
     for a separate controller pool because the controller line is one of the
     seven above, and a combined quorum sizes no controller shape at all.
     """
-    _run(_dial(tmp_path, estimate=None, controller_pool="separate"), tmp_path, cloud="aws")
+    _run(
+        _dial(tmp_path, estimate=None, controller_pool="separate"),
+        tmp_path,
+        cloud="aws",
+    )
     report = (tmp_path / "sizing" / "scale.report.md").read_text(encoding="utf-8")
     rows = re.findall(r"\| \*\*total compute\*\* \| .*?\*\*([A-Z]{1,2})\*\* \|", report)
     assert rows, report
@@ -2858,7 +3466,9 @@ def test_the_no_estimate_floor_does_not_size_up_on_a_fixed_volume_profile(tmp_pa
     }, report
 
     doc = json.loads((tmp_path / "sizing.auto.tfvars.json").read_text(encoding="utf-8"))
-    shapes = {name: body["instance_types"][0] for name, body in doc["resolved_shapes"].items()}
+    shapes = {
+        name: body["instance_types"][0] for name, body in doc["resolved_shapes"].items()
+    }
     assert shapes["kafka-broker"] == "m8g.xlarge", shapes
     assert shapes["kraft-controller"] == "m8g.large", shapes
     assert shapes["clickhouse"] == "r8gd.large", shapes
@@ -2920,7 +3530,9 @@ def test_the_instance_store_cache_converts_gb_to_gib(catalogue) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("use_case", ["eks-system", "general", "ci-burst", "msk-broker", "toolbox"])
+@pytest.mark.parametrize(
+    "use_case", ["eks-system", "general", "ci-burst", "msk-broker", "toolbox"]
+)
 def test_a_node_override_on_a_nodeless_use_case_is_refused_by_name(
     tmp_path: Path, use_case: str, capsys
 ) -> None:
@@ -2955,11 +3567,17 @@ def test_az_count_reaches_the_catalogues_own_zone_slice(tmp_path: Path) -> None:
     2, not silently keep 3 -- proving the dial's az_count is read at all."""
     extra = "network:\n  az_count: 2"
     _run(_dial(tmp_path, extra=extra), tmp_path, cloud="aws")
-    doc = json.loads((tmp_path / "shapes" / "resolved" / "aws-us-west-2.json").read_text(encoding="utf-8"))
+    doc = json.loads(
+        (tmp_path / "shapes" / "resolved" / "aws-us-west-2.json").read_text(
+            encoding="utf-8"
+        )
+    )
     assert doc["_provenance"]["availability_zones"] == ["us-west-2a", "us-west-2b"]
 
 
-def test_az_count_above_the_fixtures_own_zone_count_is_refused_by_name(tmp_path: Path, capsys) -> None:
+def test_az_count_above_the_fixtures_own_zone_count_is_refused_by_name(
+    tmp_path: Path, capsys
+) -> None:
     """The committed fixture carries 3 zones; a dial asking for 4 cannot be
     validated against a zone the fixture never captured."""
     extra = "network:\n  az_count: 4"
@@ -2968,7 +3586,9 @@ def test_az_count_above_the_fixtures_own_zone_count_is_refused_by_name(tmp_path:
     assert "fewer than the 4" in err
 
 
-def test_az_count_out_of_the_tofu_roots_own_range_is_refused(tmp_path: Path, capsys) -> None:
+def test_az_count_out_of_the_tofu_roots_own_range_is_refused(
+    tmp_path: Path, capsys
+) -> None:
     extra = "network:\n  az_count: 7"
     assert _run(_dial(tmp_path, extra=extra), tmp_path) == 1
     assert "network.az_count must be between 2 and 6" in capsys.readouterr().err
@@ -2980,7 +3600,9 @@ def test_the_broker_count_multiple_follows_az_count(tmp_path: Path) -> None:
     multiple regardless of how many zones the VPC spans."""
     extra = "network:\n  az_count: 5"
     _run(_dial(tmp_path, cloud="onprem", extra=extra), tmp_path, cloud="onprem")
-    doc = json.loads((tmp_path / "sizing" / "scale.nodes.json").read_text(encoding="utf-8"))
+    doc = json.loads(
+        (tmp_path / "sizing" / "scale.nodes.json").read_text(encoding="utf-8")
+    )
     assert doc["kafka-broker"]["count"] == 5
 
 
@@ -2997,7 +3619,11 @@ def test_fallbacks_never_undercut_the_volume_step_up(tmp_path: Path) -> None:
     fallback in the committed answer must carry at least the chosen type's own
     vCPU and memory."""
     _run(_dial(tmp_path), tmp_path, cloud="aws")
-    doc = json.loads((tmp_path / "shapes" / "resolved" / "aws-us-west-2.json").read_text(encoding="utf-8"))
+    doc = json.loads(
+        (tmp_path / "shapes" / "resolved" / "aws-us-west-2.json").read_text(
+            encoding="utf-8"
+        )
+    )
     live_catalogue = resolve_sizing.fetch_fixtures(FIXTURES, "us-west-2")
     for use_case, entry in doc.items():
         if use_case.startswith("_") or use_case == "msk-broker":
@@ -3053,7 +3679,11 @@ def test_fallbacks_never_undercut_the_volume_step_up(tmp_path: Path) -> None:
     for name in choice.fallbacks:
         candidate = catalogue_obj.types[name]
         assert candidate.vcpu >= choice.vcpu, (name, candidate.vcpu, choice.vcpu)
-        assert candidate.memory_gib >= choice.memory_gib, (name, candidate.memory_gib, choice.memory_gib)
+        assert candidate.memory_gib >= choice.memory_gib, (
+            name,
+            candidate.memory_gib,
+            choice.memory_gib,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -3095,10 +3725,19 @@ def test_a_fallback_list_holds_the_newest_generation_and_one_step_back(
     }
     demand = resolve_sizing.Node("eks-system", 3, 2, 8, 40, 0, 0, "test")
     choice = resolve_sizing.select_shape(
-        "eks-system", entry, demand, catalogue, "newest", [],
-        ROOT_VOLUME_DEMAND_MIB_S, ROOT_VOLUME_DEMAND_IOPS,
+        "eks-system",
+        entry,
+        demand,
+        catalogue,
+        "newest",
+        [],
+        ROOT_VOLUME_DEMAND_MIB_S,
+        ROOT_VOLUME_DEMAND_IOPS,
     )
-    listed = {catalogue.types[name].generation for name in (choice.instance_type, *choice.fallbacks)}
+    listed = {
+        catalogue.types[name].generation
+        for name in (choice.instance_type, *choice.fallbacks)
+    }
     assert listed == generations, [choice.instance_type, *choice.fallbacks]
 
 
@@ -3141,10 +3780,19 @@ def test_a6_catches_iops_per_gb_on_the_raw_shape_entry(catalogue) -> None:
     compute-shapes.yaml declares instead, which is where a future mistaken
     field name would actually appear."""
     choice = _choice(
-        volumes={"data": {"type": "gp3", "size_gib": 500, "iops": 3000, "throughput_mib_s": 500}}
+        volumes={
+            "data": {
+                "type": "gp3",
+                "size_gib": 500,
+                "iops": 3000,
+                "throughput_mib_s": 500,
+            }
+        }
     )
     entry = {"volumes": {"data": {"iopsPerGB": "50"}}}
-    findings = resolve_sizing.assert_caps(choice, entry, catalogue, 0, gp3_usd_per_gib_month=0.08)
+    findings = resolve_sizing.assert_caps(
+        choice, entry, catalogue, 0, gp3_usd_per_gib_month=0.08
+    )
     assert any(f.rule == "A6" and "iopsPerGB" in f.message for f in findings)
 
 

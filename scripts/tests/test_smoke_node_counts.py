@@ -27,18 +27,28 @@ from _smoke import run_smoke
 def test_each_node_count_is_printed_under_its_heading() -> None:
     out, counts = run_smoke({"otel_zero_answers": 0}, DFE_OTEL_WAIT="0")
     lines = out.stdout.splitlines()
-    heading = next((i for i, line in enumerate(lines) if "per-node counts:" in line), None)
+    heading = next(
+        (i for i, line in enumerate(lines) if "per-node counts:" in line), None
+    )
     expect("CORE 2 prints its per-node counts heading", heading is not None, out.stdout)
-    following = lines[heading + 1] if heading is not None and heading + 1 < len(lines) else ""
-    expect("the node's count is the next line",
-           following == f"    dfe-clickhouse-0: {counts['posted']}", f"got {following!r}")
+    following = (
+        lines[heading + 1] if heading is not None and heading + 1 < len(lines) else ""
+    )
+    expect(
+        "the node's count is the next line",
+        following == f"    dfe-clickhouse-0: {counts['posted']}",
+        f"got {following!r}",
+    )
 
 
 def test_the_assertion_still_runs() -> None:
     out, _ = run_smoke({"otel_zero_answers": 0}, DFE_OTEL_WAIT="0")
-    expect("the every-node check still reports",
-           "[PASS] fixture events posted to receiver land in dfe.main on EVERY ClickHouse node"
-           in out.stdout, out.stdout)
+    expect(
+        "the every-node check still reports",
+        "[PASS] fixture events posted to receiver land in dfe.main on EVERY ClickHouse node"
+        in out.stdout,
+        out.stdout,
+    )
 
 
 def main() -> int:

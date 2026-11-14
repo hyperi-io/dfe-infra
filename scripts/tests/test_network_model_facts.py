@@ -45,7 +45,9 @@ BOOTSTRAP = REPO_ROOT / "bootstrap" / "bootstrap.sh"
 RENDER_ENV = REPO_ROOT / "bootstrap" / "render_env.py"
 CLUSTER_SECRET = REPO_ROOT / "bootstrap" / "templates" / "cluster-secret.yaml.tpl"
 AWS_ROOT_OUTPUTS = REPO_ROOT / "terraform" / "environments" / "aws" / "outputs.tf"
-CLUSTER_OUTPUTS = REPO_ROOT / "terraform" / "modules" / "kubernetes-cluster" / "aws" / "outputs.tf"
+CLUSTER_OUTPUTS = (
+    REPO_ROOT / "terraform" / "modules" / "kubernetes-cluster" / "aws" / "outputs.tf"
+)
 COMMON = REPO_ROOT / "argocd" / "values" / "common.yaml"
 APPSET = Path("argocd/appsets/layer2-platform.yaml")
 
@@ -80,34 +82,57 @@ def model() -> dict:
 def test_the_aws_root_reads_both_ranges_off_the_cluster() -> None:
     outputs = AWS_ROOT_OUTPUTS.read_text(encoding="utf-8")
     assert 'output "DFE_POD_CIDR"' in outputs
-    assert "module.cluster.network.cidr" in outputs.split('output "DFE_POD_CIDR"')[1].split("output ")[0]
+    assert (
+        "module.cluster.network.cidr"
+        in outputs.split('output "DFE_POD_CIDR"')[1].split("output ")[0]
+    )
     assert 'output "DFE_SERVICE_CIDR"' in outputs
-    assert "module.cluster.service_cidr" in outputs.split('output "DFE_SERVICE_CIDR"')[1].split("output ")[0]
+    assert (
+        "module.cluster.service_cidr"
+        in outputs.split('output "DFE_SERVICE_CIDR"')[1].split("output ")[0]
+    )
     cluster = CLUSTER_OUTPUTS.read_text(encoding="utf-8")
-    assert "one(aws_eks_cluster.this.kubernetes_network_config[*].service_ipv4_cidr)" in cluster
+    assert (
+        "one(aws_eks_cluster.this.kubernetes_network_config[*].service_ipv4_cidr)"
+        in cluster
+    )
 
 
 def _bootstrap_block() -> str:
     """bootstrap.sh's own block, run on its own rather than copied here."""
     lines = BOOTSTRAP.read_text(encoding="utf-8").splitlines()
     start = lines.index('export DFE_POD_CIDR="${DFE_POD_CIDR:-}"')
-    end = next(i for i, line in enumerate(lines) if line.startswith("export DFE_SERVICE_CIDR_ANNOTATION="))
+    end = next(
+        i
+        for i, line in enumerate(lines)
+        if line.startswith("export DFE_SERVICE_CIDR_ANNOTATION=")
+    )
     return "\n".join(lines[start : end + 1])
 
 
 def _run_block(**env: str) -> subprocess.CompletedProcess:
-    script = _bootstrap_block() + '\nprintf "%s\\n%s\\n" "$DFE_POD_CIDR_ANNOTATION" "$DFE_SERVICE_CIDR_ANNOTATION"'
+    script = (
+        _bootstrap_block()
+        + '\nprintf "%s\\n%s\\n" "$DFE_POD_CIDR_ANNOTATION" "$DFE_SERVICE_CIDR_ANNOTATION"'
+    )
     return subprocess.run(
         ["bash", "-euo", "pipefail", "-c", script],
         env={"PATH": "/usr/bin:/bin", **env},
-        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
     )
 
 
 def test_both_ranges_write_both_annotations() -> None:
     done = _run_block(DFE_POD_CIDR=POD, DFE_SERVICE_CIDR=SERVICE)
     assert done.returncode == 0, done.stderr
-    assert done.stdout.splitlines() == [f'{POD_KEY}: "{POD}"', f'{SERVICE_KEY}: "{SERVICE}"']
+    assert done.stdout.splitlines() == [
+        f'{POD_KEY}: "{POD}"',
+        f'{SERVICE_KEY}: "{SERVICE}"',
+    ]
 
 
 def test_a_root_that_names_neither_writes_neither() -> None:
@@ -137,7 +162,11 @@ def test_the_cluster_secret_carries_both_annotations() -> None:
             "DFE_POD_CIDR_ANNOTATION": f'{POD_KEY}: "{POD}"',
             "DFE_SERVICE_CIDR_ANNOTATION": f'{SERVICE_KEY}: "{SERVICE}"',
         },
-        capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=True,
     ).stdout
     annotations = yaml.safe_load(rendered)["metadata"]["annotations"]
     assert annotations[POD_KEY] == POD
@@ -148,7 +177,11 @@ def test_the_cluster_secret_carries_both_annotations() -> None:
 
 
 @functools.cache
-def policies(cloud: str, facts: tuple[tuple[str, str], ...], overlays: tuple[tuple[str, str], ...] = ()) -> tuple[dict, ...]:
+def policies(
+    cloud: str,
+    facts: tuple[tuple[str, str], ...],
+    overlays: tuple[tuple[str, str], ...] = (),
+) -> tuple[dict, ...]:
     """network-policies as layer2-platform's Application renders it.
 
     ``overlays`` are deploy-repo files under infra/, as (name, YAML text).
@@ -163,7 +196,9 @@ def policies(cloud: str, facts: tuple[tuple[str, str], ...], overlays: tuple[tup
         if e["app"] == "network-policies"
     )
     target = w.Target(element["app"], "scale", cloud, annotations=facts)
-    app = w.expand_template(doc["spec"]["template"], {**w.generator_params(target, None), **element}, helm())
+    app = w.expand_template(
+        doc["spec"]["template"], {**w.generator_params(target, None), **element}, helm()
+    )
     source = app["spec"]["sources"][0]
     chart = REPO_ROOT / source["path"]
     with tempfile.TemporaryDirectory() as tmp:
@@ -173,10 +208,19 @@ def policies(cloud: str, facts: tuple[tuple[str, str], ...], overlays: tuple[tup
             (deploy / "infra" / name).write_text(text, encoding="utf-8")
         chain = []
         for raw in source["helm"].get("valueFiles") or []:
-            path = deploy / raw.removeprefix("$values/") if raw.startswith("$values/") else (chart / raw).resolve()
+            path = (
+                deploy / raw.removeprefix("$values/")
+                if raw.startswith("$values/")
+                else (chart / raw).resolve()
+            )
             chain.append({"written": raw, "path": path, "present": path.is_file()})
         docs = w.render_source(
-            source, chart=chart, release=element["app"], namespace=element["namespace"], chain=chain, helm=helm()
+            source,
+            chart=chart,
+            release=element["app"],
+            namespace=element["namespace"],
+            chain=chain,
+            helm=helm(),
         )
     return tuple(d for d in docs if d.get("kind") == "NetworkPolicy")
 
@@ -195,7 +239,9 @@ def carve_outs(rendered: tuple[dict, ...]) -> list[set[str]]:
 
 
 def aws(*overlays: tuple[str, str]) -> list[set[str]]:
-    return carve_outs(policies("aws", tuple(sorted({**AWS_RANGES, **MANAGED}.items())), overlays))
+    return carve_outs(
+        policies("aws", tuple(sorted({**AWS_RANGES, **MANAGED}.items())), overlays)
+    )
 
 
 def test_an_aws_cluster_carves_link_local_only() -> None:
@@ -212,13 +258,17 @@ def test_an_aws_carve_out_never_covers_the_service_range() -> None:
     """
     service = ipaddress.ip_network(SERVICE)
     for found in aws():
-        assert not any(service.overlaps(ipaddress.ip_network(cidr)) for cidr in found), found
+        assert not any(
+            service.overlaps(ipaddress.ip_network(cidr)) for cidr in found
+        ), found
 
 
 def test_a_broker_in_the_vpc_stays_reachable() -> None:
     """MSK brokers and PrivateLink endpoints sit in the private subnets pods draw from."""
     for found in aws():
-        assert not any(IN_VPC_BROKER in ipaddress.ip_network(cidr) for cidr in found), found
+        assert not any(IN_VPC_BROKER in ipaddress.ip_network(cidr) for cidr in found), (
+            found
+        )
 
 
 def test_a_cluster_with_no_facts_keeps_the_common_ranges() -> None:

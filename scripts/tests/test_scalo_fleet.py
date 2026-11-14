@@ -234,7 +234,10 @@ class SlugTests(unittest.TestCase):
     """Branch names have to be deterministic, so a re-run reuses its own PR."""
 
     def test_subject_becomes_a_git_safe_branch_fragment(self) -> None:
-        assert sf._slugify("fix: the WorkBatch recv model") == "fix-the-workbatch-recv-model"
+        assert (
+            sf._slugify("fix: the WorkBatch recv model")
+            == "fix-the-workbatch-recv-model"
+        )
 
     def test_same_input_gives_the_same_slug(self) -> None:
         assert sf._slugify("fix: x") == sf._slugify("fix: x")
@@ -253,7 +256,10 @@ class PrNumberTests(unittest.TestCase):
     """gh prints the new PR's URL; the list endpoint is eventually consistent."""
 
     def test_number_is_read_from_the_url(self) -> None:
-        assert sf._pr_number_from_url("https://github.com/hyperi-io/scalo-rs/pull/4213\n") == 4213
+        assert (
+            sf._pr_number_from_url("https://github.com/hyperi-io/scalo-rs/pull/4213\n")
+            == 4213
+        )
 
     def test_no_url_is_not_a_number(self) -> None:
         assert sf._pr_number_from_url("Warning: something else entirely") is None
@@ -378,7 +384,12 @@ class FindRunForShaTests(OnPathTestCase):
 
     def test_a_snapshotted_run_is_refused(self) -> None:
         _fake_bin(self.bindir, "gh", stdout=self.PAYLOAD)
-        assert sf.find_run_for_sha("hyperi-io/dfe-engine", "abc123", after_run_id=33054900002) is None
+        assert (
+            sf.find_run_for_sha(
+                "hyperi-io/dfe-engine", "abc123", after_run_id=33054900002
+            )
+            is None
+        )
 
 
 class PollRunTests(OnPathTestCase):
@@ -562,10 +573,14 @@ class RebuildRsTests(OnPathTestCase):
         with pytest.raises(SystemExit):
             self._args("--gate", "remote")
 
-    def test_a_worktree_named_anything_builds_its_repos_app_and_the_main_checkout_stays_on_main(self) -> None:
+    def test_a_worktree_named_anything_builds_its_repos_app_and_the_main_checkout_stays_on_main(
+        self,
+    ) -> None:
         wt = self.repo.parent / "ga-rebuild"
         _git(self.repo, "worktree", "add", "-b", "scratch", str(wt))
-        args = sf.build_parser().parse_args(["rebuild-rs", str(wt), "2.11.0", "--no-tests"])
+        args = sf.build_parser().parse_args(
+            ["rebuild-rs", str(wt), "2.11.0", "--no-tests"]
+        )
         assert sf.cmd_rebuild_rs(args) == 0
         argv = _fake_argv(self.bindir, "cargo")
         assert argv[argv.index("--bin") + 1] == "dfe-receiver"
@@ -707,19 +722,28 @@ class GateFeaturesTests(OnPathTestCase):
         self.repo = Path(repo_tmp.name)
 
     def _metadata(self, payload: dict) -> None:
-        _fake_bin(self.bindir, "cargo", routes=[(_METADATA_CALL, json.dumps(payload))], status=1)
+        _fake_bin(
+            self.bindir,
+            "cargo",
+            routes=[(_METADATA_CALL, json.dumps(payload))],
+            status=1,
+        )
 
     def test_nothing_excluded_is_all_features_and_asks_cargo_nothing(self) -> None:
         assert _gate_features(self.repo, []) == ["--all-features"]
         assert _fake_argv(self.bindir, "cargo") == []
 
-    def test_the_excluded_feature_and_every_feature_that_turns_it_on_are_dropped(self) -> None:
+    def test_the_excluded_feature_and_every_feature_that_turns_it_on_are_dropped(
+        self,
+    ) -> None:
         # `full` is the umbrella: listing it would link unixODBC all over again.
         self._metadata(_FETCHER_METADATA)
         assert _gate_features(self.repo, ["dfe-fetcher-db/odbc"]) == _FETCHER_GATE
         assert _contains(_fake_argv(self.bindir, "cargo"), _METADATA_CALL.split()) != -1
 
-    def test_a_feature_reaching_it_through_a_renamed_weak_dependency_is_dropped(self) -> None:
+    def test_a_feature_reaching_it_through_a_renamed_weak_dependency_is_dropped(
+        self,
+    ) -> None:
         # A feature names a dependency by its Cargo.toml key, which a rename changes.
         payload = {
             "packages": [
@@ -768,14 +792,18 @@ class ReleaseTimeoutTests(unittest.TestCase):
 
     def test_a_node_that_sets_nothing_takes_the_default(self) -> None:
         assert _release_timeout(_suite_node("dfe-loader"), "dfe-loader", 7200) == 7200
-        assert _release_timeout(_suite_node("not-a-suite-member-xyzzy"), "x", 3600) == 3600
+        assert (
+            _release_timeout(_suite_node("not-a-suite-member-xyzzy"), "x", 3600) == 3600
+        )
 
     def test_minutes_are_returned_as_seconds(self) -> None:
         assert _release_timeout({"release_timeout_minutes": "90"}, "app", 7200) == 5400
 
     def test_a_value_that_is_not_quoted_whole_minutes_is_refused(self) -> None:
         for bad in ("0", "-5", "4h", "2.5", "", " 60", 300, True, ["60"]):
-            with pytest.raises(sf.FleetError, match=re.escape(f"minutes is {bad!r}, not")):
+            with pytest.raises(
+                sf.FleetError, match=re.escape(f"minutes is {bad!r}, not")
+            ):
                 _release_timeout({"release_timeout_minutes": bad}, "app", 7200)
 
 
@@ -811,7 +839,9 @@ class RebuildRsGateFeaturesTests(OnPathTestCase):
         os.environ["SCALO_REBUILD_TARGET"] = str(root / "target")
 
     def _rebuild(self, *extra: str) -> str:
-        args = sf.build_parser().parse_args(["rebuild-rs", str(self.repo), "2.11.0", *extra])
+        args = sf.build_parser().parse_args(
+            ["rebuild-rs", str(self.repo), "2.11.0", *extra]
+        )
         buffer = io.StringIO()
         with contextlib.redirect_stdout(buffer):
             assert sf.cmd_rebuild_rs(args) == 0
@@ -820,7 +850,15 @@ class RebuildRsGateFeaturesTests(OnPathTestCase):
     def test_clippy_and_the_test_suite_build_without_the_excluded_feature(self) -> None:
         output = self._rebuild()
         argv = _fake_argv(self.bindir, "cargo")
-        clippy = ["clippy", "--workspace", "--all-targets", *_FETCHER_GATE, "--", "-D", "warnings"]
+        clippy = [
+            "clippy",
+            "--workspace",
+            "--all-targets",
+            *_FETCHER_GATE,
+            "--",
+            "-D",
+            "warnings",
+        ]
         assert _contains(argv, clippy) != -1
         assert _contains(argv, ["nextest", "run", "--workspace", *_FETCHER_GATE]) != -1
         assert "--all-features" not in argv
@@ -952,7 +990,9 @@ class LandOnMainTests(unittest.TestCase):
         self._land()
         # The remote's main still ends at the other person's commit: the fleet
         # lands through a PR, never a push.
-        assert _git(self.origin, "log", "-1", "--format=%s", "main") == "fix: someone else"
+        assert (
+            _git(self.origin, "log", "-1", "--format=%s", "main") == "fix: someone else"
+        )
 
     def test_branch_reaches_the_remote(self) -> None:
         (self.work / "FIX.md").write_text("the fix\n", encoding="utf-8")
@@ -988,7 +1028,10 @@ class LandOnMainTests(unittest.TestCase):
             "release/the-fix",
             cwd=self.work,
         )
-        assert _git(self.origin, "log", "-1", "--format=%s", "release/the-fix") == "fix: the thing"
+        assert (
+            _git(self.origin, "log", "-1", "--format=%s", "release/the-fix")
+            == "fix: the thing"
+        )
 
     def test_head_sha_and_branch_report_the_truth(self) -> None:
         (self.work / "FIX.md").write_text("the fix\n", encoding="utf-8")
@@ -1058,7 +1101,9 @@ class SyncMainTests(unittest.TestCase):
                 assert "already used by worktree" not in message
         assert sf.current_branch(self.work) == "some-side-branch"
 
-    def test_a_linked_worktree_detaches_at_origin_main_and_leaves_main_alone(self) -> None:
+    def test_a_linked_worktree_detaches_at_origin_main_and_leaves_main_alone(
+        self,
+    ) -> None:
         # The fleet runs in a worktree called anything, while the repo's main
         # checkout stays on main and nobody borrows it.
         wt = Path(self._tmp.name) / "ga-rebuild"
@@ -1078,7 +1123,9 @@ class SyncMainTests(unittest.TestCase):
         sf.sync_main(wt, dry_run=False)
         assert "my wip" in (wt / "a.txt").read_text(encoding="utf-8")
 
-    def test_after_a_merge_a_linked_worktree_detaches_and_the_main_checkout_is_untouched(self) -> None:
+    def test_after_a_merge_a_linked_worktree_detaches_and_the_main_checkout_is_untouched(
+        self,
+    ) -> None:
         wt = Path(self._tmp.name) / "ga-rebuild"
         _git(self.work, "worktree", "add", "-b", "some-side-branch", str(wt))
         sf.return_to_main(wt)
@@ -1095,7 +1142,13 @@ class SyncMainTests(unittest.TestCase):
     def test_the_repo_name_comes_from_the_remote_not_the_directory(self) -> None:
         named = Path(self._tmp.name) / "named"
         origin = _git(self.work, "remote", "get-url", "origin")
-        _git(self.work, "remote", "set-url", "origin", origin.replace("origin.git", "dfe-fetcher.git"))
+        _git(
+            self.work,
+            "remote",
+            "set-url",
+            "origin",
+            origin.replace("origin.git", "dfe-fetcher.git"),
+        )
         _git(self.work, "worktree", "add", "-b", "x", str(named))
         assert sf.repo_slug(named, "hyperi-io") == "hyperi-io/dfe-fetcher"
 
@@ -1130,7 +1183,9 @@ class PyConstraintTests(unittest.TestCase):
         assert '"httpx>=0.27"' in text
 
     def test_an_upper_bound_survives_the_floor_moving(self) -> None:
-        self._pyproject('dependencies = ["scalo[expression,http,metrics]>=2.31.5,<3"]\n')
+        self._pyproject(
+            'dependencies = ["scalo[expression,http,metrics]>=2.31.5,<3"]\n'
+        )
         sf._bump_py_constraint(self.repo, "2.31.6")
         text = (self.repo / "pyproject.toml").read_text(encoding="utf-8")
         assert '"scalo[expression,http,metrics]>=2.31.6,<3"' in text
@@ -1138,7 +1193,9 @@ class PyConstraintTests(unittest.TestCase):
     def test_a_bare_scalo_constraint_also_moves(self) -> None:
         self._pyproject('dependencies = ["scalo>=2.0.0"]\n')
         sf._bump_py_constraint(self.repo, "2.29.10")
-        assert '"scalo>=2.29.10"' in (self.repo / "pyproject.toml").read_text(encoding="utf-8")
+        assert '"scalo>=2.29.10"' in (self.repo / "pyproject.toml").read_text(
+            encoding="utf-8"
+        )
 
     def test_a_missing_constraint_is_a_hard_failure(self) -> None:
         self._pyproject('dependencies = ["httpx>=0.27"]\n')
@@ -1206,11 +1263,19 @@ class CliTests(unittest.TestCase):
 
     def test_rebuild_rs_takes_release_unoptimized_and_rebuild_py_does_not(self) -> None:
         # dfe-engine is Python and has no optimisation stage to consent to skipping.
-        rs = sf.build_parser().parse_args(["rebuild-rs", "/x", "1.0.0", "--release-unoptimized"])
+        rs = sf.build_parser().parse_args(
+            ["rebuild-rs", "/x", "1.0.0", "--release-unoptimized"]
+        )
         assert rs.release_unoptimized
-        assert not sf.build_parser().parse_args(["rebuild-rs", "/x", "1.0.0"]).release_unoptimized
+        assert (
+            not sf.build_parser()
+            .parse_args(["rebuild-rs", "/x", "1.0.0"])
+            .release_unoptimized
+        )
         with pytest.raises(SystemExit):
-            sf.build_parser().parse_args(["rebuild-py", "/x", "1.0.0", "--release-unoptimized"])
+            sf.build_parser().parse_args(
+                ["rebuild-py", "/x", "1.0.0", "--release-unoptimized"]
+            )
 
     def test_a_subcommand_is_required(self) -> None:
         with pytest.raises(SystemExit):
@@ -1288,7 +1353,11 @@ def _caller_yml(
     passes = ""
     for name in _CONSENT:
         block = f'      {name}:\n        type: string\n        required: false\n        default: ""\n'
-        line = f"      {name}: " + values.get(name, "${{ inputs." + name + " || '' }}") + "\n"
+        line = (
+            f"      {name}: "
+            + values.get(name, "${{ inputs." + name + " || '' }}")
+            + "\n"
+        )
         if name in commented:
             inputs += _commented(block)
             passes += _commented(line)
@@ -1310,7 +1379,12 @@ def _contains(seq: Sequence[str], sub: Sequence[str]) -> int:
 
 
 def _dispatching_gh(
-    directory: Path, *, sha: str, push_run: int, dispatch_run: int, push_appears: int = 1
+    directory: Path,
+    *,
+    sha: str,
+    push_run: int,
+    dispatch_run: int,
+    push_appears: int = 1,
 ) -> None:
     """A gh stand-in for a whole land-then-dispatch release.
 
@@ -1336,7 +1410,9 @@ def _dispatching_gh(
         '{"status":"completed","conclusion":"success",'
         '"jobs":[{"name":"publish","conclusion":"success"}]}'
     )
-    clean = '{"mergeStateStatus":"CLEAN","mergeable":"MERGEABLE","statusCheckRollup":[]}'
+    clean = (
+        '{"mergeStateStatus":"CLEAN","mergeable":"MERGEABLE","statusCheckRollup":[]}'
+    )
     lines = [
         "#!/bin/sh",
         f'printf "%s\\n" "$@" >> "{directory / "gh.argv"}"',
@@ -1344,15 +1420,15 @@ def _dispatching_gh(
         f'  *" workflow run "*) : > "{marker}"; exit 0 ;;',
         '  *" run list "*)',
         f'    echo x >> "{count}"',
-        f'    if [ -e "{marker}" ]; then echo \'{after_rows}\'',
+        f"    if [ -e \"{marker}\" ]; then echo '{after_rows}'",
         # Unquoted: BSD wc pads the count with spaces, which word splitting drops.
-        f'    elif [ $(wc -l < "{count}") -ge {push_appears} ]; then echo \'{before_rows}\'',
+        f"    elif [ $(wc -l < \"{count}\") -ge {push_appears} ]; then echo '{before_rows}'",
         "    else echo '[]'; fi",
         "    exit 0 ;;",
         f"  *\" run view \"*) echo '{green}'; exit 0 ;;",
         '  *" release list "*)',
         f'    if [ -e "{marker}" ]; then echo \'[{{"tagName":"v1.0.1"}}]\'; '
-        "else echo '[{\"tagName\":\"v1.0.0\"}]'; fi",
+        'else echo \'[{"tagName":"v1.0.0"}]\'; fi',
         "    exit 0 ;;",
         "  *\" pr list \"*) echo '[]'; exit 0 ;;",
         '  *" pr create "*) echo "https://github.com/example-org/dfe-app/pull/7"; exit 0 ;;',
@@ -1397,14 +1473,17 @@ class UnoptimizedCallerTests(unittest.TestCase):
 
     def test_a_missing_input_is_named_and_nothing_else(self) -> None:
         message = self._check(_caller_yml(declared=("skip-optimize",)))
-        assert "on.workflow_dispatch.inputs.release-unoptimized is not declared" in message
+        assert (
+            "on.workflow_dispatch.inputs.release-unoptimized is not declared" in message
+        )
         assert "inputs.skip-optimize is not declared" not in message
         assert "does not pass" not in message
 
     def test_an_input_declared_but_not_forwarded_is_named(self) -> None:
         message = self._check(_caller_yml(forwarded=("skip-optimize",)))
-        assert "jobs.ci.with.release-unoptimized does not pass inputs.release-unoptimized" in (
-            message
+        assert (
+            "jobs.ci.with.release-unoptimized does not pass inputs.release-unoptimized"
+            in (message)
         )
         assert "is not declared" not in message
 
@@ -1521,7 +1600,15 @@ class RebuildRsUnoptimizedTests(OnPathTestCase):
     def _rebuild(self, *extra: str) -> tuple[int, str]:
         """Run the CLI handler; ``self.output`` keeps what it said even if it raises."""
         args = sf.build_parser().parse_args(
-            ["--org", "example-org", "rebuild-rs", str(self.repo), "2.11.0", "--no-tests", *extra]
+            [
+                "--org",
+                "example-org",
+                "rebuild-rs",
+                str(self.repo),
+                "2.11.0",
+                "--no-tests",
+                *extra,
+            ]
         )
         self.output = io.StringIO()
         with contextlib.redirect_stdout(self.output):
@@ -1546,14 +1633,20 @@ class RebuildRsUnoptimizedTests(OnPathTestCase):
         assert "carries no release trailer" in output
 
         # The caller edit made in the tree is folded into the release commit.
-        touched = _git(self.origin, "show", "--name-only", "--format=", self.BRANCH).split()
+        touched = _git(
+            self.origin, "show", "--name-only", "--format=", self.BRANCH
+        ).split()
         assert ".github/workflows/ci.yml" in touched
 
         # Exactly that dispatch, and no other input: -f appears only there.
         dispatched = _contains(argv, self.DISPATCH)
         assert dispatched != -1
         inputs = [argv[i + 1] for i, arg in enumerate(argv) if arg == "-f"]
-        assert inputs == ["from-head=true", "skip-optimize=true", "release-unoptimized=true"]
+        assert inputs == [
+            "from-head=true",
+            "skip-optimize=true",
+            "release-unoptimized=true",
+        ]
 
         # The merge's push run is waited for BEFORE the dispatch, so it cannot
         # register later and cancel the release in the concurrency group.
@@ -1623,7 +1716,9 @@ class RebuildRsUnoptimizedTests(OnPathTestCase):
             "and .hyperi-ci.yaml sets build.skip_optimize: true"
         ) in output
 
-    def test_a_push_run_that_registers_late_is_waited_for_before_the_dispatch(self) -> None:
+    def test_a_push_run_that_registers_late_is_waited_for_before_the_dispatch(
+        self,
+    ) -> None:
         # Dispatching first would let the push run, registering after it, cancel
         # the release in the workflow's concurrency group. Costs one 5s poll.
         _dispatching_gh(
@@ -1671,7 +1766,9 @@ class RebuildRsUnoptimizedTests(OnPathTestCase):
         message = str(caught.value)
         # macOS parks temp dirs behind a /var -> /private/var symlink.
         assert str(self.caller) in message or str(self.caller.resolve()) in message
-        assert "on.workflow_dispatch.inputs.release-unoptimized is not declared" in message
+        assert (
+            "on.workflow_dispatch.inputs.release-unoptimized is not declared" in message
+        )
         # Refused before any cargo step and before anything reached the remote.
         assert _fake_argv(self.bindir, "cargo") == []
         assert _git(self.origin, "branch", "--list", "scalo/*") == ""
@@ -1685,9 +1782,14 @@ class RebuildRsUnoptimizedTests(OnPathTestCase):
             "preflight: .github/workflows/ci.yml declares and forwards "
             "skip-optimize and release-unoptimized"
         ) in output
-        assert f"would land it on {self.SLUG} main via a PR without the release trailer" in output
+        assert (
+            f"would land it on {self.SLUG} main via a PR without the release trailer"
+            in output
+        )
         assert "gh " + " ".join(self.DISPATCH) in output
-        assert "would follow the dispatched run until the GitHub release moves" in output
+        assert (
+            "would follow the dispatched run until the GitHub release moves" in output
+        )
         # A dry run: the checkout and the remote are untouched.
         assert sf.head_sha(self.repo) == before
         assert _fake_argv(self.bindir, "cargo") == []
@@ -1707,7 +1809,9 @@ class DispatchReleaseTests(OnPathTestCase):
 
     SLUG = "example-org/dfe-app"
 
-    def test_the_run_already_on_the_sha_is_refused_and_the_dispatch_followed(self) -> None:
+    def test_the_run_already_on_the_sha_is_refused_and_the_dispatch_followed(
+        self,
+    ) -> None:
         _dispatching_gh(self.bindir, sha="abc123", push_run=100, dispatch_run=200)
         buffer = io.StringIO()
         with contextlib.redirect_stdout(buffer):
@@ -1735,7 +1839,10 @@ class RunAppearHintTests(OnPathTestCase):
 
     def _dispatch(self, *, just_merged: bool) -> str:
         """Dispatch the consented release with no time for any run to register."""
-        with pytest.raises(sf.FleetError) as caught, contextlib.redirect_stdout(io.StringIO()):
+        with (
+            pytest.raises(sf.FleetError) as caught,
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
             dispatch_release(
                 repo=self.bindir,
                 slug=self.SLUG,
@@ -1750,9 +1857,14 @@ class RunAppearHintTests(OnPathTestCase):
         return str(caught.value)
 
     def test_a_trailer_release_still_names_hyperi_ci_release(self) -> None:
-        with pytest.raises(sf.FleetError) as caught, contextlib.redirect_stdout(io.StringIO()):
+        with (
+            pytest.raises(sf.FleetError) as caught,
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
             sf.await_run(self.SLUG, "abc123", timeout=0)
-        assert "`hyperi-ci release` from a checkout sitting on that commit" in str(caught.value)
+        assert "`hyperi-ci release` from a checkout sitting on that commit" in str(
+            caught.value
+        )
 
     def test_a_missing_push_run_names_the_consented_dispatch(self) -> None:
         # hyperi-ci release carries no consent, so naming it here sends the

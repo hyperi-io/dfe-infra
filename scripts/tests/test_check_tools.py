@@ -47,7 +47,9 @@ def _bin(tmp_path: Path, tools: list[str]) -> Path:
     return directory
 
 
-def _check(path: Path, *args: str, cloud: str | None = None) -> subprocess.CompletedProcess[str]:
+def _check(
+    path: Path, *args: str, cloud: str | None = None
+) -> subprocess.CompletedProcess[str]:
     env = {"PATH": str(path)}
     if cloud is not None:
         env["DFE_CLOUD"] = cloud
@@ -85,7 +87,11 @@ def test_expected_fail_each_missing_tool_is_named_with_what_needs_it(
 def test_expected_fail_every_missing_tool_is_named_at_once(tmp_path: Path) -> None:
     done = _check(_bin(tmp_path, ["python3"]))
     assert done.returncode == 1
-    assert re.findall(r"^  (\S+): ", done.stderr, re.M) == ["kubectl", "helm", "openssl"]
+    assert re.findall(r"^  (\S+): ", done.stderr, re.M) == [
+        "kubectl",
+        "helm",
+        "openssl",
+    ]
 
 
 def test_expected_fail_an_empty_path_names_every_tool(tmp_path: Path) -> None:
@@ -96,7 +102,9 @@ def test_expected_fail_an_empty_path_names_every_tool(tmp_path: Path) -> None:
     assert re.findall(r"^  (\S+): ", done.stderr, re.M) == EVERY_CLOUD
 
 
-def test_expected_fail_a_tool_that_is_not_executable_does_not_count(tmp_path: Path) -> None:
+def test_expected_fail_a_tool_that_is_not_executable_does_not_count(
+    tmp_path: Path,
+) -> None:
     path = _bin(tmp_path, EVERY_CLOUD)
     (path / "helm").chmod(0o644)
     done = _check(path)
@@ -114,7 +122,9 @@ def test_expected_fail_an_aws_deployment_needs_the_aws_cli(tmp_path: Path) -> No
 def test_an_aws_deployment_with_the_aws_cli_passes(tmp_path: Path) -> None:
     done = _check(_bin(tmp_path, [*EVERY_CLOUD, "aws"]), cloud="aws")
     assert done.returncode == 0, done.stderr
-    assert done.stdout.strip() == "deploy tools on PATH: kubectl helm python3 openssl aws"
+    assert (
+        done.stdout.strip() == "deploy tools on PATH: kubectl helm python3 openssl aws"
+    )
 
 
 @pytest.mark.parametrize("cloud", ["local", "gcp", "azure", ""])
@@ -131,7 +141,8 @@ def test_the_cloud_flag_wins_over_dfe_cloud(tmp_path: Path) -> None:
 def test_every_tool_is_one_bootstrap_or_destroy_actually_runs() -> None:
     """A tool on the list that neither script runs would refuse a deploy for nothing."""
     scripts = "\n".join(
-        (BOOTSTRAP / name).read_text(encoding="utf-8") for name in ("bootstrap.sh", "destroy.sh")
+        (BOOTSTRAP / name).read_text(encoding="utf-8")
+        for name in ("bootstrap.sh", "destroy.sh")
     )
     listed = [tool for tool, _ in check_tools.TOOLS]
     listed += [tool for tools in check_tools.CLOUD_TOOLS.values() for tool, _ in tools]
@@ -142,7 +153,11 @@ def test_every_tool_is_one_bootstrap_or_destroy_actually_runs() -> None:
 def test_bootstrap_checks_its_tools_before_anything_else_runs() -> None:
     """Anything ahead of the check could reach the cluster with a tool missing."""
     lines = (BOOTSTRAP / "bootstrap.sh").read_text(encoding="utf-8").splitlines()
-    code = [line.strip() for line in lines if line.strip() and not line.lstrip().startswith("#")]
+    code = [
+        line.strip()
+        for line in lines
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
     check = code.index('python3 "${SCRIPT_DIR}/check_tools.py"')
     before = code[:check]
     assert before[0] == "set -euo pipefail"

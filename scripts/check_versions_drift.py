@@ -68,7 +68,9 @@ def _parse_nested(text: str) -> dict:
         if not raw.strip() or raw.lstrip().startswith("#"):
             continue
         indent = len(raw) - len(raw.lstrip())
-        m = re.match(r'^([A-Za-z0-9_.-]+):\s*(?:"([^"]*)"|([^#]*?))?\s*(?:#.*)?$', raw.strip())
+        m = re.match(
+            r'^([A-Za-z0-9_.-]+):\s*(?:"([^"]*)"|([^#]*?))?\s*(?:#.*)?$', raw.strip()
+        )
         if not m:
             continue
         key, quoted = m.group(1), m.group(2)
@@ -247,7 +249,8 @@ _APPSET_PINS = [
 ]
 
 CHECKS: list[Check] = [
-    Check(label, key, Path(f), appset_chart_pattern(chart)) for label, key, f, chart in _APPSET_PINS
+    Check(label, key, Path(f), appset_chart_pattern(chart))
+    for label, key, f, chart in _APPSET_PINS
 ]
 
 
@@ -341,8 +344,16 @@ CHECKS += [
         full_ref_pattern(field, repository, half),
     )
     for field, repository, key in (
-        ("documentDB", "ghcr.io/documentdb/documentdb-kubernetes-operator/documentdb", "documentdb"),
-        ("gateway", "ghcr.io/documentdb/documentdb-kubernetes-operator/gateway", "documentdb-gateway"),
+        (
+            "documentDB",
+            "ghcr.io/documentdb/documentdb-kubernetes-operator/documentdb",
+            "documentdb",
+        ),
+        (
+            "gateway",
+            "ghcr.io/documentdb/documentdb-kubernetes-operator/gateway",
+            "documentdb-gateway",
+        ),
         ("postgres", "ghcr.io/cloudnative-pg/postgresql", "documentdb-postgres"),
     )
     for half in ("tag", "digest")
@@ -699,7 +710,13 @@ CHECKS += [
 
 # The EKS add-on pins, mirrored into the aws root's example tfvars: render_dial.py
 # renders the same pins into a deployment's own eks_addon_versions.
-_EKS_ADDONS = ("aws-ebs-csi-driver", "coredns", "eks-pod-identity-agent", "kube-proxy", "vpc-cni")
+_EKS_ADDONS = (
+    "aws-ebs-csi-driver",
+    "coredns",
+    "eks-pod-identity-agent",
+    "kube-proxy",
+    "vpc-cni",
+)
 CHECKS += [
     Check(
         f"EKS add-on {addon} (aws example.tfvars.json eks_addon_versions)",
@@ -757,7 +774,6 @@ _CONTRACT_ENTRIES = [
 ]
 
 
-
 def content_ref_pattern(role: str, app: str, half: str) -> str:
     """One half of a content entry's `ref`, anchored on the entry's role and app.
 
@@ -766,8 +782,13 @@ def content_ref_pattern(role: str, app: str, half: str) -> str:
     for an app gets its own check, since a check claims its FIRST match only.
     """
     head = (
-        r"role: " + re.escape(role) + r"\n\s*app: " + re.escape(app)
-        + r"\n\s*ref: \"ghcr\.io/hyperi-io/" + re.escape(app) + ":"
+        r"role: "
+        + re.escape(role)
+        + r"\n\s*app: "
+        + re.escape(app)
+        + r"\n\s*ref: \"ghcr\.io/hyperi-io/"
+        + re.escape(app)
+        + ":"
     )
     return head + (r"([^\"@]+)@" if half == "tag" else r"[^\"@]+@([^\"]+)\"")
 
@@ -900,7 +921,9 @@ def chart_pin_pattern(service: str) -> str:
 
 def chart_digest_keys(versions: dict[str, str]) -> set[str]:
     """The services the selected stack pins a chart digest for."""
-    return {key.split(".", 1)[1] for key in versions if key.startswith("chart-digests.")}
+    return {
+        key.split(".", 1)[1] for key in versions if key.startswith("chart-digests.")
+    }
 
 
 CHECKS += [
@@ -957,30 +980,106 @@ def chart_pin_problems(versions: dict[str, str], texts: dict[Path, str]) -> list
 # own, so there is only ever one ClickHouse version to keep in step with.
 _TOOLBOX_ARGS = [
     # (label, versions.yaml key, Dockerfile, ARG name)
-    ("toolbox base image Debian base", "toolbox.debian", "docker/dfe-toolbox/base/Dockerfile", "DEBIAN_TAG"),
-    ("toolbox base image kubectl", "toolbox.kubectl", "docker/dfe-toolbox/base/Dockerfile", "KUBECTL_VERSION"),
-    ("toolbox base image helm", "toolbox.helm", "docker/dfe-toolbox/base/Dockerfile", "HELM_VERSION"),
-    ("toolbox base image argocd CLI", "toolbox.argocd-cli", "docker/dfe-toolbox/base/Dockerfile", "ARGOCD_VERSION"),
-    ("toolbox base image argocd image", "toolbox.argocd-cli-image", "docker/dfe-toolbox/base/Dockerfile", "ARGOCD_IMAGE"),
-    ("toolbox base image tofu", "toolbox.tofu", "docker/dfe-toolbox/base/Dockerfile", "TOFU_VERSION"),
-    ("toolbox base image yq", "toolbox.yq", "docker/dfe-toolbox/base/Dockerfile", "YQ_VERSION"),
-    ("toolbox base image yq image", "toolbox.yq-image", "docker/dfe-toolbox/base/Dockerfile", "YQ_IMAGE"),
-    ("toolbox base image clickhouse-client", "services.clickhouse-version", "docker/dfe-toolbox/base/Dockerfile", "CLICKHOUSE_VERSION"),
-    ("toolbox aws image base tag", "toolbox.dfe-toolbox", "docker/dfe-toolbox/aws/Dockerfile", "BASE_TAG"),
-    ("toolbox aws image aws-cli", "toolbox.aws-cli", "docker/dfe-toolbox/aws/Dockerfile", "AWS_CLI_VERSION"),
+    (
+        "toolbox base image Debian base",
+        "toolbox.debian",
+        "docker/dfe-toolbox/base/Dockerfile",
+        "DEBIAN_TAG",
+    ),
+    (
+        "toolbox base image kubectl",
+        "toolbox.kubectl",
+        "docker/dfe-toolbox/base/Dockerfile",
+        "KUBECTL_VERSION",
+    ),
+    (
+        "toolbox base image helm",
+        "toolbox.helm",
+        "docker/dfe-toolbox/base/Dockerfile",
+        "HELM_VERSION",
+    ),
+    (
+        "toolbox base image argocd CLI",
+        "toolbox.argocd-cli",
+        "docker/dfe-toolbox/base/Dockerfile",
+        "ARGOCD_VERSION",
+    ),
+    (
+        "toolbox base image argocd image",
+        "toolbox.argocd-cli-image",
+        "docker/dfe-toolbox/base/Dockerfile",
+        "ARGOCD_IMAGE",
+    ),
+    (
+        "toolbox base image tofu",
+        "toolbox.tofu",
+        "docker/dfe-toolbox/base/Dockerfile",
+        "TOFU_VERSION",
+    ),
+    (
+        "toolbox base image yq",
+        "toolbox.yq",
+        "docker/dfe-toolbox/base/Dockerfile",
+        "YQ_VERSION",
+    ),
+    (
+        "toolbox base image yq image",
+        "toolbox.yq-image",
+        "docker/dfe-toolbox/base/Dockerfile",
+        "YQ_IMAGE",
+    ),
+    (
+        "toolbox base image clickhouse-client",
+        "services.clickhouse-version",
+        "docker/dfe-toolbox/base/Dockerfile",
+        "CLICKHOUSE_VERSION",
+    ),
+    (
+        "toolbox aws image base tag",
+        "toolbox.dfe-toolbox",
+        "docker/dfe-toolbox/aws/Dockerfile",
+        "BASE_TAG",
+    ),
+    (
+        "toolbox aws image aws-cli",
+        "toolbox.aws-cli",
+        "docker/dfe-toolbox/aws/Dockerfile",
+        "AWS_CLI_VERSION",
+    ),
     (
         "toolbox aws image session-manager-plugin",
         "toolbox.aws-session-manager-plugin",
         "docker/dfe-toolbox/aws/Dockerfile",
         "AWS_SSM_PLUGIN_VERSION",
     ),
-    ("toolbox gcp image base tag", "toolbox.dfe-toolbox", "docker/dfe-toolbox/gcp/Dockerfile", "BASE_TAG"),
-    ("toolbox gcp image gcloud", "toolbox.gcloud", "docker/dfe-toolbox/gcp/Dockerfile", "GCLOUD_VERSION"),
-    ("toolbox azure image base tag", "toolbox.dfe-toolbox", "docker/dfe-toolbox/azure/Dockerfile", "BASE_TAG"),
-    ("toolbox azure image az-cli", "toolbox.az-cli", "docker/dfe-toolbox/azure/Dockerfile", "AZ_CLI_VERSION"),
+    (
+        "toolbox gcp image base tag",
+        "toolbox.dfe-toolbox",
+        "docker/dfe-toolbox/gcp/Dockerfile",
+        "BASE_TAG",
+    ),
+    (
+        "toolbox gcp image gcloud",
+        "toolbox.gcloud",
+        "docker/dfe-toolbox/gcp/Dockerfile",
+        "GCLOUD_VERSION",
+    ),
+    (
+        "toolbox azure image base tag",
+        "toolbox.dfe-toolbox",
+        "docker/dfe-toolbox/azure/Dockerfile",
+        "BASE_TAG",
+    ),
+    (
+        "toolbox azure image az-cli",
+        "toolbox.az-cli",
+        "docker/dfe-toolbox/azure/Dockerfile",
+        "AZ_CLI_VERSION",
+    ),
 ]
 CHECKS += [
-    Check(label, key, Path(f), docker_arg_pattern(arg)) for label, key, f, arg in _TOOLBOX_ARGS
+    Check(label, key, Path(f), docker_arg_pattern(arg))
+    for label, key, f, arg in _TOOLBOX_ARGS
 ]
 
 # tf-validate.yml installs tofu itself, so its TOFU_VERSION is a mirror of the
@@ -1454,7 +1553,9 @@ def plan_fix(
             if expected is None:
                 if pending_reason(check.key):
                     continue
-                refused.append(f"  [refused] {check.label}: versions.yaml has no key '{check.key}'")
+                refused.append(
+                    f"  [refused] {check.label}: versions.yaml has no key '{check.key}'"
+                )
                 continue
             found = extract_span(check)
             if found is None:
@@ -1517,8 +1618,16 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Check every version pin in the tree against versions.yaml."
     )
-    parser.add_argument("--fix", action="store_true", help="rewrite the mirrors that drifted, then re-verify")
-    parser.add_argument("--stack", default=None, help="the stacks.<version> block to audit (default: the `current` pointer)")
+    parser.add_argument(
+        "--fix",
+        action="store_true",
+        help="rewrite the mirrors that drifted, then re-verify",
+    )
+    parser.add_argument(
+        "--stack",
+        default=None,
+        help="the stacks.<version> block to audit (default: the `current` pointer)",
+    )
     return parser.parse_args(argv)
 
 
@@ -1528,7 +1637,11 @@ def main(argv: list[str] | None = None) -> int:
     versions = load_versions(args.stack)
     stack = versions["pointers.current"]
 
-    if fix and args.stack and args.stack != _parse_nested(VERSIONS_FILE.read_text()).get("current"):
+    if (
+        fix
+        and args.stack
+        and args.stack != _parse_nested(VERSIONS_FILE.read_text()).get("current")
+    ):
         raise SystemExit(
             f"--fix WRITES the tree, and the tree mirrors `current`; refusing to "
             f"propagate stack {args.stack!r} over it. Audit another stack read-only "
@@ -1574,7 +1687,9 @@ def main(argv: list[str] | None = None) -> int:
             continue
         actual = extract_value(check)
         if actual is None:
-            failures.append(f"  [missing] {label}: could not locate the pin in its file")
+            failures.append(
+                f"  [missing] {label}: could not locate the pin in its file"
+            )
             continue
         checked += 1
         if actual != expected:
@@ -1618,12 +1733,18 @@ def main(argv: list[str] | None = None) -> int:
                 continue
         elif pattern in versions:
             continue
-        failures.append(f"  [stale]   UNCONSUMED lists '{pattern}', which is not in versions.yaml")
+        failures.append(
+            f"  [stale]   UNCONSUMED lists '{pattern}', which is not in versions.yaml"
+        )
 
     failures.extend(dead_guards(versions, stack))
-    failures.extend(helm_version_problems({path: read_source(path) for path in HELM_WORKFLOWS}))
     failures.extend(
-        chart_pin_problems(versions, {path: read_source(path) for path in CHART_PIN_APPSETS})
+        helm_version_problems({path: read_source(path) for path in HELM_WORKFLOWS})
+    )
+    failures.extend(
+        chart_pin_problems(
+            versions, {path: read_source(path) for path in CHART_PIN_APPSETS}
+        )
     )
 
     # The other direction: a literal in a file no check points at.
@@ -1639,7 +1760,9 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         print("\n".join(failures), file=sys.stderr)
-        print(f"\n{len(failures)} problem(s); {checked} pin(s) matched.", file=sys.stderr)
+        print(
+            f"\n{len(failures)} problem(s); {checked} pin(s) matched.", file=sys.stderr
+        )
         return 1
 
     # Say what the sweep looked at, not just that it found nothing: a silent

@@ -57,7 +57,9 @@ def _hits(text: str, label: str) -> list[str]:
 
 def _tf_comment_hits(path: Path) -> list[str]:
     found: list[str] = []
-    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+    for number, line in enumerate(
+        path.read_text(encoding="utf-8").splitlines(), start=1
+    ):
         comment = TF_COMMENT.search(line)
         if comment and CURRENCY.search(comment.group(1)):
             found.append(f"{path.relative_to(REPO_ROOT)}:{number}: {line.strip()}")
@@ -88,7 +90,9 @@ PRICE_KEY = re.compile(r'"[\w.]*price[\w.]*"\s*:\s*[\d.]')
 def _price_key_hits(path: Path) -> list[str]:
     return [
         f"{path.relative_to(REPO_ROOT)}:{number}: {line.strip()}"
-        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1)
+        for number, line in enumerate(
+            path.read_text(encoding="utf-8").splitlines(), start=1
+        )
         if PRICE_KEY.search(line)
     ]
 
@@ -106,15 +110,21 @@ def test_no_committed_shape_snapshot_carries_a_price_key() -> None:
 def test_no_committed_file_a_deployer_reads_carries_a_cost_figure() -> None:
     found: list[str] = []
     for path in _committed_files():
-        found += _hits(path.read_text(encoding="utf-8"), str(path.relative_to(REPO_ROOT)))
-    assert not found, "cost figures found -- use a bucket and the pricing model:\n" + "\n".join(found)
+        found += _hits(
+            path.read_text(encoding="utf-8"), str(path.relative_to(REPO_ROOT))
+        )
+    assert not found, (
+        "cost figures found -- use a bucket and the pricing model:\n" + "\n".join(found)
+    )
 
 
 def test_no_opentofu_comment_carries_a_cost_figure() -> None:
     found: list[str] = []
     for path in sorted((REPO_ROOT / "terraform").glob("**/*.tf")):
         found += _tf_comment_hits(path)
-    assert not found, "cost figures found -- use a bucket and the pricing model:\n" + "\n".join(found)
+    assert not found, (
+        "cost figures found -- use a bucket and the pricing model:\n" + "\n".join(found)
+    )
 
 
 @pytest.fixture(scope="module")
@@ -151,7 +161,16 @@ def resolved(tmp_path_factory) -> Path:
         encoding="utf-8",
     )
     resolve_sizing.main(
-        ["--dial", str(dial), "--fixtures", str(FIXTURES), "--cloud", "aws", "--out", str(out)]
+        [
+            "--dial",
+            str(dial),
+            "--fixtures",
+            str(FIXTURES),
+            "--cloud",
+            "aws",
+            "--out",
+            str(out),
+        ]
     )
     return out
 
@@ -159,11 +178,17 @@ def resolved(tmp_path_factory) -> Path:
 def test_the_rendered_report_carries_no_cost_figure(resolved: Path) -> None:
     report = resolved / "sizing" / "scale.report.md"
     text = report.read_text(encoding="utf-8")
-    assert "A5" in text, "the fixture dial did not trip the spend warning it exists to render"
-    assert not _hits(text, "sizing/scale.report.md"), "\n".join(_hits(text, str(report)))
+    assert "A5" in text, (
+        "the fixture dial did not trip the spend warning it exists to render"
+    )
+    assert not _hits(text, "sizing/scale.report.md"), "\n".join(
+        _hits(text, str(report))
+    )
 
 
-def test_the_written_resolved_yaml_carries_a_bucket_and_no_figure(resolved: Path) -> None:
+def test_the_written_resolved_yaml_carries_a_bucket_and_no_figure(
+    resolved: Path,
+) -> None:
     text = (resolved / "sizing" / "resolved.yaml").read_text(encoding="utf-8")
     assert "compute_usd_per_hour" not in text
     assert re.search(r"^compute_bucket: \"(XS|S|M|L|XL)\"$", text, re.M), text

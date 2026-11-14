@@ -36,29 +36,48 @@ APPSETS = REPO_ROOT / "argocd" / "appsets"
 # The cascade layer2-edge.yaml runs for an on-prem cluster on the one profile
 # whose Kafka tier deploys the Cruise Control UI.
 ON_PREM = (
-    "--namespace", "envoy-gateway-system",
-    "-f", str(VALUES / "common.yaml"),
-    "-f", str(VALUES / "local.yaml"),
-    "-f", str(VALUES / "edge-onprem.yaml"),
-    "-f", str(VALUES / "profile-scale.yaml"),
-    "--set", "appNamespace=dfe",
-    "--set", "domain=dfe.example.com",
+    "--namespace",
+    "envoy-gateway-system",
+    "-f",
+    str(VALUES / "common.yaml"),
+    "-f",
+    str(VALUES / "local.yaml"),
+    "-f",
+    str(VALUES / "edge-onprem.yaml"),
+    "-f",
+    str(VALUES / "profile-scale.yaml"),
+    "--set",
+    "appNamespace=dfe",
+    "--set",
+    "domain=dfe.example.com",
 )
 
 # The same cascade on AWS, where the Service is internet-facing: aws.yaml turns
 # oidc.enabled on with no provider, and edge-aws.yaml turns the infra class off.
 AWS = (
-    "--namespace", "envoy-gateway-system",
-    "-f", str(VALUES / "common.yaml"),
-    "-f", str(VALUES / "aws.yaml"),
-    "-f", str(VALUES / "edge-aws.yaml"),
-    "-f", str(VALUES / "profile-scale.yaml"),
-    "--set", "appNamespace=dfe",
-    "--set", "domain=dfe.example.com",
+    "--namespace",
+    "envoy-gateway-system",
+    "-f",
+    str(VALUES / "common.yaml"),
+    "-f",
+    str(VALUES / "aws.yaml"),
+    "-f",
+    str(VALUES / "edge-aws.yaml"),
+    "-f",
+    str(VALUES / "profile-scale.yaml"),
+    "--set",
+    "appNamespace=dfe",
+    "--set",
+    "domain=dfe.example.com",
 )
 
 PROVIDER = [{"name": "acme", "issuerUrl": "https://id.example.com", "clientId": "dfe"}]
-OIDC = ("--set", "oidc.enabled=true", "--set-json", f"oidc.providers={json.dumps(PROVIDER)}")
+OIDC = (
+    "--set",
+    "oidc.enabled=true",
+    "--set-json",
+    f"oidc.providers={json.dumps(PROVIDER)}",
+)
 
 LOGIN_LESS = {"links", "cruise-control"}
 OWN_LOGIN = {"argocd", "kafbat"}
@@ -66,10 +85,16 @@ INFRA = {"argocd", "kafbat", "forgejo", "links", "cruise-control"}
 BUNDLED_LABEL = "dfe.hyperi.io/bundled-deploy-repo"
 
 
-def helm(*args: str, cascade: tuple[str, ...] = ON_PREM) -> subprocess.CompletedProcess[str]:
+def helm(
+    *args: str, cascade: tuple[str, ...] = ON_PREM
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["helm", "template", "envoy-gateway-config", str(GATEWAY), *cascade, *args],
-        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
     )
 
 
@@ -126,7 +151,9 @@ def test_the_edge_login_puts_them_back_behind_their_policies() -> None:
     docs = render(*OIDC)
     assert LOGIN_LESS <= names(docs, "HTTPRoute"), sorted(names(docs, "HTTPRoute"))
     policies = names(docs, "SecurityPolicy")
-    assert {"dfe-oidc-links-admin", "dfe-oidc-cruise-control-admin"} <= policies, sorted(policies)
+    assert {"dfe-oidc-links-admin", "dfe-oidc-cruise-control-admin"} <= policies, (
+        sorted(policies)
+    )
 
 
 def test_oidc_switched_on_with_no_provider_is_not_a_login() -> None:
@@ -150,8 +177,12 @@ def test_product_and_ingest_routes_are_untouched() -> None:
     assert {"dfe-ui", "dfe-engine", "receiver"} <= served, sorted(served)
     # The otel route answers to otel.ingress.enabled alone (test_otel_ingress.py).
     assert "otel" not in served, sorted(served)
-    ingress = ("--set", "otel.ingress.enabled=true",
-               "--set", "otel.ingress.auth.remoteKey=dfe/local/otel/ingress")
+    ingress = (
+        "--set",
+        "otel.ingress.enabled=true",
+        "--set",
+        "otel.ingress.auth.remoteKey=dfe/local/otel/ingress",
+    )
     assert "otel" in routes(*ingress), sorted(routes(*ingress))
 
 
@@ -178,11 +209,18 @@ def test_every_infra_route_declares_own_login() -> None:
 
 def test_a_quoted_own_login_is_refused_by_name() -> None:
     """A quoted "true" or "false" is truthy either way, and would publish the page bare."""
-    assert "routes.links.ownLogin" in refusal("--set-string", "routes.links.ownLogin=false")
+    assert "routes.links.ownLogin" in refusal(
+        "--set-string", "routes.links.ownLogin=false"
+    )
 
 
 def test_a_public_flag_on_a_withheld_route_is_refused_by_name() -> None:
-    err = refusal("--set", "ui.public_domain=example.com", "--set", "exposure.groups.admin.tools.links=true")
+    err = refusal(
+        "--set",
+        "ui.public_domain=example.com",
+        "--set",
+        "exposure.groups.admin.tools.links=true",
+    )
     assert "routes.links has no login of its own" in err, err
 
 
@@ -204,7 +242,12 @@ def test_the_aws_defaults_render_with_no_infra_route() -> None:
     assert {"dfe-ui", "dfe-engine", "hyperdx"} <= served, sorted(served)
 
 
-ADMIN_PUBLIC = ("--set", "exposure.groups.admin.enabled=true", "--set", "exposure.groups.admin.allowPublic=true")
+ADMIN_PUBLIC = (
+    "--set",
+    "exposure.groups.admin.enabled=true",
+    "--set",
+    "exposure.groups.admin.allowPublic=true",
+)
 
 
 def test_oidc_switched_on_with_no_provider_does_not_satisfy_the_guard() -> None:
@@ -218,8 +261,11 @@ def test_a_provider_satisfies_the_guard_and_fronts_every_policy_route() -> None:
     docs = render(*ADMIN_PUBLIC, *OIDC, cascade=AWS)
     assert {"argocd", "links", "cruise-control"} <= names(docs, "HTTPRoute")
     policies = names(docs, "SecurityPolicy")
-    assert {"dfe-oidc-argocd-admin", "dfe-oidc-links-admin",
-            "dfe-oidc-cruise-control-admin"} <= policies, sorted(policies)
+    assert {
+        "dfe-oidc-argocd-admin",
+        "dfe-oidc-links-admin",
+        "dfe-oidc-cruise-control-admin",
+    } <= policies, sorted(policies)
 
 
 # --- the git route exists only where Forgejo does ----------------------------
@@ -238,8 +284,12 @@ def test_a_quoted_bundled_flag_is_refused_by_name() -> None:
 
 def test_both_gateway_appsets_read_the_label_forgejo_is_deployed_on() -> None:
     """The deploy-repo appset and the gateway must key on the same label and value."""
-    deploy_repo = yaml.safe_load((APPSETS / "layer2-deploy-repo.yaml").read_text(encoding="utf-8"))
-    selector = deploy_repo["spec"]["generators"][0]["clusters"]["selector"]["matchLabels"]
+    deploy_repo = yaml.safe_load(
+        (APPSETS / "layer2-deploy-repo.yaml").read_text(encoding="utf-8")
+    )
+    selector = deploy_repo["spec"]["generators"][0]["clusters"]["selector"][
+        "matchLabels"
+    ]
     assert selector.get(BUNDLED_LABEL) == "true", selector
 
     found = gateway_appsets()
@@ -258,13 +308,18 @@ def test_both_gateway_appsets_read_the_label_forgejo_is_deployed_on() -> None:
 # --- the Cruise Control label is the canonical map's -------------------------
 def test_the_cruise_control_label_lives_in_the_canonical_map() -> None:
     common = yaml.safe_load((VALUES / "common.yaml").read_text(encoding="utf-8"))
-    assert common["hostnames"].get("cruiseControl") == "cruise-control", common["hostnames"]
+    assert common["hostnames"].get("cruiseControl") == "cruise-control", common[
+        "hostnames"
+    ]
     assert chart_values()["routes"]["cruiseControl"]["hostname"] == ""
 
 
 def test_the_cruise_control_route_takes_its_host_from_the_map() -> None:
     docs = render(*OIDC, "--set", "hostnames.cruiseControl=rebalancer")
-    route = [d for d in docs if d.get("kind") == "HTTPRoute"
-             and d["metadata"]["name"] == "cruise-control"]
+    route = [
+        d
+        for d in docs
+        if d.get("kind") == "HTTPRoute" and d["metadata"]["name"] == "cruise-control"
+    ]
     assert len(route) == 1, sorted(names(docs, "HTTPRoute"))
     assert route[0]["spec"]["hostnames"] == ["rebalancer.dfe.example.com"]

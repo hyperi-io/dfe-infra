@@ -41,14 +41,22 @@ def _engine_checkout_is_the_pin(monkeypatch: pytest.MonkeyPatch) -> None:
     """These tests are about what the stage does after the checkout gates, which have their own tests."""
     monkeypatch.setattr(dfeops, "_checkout_gate", lambda *_args: 0)
 
+
 BUDGET_VARS = ("E2E_TEST_TIMEOUT_MS", "E2E_EXPECT_TIMEOUT_MS", "E2E_NAV_TIMEOUT_MS")
 
 
 def _parse(*extra: str) -> argparse.Namespace:
     # The onboarding root step drives a real browser, so these runs start at the suite.
     return dfeops.build_parser().parse_args(
-        ["ui", "--ui-repo", "/nonexistent/dfe-ui", "--ui-url", "https://dfe.example",
-         "--skip-onboarding", *extra]
+        [
+            "ui",
+            "--ui-repo",
+            "/nonexistent/dfe-ui",
+            "--ui-url",
+            "https://dfe.example",
+            "--skip-onboarding",
+            *extra,
+        ]
     )
 
 
@@ -127,7 +135,12 @@ def test_the_budgets_exceed_the_suites_own_defaults(monkeypatch) -> None:
 
 def test_an_operator_override_wins(monkeypatch) -> None:
     args = _parse(
-        "--test-timeout-ms", "90000", "--expect-timeout-ms", "15000", "--nav-timeout-ms", "0"
+        "--test-timeout-ms",
+        "90000",
+        "--expect-timeout-ms",
+        "15000",
+        "--nav-timeout-ms",
+        "0",
     )
 
     env = _suite_env(monkeypatch, args)
@@ -169,7 +182,9 @@ def test_the_suite_gets_a_password_for_the_forced_change(monkeypatch) -> None:
     assert env["E2E_ADMIN_NEW_PASSWORD"] != dfeops.E2E_SEED_PASSWORD
 
 
-def test_the_suite_leaves_the_admin_on_the_password_the_next_root_step_holds(monkeypatch) -> None:
+def test_the_suite_leaves_the_admin_on_the_password_the_next_root_step_holds(
+    monkeypatch,
+) -> None:
     monkeypatch.delenv(dfeops.NEW_ADMIN_PASSWORD_VAR, raising=False)
     env = _suite_env(monkeypatch, _parse())
 

@@ -78,7 +78,9 @@ def stack_facts(versions: Path, stack: str | None) -> tuple[str, str, str]:
         ValueError: The stack, its pin or its platform minor is missing.
     """
     try:
-        tree = parse_yaml_subset(versions.read_text(encoding="utf-8"), source=str(versions))
+        tree = parse_yaml_subset(
+            versions.read_text(encoding="utf-8"), source=str(versions)
+        )
     except (OSError, YamlSubsetError) as err:
         raise ValueError(f"cannot read {versions}: {err}") from err
     name = stack or str(at(tree, ("current",)) or "")
@@ -171,14 +173,27 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--versions", type=Path, default=VERSIONS_FILE, help="versions.yaml to read"
     )
-    parser.add_argument("--minor", default=None, help="override the stack's Kubernetes minor")
-    parser.add_argument("--arch", default="arm64", help="the node architecture (default arm64)")
-    parser.add_argument("--source", choices=("github", "ssm"), default="github")
-    parser.add_argument("--region", default="us-west-2", help="the region the ssm source reads")
-    parser.add_argument("--releases-json", type=Path, default=None, help="recorded github answer")
-    parser.add_argument("--fixtures", type=Path, default=None, help="recorded ssm answers")
     parser.add_argument(
-        "--now", type=datetime.fromisoformat, default=None, help="the time the cooldown counts from"
+        "--minor", default=None, help="override the stack's Kubernetes minor"
+    )
+    parser.add_argument(
+        "--arch", default="arm64", help="the node architecture (default arm64)"
+    )
+    parser.add_argument("--source", choices=("github", "ssm"), default="github")
+    parser.add_argument(
+        "--region", default="us-west-2", help="the region the ssm source reads"
+    )
+    parser.add_argument(
+        "--releases-json", type=Path, default=None, help="recorded github answer"
+    )
+    parser.add_argument(
+        "--fixtures", type=Path, default=None, help="recorded ssm answers"
+    )
+    parser.add_argument(
+        "--now",
+        type=datetime.fromisoformat,
+        default=None,
+        help="the time the cooldown counts from",
     )
     args = parser.parse_args(argv)
     try:
@@ -203,7 +218,9 @@ def main(argv: list[str] | None = None) -> int:
             )
             target = node_images.Target("aws", args.region, "", minor, args.arch)
             alias = node_images.recommended_ami_alias(target, read)
-            newest: Newest | None = Newest(alias.split("@", 1)[1], "", f"ssm {args.region}")
+            newest: Newest | None = Newest(
+                alias.split("@", 1)[1], "", f"ssm {args.region}"
+            )
         else:
             releases = (
                 json.loads(args.releases_json.read_text(encoding="utf-8"))
@@ -218,14 +235,23 @@ def main(argv: list[str] | None = None) -> int:
                 args.now,
             )
     except (node_images.ImageLookupError, OSError, json.JSONDecodeError) as err:
-        _say("notice", f"Karpenter AMI pin not checked -- {err}. This is a skip, not a pass.")
+        _say(
+            "notice",
+            f"Karpenter AMI pin not checked -- {err}. This is a skip, not a pass.",
+        )
         return 0
     if newest is None:
-        _say("notice", f"no {EKS_AMI_REPO} release ships an AL2023 {args.arch} image for {minor}")
+        _say(
+            "notice",
+            f"no {EKS_AMI_REPO} release ships an AL2023 {args.arch} image for {minor}",
+        )
         return 0
 
     if not PIN.match(pin):
-        _say("warning", f"stack {stack} pins {'.'.join(PIN_PATH)} {pin!r}, not v<YYYYMMDD>")
+        _say(
+            "warning",
+            f"stack {stack} pins {'.'.join(PIN_PATH)} {pin!r}, not v<YYYYMMDD>",
+        )
         return 0
     published = f", published {newest.published[:10]}" if newest.published else ""
     behind = None if pin == newest.tag else lag(published_at(releases, pin), newest)
@@ -233,7 +259,9 @@ def main(argv: list[str] | None = None) -> int:
     unmeasured = behind is None and pin < newest.tag
     if unmeasured or (behind is not None and behind > 0):
         distance = "behind" if behind is None else f"{behind} day(s) behind"
-        undated = " One of the two release dates was not read, so the lag has no day count."
+        undated = (
+            " One of the two release dates was not read, so the lag has no day count."
+        )
         undated = undated if unmeasured else ""
         _say(
             "warning",

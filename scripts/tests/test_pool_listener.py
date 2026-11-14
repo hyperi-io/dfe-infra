@@ -81,21 +81,37 @@ SAFE_RETRY_TRIGGERS = ["connect-failure", "resource-exhausted"]
 DURATION_UNITS = {"ms": 0.001, "s": 1.0, "m": 60.0, "h": 3600.0}
 
 
-def render(chart: str, profile: str, *extra: str, path: Path | None = None) -> list[dict]:
+def render(
+    chart: str, profile: str, *extra: str, path: Path | None = None
+) -> list[dict]:
     """One chart under one profile, with the same values cascade Argo layers."""
     cmd = [
-        "helm", "template", chart, str(path or chart_dir(chart)),
-        "--namespace", "dfe",
-        "--set", "appNamespace=dfe",
-        "-f", str(VALUES / "common.yaml"),
-        "-f", str(VALUES / f"profile-{profile}.yaml"),
+        "helm",
+        "template",
+        chart,
+        str(path or chart_dir(chart)),
+        "--namespace",
+        "dfe",
+        "--set",
+        "appNamespace=dfe",
+        "-f",
+        str(VALUES / "common.yaml"),
+        "-f",
+        str(VALUES / f"profile-{profile}.yaml"),
         *extra,
     ]
     out = subprocess.run(
-        cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False
+        cmd,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
     )
     if out.returncode != 0:
-        raise SystemExit(f"helm template failed for {chart} on {profile}:\n{out.stderr}")
+        raise SystemExit(
+            f"helm template failed for {chart} on {profile}:\n{out.stderr}"
+        )
     return [d for d in yaml.safe_load_all(out.stdout) if d]
 
 
@@ -127,38 +143,62 @@ def test_every_pool_gets_a_listener_on_the_mesh_profile() -> None:
         if not routes:
             continue
         route = routes[0]
-        expect(f"{chart} route is named for the pool", route["metadata"]["name"] == alias,
-               f"got {route['metadata']['name']!r}")
+        expect(
+            f"{chart} route is named for the pool",
+            route["metadata"]["name"] == alias,
+            f"got {route['metadata']['name']!r}",
+        )
 
         parents = route["spec"]["parentRefs"]
-        expect(f"{chart} attaches to the one mesh Gateway",
-               [(p["name"], p["namespace"]) for p in parents]
-               == [(MESH_GATEWAY, GATEWAY_NAMESPACE)], f"got {parents!r}")
+        expect(
+            f"{chart} attaches to the one mesh Gateway",
+            [(p["name"], p["namespace"]) for p in parents]
+            == [(MESH_GATEWAY, GATEWAY_NAMESPACE)],
+            f"got {parents!r}",
+        )
 
-        expect(f"{chart} matches its own alias as the authority",
-               route["spec"]["hostnames"]
-               == [f"{alias}.{GATEWAY_NAMESPACE}.svc.cluster.local", f"{alias}.{GATEWAY_NAMESPACE}"],
-               f"got {route['spec']['hostnames']!r}")
+        expect(
+            f"{chart} matches its own alias as the authority",
+            route["spec"]["hostnames"]
+            == [
+                f"{alias}.{GATEWAY_NAMESPACE}.svc.cluster.local",
+                f"{alias}.{GATEWAY_NAMESPACE}",
+            ],
+            f"got {route['spec']['hostnames']!r}",
+        )
 
         backends = [b for rule in route["spec"]["rules"] for b in rule["backendRefs"]]
-        expect(f"{chart} routes to its own pool Service",
-               [(b["name"], b["port"]) for b in backends] == [(chart, port)],
-               f"got {backends!r}")
+        expect(
+            f"{chart} routes to its own pool Service",
+            [(b["name"], b["port"]) for b in backends] == [(chart, port)],
+            f"got {backends!r}",
+        )
 
-        aliases = [s for s in of_kind(docs, "Service") if s["metadata"]["name"] == alias]
-        expect(f"{chart} has one alias Service", len(aliases) == 1, f"got {len(aliases)}")
+        aliases = [
+            s for s in of_kind(docs, "Service") if s["metadata"]["name"] == alias
+        ]
+        expect(
+            f"{chart} has one alias Service", len(aliases) == 1, f"got {len(aliases)}"
+        )
         if not aliases:
             continue
         svc = aliases[0]
-        expect(f"{chart} alias sits with the proxy pods",
-               svc["metadata"]["namespace"] == GATEWAY_NAMESPACE,
-               f"got {svc['metadata'].get('namespace')!r}")
-        expect(f"{chart} alias selects the mesh Gateway's proxy",
-               svc["spec"]["selector"].get("gateway.envoyproxy.io/owning-gateway-name")
-               == MESH_GATEWAY, f"got {svc['spec']['selector']!r}")
-        expect(f"{chart} alias answers on the pool's port",
-               [p["port"] for p in svc["spec"]["ports"]] == [port],
-               f"got {svc['spec']['ports']!r}")
+        expect(
+            f"{chart} alias sits with the proxy pods",
+            svc["metadata"]["namespace"] == GATEWAY_NAMESPACE,
+            f"got {svc['metadata'].get('namespace')!r}",
+        )
+        expect(
+            f"{chart} alias selects the mesh Gateway's proxy",
+            svc["spec"]["selector"].get("gateway.envoyproxy.io/owning-gateway-name")
+            == MESH_GATEWAY,
+            f"got {svc['spec']['selector']!r}",
+        )
+        expect(
+            f"{chart} alias answers on the pool's port",
+            [p["port"] for p in svc["spec"]["ports"]] == [port],
+            f"got {svc['spec']['ports']!r}",
+        )
 
 
 def test_the_backend_is_declared_cleartext_http2() -> None:
@@ -166,29 +206,44 @@ def test_the_backend_is_declared_cleartext_http2() -> None:
     for chart, port in sorted(POOLS.items()):
         for cloud in CLOUDS:
             docs = golden(chart, MESH_PROFILE, cloud)
-            pool = [s for s in of_kind(docs, "Service") if s["metadata"]["name"] == chart]
-            expect(f"{chart} on {cloud} has its own pool Service", len(pool) == 1,
-                   f"got {len(pool)}")
+            pool = [
+                s for s in of_kind(docs, "Service") if s["metadata"]["name"] == chart
+            ]
+            expect(
+                f"{chart} on {cloud} has its own pool Service",
+                len(pool) == 1,
+                f"got {len(pool)}",
+            )
             if not pool:
                 continue
             ports = [p for p in pool[0]["spec"]["ports"] if p["port"] == port]
-            expect(f"{chart} on {cloud} declares h2c on {port}",
-                   [p.get("appProtocol") for p in ports] == ["kubernetes.io/h2c"],
-                   f"got {ports!r}")
+            expect(
+                f"{chart} on {cloud} declares h2c on {port}",
+                [p.get("appProtocol") for p in ports] == ["kubernetes.io/h2c"],
+                f"got {ports!r}",
+            )
 
 
 def test_every_route_carries_its_own_policy() -> None:
     for chart in sorted(POOLS):
         alias = f"{chart}-mesh"
         policies = of_kind(listener(chart, MESH_PROFILE), "BackendTrafficPolicy")
-        expect(f"{chart} has one route policy", len(policies) == 1, f"got {len(policies)}")
+        expect(
+            f"{chart} has one route policy", len(policies) == 1, f"got {len(policies)}"
+        )
         if not policies:
             continue
         spec = policies[0]["spec"]
         expect(
             f"{chart} policy targets its own route, not the Gateway",
             spec["targetRefs"]
-            == [{"group": "gateway.networking.k8s.io", "kind": "GRPCRoute", "name": alias}],
+            == [
+                {
+                    "group": "gateway.networking.k8s.io",
+                    "kind": "GRPCRoute",
+                    "name": alias,
+                }
+            ],
             f"got {spec['targetRefs']!r}",
         )
         expect(
@@ -230,7 +285,9 @@ def test_the_duration_reader_reads_what_the_policy_writes() -> None:
 
 
 def test_another_gateway_can_leave_the_route_policy_out() -> None:
-    docs = listener("dfe-loader", MESH_PROFILE, "--set", "mesh.routePolicy.enabled=false")
+    docs = listener(
+        "dfe-loader", MESH_PROFILE, "--set", "mesh.routePolicy.enabled=false"
+    )
     expect(
         "mesh.routePolicy.enabled=false renders no policy",
         of_kind(docs, "BackendTrafficPolicy") == [],
@@ -248,57 +305,97 @@ def test_no_listener_on_a_profile_that_did_not_ask() -> None:
         for chart in sorted(POOLS):
             docs = listener(chart, profile)
             routes = of_kind(docs, "GRPCRoute")
-            expect(f"{chart} has no route on {profile}", routes == [], f"got {len(routes)}")
+            expect(
+                f"{chart} has no route on {profile}", routes == [], f"got {len(routes)}"
+            )
             policies = of_kind(docs, "BackendTrafficPolicy")
             expect(
-                f"{chart} has no route policy on {profile}", policies == [], f"got {len(policies)}"
+                f"{chart} has no route policy on {profile}",
+                policies == [],
+                f"got {len(policies)}",
             )
             aliases = [
-                s for s in of_kind(docs, "Service")
+                s
+                for s in of_kind(docs, "Service")
                 if s["metadata"]["name"].endswith("-mesh")
             ]
-            expect(f"{chart} has no alias on {profile}", aliases == [], f"got {aliases!r}")
+            expect(
+                f"{chart} has no alias on {profile}", aliases == [], f"got {aliases!r}"
+            )
 
 
 def test_the_gateway_the_listeners_attach_to() -> None:
     docs = render("envoy-gateway-config", MESH_PROFILE)
-    mesh = [g for g in of_kind(docs, "Gateway") if g["metadata"]["name"] == MESH_GATEWAY]
+    mesh = [
+        g for g in of_kind(docs, "Gateway") if g["metadata"]["name"] == MESH_GATEWAY
+    ]
     expect("the mesh Gateway renders", len(mesh) == 1, f"got {len(mesh)}")
     if mesh:
         listeners = mesh[0]["spec"]["listeners"]
-        expect("one listener carries every pool, told apart by route hostname",
-               [(listener["name"], listener["port"]) for listener in listeners] == [("mesh", 6000)],
-               f"got {listeners!r}")
-        expect("its proxy parameters are its own, not the edge's",
-               mesh[0]["spec"]["infrastructure"]["parametersRef"]["name"] == f"{MESH_GATEWAY}-proxy",
-               f"got {mesh[0]['spec'].get('infrastructure')!r}")
+        expect(
+            "one listener carries every pool, told apart by route hostname",
+            [(listener["name"], listener["port"]) for listener in listeners]
+            == [("mesh", 6000)],
+            f"got {listeners!r}",
+        )
+        expect(
+            "its proxy parameters are its own, not the edge's",
+            mesh[0]["spec"]["infrastructure"]["parametersRef"]["name"]
+            == f"{MESH_GATEWAY}-proxy",
+            f"got {mesh[0]['spec'].get('infrastructure')!r}",
+        )
 
-    proxy = [p for p in of_kind(docs, "EnvoyProxy") if p["metadata"]["name"] == f"{MESH_GATEWAY}-proxy"]
-    expect("the mesh proxy is not a LoadBalancer", bool(proxy) and
-           proxy[0]["spec"]["provider"]["kubernetes"]["envoyService"]["type"] == "ClusterIP",
-           f"got {proxy!r}")
+    proxy = [
+        p
+        for p in of_kind(docs, "EnvoyProxy")
+        if p["metadata"]["name"] == f"{MESH_GATEWAY}-proxy"
+    ]
+    expect(
+        "the mesh proxy is not a LoadBalancer",
+        bool(proxy)
+        and proxy[0]["spec"]["provider"]["kubernetes"]["envoyService"]["type"]
+        == "ClusterIP",
+        f"got {proxy!r}",
+    )
 
     balancing = [
-        p for p in of_kind(docs, "BackendTrafficPolicy")
+        p
+        for p in of_kind(docs, "BackendTrafficPolicy")
         if p["metadata"]["name"] == f"{MESH_GATEWAY}-pools"
     ]
-    expect("the pools are balanced per request", bool(balancing) and
-           balancing[0]["spec"]["loadBalancer"]["type"] == "RoundRobin", f"got {balancing!r}")
-    expect("and the connection is kept alive", bool(balancing) and
-           "connectionKeepalive" in balancing[0]["spec"]["http2"], f"got {balancing!r}")
+    expect(
+        "the pools are balanced per request",
+        bool(balancing)
+        and balancing[0]["spec"]["loadBalancer"]["type"] == "RoundRobin",
+        f"got {balancing!r}",
+    )
+    expect(
+        "and the connection is kept alive",
+        bool(balancing) and "connectionKeepalive" in balancing[0]["spec"]["http2"],
+        f"got {balancing!r}",
+    )
 
     senders = [
-        p for p in of_kind(docs, "ClientTrafficPolicy")
+        p
+        for p in of_kind(docs, "ClientTrafficPolicy")
         if p["metadata"]["name"] == f"{MESH_GATEWAY}-senders"
     ]
-    expect("the sender side is kept alive too", bool(senders) and
-           "connectionKeepalive" in senders[0]["spec"]["http2"], f"got {senders!r}")
+    expect(
+        "the sender side is kept alive too",
+        bool(senders) and "connectionKeepalive" in senders[0]["spec"]["http2"],
+        f"got {senders!r}",
+    )
 
     for profile in QUIET_PROFILES:
         quiet = render("envoy-gateway-config", profile)
-        named = [d for d in quiet if d["metadata"].get("name", "").startswith(MESH_GATEWAY)]
-        expect(f"nothing mesh renders on {profile}", named == [],
-               f"got {[d['metadata']['name'] for d in named]}")
+        named = [
+            d for d in quiet if d["metadata"].get("name", "").startswith(MESH_GATEWAY)
+        ]
+        expect(
+            f"nothing mesh renders on {profile}",
+            named == [],
+            f"got {[d['metadata']['name'] for d in named]}",
+        )
 
 
 def test_the_senders_are_allowed_to_reach_the_listener() -> None:
@@ -309,22 +406,31 @@ def test_the_senders_are_allowed_to_reach_the_listener() -> None:
     has to join it or every stage times out dialling the next one.
     """
     policies = [
-        p for p in of_kind(render("network-policies", MESH_PROFILE), "NetworkPolicy")
+        p
+        for p in of_kind(render("network-policies", MESH_PROFILE), "NetworkPolicy")
         if p["metadata"]["name"] == "allow-gateway-egress"
     ]
     expect("the gateway egress policy renders", bool(policies), f"got {policies!r}")
     for policy in policies:
         ports = [p["port"] for rule in policy["spec"]["egress"] for p in rule["ports"]]
-        expect(f"{policy['metadata']['namespace']} may reach the mesh listener",
-               6000 in ports, f"got {ports!r}")
+        expect(
+            f"{policy['metadata']['namespace']} may reach the mesh listener",
+            6000 in ports,
+            f"got {ports!r}",
+        )
 
     quiet = [
-        p for p in of_kind(render("network-policies", "scale"), "NetworkPolicy")
+        p
+        for p in of_kind(render("network-policies", "scale"), "NetworkPolicy")
         if p["metadata"]["name"] == "allow-gateway-egress"
     ]
     for policy in quiet:
         ports = [p["port"] for rule in policy["spec"]["egress"] for p in rule["ports"]]
-        expect("no mesh port opened where there is no mesh", 6000 not in ports, f"got {ports!r}")
+        expect(
+            "no mesh port opened where there is no mesh",
+            6000 not in ports,
+            f"got {ports!r}",
+        )
 
 
 def test_the_receiver_buffers_what_the_profile_says() -> None:
@@ -332,29 +438,47 @@ def test_the_receiver_buffers_what_the_profile_says() -> None:
     for cloud in CLOUDS:
         docs = golden("dfe-receiver", MESH_PROFILE, cloud)
         cfg = next(
-            d for d in of_kind(docs, "ConfigMap") if d["metadata"]["name"] == "dfe-receiver-config"
+            d
+            for d in of_kind(docs, "ConfigMap")
+            if d["metadata"]["name"] == "dfe-receiver-config"
         )
         buffer = yaml.safe_load(configmap_files(cfg)["config.yaml"])["buffer"]
-        expect(f"the memory ceiling is stated, not auto-detected, on {cloud}",
-               buffer["memory_limit"] == 3221225472, f"got {buffer.get('memory_limit')!r}")
-        expect(f"spillover is on, on {cloud}", buffer["spillover"]["enabled"] is True,
-               f"got {buffer!r}")
+        expect(
+            f"the memory ceiling is stated, not auto-detected, on {cloud}",
+            buffer["memory_limit"] == 3221225472,
+            f"got {buffer.get('memory_limit')!r}",
+        )
+        expect(
+            f"spillover is on, on {cloud}",
+            buffer["spillover"]["enabled"] is True,
+            f"got {buffer!r}",
+        )
 
         deployment = next(d for d in of_kind(docs, "Deployment"))
         pod = deployment["spec"]["template"]["spec"]
-        mounts = {m["mountPath"]: m["name"] for m in pod["containers"][0]["volumeMounts"]}
+        mounts = {
+            m["mountPath"]: m["name"] for m in pod["containers"][0]["volumeMounts"]
+        }
         spool = mounts.get(buffer["spillover"]["path"])
-        expect(f"the spool path is mounted on {cloud}", spool is not None, f"got {mounts!r}")
+        expect(
+            f"the spool path is mounted on {cloud}",
+            spool is not None,
+            f"got {mounts!r}",
+        )
         volumes = {v["name"]: v for v in pod["volumes"]}
-        expect(f"and the volume is capped on {cloud}",
-               volumes.get(spool, {}).get("emptyDir", {}).get("sizeLimit") == "20Gi",
-               f"got {volumes.get(spool)!r}")
+        expect(
+            f"and the volume is capped on {cloud}",
+            volumes.get(spool, {}).get("emptyDir", {}).get("sizeLimit") == "20Gi",
+            f"got {volumes.get(spool)!r}",
+        )
 
         quiet = golden("dfe-receiver", "scale", cloud)
         pod = next(d for d in of_kind(quiet, "Deployment"))["spec"]["template"]["spec"]
-        expect(f"no spool volume where a broker holds the records, on {cloud}",
-               [v for v in pod["volumes"] if "spool" in v["name"]] == [],
-               f"got {pod['volumes']!r}")
+        expect(
+            f"no spool volume where a broker holds the records, on {cloud}",
+            [v for v in pod["volumes"] if "spool" in v["name"]] == [],
+            f"got {pod['volumes']!r}",
+        )
 
 
 def main() -> int:

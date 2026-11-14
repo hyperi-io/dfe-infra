@@ -115,7 +115,9 @@ FIRST_MEMBER_POSITION = 10
 MARKDOWN = (".md", ".mdx")
 NOT_RENDERED = (".rst", ".adoc", ".txt")
 IMAGES = (".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp")
-BANNED_NAMES = frozenset({"design.md", "context.md", "notes.md", "todo.md", "scratch.md"})
+BANNED_NAMES = frozenset(
+    {"design.md", "context.md", "notes.md", "todo.md", "scratch.md"}
+)
 LANDING = "README.md"
 _LANDINGS = frozenset({"readme.md", "index.md"})
 # A member with no landing page opens its sidebar section on its architecture page.
@@ -320,7 +322,10 @@ class Journeys:
 
     def manifest(self) -> list[dict[str, object]]:
         """The journeys and sections for site.json, in sidebar order."""
-        return [{"label": label, "sections": list(sections)} for label, sections in self.order]
+        return [
+            {"label": label, "sections": list(sections)}
+            for label, sections in self.order
+        ]
 
 
 @dataclass(slots=True)
@@ -346,7 +351,9 @@ class BuildResult:
     placements: dict[str, str] = field(default_factory=dict)
 
 
-def _run(cmd: list[str], env: Mapping[str, str] | None = None) -> subprocess.CompletedProcess:
+def _run(
+    cmd: list[str], env: Mapping[str, str] | None = None
+) -> subprocess.CompletedProcess:
     """Run a command and capture its text output as UTF-8, never raising on a bad byte."""
     return subprocess.run(
         cmd,
@@ -366,8 +373,12 @@ def anonymous_git_env() -> dict[str, str]:
         The current environment less every GIT_* variable, with no global or system
         config (so no credential helper or URL rewrite) and terminal prompts off.
     """
-    env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
-    env.update(GIT_TERMINAL_PROMPT="0", GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
+    env = {
+        key: value for key, value in os.environ.items() if not key.startswith("GIT_")
+    }
+    env.update(
+        GIT_TERMINAL_PROMPT="0", GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1"
+    )
     return env
 
 
@@ -375,7 +386,10 @@ class Fetcher:
     """Anonymous, shallow, sparse checkouts of member repositories, one per repo and ref."""
 
     def __init__(
-        self, work: Path, git_base: str = GITHUB, local: Mapping[str, Path] | None = None
+        self,
+        work: Path,
+        git_base: str = GITHUB,
+        local: Mapping[str, Path] | None = None,
     ) -> None:
         """Fetch into `work`, from repositories under `git_base`.
 
@@ -414,9 +428,9 @@ class Fetcher:
         dest = self._work / f"{repo.replace('/', '__')}@{ref}"
         marker = dest / ".git" / "dfe-docs-commit"
         sparse = dest / ".git" / "info" / "sparse-checkout"
-        same_paths = sparse.is_file() and sparse.read_text(encoding="utf-8").split() == list(
-            SPARSE_PATTERNS
-        )
+        same_paths = sparse.is_file() and sparse.read_text(
+            encoding="utf-8"
+        ).split() == list(SPARSE_PATTERNS)
         if ref != HEAD and marker.is_file() and same_paths:
             checkout = Checkout(dest, marker.read_text(encoding="utf-8").strip())
         else:
@@ -433,10 +447,20 @@ class Fetcher:
         self._git("-C", str(dest), "remote", "add", "origin", url)
         sparse = dest / ".git" / "info" / "sparse-checkout"
         sparse.parent.mkdir(parents=True, exist_ok=True)
-        sparse.write_text("\n".join(SPARSE_PATTERNS) + "\n", encoding="utf-8", newline="\n")
+        sparse.write_text(
+            "\n".join(SPARSE_PATTERNS) + "\n", encoding="utf-8", newline="\n"
+        )
         self._git("-C", str(dest), "config", "core.sparseCheckout", "true")
         self._git(
-            "-C", str(dest), "fetch", "-q", "--depth", "1", "--filter=blob:none", "origin", ref
+            "-C",
+            str(dest),
+            "fetch",
+            "-q",
+            "--depth",
+            "1",
+            "--filter=blob:none",
+            "origin",
+            ref,
         )
         self._git("-C", str(dest), "checkout", "-q", "FETCH_HEAD")
         commit = self._git("-C", str(dest), "rev-parse", "FETCH_HEAD^{commit}").strip()
@@ -446,7 +470,9 @@ class Fetcher:
         done = _run(["git", *args], env=self._env)
         if done.returncode == 0:
             return done.stdout
-        message = f"git {' '.join(args)} failed ({done.returncode}): {done.stderr.strip()}"
+        message = (
+            f"git {' '.join(args)} failed ({done.returncode}): {done.stderr.strip()}"
+        )
         if any(sign in done.stderr for sign in REFUSED):
             raise RefusedError(message)
         raise FetchError(message)
@@ -511,11 +537,15 @@ def load_policy(tree: Mapping[str, object], members: Iterable[str]) -> Policy:
     keys = ("dropped_versions", "mount_under", "internal", "docs_refs")
     sections = {key: tree.get(key) or {} for key in keys}
     problems = [
-        f"`{key}` is not a map" for key, value in sections.items() if not isinstance(value, dict)
+        f"`{key}` is not a map"
+        for key, value in sections.items()
+        if not isinstance(value, dict)
     ]
     if problems:
         raise SystemExit(f"error: {PUBLISH_FILE.name}: {'; '.join(problems)}")
-    mounts = {str(child): str(parent) for child, parent in sections["mount_under"].items()}
+    mounts = {
+        str(child): str(parent) for child, parent in sections["mount_under"].items()
+    }
     for child, parent in mounts.items():
         if child not in known or parent not in known:
             problems.append(f"mount_under {child} -> {parent}: not both members")
@@ -528,8 +558,12 @@ def load_policy(tree: Mapping[str, object], members: Iterable[str]) -> Policy:
         if member not in known or not isinstance(paths, dict):
             problems.append(f"internal {member}: not a member with a map of paths")
             continue
-        bad = [path for path in paths if path.startswith("/") or ".." in path.split("/")]
-        problems += [f"internal {member}: {path} is not a path under docs/" for path in bad]
+        bad = [
+            path for path in paths if path.startswith("/") or ".." in path.split("/")
+        ]
+        problems += [
+            f"internal {member}: {path} is not a path under docs/" for path in bad
+        ]
         internal[member] = frozenset(
             "docs/" if path == WHOLE_MEMBER else f"docs/{path}" for path in paths
         )
@@ -566,7 +600,9 @@ def load_journeys(tree: Mapping[str, object], members: Iterable[str]) -> Journey
     sidebar = tree.get("sidebar") or {}
     placement = tree.get("placement") or {}
     if not isinstance(sidebar, dict) or not isinstance(placement, dict):
-        raise SystemExit(f"error: {JOURNEYS_FILE.name}: `sidebar` and `placement` are maps")
+        raise SystemExit(
+            f"error: {JOURNEYS_FILE.name}: `sidebar` and `placement` are maps"
+        )
     order = tuple(
         (journey, tuple(sections) if isinstance(sections, dict) else ())
         for journey, sections in sidebar.items()
@@ -632,7 +668,9 @@ def parse_local(values: Iterable[str], members: Iterable[Member]) -> dict[str, P
     for value in values:
         name, eq, path = value.partition("=")
         if not eq or name not in repos:
-            raise SystemExit(f"error: --local {value}: want MEMBER=PATH for a suite member")
+            raise SystemExit(
+                f"error: --local {value}: want MEMBER=PATH for a suite member"
+            )
         root = Path(path).expanduser().resolve()
         if not (root / "docs").is_dir():
             raise SystemExit(f"error: --local {value}: {root} has no docs/")
@@ -750,7 +788,9 @@ def relink(
         return target, True
     suffix = f"{query_mark}{query}{hash_mark}{fragment}"
     if mount and resolved.startswith(ROOT_PAGES_IN_REPO):
-        here = posixpath.normpath(posixpath.join(mount, posixpath.relpath(doc_dir, "docs")))
+        here = posixpath.normpath(
+            posixpath.join(mount, posixpath.relpath(doc_dir, "docs"))
+        )
         new = posixpath.relpath(resolved[len(ROOT_PAGES_IN_REPO) :], here) + suffix
         return (f"<{new}>" if bracketed else new), False
     parts = resolved.split("/")
@@ -765,7 +805,9 @@ def relink(
     if published:
         if not absolute:
             return target, False
-        local = posixpath.relpath(resolved, doc_dir) + ("/" if path.endswith("/") else "")
+        local = posixpath.relpath(resolved, doc_dir) + (
+            "/" if path.endswith("/") else ""
+        )
         new = local + suffix
     elif resolved == ".":
         new = f"{GITHUB}/{repo}/tree/{ref}{suffix}"
@@ -807,7 +849,12 @@ def rewrite_links(
 
     def fix(match: re.Match[str]) -> str:
         new, escapes = relink(
-            match.group(2), doc_dir=doc_dir, repo=repo, ref=ref, internal=internal, mount=mount
+            match.group(2),
+            doc_dir=doc_dir,
+            repo=repo,
+            ref=ref,
+            internal=internal,
+            mount=mount,
         )
         if escapes:
             escaped.append(match.group(2))
@@ -878,7 +925,8 @@ def mdx_safe(text: str) -> str:
         JSX tag, replaced.
     """
     return map_outside_code(
-        text, lambda segment, _: _MDX_SPECIAL.sub(lambda m: _MDX_REFERENCE[m[1][0]], segment)
+        text,
+        lambda segment, _: _MDX_SPECIAL.sub(lambda m: _MDX_REFERENCE[m[1][0]], segment),
     )
 
 
@@ -925,7 +973,10 @@ def find_strays(docs: Path, member: str) -> list[Finding]:
             if relative.name in WORKING_DIRS:
                 findings.append(Finding(member, f"{repo_dir}/", Rule.WORKING))
             continue
-        if any(part.startswith(".") for part in relative.parts) or directory.is_symlink():
+        if (
+            any(part.startswith(".") for part in relative.parts)
+            or directory.is_symlink()
+        ):
             continue
         names = {path.name for path in directory.iterdir() if path.is_file()}
         prose = {name for name in names if name.lower().endswith(MARKDOWN)}
@@ -989,7 +1040,11 @@ def copy_docs(
     for path in sorted(docs.rglob("*")):
         relative = path.relative_to(docs)
         hidden = any(part.startswith(".") for part in relative.parts)
-        if path.is_symlink() or hidden or WORKING_DIRS.intersection(relative.parts[:-1]):
+        if (
+            path.is_symlink()
+            or hidden
+            or WORKING_DIRS.intersection(relative.parts[:-1])
+        ):
             continue
         repo_path = f"docs/{relative.as_posix()}"
         if not path.is_file() or is_internal(repo_path, internal):
@@ -1001,10 +1056,17 @@ def copy_docs(
             continue
         text = drop_leading_comments(path.read_text(encoding="utf-8", errors="replace"))
         rewritten, escaped = rewrite_links(
-            text, doc_path=repo_path, repo=member.repo, ref=ref, internal=internal, mount=mount
+            text,
+            doc_path=repo_path,
+            repo=member.repo,
+            ref=ref,
+            internal=internal,
+            mount=mount,
         )
         target.write_text(rewritten, encoding="utf-8", newline="\n")
-        findings += [Finding(member.name, repo_path, Rule.LINK, link) for link in escaped]
+        findings += [
+            Finding(member.name, repo_path, Rule.LINK, link) for link in escaped
+        ]
     return findings
 
 
@@ -1038,7 +1100,9 @@ def write_json(path: Path, data: object) -> None:
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8", newline="\n")
 
 
-def category(member: Member, *, ref: str, opening: str | None = None) -> dict[str, object]:
+def category(
+    member: Member, *, ref: str, opening: str | None = None
+) -> dict[str, object]:
     """The `_category_.json` for one member's sidebar entry.
 
     Args:
@@ -1073,7 +1137,9 @@ def mount_order(members: Iterable[Member], mounts: Mapping[str, str]) -> list[Me
         The members, top-level first, so a parent is assembled before its children.
     """
     members = list(members)
-    return [m for m in members if m.name not in mounts] + [m for m in members if m.name in mounts]
+    return [m for m in members if m.name not in mounts] + [
+        m for m in members if m.name in mounts
+    ]
 
 
 def assemble(
@@ -1122,7 +1188,9 @@ def assemble(
         try:
             checkout = fetcher.fetch(member.repo, ref)
         except RefusedError:
-            result.findings.append(Finding(member.name, "", Rule.REFUSED, f"{member.repo}@{ref}"))
+            result.findings.append(
+                Finding(member.name, "", Rule.REFUSED, f"{member.repo}@{ref}")
+            )
             continue
         result.fetched[member.name] = checkout.commit
         if member.name == STACK_REPO_MEMBER:
@@ -1142,7 +1210,11 @@ def assemble(
         if member.classification not in UPSTREAM_LED:
             result.findings += find_strays(docs, member.name)
         internal = policy.internal_to(member.name)
-        mount = dest.relative_to(root).as_posix() if member.name == STACK_REPO_MEMBER else ""
+        mount = (
+            dest.relative_to(root).as_posix()
+            if member.name == STACK_REPO_MEMBER
+            else ""
+        )
         result.findings += copy_docs(
             docs, dest, member=member, ref=link_ref, internal=internal, mount=mount
         )
@@ -1150,14 +1222,24 @@ def assemble(
             result.findings.append(Finding(member.name, "docs/", Rule.ALL_INTERNAL))
             continue
         if journeys:
-            result.placements |= journeys.keys_for(member.name, dest.relative_to(root).as_posix())
+            result.placements |= journeys.keys_for(
+                member.name, dest.relative_to(root).as_posix()
+            )
         opening = None
         if not (dest / LANDING).is_file():
-            found = next((name for name in ARCHITECTURE if (dest / name).is_file()), None)
-            opening = (dest / found).relative_to(root).with_suffix("").as_posix() if found else None
+            found = next(
+                (name for name in ARCHITECTURE if (dest / name).is_file()), None
+            )
+            opening = (
+                (dest / found).relative_to(root).with_suffix("").as_posix()
+                if found
+                else None
+            )
             if not any(path.name.lower() in _LANDINGS for path in dest.iterdir()):
                 write_section_index(dest, member.name)
-        write_json(dest / CATEGORY_FILE, category(member, ref=link_ref, opening=opening))
+        write_json(
+            dest / CATEGORY_FILE, category(member, ref=link_ref, opening=opening)
+        )
         included.add(member.name)
         result.members.append(
             {
@@ -1172,7 +1254,9 @@ def assemble(
             spec_checkout = checkout
             if ref != released_ref:
                 spec_checkout = fetcher.fetch(member.repo, released_ref)
-            result.openapi = _place_spec(spec_checkout, build, dest, out, result.findings)
+            result.openapi = _place_spec(
+                spec_checkout, build, dest, out, result.findings
+            )
             result.cli = _place_cli(released_ref, root, dest, result.findings)
     quickstart = docker_quickstart(build, newest)
     if quickstart is not None:
@@ -1237,7 +1321,13 @@ def write_section_index(dest: Path, name: str) -> None:
             path.name.lower(),
         ),
     )
-    lines = [SECTION_INDEX_MARK, f"# {name}", "", f"Every page in the {name} section.", ""]
+    lines = [
+        SECTION_INDEX_MARK,
+        f"# {name}",
+        "",
+        f"Every page in the {name} section.",
+        "",
+    ]
     for path in pages:
         relative = path.relative_to(dest)
         depth = len(relative.parts) - 1
@@ -1246,7 +1336,9 @@ def write_section_index(dest: Path, name: str) -> None:
         text = path.read_text(encoding="utf-8", errors="replace")
         title = page_title(text, path.stem).replace("[", "\\[").replace("]", "\\]")
         lines.append(f"{'  ' * depth}- [{title}]({relative.as_posix()})")
-    (dest / SECTION_INDEX).write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
+    (dest / SECTION_INDEX).write_text(
+        "\n".join(lines) + "\n", encoding="utf-8", newline="\n"
+    )
 
 
 def _place_spec(
@@ -1254,14 +1346,21 @@ def _place_spec(
 ) -> dict[str, str] | None:
     """Copy the engine's spec beside the builds and mark the directory its pages go in."""
     spec = next(
-        (checkout.path / path for path in SPEC_FILES if (checkout.path / path).is_file()), None
+        (
+            checkout.path / path
+            for path in SPEC_FILES
+            if (checkout.path / path).is_file()
+        ),
+        None,
     )
     if spec is None:
         findings.append(Finding(SPEC_MEMBER, " or ".join(SPEC_FILES), Rule.NO_SPEC))
         return None
     api = dest / API_DIR
     if api.exists():
-        raise SystemExit(f"error: {SPEC_MEMBER}'s docs/ carries {API_DIR}/, the API pages' home")
+        raise SystemExit(
+            f"error: {SPEC_MEMBER}'s docs/ carries {API_DIR}/, the API pages' home"
+        )
     placed = out / "_specs" / build.name / f"{SPEC_MEMBER}.json"
     document = json.loads(spec.read_text(encoding="utf-8"))
     write_json(placed, mdx_safe_spec(document))
@@ -1272,7 +1371,11 @@ def _place_spec(
     # The sidebar generator swaps this category's items for the slice gen-api-docs writes.
     write_json(
         api / CATEGORY_FILE,
-        {"label": API_LABEL, "position": 10_000, "customProps": {"openapiSlice": slice_path}},
+        {
+            "label": API_LABEL,
+            "position": 10_000,
+            "customProps": {"openapiSlice": slice_path},
+        },
     )
     return {
         "spec": placed.relative_to(out).as_posix(),
@@ -1282,7 +1385,9 @@ def _place_spec(
     }
 
 
-def _place_cli(ref: str, root: Path, dest: Path, findings: list[Finding]) -> dict[str, str] | None:
+def _place_cli(
+    ref: str, root: Path, dest: Path, findings: list[Finding]
+) -> dict[str, str] | None:
     """Render the dfe CLI reference from the engine image into the engine's docs.
 
     Args:
@@ -1305,7 +1410,9 @@ def _place_cli(ref: str, root: Path, dest: Path, findings: list[Finding]) -> dic
             " the generated CLI page"
         )
     if shutil.which("docker") is None:
-        findings.append(Finding(SPEC_MEMBER, cli_reference.PAGE.as_posix(), Rule.NO_DOCKER))
+        findings.append(
+            Finding(SPEC_MEMBER, cli_reference.PAGE.as_posix(), Rule.NO_DOCKER)
+        )
         return None
     tag = cli_reference.image_tag(ref)
     try:
@@ -1313,12 +1420,17 @@ def _place_cli(ref: str, root: Path, dest: Path, findings: list[Finding]) -> dic
     except cli_reference.ImageError as exc:
         raise FetchError(str(exc)) from exc
     except cli_reference.RenderError as exc:
-        findings.append(Finding(SPEC_MEMBER, cli_reference.PAGE.as_posix(), Rule.NO_CLI, str(exc)))
+        findings.append(
+            Finding(SPEC_MEMBER, cli_reference.PAGE.as_posix(), Rule.NO_CLI, str(exc))
+        )
         return None
     page.parent.mkdir(parents=True, exist_ok=True)
     text = mdx_safe(cli_reference.page_text(rendered, tag))
     page.write_text(text, encoding="utf-8", newline="\n")
-    return {"page": page.relative_to(root).as_posix(), "image": f"{cli_reference.IMAGE}:{tag}"}
+    return {
+        "page": page.relative_to(root).as_posix(),
+        "image": f"{cli_reference.IMAGE}:{tag}",
+    }
 
 
 def root_pages() -> dict[str, Path]:
@@ -1345,7 +1457,8 @@ QUICKSTART_SCHEMAS = (1, 2)
 # A pack's use_case is a path on this site.
 WEBSITE = "https://hyperi.io"
 _QUICKSTART_REGION = re.compile(
-    r"<!-- docker-quickstart: (up|demo) -->\n.*?<!-- /docker-quickstart -->\n", re.DOTALL
+    r"<!-- docker-quickstart: (up|demo) -->\n.*?<!-- /docker-quickstart -->\n",
+    re.DOTALL,
 )
 
 
@@ -1388,7 +1501,9 @@ def docker_quickstart(build: Build, newest: str | None) -> dict | None:
     if data.get("schema") not in QUICKSTART_SCHEMAS or not all(
         isinstance(lines, list) for lines in commands
     ):
-        raise FetchError(f"{url}: not a schema 1 or 2 quickstart.json with up and demo commands")
+        raise FetchError(
+            f"{url}: not a schema 1 or 2 quickstart.json with up and demo commands"
+        )
     if data.get("kind") != "compose":
         return None
     notes = data.get("notes") or {}
@@ -1396,7 +1511,9 @@ def docker_quickstart(build: Build, newest: str | None) -> dict | None:
         raise FetchError(f"{url}: a compose quickstart.json without up and demo notes")
     packs = data.get("packs", [])
     if not isinstance(packs, list) or not all(_is_pack(pack, form) for pack in packs):
-        raise FetchError(f"{url}: a pack without its name, title, use_case and {form} command")
+        raise FetchError(
+            f"{url}: a pack without its name, title, use_case and {form} command"
+        )
     return {**data, "packs": packs, "form": form}
 
 
@@ -1483,7 +1600,9 @@ def fill_generated(text: str, tables: Mapping[str, str]) -> str:
     return text
 
 
-def copy_root(root: Path, member_names: set[str], quickstart: dict | None = None) -> None:
+def copy_root(
+    root: Path, member_names: set[str], quickstart: dict | None = None
+) -> None:
     """Copy the suite's own pages to the top of a build, refusing to overwrite a member.
 
     Args:
@@ -1499,13 +1618,19 @@ def copy_root(root: Path, member_names: set[str], quickstart: dict | None = None
     pages = root_pages()
     clash = sorted({relative.split("/")[0] for relative in pages} & member_names)
     if clash:
-        raise SystemExit(f"error: content-root/ entries collide with members: {', '.join(clash)}")
+        raise SystemExit(
+            f"error: content-root/ entries collide with members: {', '.join(clash)}"
+        )
     for relative, path in pages.items():
         target = root / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         if relative.lower().endswith(MARKDOWN):
-            text = match_case(path.read_text(encoding="utf-8"), page=relative, root=root)
-            target.write_text(fill_quickstart(text, quickstart), encoding="utf-8", newline="\n")
+            text = match_case(
+                path.read_text(encoding="utf-8"), page=relative, root=root
+            )
+            target.write_text(
+                fill_quickstart(text, quickstart), encoding="utf-8", newline="\n"
+            )
         else:
             shutil.copyfile(path, target)
 
@@ -1536,10 +1661,16 @@ def match_case(text: str, *, page: str, root: Path) -> str:
             return match.group(0)
         path, hash_mark, fragment = raw.partition("#")
         path, query_mark, query = path.partition("?")
-        found = _respell(posixpath.normpath(posixpath.join(page_dir, path)), root) if path else None
+        found = (
+            _respell(posixpath.normpath(posixpath.join(page_dir, path)), root)
+            if path
+            else None
+        )
         if found is None:
             return match.group(0)
-        new = posixpath.relpath(found, page_dir or ".") + ("/" if path.endswith("/") else "")
+        new = posixpath.relpath(found, page_dir or ".") + (
+            "/" if path.endswith("/") else ""
+        )
         new += f"{query_mark}{query}{hash_mark}{fragment}"
         closing = match.group(3) if match.re is _HTML_TARGET else ""
         return match.group(1) + (f"<{new}>" if bracketed else new) + closing
@@ -1602,7 +1733,9 @@ def stray_report(result: BuildResult) -> str:
         "|---|---|---|",
     ]
     for member, findings in by_member.items():
-        top_rule, top_count = Counter(finding.rule for finding in findings).most_common(1)[0]
+        top_rule, top_count = Counter(finding.rule for finding in findings).most_common(
+            1
+        )[0]
         lines.append(f"| {member} | {len(findings)} | {top_rule} ({top_count}) |")
     for member, findings in by_member.items():
         lines += ["", f"## {member}", ""]
@@ -1693,7 +1826,9 @@ def pin_next(builds: list[Build], site_file: Path) -> list[Build]:
     next_build = next((b for b in builds if b.name == NEXT), None)
     if next_build is None:
         return builds
-    unpinned = sorted(n for n in next_build.refs if not _COMMIT.fullmatch(str(fetched.get(n, ""))))
+    unpinned = sorted(
+        n for n in next_build.refs if not _COMMIT.fullmatch(str(fetched.get(n, "")))
+    )
     if unpinned:
         raise SystemExit(
             f"error: {site_file} recorded no commit for {', '.join(unpinned)}, "
@@ -1736,11 +1871,15 @@ def plan_builds(
     stray_pins = sorted(set(docs_refs) - set(released))
     if stray_pins:
         names = ", ".join(stray_pins)
-        raise SystemExit(f"error: {PUBLISH_FILE.name} docs_refs names no built stack: {names}")
+        raise SystemExit(
+            f"error: {PUBLISH_FILE.name} docs_refs names no built stack: {names}"
+        )
     unknown = sorted(set(stacks) - set(released))
     if unknown:
         have = ", ".join(released) or "none"
-        raise SystemExit(f"error: not a released stack: {', '.join(unknown)} (released: {have})")
+        raise SystemExit(
+            f"error: not a released stack: {', '.join(unknown)} (released: {have})"
+        )
     chosen = [name for name in released if not stacks or name in stacks]
     blocks = tree["stacks"]
     builds = [
@@ -1757,7 +1896,9 @@ def plan_builds(
         heads = {member.name: HEAD for member in members}
         builds.append(Build(NEXT, f"/{NEXT}/", False, heads))
     if not builds:
-        raise SystemExit("error: versions.yaml holds no released stack, and --next was not given")
+        raise SystemExit(
+            "error: versions.yaml holds no released stack, and --next was not given"
+        )
     return builds
 
 
@@ -1769,7 +1910,9 @@ def summarise(result: BuildResult, emit: Callable[[str], None] = print) -> None:
         emit: Where each line goes.
     """
     left_out = [finding for finding in result.findings if finding.rule in LEFT_OUT]
-    emit(f"{result.build.name}: {len(result.members)} members included, {len(left_out)} left out")
+    emit(
+        f"{result.build.name}: {len(result.members)} members included, {len(left_out)} left out"
+    )
     for finding in left_out:
         emit(f"  left out {finding.member}: {finding.rule}")
     strays = Counter(f.member for f in result.findings if f.rule not in LEFT_OUT)
@@ -1801,10 +1944,15 @@ def main(argv: list[str] | None = None) -> int:
         help="also build the unlisted /next/ preview from each default branch",
     )
     parser.add_argument(
-        "--out", type=Path, default=DEFAULT_OUT, help="the content root (default docs-site/content)"
+        "--out",
+        type=Path,
+        default=DEFAULT_OUT,
+        help="the content root (default docs-site/content)",
     )
     parser.add_argument(
-        "--work-dir", type=Path, help="keep the member checkouts here and reuse them next run"
+        "--work-dir",
+        type=Path,
+        help="keep the member checkouts here and reuse them next run",
     )
     parser.add_argument(
         "--git-base",
@@ -1829,13 +1977,17 @@ def main(argv: list[str] | None = None) -> int:
     text = VERSIONS_FILE.read_text(encoding="utf-8")
     tree = yaml_subset.parse(text, source=str(VERSIONS_FILE))
     members = ordered_members(load_suite())
-    publish = yaml_subset.parse(PUBLISH_FILE.read_text(encoding="utf-8"), source=str(PUBLISH_FILE))
+    publish = yaml_subset.parse(
+        PUBLISH_FILE.read_text(encoding="utf-8"), source=str(PUBLISH_FILE)
+    )
     policy = load_policy(publish, (member.name for member in members))
     sidebar = yaml_subset.parse(
         JOURNEYS_FILE.read_text(encoding="utf-8"), source=str(JOURNEYS_FILE)
     )
     journeys = load_journeys(sidebar, (member.name for member in members))
-    builds = plan_builds(tree, members, args.stack, args.next, policy.dropped, policy.docs_refs)
+    builds = plan_builds(
+        tree, members, args.stack, args.next, policy.dropped, policy.docs_refs
+    )
     if args.next_refs:
         builds = pin_next(builds, args.next_refs)
     newest = next(iter(released_stacks(tree)), None)

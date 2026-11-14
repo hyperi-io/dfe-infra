@@ -83,9 +83,7 @@ STATE_ROOT = REPO_ROOT / ".tmp" / "kind"
 # the ones built for it: this is the v1.36.1 image kind v0.32.0 published,
 # digest verified against Docker Hub on 2026-09-24 (pushed 2026-06-02).
 KIND_RELEASE = "v0.32.0"
-KIND_NODE_IMAGE = (
-    "kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5"
-)
+KIND_NODE_IMAGE = "kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5"
 
 DEFAULT_NAME = "dfe-kind"
 DEFAULT_MODE = "single"
@@ -153,7 +151,9 @@ def _stream(cmd: list[str], *, env: dict[str, str] | None = None) -> int:
 def _kubectl(
     kubeconfig: Path, *argv: str, input_text: str | None = None
 ) -> subprocess.CompletedProcess:
-    return _run(["kubectl", "--kubeconfig", str(kubeconfig), *argv], input_text=input_text)
+    return _run(
+        ["kubectl", "--kubeconfig", str(kubeconfig), *argv], input_text=input_text
+    )
 
 
 # --- pure helpers (unit-tested) ----------------------------------------------
@@ -162,7 +162,9 @@ def state_dir(name: str, root: Path | None = None) -> Path:
     return (root or STATE_ROOT) / name
 
 
-def render_cluster_config(name: str, node_image: str, api_port: int, workers: int) -> str:
+def render_cluster_config(
+    name: str, node_image: str, api_port: int, workers: int
+) -> str:
     """The kind cluster config, as JSON (a YAML subset kind parses as-is).
 
     The API server binds loopback only; port 0 lets docker choose a free one, so
@@ -194,7 +196,11 @@ def pending_serving_csrs(csrs: dict, nodes: set[str]) -> list[str]:
         spec = csr.get("spec") or {}
         decided = (csr.get("status") or {}).get("conditions")
         requestor = spec.get("username", "").removeprefix("system:node:")
-        if spec.get("signerName") == KUBELET_SERVING_SIGNER and requestor in nodes and not decided:
+        if (
+            spec.get("signerName") == KUBELET_SERVING_SIGNER
+            and requestor in nodes
+            and not decided
+        ):
             names.append((csr.get("metadata") or {}).get("name", ""))
     return sorted(name for name in names if name)
 
@@ -222,7 +228,9 @@ def network_subnet(inspect: list[dict]) -> ipaddress.IPv4Network:
                 continue
             if isinstance(subnet, ipaddress.IPv4Network):
                 return subnet
-    raise KindError("the kind network carries no IPv4 subnet, so MetalLB has nothing to announce")
+    raise KindError(
+        "the kind network carries no IPv4 subnet, so MetalLB has nothing to announce"
+    )
 
 
 def network_addresses(inspect: list[dict]) -> set[ipaddress.IPv4Address]:
@@ -285,7 +293,10 @@ def render_storage_class(name: str, provisioner: str) -> str:
     manifest = {
         "apiVersion": "storage.k8s.io/v1",
         "kind": "StorageClass",
-        "metadata": {"name": name, "labels": {"app.kubernetes.io/managed-by": MANAGED_BY}},
+        "metadata": {
+            "name": name,
+            "labels": {"app.kubernetes.io/managed-by": MANAGED_BY},
+        },
         "provisioner": provisioner,
         "reclaimPolicy": "Delete",
         "volumeBindingMode": "WaitForFirstConsumer",
@@ -300,7 +311,11 @@ def child_env(kubeconfig: Path, base: dict[str, str] | None = None) -> dict[str,
     cluster but the one `up` made.
     """
     source = os.environ if base is None else base
-    env = {k: v for k, v in source.items() if not k.startswith("DFE_") and k != "KUBECONFIG"}
+    env = {
+        k: v
+        for k, v in source.items()
+        if not k.startswith("DFE_") and k != "KUBECONFIG"
+    }
     env["KUBECONFIG"] = str(kubeconfig)
     return env
 
@@ -368,7 +383,9 @@ def render_env_file(values: dict[str, str]) -> str:
     lines = []
     for key, value in values.items():
         if '"' in value or "\n" in value:
-            raise KindError(f"{key} carries a quote or newline, which an env file cannot hold")
+            raise KindError(
+                f"{key} carries a quote or newline, which an env file cannot hold"
+            )
         lines.append(f'{key}="{value}"')
     return "\n".join(lines) + "\n"
 
@@ -453,7 +470,9 @@ def required_tools(cloud: str) -> tuple[tuple[str, str], ...]:
 
 def missing_tools(cloud: str) -> list[tuple[str, str]]:
     """The required_tools pairs not on this process's PATH, which the deploy's children inherit."""
-    return [(tool, why) for tool, why in required_tools(cloud) if shutil.which(tool) is None]
+    return [
+        (tool, why) for tool, why in required_tools(cloud) if shutil.which(tool) is None
+    ]
 
 
 def _clusters() -> list[str]:
@@ -476,7 +495,9 @@ def _network_inspect(network: str) -> list[dict] | None:
 
 def _live_node_volumes(name: str) -> list[str]:
     """Volumes mounted by every container kind labels as part of cluster *name*."""
-    ids = _run(["docker", "ps", "-aq", "--filter", f"label={KIND_CLUSTER_LABEL}={name}"])
+    ids = _run(
+        ["docker", "ps", "-aq", "--filter", f"label={KIND_CLUSTER_LABEL}={name}"]
+    )
     if not ids.stdout.split():
         return []
     done = _run(["docker", "inspect", *ids.stdout.split()])
@@ -525,7 +546,9 @@ def _resolve_commit(ref: str, remote: str, fetch: bool) -> str:
         target = "FETCH_HEAD^{commit}"
     else:
         target = f"{ref}^{{commit}}"
-    done = _run(["git", "-C", str(REPO_ROOT), "rev-parse", "--verify", "--quiet", target])
+    done = _run(
+        ["git", "-C", str(REPO_ROOT), "rev-parse", "--verify", "--quiet", target]
+    )
     if done.returncode != 0 or not done.stdout.strip():
         raise KindError(f"{ref!r} does not name a commit here")
     return done.stdout.strip()
@@ -534,14 +557,31 @@ def _resolve_commit(ref: str, remote: str, fetch: bool) -> str:
 def _checkout(commit: str, dest: Path) -> None:
     """A private checkout of *commit*, sharing this clone's objects."""
     common = _run(
-        ["git", "-C", str(REPO_ROOT), "rev-parse", "--path-format=absolute", "--git-common-dir"]
+        [
+            "git",
+            "-C",
+            str(REPO_ROOT),
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-common-dir",
+        ]
     )
     if common.returncode != 0:
-        raise KindError(f"cannot find this checkout's git directory: {common.stderr.strip()}")
+        raise KindError(
+            f"cannot find this checkout's git directory: {common.stderr.strip()}"
+        )
     if dest.exists():
         shutil.rmtree(dest)
     for cmd in (
-        ["git", "clone", "--quiet", "--shared", "--no-checkout", common.stdout.strip(), str(dest)],
+        [
+            "git",
+            "clone",
+            "--quiet",
+            "--shared",
+            "--no-checkout",
+            common.stdout.strip(),
+            str(dest),
+        ],
         ["git", "-C", str(dest), "checkout", "--quiet", "--detach", commit],
     ):
         done = _run(cmd)
@@ -560,15 +600,23 @@ def _ensure_storage_class(kubeconfig: Path, name: str) -> None:
     if done.returncode != 0:
         raise KindError(f"cannot list StorageClasses: {done.stderr.strip()}")
     classes = json.loads(done.stdout)
-    names = {(sc.get("metadata") or {}).get("name") for sc in classes.get("items") or []}
+    names = {
+        (sc.get("metadata") or {}).get("name") for sc in classes.get("items") or []
+    }
     if name in names:
         print(f"  StorageClass {name} already present", file=sys.stderr)
         return
     provisioner = default_provisioner(classes)
     if not provisioner:
-        raise KindError("the kind cluster has no default StorageClass to take a provisioner from")
+        raise KindError(
+            "the kind cluster has no default StorageClass to take a provisioner from"
+        )
     done = _kubectl(
-        kubeconfig, "apply", "-f", "-", input_text=render_storage_class(name, provisioner)
+        kubeconfig,
+        "apply",
+        "-f",
+        "-",
+        input_text=render_storage_class(name, provisioner),
     )
     if done.returncode != 0:
         raise KindError(f"cannot create StorageClass {name}: {done.stderr.strip()}")
@@ -581,7 +629,9 @@ def _approve_kubelet_serving(kubeconfig: Path) -> None:
     Nothing in a cluster approves these by itself, and until one is approved the
     kubelet serves no TLS, so `kubectl logs` and metrics-server both fail.
     """
-    done = _kubectl(kubeconfig, "get", "nodes", "-o", "jsonpath={.items[*].metadata.name}")
+    done = _kubectl(
+        kubeconfig, "get", "nodes", "-o", "jsonpath={.items[*].metadata.name}"
+    )
     if done.returncode != 0:
         raise KindError(f"cannot list nodes: {done.stderr.strip()}")
     nodes = set(done.stdout.split())
@@ -594,7 +644,8 @@ def _approve_kubelet_serving(kubeconfig: Path) -> None:
         missing = nodes - serving_nodes(csrs)
         if not missing:
             print(
-                f"  kubelet serving certificates signed for {len(nodes)} node(s)", file=sys.stderr
+                f"  kubelet serving certificates signed for {len(nodes)} node(s)",
+                file=sys.stderr,
             )
             return
         for name in pending_serving_csrs(csrs, nodes):
@@ -613,22 +664,30 @@ def _read_state(name: str) -> dict:
     path = state_dir(name) / "state.json"
     try:
         return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except OSError, json.JSONDecodeError:
         return {}
 
 
 def _write_state(name: str, state: dict) -> None:
-    private_file.write_private(state_dir(name) / "state.json", json.dumps(state, indent=2) + "\n")
+    private_file.write_private(
+        state_dir(name) / "state.json", json.dumps(state, indent=2) + "\n"
+    )
 
 
 def cmd_kind_up(args: argparse.Namespace) -> int:
     missing = missing_tools(args.cloud_overlay)
     if missing:
-        print("kind up: not on PATH, and the deploy cannot finish without them:", file=sys.stderr)
+        print(
+            "kind up: not on PATH, and the deploy cannot finish without them:",
+            file=sys.stderr,
+        )
         for tool, why in missing:
             print(f"  {tool}: {why}", file=sys.stderr)
         return 2
-    if args.node_image == KIND_NODE_IMAGE and (found := _kind_version()) != KIND_RELEASE:
+    if (
+        args.node_image == KIND_NODE_IMAGE
+        and (found := _kind_version()) != KIND_RELEASE
+    ):
         print(
             f"  WARNING: the default node image was built for kind {KIND_RELEASE}; this host runs "
             f"{found or 'an unknown kind'}. Pass --node-image with an image from that release if "
@@ -647,7 +706,10 @@ def cmd_kind_up(args: argparse.Namespace) -> int:
                 f"({root / 'state.json'}); pass another --name, or delete that cluster first"
             )
         if existing:
-            print(f"==> kind cluster {args.name} exists; deploying onto it", file=sys.stderr)
+            print(
+                f"==> kind cluster {args.name} exists; deploying onto it",
+                file=sys.stderr,
+            )
         elif not args.skip_capacity_check:
             _capacity_gate(args.mode)
 
@@ -674,7 +736,9 @@ def cmd_kind_up(args: argparse.Namespace) -> int:
             config = root / "kind-config.json"
             private_file.write_private(
                 config,
-                render_cluster_config(args.name, args.node_image, args.api_port, args.workers),
+                render_cluster_config(
+                    args.name, args.node_image, args.api_port, args.workers
+                ),
             )
             # kind creates its kubeconfig 0600 but merges into an existing file at that
             # file's mode, so a dead cluster's leftover would take the new credentials.
@@ -710,7 +774,9 @@ def cmd_kind_up(args: argparse.Namespace) -> int:
         elif not kubeconfig.is_file():
             done = _run(["kind", "get", "kubeconfig", "--name", args.name])
             if done.returncode != 0:
-                raise KindError(f"cannot read the kubeconfig of {args.name}: {done.stderr.strip()}")
+                raise KindError(
+                    f"cannot read the kubeconfig of {args.name}: {done.stderr.strip()}"
+                )
             private_file.write_private(kubeconfig, done.stdout)
 
         print("==> kind glue", file=sys.stderr)
@@ -734,7 +800,9 @@ def cmd_kind_up(args: argparse.Namespace) -> int:
         template = checkout / "bootstrap" / "local.env.example"
         template_env = envfile.parse_env_file(template) if template.is_file() else {}
         args.default_repo_url = _default_repo_url(args.remote)
-        defaults, facts = plan_env(args, operator_env, template_env, gateway_ip, receiver_ip)
+        defaults, facts = plan_env(
+            args, operator_env, template_env, gateway_ip, receiver_ip
+        )
         defaults_file = root / "kind-defaults.env"
         facts_file = root / "kind-facts.env"
         private_file.write_private(defaults_file, render_env_file(defaults))
@@ -761,12 +829,20 @@ def cmd_kind_up(args: argparse.Namespace) -> int:
         return 1
 
     argv = stack_deploy_argv(
-        args, checkout, kubeconfig, commit, defaults_file, facts_file, root / "dfe-access.md"
+        args,
+        checkout,
+        kubeconfig,
+        commit,
+        defaults_file,
+        facts_file,
+        root / "dfe-access.md",
     )
     rc = _stream(argv, env=child_env(kubeconfig))
     env_flags = " ".join(f"--env-file {p}" for p in state["env_files"])
     print("", file=sys.stderr)
-    print(f"=== kind up {'OK' if rc == 0 else f'FAILED (rc {rc})'} ===", file=sys.stderr)
+    print(
+        f"=== kind up {'OK' if rc == 0 else f'FAILED (rc {rc})'} ===", file=sys.stderr
+    )
     print(f"  cluster:    {args.name} (network {state['network']})", file=sys.stderr)
     print(f"  deployed:   {args.mode} from {args.ref} at {commit}", file=sys.stderr)
     print(f"  kubeconfig: {kubeconfig}", file=sys.stderr)
@@ -802,10 +878,16 @@ def load_balancers(services: dict) -> list[tuple[str, str, int]]:
             continue
         meta = svc.get("metadata") or {}
         ports = [p.get("port") for p in spec.get("ports") or [] if p.get("port")]
-        for ingress in (svc.get("status") or {}).get("loadBalancer", {}).get("ingress") or []:
+        for ingress in (svc.get("status") or {}).get("loadBalancer", {}).get(
+            "ingress"
+        ) or []:
             if ingress.get("ip") and ports:
                 found.append(
-                    (f"{meta.get('namespace')}/{meta.get('name')}", ingress["ip"], int(ports[0]))
+                    (
+                        f"{meta.get('namespace')}/{meta.get('name')}",
+                        ingress["ip"],
+                        int(ports[0]),
+                    )
                 )
     return sorted(found)
 
@@ -878,7 +960,13 @@ def cmd_kind_status(args: argparse.Namespace) -> int:
     healthy &= bool(items) and len(ready) == len(items)
 
     done = _kubectl(
-        kubeconfig, "-n", ARGOCD_NAMESPACE, "get", "applications.argoproj.io", "-o", "json"
+        kubeconfig,
+        "-n",
+        ARGOCD_NAMESPACE,
+        "get",
+        "applications.argoproj.io",
+        "-o",
+        "json",
     )
     if done.returncode != 0:
         print("  argo: no Applications (not deployed yet?)")
@@ -886,7 +974,9 @@ def cmd_kind_status(args: argparse.Namespace) -> int:
     else:
         rows = app_rows(json.loads(done.stdout))
         bad = [r for r in rows if r[1] != "Synced" or r[2] != "Healthy"]
-        print(f"  argo: {len(rows) - len(bad)}/{len(rows)} Applications Synced and Healthy")
+        print(
+            f"  argo: {len(rows) - len(bad)}/{len(rows)} Applications Synced and Healthy"
+        )
         for name, sync, health in bad:
             print(f"    {name:<44} {sync:<10} {health}")
         healthy &= bool(rows) and not bad
@@ -894,7 +984,11 @@ def cmd_kind_status(args: argparse.Namespace) -> int:
     done = _kubectl(kubeconfig, "get", "services", "-A", "-o", "json")
     if done.returncode == 0:
         for svc, address, port in load_balancers(json.loads(done.stdout)):
-            verdict = "reachable" if _reachable(address, port) else "NOT reachable from this host"
+            verdict = (
+                "reachable"
+                if _reachable(address, port)
+                else "NOT reachable from this host"
+            )
             print(f"  door {svc}: {address}:{port} {verdict}")
     return 0 if healthy else 1
 
@@ -911,7 +1005,9 @@ def cmd_kind_down(args: argparse.Namespace) -> int:
     except KindError as exc:
         print(f"kind down: {exc}", file=sys.stderr)
         return 1
-    volumes = sorted(set(state.get("volumes") or []) | set(_live_node_volumes(args.name)))
+    volumes = sorted(
+        set(state.get("volumes") or []) | set(_live_node_volumes(args.name))
+    )
     if present:
         rc = _stream(["kind", "delete", "cluster", "--name", args.name])
         if rc != 0:
@@ -927,10 +1023,16 @@ def cmd_kind_down(args: argparse.Namespace) -> int:
     if owned and _network_inspect(network) is not None:
         done = _run(["docker", "network", "rm", network])
         if done.returncode != 0:
-            print(f"kind down: docker network rm {network}: {done.stderr.strip()}", file=sys.stderr)
+            print(
+                f"kind down: docker network rm {network}: {done.stderr.strip()}",
+                file=sys.stderr,
+            )
             problems += 1
     elif not owned:
-        print(f"  docker network {network}: not created by kind up, left in place", file=sys.stderr)
+        print(
+            f"  docker network {network}: not created by kind up, left in place",
+            file=sys.stderr,
+        )
 
     if root.exists():
         shutil.rmtree(root)
@@ -941,13 +1043,22 @@ def cmd_kind_down(args: argparse.Namespace) -> int:
         (
             f"containers labelled {KIND_CLUSTER_LABEL}={args.name}",
             not _run(
-                ["docker", "ps", "-aq", "--filter", f"label={KIND_CLUSTER_LABEL}={args.name}"]
+                [
+                    "docker",
+                    "ps",
+                    "-aq",
+                    "--filter",
+                    f"label={KIND_CLUSTER_LABEL}={args.name}",
+                ]
             ).stdout.strip(),
         ),
         (f"state directory {root}", not root.exists()),
     ]
     checks += [
-        (f"node volume {volume}", _run(["docker", "volume", "inspect", volume]).returncode != 0)
+        (
+            f"node volume {volume}",
+            _run(["docker", "volume", "inspect", volume]).returncode != 0,
+        )
         for volume in volumes
     ]
     if owned:
@@ -1008,7 +1119,9 @@ def add_kind_subparser(sub: argparse._SubParsersAction) -> None:
         help="deploy profile",
     )
     up.add_argument(
-        "--stack", default="", help="versions.yaml stack to deploy (default: the ref's `current`)"
+        "--stack",
+        default="",
+        help="versions.yaml stack to deploy (default: the ref's `current`)",
     )
     up.add_argument(
         "--env-file",
@@ -1036,7 +1149,9 @@ def add_kind_subparser(sub: argparse._SubParsersAction) -> None:
         "--namespace", default=None, help=f"app namespace (default {DEFAULT_NAMESPACE})"
     )
     up.add_argument(
-        "--env", default=None, help=f"deployment posture, DFE_ENV (default {DEFAULT_ENV})"
+        "--env",
+        default=None,
+        help=f"deployment posture, DFE_ENV (default {DEFAULT_ENV})",
     )
     up.add_argument(
         "--cloud-overlay",
@@ -1049,7 +1164,9 @@ def add_kind_subparser(sub: argparse._SubParsersAction) -> None:
         help="StorageClass the overlay requests; created on the kind provisioner if absent",
     )
     up.add_argument(
-        "--network", default=None, help="docker network the nodes join (default: the cluster name)"
+        "--network",
+        default=None,
+        help="docker network the nodes join (default: the cluster name)",
     )
     up.add_argument(
         "--gateway-ip",
@@ -1067,9 +1184,13 @@ def add_kind_subparser(sub: argparse._SubParsersAction) -> None:
         default=0,
         help="host port for the API server on 127.0.0.1; 0 lets docker choose a free one",
     )
-    up.add_argument("--workers", type=int, default=0, help="worker nodes beside the control plane")
     up.add_argument(
-        "--node-image", default=KIND_NODE_IMAGE, help="kind node image, pinned by digest"
+        "--workers", type=int, default=0, help="worker nodes beside the control plane"
+    )
+    up.add_argument(
+        "--node-image",
+        default=KIND_NODE_IMAGE,
+        help="kind node image, pinned by digest",
     )
     up.add_argument(
         "--readiness-timeout",

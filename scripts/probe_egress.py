@@ -62,18 +62,32 @@ EXEC_OVERHEAD = 20
 OK, REFUSED, TIMEOUT, NO_PROBE, ERROR = "OK", "REFUSED", "TIMEOUT", "NO-PROBE", "ERROR"
 
 
-def kubectl(args: list[str], context: str | None, timeout: int) -> subprocess.CompletedProcess:
+def kubectl(
+    args: list[str], context: str | None, timeout: int
+) -> subprocess.CompletedProcess:
     cmd = ["kubectl"]
     if context:
         cmd += ["--context", context]
     cmd += args
-    return subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=timeout)
+    return subprocess.run(
+        cmd, capture_output=True, text=True, check=False, timeout=timeout
+    )
 
 
 def running_pods(namespace: str, selector: str, context: str | None) -> list[str]:
     """Pod names matching the selector, Running phase only."""
     out = kubectl(
-        ["get", "pods", "-n", namespace, "-l", selector, "-o", "json", "--request-timeout=30s"],
+        [
+            "get",
+            "pods",
+            "-n",
+            namespace,
+            "-l",
+            selector,
+            "-o",
+            "json",
+            "--request-timeout=30s",
+        ],
         context,
         60,
     )
@@ -114,17 +128,32 @@ def probe_commands(host: str, port: int, timeout: int) -> list[tuple[str, list[s
         ("python3", ["python3", "-c", src]),
         ("python", ["python", "-c", src]),
         # /dev/tcp is a bash feature, absent from POSIX sh.
-        ("bash", ["bash", "-c", f"exec 3<>/dev/tcp/{host}/{port} && echo DFE_EGRESS_OK"]),
+        (
+            "bash",
+            ["bash", "-c", f"exec 3<>/dev/tcp/{host}/{port} && echo DFE_EGRESS_OK"],
+        ),
         ("nc", ["nc", "-z", "-w", str(timeout), host, str(port)]),
-        ("curl", ["curl", "-s", "-o", "/dev/null", "--connect-timeout", str(timeout),
-                  f"telnet://{quoted}"]),
+        (
+            "curl",
+            [
+                "curl",
+                "-s",
+                "-o",
+                "/dev/null",
+                "--connect-timeout",
+                str(timeout),
+                f"telnet://{quoted}",
+            ],
+        ),
     ]
 
 
 def _tool_missing(result: subprocess.CompletedProcess) -> bool:
     text = (result.stderr or "") + (result.stdout or "")
-    return result.returncode == 127 or "executable file not found" in text or (
-        "not found" in text and "no such file" in text.lower()
+    return (
+        result.returncode == 127
+        or "executable file not found" in text
+        or ("not found" in text and "no such file" in text.lower())
     )
 
 
@@ -149,8 +178,15 @@ def classify(tool: str, result: subprocess.CompletedProcess) -> str | None:
     return REFUSED if tool in ("nc", "curl", "bash") else ERROR
 
 
-def probe(pod: str, namespace: str, host: str, port: int, timeout: int,
-          context: str | None, container: str | None) -> tuple[str, str]:
+def probe(
+    pod: str,
+    namespace: str,
+    host: str,
+    port: int,
+    timeout: int,
+    context: str | None,
+    container: str | None,
+) -> tuple[str, str]:
     """Return (result, tool). Walks the ladder until a tool is present."""
     for tool, argv in probe_commands(host, port, timeout):
         args = ["exec", pod, "-n", namespace]
@@ -175,21 +211,43 @@ def parse_target(target: str) -> tuple[str, int]:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__,
-                                     formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--namespace", "-n", required=True, help="namespace the pod runs in")
-    parser.add_argument("--app", help=f"value of {DEFAULT_LABEL_KEY} identifying the app")
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument(
+        "--namespace", "-n", required=True, help="namespace the pod runs in"
+    )
+    parser.add_argument(
+        "--app", help=f"value of {DEFAULT_LABEL_KEY} identifying the app"
+    )
     parser.add_argument("--label", help="full label selector, instead of --app")
-    parser.add_argument("--label-key", default=DEFAULT_LABEL_KEY,
-                        help=f"label key --app matches on (default {DEFAULT_LABEL_KEY})")
-    parser.add_argument("--target", action="append", required=True, metavar="HOST:PORT",
-                        help="endpoint to reach; repeat for several")
+    parser.add_argument(
+        "--label-key",
+        default=DEFAULT_LABEL_KEY,
+        help=f"label key --app matches on (default {DEFAULT_LABEL_KEY})",
+    )
+    parser.add_argument(
+        "--target",
+        action="append",
+        required=True,
+        metavar="HOST:PORT",
+        help="endpoint to reach; repeat for several",
+    )
     parser.add_argument("--context", help="kubectl context (default: current)")
-    parser.add_argument("--container", "-c", help="container to exec in (default: first)")
-    parser.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT,
-                        help=f"per-connect timeout in seconds (default {DEFAULT_TIMEOUT})")
-    parser.add_argument("--all-pods", action="store_true",
-                        help="probe every matching pod, not just the first")
+    parser.add_argument(
+        "--container", "-c", help="container to exec in (default: first)"
+    )
+    parser.add_argument(
+        "--timeout",
+        type=int,
+        default=DEFAULT_TIMEOUT,
+        help=f"per-connect timeout in seconds (default {DEFAULT_TIMEOUT})",
+    )
+    parser.add_argument(
+        "--all-pods",
+        action="store_true",
+        help="probe every matching pod, not just the first",
+    )
     args = parser.parse_args()
 
     if not args.app and not args.label:
@@ -208,8 +266,15 @@ def main() -> int:
     failures = 0
     for pod in pods:
         for host, port in targets:
-            verdict, tool = probe(pod, args.namespace, host, port, args.timeout,
-                                  args.context, args.container)
+            verdict, tool = probe(
+                pod,
+                args.namespace,
+                host,
+                port,
+                args.timeout,
+                args.context,
+                args.container,
+            )
             if verdict != OK:
                 failures += 1
             print(f"{verdict:9} {pod} -> {host}:{port}  (via {tool})")

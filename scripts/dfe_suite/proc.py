@@ -121,7 +121,9 @@ class CommandTimeoutError(FleetError):
             argv: The command that was stopped.
             seconds: The timeout it outlived.
         """
-        super().__init__(f"{argv[0] if argv else 'command'} timed out after {seconds:g}s")
+        super().__init__(
+            f"{argv[0] if argv else 'command'} timed out after {seconds:g}s"
+        )
         self.seconds = seconds
 
 

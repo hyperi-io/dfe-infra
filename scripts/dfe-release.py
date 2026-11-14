@@ -115,7 +115,9 @@ def _open_pr(
     proc = _gh(cmd, check=False)
     if proc.returncode != 0:
         # Already open? report the existing PR url/number.
-        existing = _gh(["pr", "view", head, "-R", repo, "--json", "number,url"], check=False)
+        existing = _gh(
+            ["pr", "view", head, "-R", repo, "--json", "number,url"], check=False
+        )
         if existing.returncode == 0:
             return 0, existing.stdout.strip(), ""
         return 1, "", proc.stderr.strip()
@@ -168,7 +170,9 @@ def _merge_pr(
     """
     cmd = ["pr", "merge", str(pr), "-R", repo]
     if publish:
-        view = _gh(["pr", "view", str(pr), "-R", repo, "--json", "title,body"], check=False)
+        view = _gh(
+            ["pr", "view", str(pr), "-R", repo, "--json", "title,body"], check=False
+        )
         if view.returncode != 0:
             return view.returncode, "", view.stderr.strip()
         info = json.loads(view.stdout or "{}")
@@ -187,7 +191,9 @@ def _merge_pr(
     proc = _gh(cmd, check=False)
     out = (proc.stdout + proc.stderr).strip()
     if publish and proc.returncode == 0:
-        out = f"{out}\nsquashed with the release trailer -- {repo} will publish from main"
+        out = (
+            f"{out}\nsquashed with the release trailer -- {repo} will publish from main"
+        )
     return proc.returncode, out, ""
 
 
@@ -211,10 +217,23 @@ def cmd_merge(a: argparse.Namespace) -> int:
 def cmd_dispatch(a: argparse.Namespace) -> int:
     repo = _repo(a.repo)
     proc = _gh(
-        ["workflow", "run", a.workflow, "-R", repo, "-f", "from-head=true", "--ref", a.ref],
+        [
+            "workflow",
+            "run",
+            a.workflow,
+            "-R",
+            repo,
+            "-f",
+            "from-head=true",
+            "--ref",
+            a.ref,
+        ],
         check=False,
     )
-    print((proc.stdout + proc.stderr).strip() or f"dispatched {a.workflow} on {repo}@{a.ref}")
+    print(
+        (proc.stdout + proc.stderr).strip()
+        or f"dispatched {a.workflow} on {repo}@{a.ref}"
+    )
     return proc.returncode
 
 
@@ -442,8 +461,13 @@ def cmd_ship(a: argparse.Namespace) -> int:
     print(out, file=sys.stderr)
 
     rc, _ = _wait_for_run(
-        repo, a.workflow, DEFAULT_INTERVAL, a.timeout,
-        after_id=before_id, out=sys.stderr, err=sys.stderr,
+        repo,
+        a.workflow,
+        DEFAULT_INTERVAL,
+        a.timeout,
+        after_id=before_id,
+        out=sys.stderr,
+        err=sys.stderr,
     )
     if rc:
         return rc
@@ -463,7 +487,9 @@ def cmd_ship(a: argparse.Namespace) -> int:
 
 
 def main() -> int:
-    p = argparse.ArgumentParser(description="Scoped GHCR release driver for DFE app repos.")
+    p = argparse.ArgumentParser(
+        description="Scoped GHCR release driver for DFE app repos."
+    )
     sub = p.add_subparsers(dest="cmd", required=True)
 
     po = sub.add_parser("open", help="create the PR for a pushed branch")
@@ -485,7 +511,9 @@ def main() -> int:
         help="squash-merge with the Publish: true trailer -- the merge itself releases",
     )
     pm.add_argument("--subject", help="squash subject (default: the PR title)")
-    pm.add_argument("--note", help="squash body line (default: the PR body's first line)")
+    pm.add_argument(
+        "--note", help="squash body line (default: the PR body's first line)"
+    )
     pm.set_defaults(func=cmd_merge)
 
     pd = sub.add_parser("dispatch", help="trigger the CI release workflow")
