@@ -17,7 +17,7 @@ python3 scripts/resolve_sizing.py --dial deployment.yaml --live \
 python3 scripts/render_dial.py --tofu
 ```
 
-`dfe-ops init` asks nine questions and writes `deployment.yaml`, the one file the deployment reads. Answer `aws` for the target, `scale` for the tier, and `msk`, `confluent-cloud` or `redpanda-cloud` for Kafka. The resolver asks the AWS API what the region offers and sizes the node pools from your GB/day estimate. Leave the estimate blank for the smallest shape that runs.
+`dfe-ops init` asks nine questions and writes `deployment.yaml`, the one file the deployment reads. Answer `aws` for the target, `scale` for the tier, and `msk`, `confluent-cloud` or `redpanda-cloud` for Kafka. The resolver asks the AWS API what the region offers and sizes the node pools from your GB/day estimate. Leave the estimate blank for the smallest node pools that run.
 
 Confluent Cloud and Redpanda Cloud take their API credentials from your shell, never a file. Export `CONFLUENT_CLOUD_API_KEY` and `CONFLUENT_CLOUD_API_SECRET` for Confluent Cloud before the plan. The Redpanda provider checks for `REDPANDA_CLIENT_ID` and `REDPANDA_CLIENT_SECRET` on every plan, whichever Kafka you chose.
 
