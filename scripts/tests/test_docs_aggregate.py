@@ -1661,7 +1661,13 @@ def test_cli_render_tells_docker_failures_from_engine_ones(
 
 
 @pytest.mark.parametrize(
-    ("ref", "tag"), [("v1.22.89", "v1.22.89"), (aggregate.HEAD, cli_reference.HEAD_TAG)]
+    ("ref", "tag"),
+    [
+        ("v1.22.89", "v1.22.89"),
+        (aggregate.HEAD, cli_reference.HEAD_TAG),
+        ("ad608a090f5993bb7b3d7aac02cc6a3e8354ae76", cli_reference.HEAD_TAG),
+    ],
+    ids=["release", "head", "commit"],
 )
 def test_cli_page_is_rendered_from_the_pinned_image(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, ref: str, tag: str

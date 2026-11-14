@@ -1307,7 +1307,7 @@ def _place_cli(ref: str, root: Path, dest: Path, findings: list[Finding]) -> dic
     if shutil.which("docker") is None:
         findings.append(Finding(SPEC_MEMBER, cli_reference.PAGE.as_posix(), Rule.NO_DOCKER))
         return None
-    tag = cli_reference.image_tag(ref, HEAD)
+    tag = cli_reference.image_tag(ref)
     try:
         rendered = cli_reference.render(tag, _run)
     except cli_reference.ImageError as exc:
@@ -1344,7 +1344,6 @@ QUICKSTART_DIR = "_quickstart"
 QUICKSTART_SCHEMAS = (1, 2)
 # A pack's use_case is a path on this site.
 WEBSITE = "https://hyperi.io"
-_RELEASE_TAG = re.compile(r"v\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?")
 _QUICKSTART_REGION = re.compile(
     r"<!-- docker-quickstart: (up|demo) -->\n.*?<!-- /docker-quickstart -->\n", re.DOTALL
 )
@@ -1375,7 +1374,7 @@ def docker_quickstart(build: Build, newest: str | None) -> dict | None:
         url, form = f"{DOCKER_RELEASES}/latest/download/{DOCKER_QUICKSTART}", "latest"
     else:
         ref = build.refs.get(DOCKER_MEMBER, "")
-        if not _RELEASE_TAG.fullmatch(ref):
+        if not cli_reference.RELEASE_TAG.fullmatch(ref):
             return None
         url = f"{DOCKER_RELEASES}/download/{ref}/{DOCKER_QUICKSTART}"
         form = "latest" if build.name == newest else "pinned"
