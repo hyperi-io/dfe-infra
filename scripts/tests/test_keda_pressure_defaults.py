@@ -42,20 +42,17 @@ CHARTS = REPO_ROOT / "helm" / "charts"
 VALUES = REPO_ROOT / "argocd" / "values"
 
 # Every app whose ScaledObject carries the pressure trigger. dfe-fetcher is absent
-# on purpose: it renders no ScaledObject. dfe-transform-vector is CPU_ONLY_APPS.
+# on purpose: it renders no ScaledObject.
 PRESSURE_APPS = [
     "dfe-archiver",
     "dfe-loader",
     "dfe-receiver",
     "dfe-transform-elastic",
+    "dfe-transform-vector",
     "dfe-transform-vrl",
 ]
 
 # Apps that ship the cpu trigger alone, because the app sets no scaling_pressure
-# gauge for the pressure trigger to read.
-CPU_ONLY_APPS = [
-    "dfe-transform-vector",
-]
 
 # The brokerless minimum tier, which runs on cpu alone.
 CPU_ONLY_TIER = "slim"
@@ -104,18 +101,6 @@ def test_every_app_chart_ships_the_pressure_trigger() -> None:
                 expect(
                     f"{app} {profile}/{cloud} renders both the cpu and metrics-api triggers",
                     got == ["cpu", "metrics-api"],
-                    f"got {got}",
-                )
-
-
-def test_a_chart_whose_app_sets_no_gauge_ships_cpu_alone() -> None:
-    for app in CPU_ONLY_APPS:
-        for profile in PROFILES:
-            for cloud in CLOUDS:
-                got = kinds(golden(app, profile, cloud), f"{app}-scaler")
-                expect(
-                    f"{app} {profile}/{cloud} renders the cpu trigger alone",
-                    got == ["cpu"],
                     f"got {got}",
                 )
 
@@ -228,7 +213,6 @@ def test_the_scale_ceiling_divides_the_partition_count() -> None:
 def main() -> int:
     with standalone():
         test_every_app_chart_ships_the_pressure_trigger()
-        test_a_chart_whose_app_sets_no_gauge_ships_cpu_alone()
         test_the_shim_address_follows_the_release_namespace()
         test_an_explicit_shim_address_still_wins()
         test_pressure_can_still_be_turned_off()
