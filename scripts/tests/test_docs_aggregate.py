@@ -1500,7 +1500,7 @@ QUICKSTART_PAGE = (
     "Intro.\n\n<!-- docker-quickstart: up -->\nYou need make.\n\n<!-- landing -->\n```bash\nmake up\n```\n"
     "<!-- /docker-quickstart -->\n\nAfter.\n"
 )
-NEED = "You need Docker Engine 27.0 or later with Compose 2.26.0 or later.\n\n"
+NEED = "<small>Docker Engine 27.0 or later with Compose 2.26.0 or later</small>\n\n"
 THEATRE = "- [Theatre and battlespace](https://hyperi.io/solutions/theatre-and-battlespace/): "
 
 
@@ -1512,6 +1512,7 @@ THEATRE = "- [Theatre and battlespace](https://hyperi.io/solutions/theatre-and-b
             "latest",
             [],
             "```bash\ndocker compose -f oci://img:latest up -d\n```\n\n"
+            f"{NEED}"
             "Then point your browser to http://localhost:3000.\n",
         ),
         (
@@ -1519,19 +1520,20 @@ THEATRE = "- [Theatre and battlespace](https://hyperi.io/solutions/theatre-and-b
             "pinned",
             QUICKSTART_PACKS,
             "```bash\ndocker compose -f oci://img:1.0.5 up -d\n```\n\n"
+            f"{NEED}"
             "Then point your browser to http://localhost:3000.\n",
         ),
         (
             "demo",
             "latest",
             [],
-            "```bash\ndocker compose -f oci://img-demo:latest up -d\n```\n\nDemo note.\n",
+            f"```bash\ndocker compose -f oci://img-demo:latest up -d\n```\n\n{NEED}Demo note.\n",
         ),
         (
             "demo",
             "pinned",
             QUICKSTART_PACKS,
-            "```bash\ndocker compose -f oci://img-demo:1.0.5 up -d\n```\n\nDemo note.\n"
+            f"```bash\ndocker compose -f oci://img-demo:1.0.5 up -d\n```\n\n{NEED}Demo note.\n"
             "\nOther demo use cases:\n\n"
             f"{THEATRE}`docker compose -f oci://img:demo-theatre-1.0.6 up -d`\n",
         ),
@@ -1544,7 +1546,7 @@ def test_a_compose_release_replaces_the_pages_make_region(
     page = QUICKSTART_PAGE.replace("docker-quickstart: up", f"docker-quickstart: {kind}")
     text = aggregate.fill_quickstart(page, {**QUICKSTART, "packs": packs, "form": form})
     assert text == (
-        f"Intro.\n\n<!-- docker-quickstart: {kind} -->\n{NEED}<!-- landing -->\n{region}"
+        f"Intro.\n\n<!-- docker-quickstart: {kind} -->\n<!-- landing -->\n{region}"
         "<!-- /docker-quickstart -->\n\nAfter.\n"
     )
 

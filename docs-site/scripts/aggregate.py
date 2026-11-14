@@ -1427,11 +1427,11 @@ def fill_quickstart(text: str, quickstart: dict | None) -> str:
     """
     if quickstart is None:
         return text
+    # Small print under the command, which the landing hero reads back as its "Needs" line.
     need = (
-        f"You need Docker Engine {quickstart['min_engine']} or later with Compose "
-        f"{quickstart['min_compose']} or later."
+        f"<small>Docker Engine {quickstart['min_engine']} or later with Compose "
+        f"{quickstart['min_compose']} or later</small>"
     )
-
     form = quickstart["form"]
     packs = "".join(
         f"- [{pack['title']}]({WEBSITE}{pack['use_case']}): `{' && '.join(pack[form])}`\n"
@@ -1444,8 +1444,8 @@ def fill_quickstart(text: str, quickstart: dict | None) -> str:
         commands = "\n".join(quickstart[kind][form])
         return (
             f"<!-- docker-quickstart: {kind} -->\n"
-            f"{need}\n\n"
-            f"<!-- landing -->\n```bash\n{commands}\n```\n\n{quickstart['notes'][kind]}\n"
+            f"<!-- landing -->\n```bash\n{commands}\n```\n\n{need}\n\n"
+            f"{quickstart['notes'][kind]}\n"
             f"{others[kind]}"
             "<!-- /docker-quickstart -->\n"
         )
