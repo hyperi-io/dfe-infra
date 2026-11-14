@@ -1,6 +1,12 @@
-# ClickHouse: targets, operators, and how to swap them
+---
+sidebar_position: 1
+---
 
-ClickHouse is the DFE data layer. Which ClickHouse, and which operator if any, is a per-deployment choice behind the `clickhouse-cluster` chart's `clickhouse.mode` value. The target options are listed below.
+# ClickHouse
+
+ClickHouse is where DFE stores every event. This page answers which ClickHouse to run, what an existing one must provide, how we deploy it on-prem, and where the fork from DFE 2.0 and 2.1 went.
+
+Which ClickHouse is a per-deployment choice in the `clickhouse-cluster` chart's `clickhouse.mode`: one we deploy on your cluster, or one you already run, on your own servers or from a cloud provider. An existing ClickHouse must meet the version floor below and provide everything in [What a self-hosted server provides](#what-a-self-hosted-server-provides). On-prem we deploy the official operator, with the `cached-object` storage model wherever an S3-compatible store exists: an object store with an SSD cache in front. It is our nearest equivalent of ClickHouse Cloud's storage, so on-prem and cloud deployments share one storage model.
 
 ## The DFE 2.2 target matrix
 
@@ -15,6 +21,8 @@ ClickHouse is the DFE data layer. Which ClickHouse, and which operator if any, i
 An external ClickHouse must run 24.10 or later. The collector's `otel_writer` grant uses a table wildcard (`INSERT ON dfe.otel_*`) that an older server refuses, so the collector can't insert.
 
 ## What a self-hosted server provides
+
+This is the checklist for a ClickHouse you already run, whether under the Altinity operator or on bare servers.
 
 dfe-engine creates every table as an argumentless `Replicated*` engine inside a Replicated database. So it refuses a self-hosted server that lacks Keeper, the `{cluster}`, `{shard}` and `{replica}` macros, or a `remote_servers` cluster the `{cluster}` macro names. On a cluster of more than one server its SQL users and roles must also live in Keeper, as the first writable `user_directories` entry. Both modes this chart deploys provide all of it:
 
@@ -32,9 +40,9 @@ In cluster mode the `KeeperCluster` turns on the operator's own NetworkPolicy, a
 
 ## History and rationale
 
-Until ClickHouse published an operator of its own, the Kubernetes options were the Altinity operator or building your own. HyperI built its own: an internal operator paired with a custom ClickHouse fork whose engine put an SSD cache in front of bulk storage, run on private-cloud deployments. HyperI maintained that pairing for two years.
+Until ClickHouse published an operator of its own, the Kubernetes options were the Altinity operator or building your own. DFE 2.0 and 2.1 ran HyperI's own: an internal operator and a ClickHouse fork, on private-cloud deployments. The Vector-based loader of those releases needed the fork's SSD cache in front of bulk storage.
 
-DFE 2.2 retires the pairing for less code to maintain, lower operational risk, and a storage model held in common across on-prem and cloud deployments. The official ClickHouse operator plus the `cached-object` storage model replaces it as the supported path. That model is an object-store disk with a local read-through cache in front of it, under the `s3_cached` policy, and it's now the default wherever an object-store endpoint exists. A deployment still on the retired pairing migrates onto DFE 2.2 by following [Migrating from DFE 2.x before 2.2](migrating-from-2.1.md).
+The ground-up Rust dfe-loader in DFE 2.2 resolved those pain points, which let the fork and the internal operator go. The official ClickHouse operator plus the `cached-object` storage model replaces them as the supported path. That model is an object-store disk with a local read-through cache in front of it, under the `s3_cached` policy, and it's the default wherever an object-store endpoint exists. A deployment still on the retired pairing follows [Migrating from DFE 2.x before 2.2](migrating-from-2.1.md).
 
 When ClickHouse Inc shipped its official operator, DFE 2.2 adopted it as the public on-cluster default. The decision record (versions.yaml, `operators.clickhouse-operator`): greenfield stack, single-shard topology, DFE owns its own DDL, safe Keeper consensus, and ClickHouse partner support. None of that needed Altinity's extra machinery. ClickHouse Cloud is the other main public target via `mode: external`.
 
