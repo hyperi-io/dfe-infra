@@ -1353,7 +1353,8 @@ def docker_quickstart(build: Build, newest: str | None) -> dict | None:
     """The quickstart.json of the dfe-docker release a build pins, with the form its pages show.
 
     The newest release and /next/ show the latest form, any other build the form
-    pinned to its own release. A build whose stack pins dfe-docker by commit gets
+    pinned to its own release. A publish.yaml docs_refs pin for dfe-docker wins over
+    the stack's. A build whose stack pins dfe-docker by commit gets
     None and keeps the commands its pages carry, and so does a release whose file
     is not the one-line compose install: its init and docker-run lines need more
     than Docker on the reader's machine.
@@ -1373,7 +1374,7 @@ def docker_quickstart(build: Build, newest: str | None) -> dict | None:
     if build.name == NEXT:
         url, form = f"{DOCKER_RELEASES}/latest/download/{DOCKER_QUICKSTART}", "latest"
     else:
-        ref = build.refs.get(DOCKER_MEMBER, "")
+        ref = build.docs_refs.get(DOCKER_MEMBER) or build.refs.get(DOCKER_MEMBER, "")
         if not cli_reference.RELEASE_TAG.fullmatch(ref):
             return None
         url = f"{DOCKER_RELEASES}/download/{ref}/{DOCKER_QUICKSTART}"
