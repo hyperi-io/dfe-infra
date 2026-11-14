@@ -1,10 +1,10 @@
 ---
 sidebar_position: 1.6
-sidebar_label: Coming from a lakehouse
+sidebar_label: Coming from a Lakehouse
 slug: /coming-from-lakehouse
 ---
 
-# Coming from a lakehouse
+# Coming from a Lakehouse
 
 If you've run Snowflake, Databricks, BigQuery, or Athena over Iceberg or Delta tables, you'll bring a warehouse's assumptions about how data lands and what a query costs. DFE is built for a different job: high-volume machine data, landed in seconds, kept for months and queried without a bill per scan. This page says where the two differ and where DFE sits beside a warehouse you keep.
 

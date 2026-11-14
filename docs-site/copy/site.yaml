@@ -25,6 +25,7 @@ footer:
     - {label: Overview, to: /overview/}
     - {label: Quickstarts, to: /quickstart/}
     - {label: Coming from Splunk or Elastic, to: /coming-from/}
+    - {label: Coming from a Lakehouse, to: /coming-from-lakehouse/}
     - {label: HTTP API reference, to: "{api_path}"}
     - {label: Release notes, href: "{release_notes}"}
     - {label: GitHub, href: "https://github.com/hyperi-io"}
