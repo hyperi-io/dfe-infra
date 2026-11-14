@@ -1500,7 +1500,6 @@ QUICKSTART_PAGE = (
     "Intro.\n\n<!-- docker-quickstart: up -->\nYou need make.\n\n<!-- landing -->\n```bash\nmake up\n```\n"
     "<!-- /docker-quickstart -->\n\nAfter.\n"
 )
-NEED = "<small>Docker Engine 27.0 or later with Compose 2.26.0 or later</small>\n\n"
 THEATRE = "- [Theatre and battlespace](https://hyperi.io/solutions/theatre-and-battlespace/): "
 
 
@@ -1512,7 +1511,6 @@ THEATRE = "- [Theatre and battlespace](https://hyperi.io/solutions/theatre-and-b
             "latest",
             [],
             "```bash\ndocker compose -f oci://img:latest up -d\n```\n\n"
-            f"{NEED}"
             "Then point your browser to http://localhost:3000.\n",
         ),
         (
@@ -1520,20 +1518,19 @@ THEATRE = "- [Theatre and battlespace](https://hyperi.io/solutions/theatre-and-b
             "pinned",
             QUICKSTART_PACKS,
             "```bash\ndocker compose -f oci://img:1.0.5 up -d\n```\n\n"
-            f"{NEED}"
             "Then point your browser to http://localhost:3000.\n",
         ),
         (
             "demo",
             "latest",
             [],
-            f"```bash\ndocker compose -f oci://img-demo:latest up -d\n```\n\n{NEED}Demo note.\n",
+            "```bash\ndocker compose -f oci://img-demo:latest up -d\n```\n\nDemo note.\n",
         ),
         (
             "demo",
             "pinned",
             QUICKSTART_PACKS,
-            f"```bash\ndocker compose -f oci://img-demo:1.0.5 up -d\n```\n\n{NEED}Demo note.\n"
+            f"```bash\ndocker compose -f oci://img-demo:1.0.5 up -d\n```\n\nDemo note.\n"
             "\nOther demo use cases:\n\n"
             f"{THEATRE}`docker compose -f oci://img:demo-theatre-1.0.6 up -d`\n",
         ),
@@ -1570,8 +1567,8 @@ OLD_QUICKSTART = {
     [
         (QUICKSTART, "compose"),
         (OLD_QUICKSTART, None),
-        ({**QUICKSTART, "notes": {"up": "x"}}, "without min_engine"),
-        ({k: v for k, v in QUICKSTART.items() if k != "min_engine"}, "without min_engine"),
+        ({**QUICKSTART, "notes": {"up": "x"}}, "without up and demo notes"),
+        ({k: v for k, v in QUICKSTART.items() if k != "min_engine"}, "compose"),
         ({**QUICKSTART, "schema": 2, "packs": QUICKSTART_PACKS}, "compose"),
         ({**QUICKSTART, "schema": 2, "packs": [{"name": "x"}]}, "a pack without"),
         ({**QUICKSTART, "schema": 2, "packs": "cyber"}, "a pack without"),
@@ -1582,7 +1579,7 @@ OLD_QUICKSTART = {
         "compose",
         "init-and-docker-run",
         "no-demo-note",
-        "no-engine-minimum",
+        "no-engine-minimum-is-fine",
         "schema-2",
         "schema-2-bad-pack",
         "schema-2-packs-not-a-list",
