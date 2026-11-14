@@ -1368,8 +1368,8 @@ def docker_quickstart(build: Build, newest: str | None) -> dict | None:
 
     Raises:
         FetchError: The release has no quickstart.json of schema 1 or 2, a compose
-            one without its Docker Engine minimum and up and demo notes, or a pack
-            without its name, title, use case and command.
+            one without its up and demo notes, or a pack without its name, title,
+            use case and command.
     """
     if build.name == NEXT:
         url, form = f"{DOCKER_RELEASES}/latest/download/{DOCKER_QUICKSTART}", "latest"
@@ -1392,12 +1392,8 @@ def docker_quickstart(build: Build, newest: str | None) -> dict | None:
     if data.get("kind") != "compose":
         return None
     notes = data.get("notes") or {}
-    if not isinstance(data.get("min_engine"), str) or not all(
-        isinstance(notes.get(kind), str) for kind in ("up", "demo")
-    ):
-        raise FetchError(
-            f"{url}: a compose quickstart.json without min_engine and up and demo notes"
-        )
+    if not all(isinstance(notes.get(kind), str) for kind in ("up", "demo")):
+        raise FetchError(f"{url}: a compose quickstart.json without up and demo notes")
     packs = data.get("packs", [])
     if not isinstance(packs, list) or not all(_is_pack(pack, form) for pack in packs):
         raise FetchError(f"{url}: a pack without its name, title, use_case and {form} command")
@@ -1427,11 +1423,6 @@ def fill_quickstart(text: str, quickstart: dict | None) -> str:
     """
     if quickstart is None:
         return text
-    # Small print under the command, which the landing hero reads back as its "Needs" line.
-    need = (
-        f"<small>Docker Engine {quickstart['min_engine']} or later with Compose "
-        f"{quickstart['min_compose']} or later</small>"
-    )
     form = quickstart["form"]
     packs = "".join(
         f"- [{pack['title']}]({WEBSITE}{pack['use_case']}): `{' && '.join(pack[form])}`\n"
@@ -1444,7 +1435,7 @@ def fill_quickstart(text: str, quickstart: dict | None) -> str:
         commands = "\n".join(quickstart[kind][form])
         return (
             f"<!-- docker-quickstart: {kind} -->\n"
-            f"<!-- landing -->\n```bash\n{commands}\n```\n\n{need}\n\n"
+            f"<!-- landing -->\n```bash\n{commands}\n```\n\n"
             f"{quickstart['notes'][kind]}\n"
             f"{others[kind]}"
             "<!-- /docker-quickstart -->\n"
