@@ -12,10 +12,10 @@ Every row carries `cloud.provider` and `dfe.provider_log.source`, so dfe-hyperdx
 
 | Flavour | Source | Receiver | State |
 |---|---|---|---|
-| `aws` | EKS control-plane log group, CloudTrail's CloudWatch group | `aws_cloudwatch` (alpha) | Built. The cloud root sets it when `telemetry.sink` is `otel` and at least one of the two groups exists. |
+| `aws` | EKS control-plane log group, CloudTrail's CloudWatch group | `aws_cloudwatch` (upstream stability: alpha) | Built. The cloud root sets it when `telemetry.sink` is `otel` and at least one of the two groups exists. |
 | `rancher` | kube-apiserver audit log on the control-plane nodes | `filelog` | Built. The deployer sets the flavour. |
-| `azure` | Diagnostic settings through an Event Hub | `azure_event_hub` | Chart only. No Azure cloud root exists. |
-| `gcp` | A log sink through a Pub/Sub subscription | `googlecloudpubsub` | Chart only. No GCP cloud root exists. |
+| `azure` | Diagnostic settings through an Event Hub | `azure_event_hub` (upstream stability: beta) | Chart only. No Azure cloud root exists. |
+| `gcp` | A log sink through a Pub/Sub subscription | `googlecloudpubsub` (upstream stability: beta) | Chart only. No GCP cloud root exists. |
 
 The receivers run in a workload of their own, `<project>-otel-collector-provider-logs`, with their own ServiceAccount. `aws_cloudwatch` makes an STS identity call and dereferences the result without checking it. A failed call exits the collector process. In its own pod that restarts the provider-logs container and leaves the gateway alone.
 
@@ -52,7 +52,7 @@ The collector already ships a receiver per cloud, and its Go SDK picks up Pod Id
 
 Under the `otel` sink, CloudWatch is a catch-up window and the otel database holds the history, so retention is pre-trimmed. Hence the shortest period by default.
 
-What it costs. The AWS receivers are alpha, so we pin the collector and the cloud cycle tests it. The rows are generic OTel logs. GuardDuty and Security Hub findings have no receiver, so they stay out.
+What it costs. Upstream labels the awscloudwatch receiver alpha, so we pin the collector version and the cloud cycle tests the feed. DFE's own AWS sources and fetchers are stable and unaffected. The rows are generic OTel logs. GuardDuty and Security Hub findings have no receiver, so they stay out.
 
 ## What the cloud cycle checks
 
