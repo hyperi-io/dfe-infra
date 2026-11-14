@@ -1291,6 +1291,82 @@ def test_dial_controller_pool_defaults_to_combined(tmp_path: Path) -> None:
     assert dial.controller_pool == "combined"
 
 
+@pytest.mark.parametrize(
+    ("scale_in", "expected"),
+    [(None, None), (1800, {"enabled": True, "cooldownSeconds": 1800})],
+    ids=["off-writes-no-key", "on-writes-the-window"],
+)
+def test_broker_scale_in_reaches_the_chart_only_when_on(
+    scale_in: int | None, expected: dict | None
+) -> None:
+    values = resolve_sizing.build_values(
+        _controller_core(), "strimzi", None, None, "auto", "combined", None, scale_in
+    )
+    assert values["kafka"]["autoscaling"].get("scaleIn") == expected
+
+
+def test_the_charts_own_scale_in_default_is_off() -> None:
+    """A fragment with no scaleIn key leaves scale-in off only while the chart says so."""
+    body = (REPO_ROOT / "helm" / "charts" / "kafka" / "values.yaml").read_text(
+        encoding="utf-8"
+    )
+    block = body[body.index("    scaleIn:") :]
+    enabled = re.search(r"^\s+enabled:\s*(\S+)", block, re.MULTILINE)
+    assert enabled is not None
+    assert enabled.group(1) == "false"
+
+
+@pytest.mark.parametrize(
+    ("extra", "provider", "expected"),
+    [
+        ("", "strimzi", None),
+        ("  broker_scale_in:\n    enabled: false", "strimzi", None),
+        ("  broker_scale_in:\n    enabled: true", "strimzi", 1800),
+        (
+            "  broker_scale_in:\n    enabled: true\n    cooldown_seconds: 600",
+            "strimzi",
+            600,
+        ),
+        ("  broker_scale_in:\n    enabled: yes", "strimzi", "true or false"),
+        (
+            "  broker_scale_in:\n    enabled: true\n    cooldown_seconds: 3601",
+            "strimzi",
+            "1 to 3600",
+        ),
+        (
+            "  broker_scale_in:\n    enabled: true\n    cooldown_seconds: 0",
+            "strimzi",
+            "1 to 3600",
+        ),
+        ("  broker_scale_in:\n    enabled: true", "msk", "strimzi only"),
+    ],
+    ids=[
+        "absent",
+        "off",
+        "on-default-window",
+        "on-own-window",
+        "not-a-bool",
+        "window-over-hpa-cap",
+        "window-zero",
+        "not-strimzi",
+    ],
+)
+def test_dial_broker_scale_in(
+    tmp_path: Path, extra: str, provider: str, expected: int | str | None
+) -> None:
+    path = _dial(tmp_path, provider=provider)
+    text = path.read_text(encoding="utf-8").replace(
+        f"  provider: {provider}\n",
+        f"  provider: {provider}\n{extra}\n" if extra else f"  provider: {provider}\n",
+    )
+    path.write_text(text, encoding="utf-8")
+    if isinstance(expected, str):
+        with pytest.raises(resolve_sizing.ResolveError, match=expected):
+            resolve_sizing.read_dial(path)
+    else:
+        assert resolve_sizing.read_dial(path).broker_scale_in == expected
+
+
 @pytest.mark.parametrize("value", ["combined", "separate", "SEPARATE"])
 def test_dial_controller_pool_reads_an_explicit_value(
     tmp_path: Path, value: str

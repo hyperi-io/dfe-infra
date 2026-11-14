@@ -691,6 +691,24 @@ def test_every_sized_request_fits_what_its_node_leaves(
     assert checked >= 3, dial
 
 
+@pytest.mark.parametrize(
+    ("kafka_extra", "expected"),
+    [
+        ("", None),
+        (
+            "  broker_scale_in:\n    enabled: true\n    cooldown_seconds: 900\n",
+            {"enabled": True, "cooldownSeconds": 900},
+        ),
+    ],
+    ids=["off", "on"],
+)
+def test_the_scale_in_dial_reaches_the_base(
+    tmp_path: Path, kafka_extra: str, expected: dict | None
+) -> None:
+    assert _resolve(tmp_path, kafka_extra=kafka_extra) in (0, 1)
+    assert _base(tmp_path)["kafka"]["autoscaling"].get("scaleIn") == expected
+
+
 def test_the_floor_broker_takes_the_shape_that_holds_its_memory(resolved: Path) -> None:
     """8 GiB of an m8g.large is more than it leaves a pod, so the floor broker takes an xlarge."""
     assert _shapes(resolved)["kafka-broker"]["instance_types"][0] == "m8g.xlarge"
