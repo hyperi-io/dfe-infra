@@ -13,18 +13,21 @@ The engine builds its `dfe` command tree from its OpenAPI spec when it starts, s
 no repository holds the page. aggregate.py renders it from the engine image the
 build pins, the way the HTTP API pages come from the committed spec: `typer utils
 docs` runs inside the image and prints every command group as Markdown, which
-aggregate.py makes MDX-safe and writes beside the engine's docs. A build at HEAD
-renders from the newest release's image, because main publishes none.
+aggregate.py makes MDX-safe and writes beside the engine's docs. A ref that is not
+a release tag (HEAD, or a pinned commit) renders from the newest release's image,
+because main publishes no image per commit.
 """
 
 import html
+import re
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
 
 IMAGE = "ghcr.io/hyperi-io/dfe-engine"
-# What a build at HEAD renders from: main publishes no image, the newest release does.
+# What a ref that is not a release tag renders from: main publishes no image, the newest release does.
 HEAD_TAG = "latest"
+RELEASE_TAG = re.compile(r"v\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?")
 PAGE = Path("reference") / "cli.md"
 TITLE = "# dfe CLI reference"
 # Runs inside the image. SpecCli is not a Typer app, but its .app() is one typer can walk.
@@ -54,9 +57,9 @@ def _reason(stderr: str) -> str:
     return next((line for line in reversed(lines) if "rror" in line), lines[-1]).strip()
 
 
-def image_tag(ref: str, head: str) -> str:
-    """The image tag a member ref renders from: the ref, or HEAD_TAG at HEAD."""
-    return HEAD_TAG if ref == head else ref
+def image_tag(ref: str) -> str:
+    """The image tag a member ref renders from: a release tag as is, anything else HEAD_TAG."""
+    return ref if RELEASE_TAG.fullmatch(ref) else HEAD_TAG
 
 
 def render(tag: str, run: Runner) -> str:
