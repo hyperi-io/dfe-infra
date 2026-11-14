@@ -73,13 +73,17 @@ ALLOWED = (
 )
 
 # A template line that opens one of FIELDS, or names a topologyKey.
-_FIELD_LINE = re.compile(rf"^(?P<indent> *)(?:- )?(?P<field>{'|'.join(FIELDS)}|topologyKey)\s*:")
+_FIELD_LINE = re.compile(
+    rf"^(?P<indent> *)(?:- )?(?P<field>{'|'.join(FIELDS)}|topologyKey)\s*:"
+)
 _COMMENT = re.compile(r"^\s*(#|\{\{-?\s*/\*)")
 
 
 def charts() -> list[Path]:
     """Every chart under helm/ the rule binds: all of them but the pool chart."""
-    return sorted(path.parent for path in HELM.rglob("Chart.yaml") if path.parent != POOL_CHART)
+    return sorted(
+        path.parent for path in HELM.rglob("Chart.yaml") if path.parent != POOL_CHART
+    )
 
 
 def templates(chart: Path) -> list[Path]:
@@ -150,7 +154,11 @@ def node_keys(node: object, field: str | None = None) -> Iterator[tuple[str, str
             yield from node_keys(value, key)
         elif field == "nodeSelector" and not isinstance(value, dict | list):
             yield field, str(key)
-        elif field in ("nodeAffinity", "tolerations") and key == "key" and isinstance(value, str):
+        elif (
+            field in ("nodeAffinity", "tolerations")
+            and key == "key"
+            and isinstance(value, str)
+        ):
             yield field, value
         else:
             yield from node_keys(value, field)
@@ -175,7 +183,12 @@ def _rendered() -> list[tuple[str, tuple[dict, ...]]]:
 
 def test_the_check_fires_on_each_denied_key_in_each_field() -> None:
     """A check that cannot fail reads the same as a clean tree."""
-    every_field = ["nodeAffinity", "nodeSelector", "tolerations", "topologySpreadConstraints"]
+    every_field = [
+        "nodeAffinity",
+        "nodeSelector",
+        "tolerations",
+        "topologySpreadConstraints",
+    ]
     for prefix in DENIED:
         key = f"{prefix}x" if prefix.endswith("/") else prefix
         values_text = (
@@ -198,7 +211,11 @@ def test_the_check_fires_on_each_denied_key_in_each_field() -> None:
         lines.insert(-1, "        {{- range .Values.spread }}")
         template = "\n".join(lines) + "\n"
         fields = sorted(entry.split(": ")[1] for entry in template_offences(template))
-        expect(f"{prefix} is caught in every field of a template", fields == every_field, f"{fields}")
+        expect(
+            f"{prefix} is caught in every field of a template",
+            fields == every_field,
+            f"{fields}",
+        )
         found = denied(node_keys(yaml.safe_load(values_text)))
         expect(
             f"{prefix} is caught in every field of a values tree",
@@ -232,7 +249,11 @@ def test_the_check_passes_the_pool_label_and_a_cloud_key_outside_placement() -> 
 def test_the_sweep_reads_every_chart_and_the_selectors_they_carry() -> None:
     """A sweep whose globs stopped matching reports the same clean as a clean tree."""
     found = charts()
-    expect("the sweep reaches the charts under helm/", len(found) >= 10, f"{[_rel(c) for c in found]}")
+    expect(
+        "the sweep reaches the charts under helm/",
+        len(found) >= 10,
+        f"{[_rel(c) for c in found]}",
+    )
     expect(
         "and leaves out only the pool chart",
         POOL_CHART.is_dir() and POOL_CHART not in found,
@@ -244,7 +265,11 @@ def test_the_sweep_reads_every_chart_and_the_selectors_they_carry() -> None:
         for template in templates(chart)
         for _ in selector_lines(template.read_text(encoding="utf-8"))
     )
-    expect("the template read finds the placement fields there are", lines > 50, f"{lines} line(s)")
+    expect(
+        "the template read finds the placement fields there are",
+        lines > 50,
+        f"{lines} line(s)",
+    )
     keys = {
         pair
         for chart in found
@@ -253,11 +278,21 @@ def test_the_sweep_reads_every_chart_and_the_selectors_they_carry() -> None:
     }
     expect(
         "the values read finds the dedicated pools' tolerations and the spread key",
-        {("tolerations", "dfe.hyperi.io/workload"), ("topologyKey", "kubernetes.io/hostname")} <= keys,
+        {
+            ("tolerations", "dfe.hyperi.io/workload"),
+            ("topologyKey", "kubernetes.io/hostname"),
+        }
+        <= keys,
         f"{sorted(keys)}",
     )
-    rendered = {pair for _name, docs in _rendered() for doc in docs for pair in node_keys(doc)}
-    expect("the rendered read finds the placements the cascade sets", bool(rendered), "none rendered")
+    rendered = {
+        pair for _name, docs in _rendered() for doc in docs for pair in node_keys(doc)
+    }
+    expect(
+        "the rendered read finds the placements the cascade sets",
+        bool(rendered),
+        "none rendered",
+    )
 
 
 # ------------------------------------------------------------- the charts
@@ -273,7 +308,8 @@ def test_no_template_places_a_pod_by_a_cloud_label() -> None:
     expect(
         "no chart template places a pod by a cloud or node-autoscaler label",
         not offenders,
-        "place by dfe.hyperi.io/workload or a well-known label: " + "; ".join(offenders),
+        "place by dfe.hyperi.io/workload or a well-known label: "
+        + "; ".join(offenders),
     )
 
 
@@ -282,12 +318,15 @@ def test_no_values_file_places_a_pod_by_a_cloud_label() -> None:
         f"{_rel(values)}: {entry}"
         for chart in charts()
         for values in values_files(chart)
-        for entry in denied(node_keys(yaml.safe_load(values.read_text(encoding="utf-8"))))
+        for entry in denied(
+            node_keys(yaml.safe_load(values.read_text(encoding="utf-8")))
+        )
     ]
     expect(
         "no chart's values place a pod by a cloud or node-autoscaler label",
         not offenders,
-        "place by dfe.hyperi.io/workload or a well-known label: " + "; ".join(offenders),
+        "place by dfe.hyperi.io/workload or a well-known label: "
+        + "; ".join(offenders),
     )
 
 
@@ -301,7 +340,8 @@ def test_no_rendered_chart_places_a_pod_by_a_cloud_label() -> None:
     expect(
         "no rendered chart places a pod by a cloud or node-autoscaler label",
         not offenders,
-        "place by dfe.hyperi.io/workload or a well-known label: " + "; ".join(offenders),
+        "place by dfe.hyperi.io/workload or a well-known label: "
+        + "; ".join(offenders),
     )
 
 

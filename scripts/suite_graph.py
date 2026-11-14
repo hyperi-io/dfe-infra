@@ -33,9 +33,19 @@ SUITE_FILE = REPO_ROOT / "suite.yaml"
 
 EDGE_TYPES = ("potential", "lockstep", "derived")
 AUDIENCES = ("general", "suite")
-NODE_REQUIRED = ("repo", "role", "language", "audience", "maturity", "support",
-                 "licence", "classification", "classification_source",
-                 "default_in_pass", "artefacts")
+NODE_REQUIRED = (
+    "repo",
+    "role",
+    "language",
+    "audience",
+    "maturity",
+    "support",
+    "licence",
+    "classification",
+    "classification_source",
+    "default_in_pass",
+    "artefacts",
+)
 # Fields that are a yes or a no, wherever they appear. Only lowercase
 # `true`/`false` reads as a boolean, so `True` or `yes` lands here as a string
 # and is named rather than silently taken for truth.
@@ -160,7 +170,11 @@ def parse_block_yaml(text: str):
                         first[key], i = {}, i + 1
                 else:
                     first[key], i = _scalar(val), i + 1
-                if i < len(lines) and lines[i][0] == child_indent and not lines[i][1].startswith("- "):
+                if (
+                    i < len(lines)
+                    and lines[i][0] == child_indent
+                    and not lines[i][1].startswith("- ")
+                ):
                     first, i = parse_map(i, child_indent, first)
                 items.append(first)
             else:
@@ -202,7 +216,9 @@ def validate(graph: dict) -> list[str]:
         if "unconsumed" in node:
             note = node["unconsumed"]
             if not isinstance(note, str) or not note.strip():
-                problems.append(f"node {name}: `unconsumed` is empty, so it says nothing")
+                problems.append(
+                    f"node {name}: `unconsumed` is empty, so it says nothing"
+                )
             elif not node.get("package"):
                 problems.append(
                     f"node {name}: `unconsumed` needs a `package`, or no lock can contradict it"
@@ -221,8 +237,13 @@ def validate(graph: dict) -> list[str]:
                 f"node {name}: audience {node['audience']!r} is not one of "
                 f"{', '.join(AUDIENCES)}"
             )
-        if node.get("maturity") in ("alpha", "beta") and node.get("default_in_pass") is True:
-            problems.append(f"node {name}: {node['maturity']} members must not be default_in_pass")
+        if (
+            node.get("maturity") in ("alpha", "beta")
+            and node.get("default_in_pass") is True
+        ):
+            problems.append(
+                f"node {name}: {node['maturity']} members must not be default_in_pass"
+            )
         if name not in in_a_lane:
             problems.append(f"node {name}: in no lane, so no pass ever reaches it")
     for edge in graph.get("edges", []):
@@ -236,7 +257,9 @@ def validate(graph: dict) -> list[str]:
             problems.append(f"{where}: type must be one of {', '.join(EDGE_TYPES)}")
         if not edge.get("evidence"):
             problems.append(f"{where}: no evidence cited")
-        elif edge.get("kind") in PACKAGE_KINDS and _CITED_LINE.search(str(edge["evidence"])):
+        elif edge.get("kind") in PACKAGE_KINDS and _CITED_LINE.search(
+            str(edge["evidence"])
+        ):
             problems.append(
                 f"{where}: a {edge['kind']} edge cites the manifest alone, never a line -- "
                 f"the declaration is found by the producer's `package`, and a line moves "
@@ -255,7 +278,9 @@ def validate(graph: dict) -> list[str]:
     for lane in graph.get("lanes", []):
         for member in lane.get("members", []):
             if member not in nodes:
-                problems.append(f"lane {lane.get('name')}: member {member} is not a node")
+                problems.append(
+                    f"lane {lane.get('name')}: member {member} is not a node"
+                )
     problems += _waiver_problems(graph.get("pin_waivers", []), nodes)
     return problems
 
@@ -271,10 +296,14 @@ def _waiver_problems(waivers: object, nodes: dict) -> list[str]:
     problems = []
     for n, waiver in enumerate(waivers, start=1):
         if not isinstance(waiver, dict):
-            problems.append(f"pin_waivers #{n}: not a map of {', '.join(WAIVER_FIELDS)}")
+            problems.append(
+                f"pin_waivers #{n}: not a map of {', '.join(WAIVER_FIELDS)}"
+            )
             continue
         where = f"pin_waivers #{n} ({waiver.get('member')} {waiver.get('file')})"
-        problems += [f"{where}: missing `{f}`" for f in WAIVER_FIELDS if not waiver.get(f)]
+        problems += [
+            f"{where}: missing `{f}`" for f in WAIVER_FIELDS if not waiver.get(f)
+        ]
         if waiver.get("member") and waiver["member"] not in nodes:
             problems.append(f"{where}: member {waiver['member']} is not a node")
         problems += [
@@ -311,14 +340,16 @@ def cycle_table(graph: dict) -> list[dict]:
     out = []
     for (producer, kind, etype), consumers in sorted(rows.items()):
         spec = graph["edge_kinds"].get(kind, {})
-        out.append({
-            "producer": producer,
-            "consumers": sorted(set(consumers)),
-            "kind": kind,
-            "type": etype,
-            "check": spec.get("check", ""),
-            "gates": spec.get("gates", []),
-        })
+        out.append(
+            {
+                "producer": producer,
+                "consumers": sorted(set(consumers)),
+                "kind": kind,
+                "type": etype,
+                "check": spec.get("check", ""),
+                "gates": spec.get("gates", []),
+            }
+        )
     return out
 
 
@@ -399,7 +430,7 @@ FADE = 0.45
 def faded(colour: str, ratio: float = FADE) -> str:
     """A brand colour mixed toward white, which is how an optional member is drawn."""
     channels = colour.lstrip("#")
-    values = (int(channels[i:i + 2], 16) for i in (0, 2, 4))
+    values = (int(channels[i : i + 2], 16) for i in (0, 2, 4))
     return "#" + "".join(f"{round(c + (255 - c) * ratio):02X}" for c in values)
 
 
@@ -424,12 +455,11 @@ _CLASS_FILL = {
 # carries the boundary.
 _CLASSES = {
     name: f"classDef {name} fill:{fill},stroke:{PALETTE['tertiary']},"
-          f"stroke-width:{width}px,color:{text}"
+    f"stroke-width:{width}px,color:{text}"
     for name, (fill, text, width) in _CLASS_FILL.items()
 } | {
-    f"{audience}-optional":
-        f"classDef {audience}-optional fill:{faded(_CLASS_FILL[audience][0])},"
-        f"stroke:{PALETTE['tertiary']},stroke-width:2px,color:{PALETTE['navy']}"
+    f"{audience}-optional": f"classDef {audience}-optional fill:{faded(_CLASS_FILL[audience][0])},"
+    f"stroke:{PALETTE['tertiary']},stroke-width:2px,color:{PALETTE['navy']}"
     for audience in AUDIENCES
 }
 
@@ -464,7 +494,9 @@ def mermaid_overview(graph: dict) -> str:
         for name in sorted(by_role[role]):
             node = graph["nodes"][name]
             used.add(_node_class(node))
-            lines.append(f'    {_mid(name)}["{_label(name, node)}"]:::{_node_class(node)}')
+            lines.append(
+                f'    {_mid(name)}["{_label(name, node)}"]:::{_node_class(node)}'
+            )
         lines.append("  end")
     lines.extend(_classdefs(used))
     return "\n".join(lines)

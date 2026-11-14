@@ -86,16 +86,24 @@ def kubectl_json(kube: list[str], *argv: str) -> dict:
         FootprintError: kubectl failed or printed something that is not JSON.
     """
     done = subprocess.run(
-        [*kube, *argv, "-o", "json"], capture_output=True, text=True,
-        encoding="utf-8", errors="replace", check=False,
+        [*kube, *argv, "-o", "json"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
     )
     if done.returncode != 0:
         first = (done.stderr or "").strip().splitlines()
-        raise FootprintError(f"kubectl {' '.join(argv)} failed: {first[0] if first else done.returncode}")
+        raise FootprintError(
+            f"kubectl {' '.join(argv)} failed: {first[0] if first else done.returncode}"
+        )
     try:
         return json.loads(done.stdout)
     except json.JSONDecodeError as exc:
-        raise FootprintError(f"kubectl {' '.join(argv)} printed unparseable output: {exc}") from exc
+        raise FootprintError(
+            f"kubectl {' '.join(argv)} printed unparseable output: {exc}"
+        ) from exc
 
 
 def _items(document: dict) -> list[dict]:
@@ -114,7 +122,11 @@ def configmap_hashes(document: dict, prefix: str) -> dict[str, str]:
         if not name.startswith(prefix):
             continue
         body = json.dumps(
-            {"data": item.get("data") or {}, "binaryData": item.get("binaryData") or {}}, sort_keys=True
+            {
+                "data": item.get("data") or {},
+                "binaryData": item.get("binaryData") or {},
+            },
+            sort_keys=True,
         )
         found[name] = hashlib.sha256(body.encode()).hexdigest()
     return found
@@ -125,31 +137,49 @@ def deployment_replicas(deployments: dict, autoscalers: dict) -> dict[str, int |
     scaled = {
         str((item.get("spec") or {}).get("scaleTargetRef", {}).get("name") or "")
         for item in _items(autoscalers)
-        if (item.get("spec") or {}).get("scaleTargetRef", {}).get("kind") == "Deployment"
+        if (item.get("spec") or {}).get("scaleTargetRef", {}).get("kind")
+        == "Deployment"
     }
     return {
-        _name(item): None if _name(item) in scaled else (item.get("spec") or {}).get("replicas")
+        _name(item): None
+        if _name(item) in scaled
+        else (item.get("spec") or {}).get("replicas")
         for item in _items(deployments)
     }
 
 
 def live_namespaces(document: dict) -> tuple[str, ...]:
     """The harness namespaces that are not already on their way out."""
-    return tuple(sorted(
-        _name(item) for item in _items(document)
-        if (item.get("status") or {}).get("phase") != "Terminating"
-    ))
+    return tuple(
+        sorted(
+            _name(item)
+            for item in _items(document)
+            if (item.get("status") or {}).get("phase") != "Terminating"
+        )
+    )
 
 
 def source_names(reply: object) -> tuple[str, ...]:
     """The names a ``GET /sources`` reply lists."""
     body = getattr(reply, "body", None)
     items = body.get("items", []) if isinstance(body, dict) else []
-    return tuple(sorted(str(item.get("name")) for item in items if isinstance(item, dict) and item.get("name")))
+    return tuple(
+        sorted(
+            str(item.get("name"))
+            for item in items
+            if isinstance(item, dict) and item.get("name")
+        )
+    )
 
 
-def capture(kube: list[str], namespace: str, engine, *, include: tuple[str, ...] = PARTS,
-            receiver: str = "dfe-receiver") -> Footprint:
+def capture(
+    kube: list[str],
+    namespace: str,
+    engine,
+    *,
+    include: tuple[str, ...] = PARTS,
+    receiver: str = "dfe-receiver",
+) -> Footprint:
     """Read the parts of the footprint named in *include*.
 
     Args:
@@ -172,14 +202,18 @@ def capture(kube: list[str], namespace: str, engine, *, include: tuple[str, ...]
     overlay: dict[str, object] = {}
     namespaces: tuple[str, ...] = ()
     if kube and "configmaps" in want:
-        configmaps = configmap_hashes(kubectl_json(kube, "-n", namespace, "get", "configmap"), receiver)
+        configmaps = configmap_hashes(
+            kubectl_json(kube, "-n", namespace, "get", "configmap"), receiver
+        )
     if kube and "replicas" in want:
         replicas = deployment_replicas(
             kubectl_json(kube, "-n", namespace, "get", "deployment"),
             kubectl_json(kube, "-n", namespace, "get", "hpa"),
         )
     if kube and "namespaces" in want:
-        namespaces = live_namespaces(kubectl_json(kube, "get", "namespace", "-l", HARNESS_LABEL))
+        namespaces = live_namespaces(
+            kubectl_json(kube, "get", "namespace", "-l", HARNESS_LABEL)
+        )
     try:
         if "sources" in want:
             listing = engine.call("GET", "/sources")
@@ -188,7 +222,11 @@ def capture(kube: list[str], namespace: str, engine, *, include: tuple[str, ...]
             sources = source_names(listing)
         if "overlay" in want:
             view = engine.call("GET", RECEIVER_ROUTE)
-            overlay = beats.held(view.body, beats.LUMBERJACK_SWITCHES) if view.status == 200 else {}
+            overlay = (
+                beats.held(view.body, beats.LUMBERJACK_SWITCHES)
+                if view.status == 200
+                else {}
+            )
     except (OSError, RuntimeError) as exc:
         if isinstance(exc, FootprintError):
             raise
@@ -196,13 +234,19 @@ def capture(kube: list[str], namespace: str, engine, *, include: tuple[str, ...]
     return Footprint(configmaps, replicas, sources, overlay, namespaces)
 
 
-def _added_removed(kind: str, before: set[str], after: set[str], allowed: Callable[[str], bool]) -> list[str]:
-    found = [f"{kind} {name} is new" for name in sorted(after - before) if not allowed(name)]
+def _added_removed(
+    kind: str, before: set[str], after: set[str], allowed: Callable[[str], bool]
+) -> list[str]:
+    found = [
+        f"{kind} {name} is new" for name in sorted(after - before) if not allowed(name)
+    ]
     found += [f"{kind} {name} is gone" for name in sorted(before - after)]
     return found
 
 
-def diff(before: Footprint, after: Footprint, *, keep_name: str = "") -> dict[str, list[str]]:
+def diff(
+    before: Footprint, after: Footprint, *, keep_name: str = ""
+) -> dict[str, list[str]]:
     """What changed between two readings, by part, leaving out the documented ``--keep`` result.
 
     Args:
@@ -218,10 +262,14 @@ def diff(before: Footprint, after: Footprint, *, keep_name: str = "") -> dict[st
         return bool(keep_name) and keep_name in name
 
     found: dict[str, list[str]] = {}
-    lines = _added_removed("source", set(before.sources), set(after.sources), lambda n: n == keep_name)
+    lines = _added_removed(
+        "source", set(before.sources), set(after.sources), lambda n: n == keep_name
+    )
     if lines:
         found["sources"] = lines
-    lines = _added_removed("deployment", set(before.replicas), set(after.replicas), owned)
+    lines = _added_removed(
+        "deployment", set(before.replicas), set(after.replicas), owned
+    )
     lines += [
         f"deployment {name} replicas {before.replicas[name]} -> {after.replicas[name]}"
         for name in sorted(set(before.replicas) & set(after.replicas))
@@ -229,7 +277,9 @@ def diff(before: Footprint, after: Footprint, *, keep_name: str = "") -> dict[st
     ]
     if lines:
         found["deployments"] = lines
-    lines = _added_removed("configmap", set(before.configmaps), set(after.configmaps), owned)
+    lines = _added_removed(
+        "configmap", set(before.configmaps), set(after.configmaps), owned
+    )
     # The receiver's routing follows the kept source, so its data is the documented result there.
     if not keep_name:
         lines += [
@@ -243,16 +293,24 @@ def diff(before: Footprint, after: Footprint, *, keep_name: str = "") -> dict[st
         found["receiver-overlay"] = [
             f"receiver overlay {dict(before.overlay) or 'unset'} -> {dict(after.overlay) or 'unset'}"
         ]
-    lines = _added_removed("namespace", set(before.namespaces), set(after.namespaces), lambda _n: False)
+    lines = _added_removed(
+        "namespace", set(before.namespaces), set(after.namespaces), lambda _n: False
+    )
     if lines:
         found["namespaces"] = lines
     return found
 
 
-def settle(before: Footprint, read: Callable[[], Footprint], *, keep_name: str = "",
-           deadline: float | None = None, interval: float | None = None,
-           sleep: Callable[[float], None] = time.sleep,
-           clock: Callable[[], float] = time.monotonic) -> list[wizard.StepResult]:
+def settle(
+    before: Footprint,
+    read: Callable[[], Footprint],
+    *,
+    keep_name: str = "",
+    deadline: float | None = None,
+    interval: float | None = None,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
+) -> list[wizard.StepResult]:
     """Rows for the run's footprint, waiting for the deployment to settle back.
 
     A removed source's apps leave on the controller's schedule, so the diff is
@@ -279,20 +337,34 @@ def settle(before: Footprint, read: Callable[[], Footprint], *, keep_name: str =
         try:
             found = diff(before, read(), keep_name=keep_name)
         except FootprintError as exc:
-            return [wizard.StepResult(CLEAN_ROW, "failed", f"could not read what the run left behind: {exc}")]
+            return [
+                wizard.StepResult(
+                    CLEAN_ROW,
+                    "failed",
+                    f"could not read what the run left behind: {exc}",
+                )
+            ]
         if not found or clock() >= until:
             break
         sleep(interval)
     if not found:
         kept = f", apart from the kept source {keep_name}" if keep_name else ""
-        return [wizard.StepResult(CLEAN_ROW, "done", f"the deployment matches its state before the run{kept}")]
+        return [
+            wizard.StepResult(
+                CLEAN_ROW,
+                "done",
+                f"the deployment matches its state before the run{kept}",
+            )
+        ]
     return [
         wizard.StepResult(f"{CLEAN_ROW}-{part}", "failed", "; ".join(lines))
         for part, lines in sorted(found.items())
     ]
 
 
-def baseline(read: Callable[[], Footprint]) -> tuple[Footprint | None, list[wizard.StepResult]]:
+def baseline(
+    read: Callable[[], Footprint],
+) -> tuple[Footprint | None, list[wizard.StepResult]]:
     """The reading taken before a run, or a failed row saying why there is none.
 
     Returns:
@@ -301,5 +373,7 @@ def baseline(read: Callable[[], Footprint]) -> tuple[Footprint | None, list[wiza
     try:
         return read(), []
     except FootprintError as exc:
-        row = wizard.StepResult(CLEAN_ROW, "failed", f"could not read the deployment before the run: {exc}")
+        row = wizard.StepResult(
+            CLEAN_ROW, "failed", f"could not read the deployment before the run: {exc}"
+        )
         return None, [row]

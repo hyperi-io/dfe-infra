@@ -65,9 +65,13 @@ def test_a_current_block_is_left_as_it_is() -> None:
 
 
 def test_the_leading_comment_of_a_fragment_is_not_copied() -> None:
-    source = (composition.FRAGMENTS / "wait-for-engine.yaml").read_text(encoding="utf-8")
+    source = (composition.FRAGMENTS / "wait-for-engine.yaml").read_text(
+        encoding="utf-8"
+    )
     assert source.startswith("#")
-    assert composition.fragment("wait-for-engine").startswith("- name: wait-for-engine\n")
+    assert composition.fragment("wait-for-engine").startswith(
+        "- name: wait-for-engine\n"
+    )
 
 
 # ---------------------------------------------------------------- expected fails
@@ -106,7 +110,9 @@ def test_check_mode_reports_a_stale_file_and_leaves_it(
 ) -> None:
     apps = tmp_path / "argocd" / "values" / "apps"
     (apps / "_fragments").mkdir(parents=True)
-    (apps / "_fragments" / "one.yaml").write_text("# header\n- a: 1\n", encoding="utf-8")
+    (apps / "_fragments" / "one.yaml").write_text(
+        "# header\n- a: 1\n", encoding="utf-8"
+    )
     (apps / "svc").mkdir()
     stale = apps / "svc" / "values.yaml"
     body = "items:\n" + _block("one", indent="  ", body="  - a: 2\n")

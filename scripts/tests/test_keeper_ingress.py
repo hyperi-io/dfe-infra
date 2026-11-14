@@ -58,7 +58,12 @@ STORE_NS = yaml.safe_load(
 
 def run(cmd: list[str]) -> tuple[dict, ...]:
     out = subprocess.run(
-        cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False
+        cmd,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
     )
     if out.returncode != 0:
         raise SystemExit(f"{' '.join(cmd[:3])} failed:\n{out.stderr}")
@@ -67,7 +72,12 @@ def run(cmd: list[str]) -> tuple[dict, ...]:
 
 @functools.cache
 def render_clickhouse(profile: str, cloud: str) -> tuple[dict, ...]:
-    cmd = ["helm", "template", "clickhouse-cluster", str(chart_dir("clickhouse-cluster"))]
+    cmd = [
+        "helm",
+        "template",
+        "clickhouse-cluster",
+        str(chart_dir("clickhouse-cluster")),
+    ]
     for f in ("common.yaml", f"{cloud}.yaml", f"profile-{profile}.yaml"):
         cmd += ["-f", str(VALUES / f)]
     return run([*cmd, "--set", "appNamespace=dfe-local"])
@@ -86,7 +96,8 @@ def data_ingress(docs: tuple[dict, ...]) -> dict[str, dict]:
     return {
         d["metadata"]["namespace"]: d
         for d in docs
-        if d.get("kind") == "NetworkPolicy" and d["metadata"]["name"] == "data-ingress-policy"
+        if d.get("kind") == "NetworkPolicy"
+        and d["metadata"]["name"] == "data-ingress-policy"
     }
 
 
@@ -128,9 +139,21 @@ def test_fixture_matches_the_pinned_operator() -> None:
 def test_cluster_mode_keeper_takes_the_operators_policy() -> None:
     for profile in CLUSTER_PROFILES:
         for cloud in CLOUDS:
-            keepers = [d for d in render_clickhouse(profile, cloud) if d.get("kind") == "KeeperCluster"]
-            expect(f"{profile}/{cloud}: one KeeperCluster renders", len(keepers) == 1, f"got {len(keepers)}")
-            policy = (keepers[0]["spec"].get("networkPolicy") or {}).get("policy") if keepers else None
+            keepers = [
+                d
+                for d in render_clickhouse(profile, cloud)
+                if d.get("kind") == "KeeperCluster"
+            ]
+            expect(
+                f"{profile}/{cloud}: one KeeperCluster renders",
+                len(keepers) == 1,
+                f"got {len(keepers)}",
+            )
+            policy = (
+                (keepers[0]["spec"].get("networkPolicy") or {}).get("policy")
+                if keepers
+                else None
+            )
             expect(
                 f"{profile}/{cloud}: the KeeperCluster turns on the operator's NetworkPolicy",
                 policy == "Enabled",
@@ -143,12 +166,30 @@ def test_cluster_mode_keeper_answers_only_read_only_words() -> None:
     words that force recovery or move leadership are switched off rather than fenced."""
     for profile in CLUSTER_PROFILES:
         for cloud in CLOUDS:
-            keepers = [d for d in render_clickhouse(profile, cloud) if d.get("kind") == "KeeperCluster"]
-            extra = (keepers[0]["spec"].get("settings") or {}).get("extraConfig") or {} if keepers else {}
-            listed = (extra.get("keeper_server") or {}).get("four_letter_word_white_list") or ""
+            keepers = [
+                d
+                for d in render_clickhouse(profile, cloud)
+                if d.get("kind") == "KeeperCluster"
+            ]
+            extra = (
+                (keepers[0]["spec"].get("settings") or {}).get("extraConfig") or {}
+                if keepers
+                else {}
+            )
+            listed = (extra.get("keeper_server") or {}).get(
+                "four_letter_word_white_list"
+            ) or ""
             words = {w for w in listed.split(",") if w}
-            expect(f"{profile}/{cloud}: the KeeperCluster sets a four-letter word list", bool(words), f"got {listed!r}")
-            expect(f"{profile}/{cloud}: every listed word is read-only", words <= READ_ONLY_WORDS, f"got {sorted(words)}")
+            expect(
+                f"{profile}/{cloud}: the KeeperCluster sets a four-letter word list",
+                bool(words),
+                f"got {listed!r}",
+            )
+            expect(
+                f"{profile}/{cloud}: every listed word is read-only",
+                words <= READ_ONLY_WORDS,
+                f"got {sorted(words)}",
+            )
             expect(
                 f"{profile}/{cloud}: mntr (the operator) and ruok (the liveness probe) still answer",
                 {"mntr", "ruok"} <= words,
@@ -158,23 +199,53 @@ def test_cluster_mode_keeper_answers_only_read_only_words() -> None:
 
 def test_data_ingress_leaves_keeper_to_the_operator() -> None:
     policies = data_ingress(render_policies())
-    expect("data-ingress-policy renders in the clickhouse namespace", "clickhouse" in policies, f"got {sorted(policies)}")
+    expect(
+        "data-ingress-policy renders in the clickhouse namespace",
+        "clickhouse" in policies,
+        f"got {sorted(policies)}",
+    )
     for ns, policy in sorted(policies.items()):
         selector = policy["spec"]["podSelector"]
-        expect(f"{ns}: data-ingress-policy leaves the keeper pods out", not selects(selector, KEEPER_POD), f"selector {selector}")
-        expect(f"{ns}: data-ingress-policy still selects the ClickHouse servers", selects(selector, SERVER_POD), f"selector {selector}")
-        expect(f"{ns}: data-ingress-policy still selects a pod with no ClickHouse role", selects(selector, UNROLED_POD), f"selector {selector}")
+        expect(
+            f"{ns}: data-ingress-policy leaves the keeper pods out",
+            not selects(selector, KEEPER_POD),
+            f"selector {selector}",
+        )
+        expect(
+            f"{ns}: data-ingress-policy still selects the ClickHouse servers",
+            selects(selector, SERVER_POD),
+            f"selector {selector}",
+        )
+        expect(
+            f"{ns}: data-ingress-policy still selects a pod with no ClickHouse role",
+            selects(selector, UNROLED_POD),
+            f"selector {selector}",
+        )
 
 
 def test_an_empty_opt_out_selects_every_pod() -> None:
     """The store's namespace still leaves the DocumentDB instances out (documentdbAccess)."""
-    for ns, policy in sorted(data_ingress(render_policies("operatorIngressScoped=null")).items()):
+    for ns, policy in sorted(
+        data_ingress(render_policies("operatorIngressScoped=null")).items()
+    ):
         selector = policy["spec"]["podSelector"]
         if ns == STORE_NS:
-            expect(f"{ns}: with the opt-out empty, the keeper pods are selected again", selects(selector, KEEPER_POD), f"selector {selector}")
-            expect(f"{ns}: and so is a pod with no ClickHouse role", selects(selector, UNROLED_POD), f"selector {selector}")
+            expect(
+                f"{ns}: with the opt-out empty, the keeper pods are selected again",
+                selects(selector, KEEPER_POD),
+                f"selector {selector}",
+            )
+            expect(
+                f"{ns}: and so is a pod with no ClickHouse role",
+                selects(selector, UNROLED_POD),
+                f"selector {selector}",
+            )
             continue
-        expect(f"{ns}: with the opt-out empty, data-ingress-policy selects every pod", selector == {}, f"selector {selector}")
+        expect(
+            f"{ns}: with the opt-out empty, data-ingress-policy selects every pod",
+            selector == {},
+            f"selector {selector}",
+        )
 
 
 def main() -> int:

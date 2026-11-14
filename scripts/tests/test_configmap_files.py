@@ -48,7 +48,9 @@ FIXTURE = TESTS / "fixtures" / "binarydata" / "dfe-transform-vrl.yaml"
 # Text Helm strips from data, a template it must not expand, and non-ASCII text
 # (e-acute, the euro sign, u-umlaut), each of which must reach the pod unchanged.
 TEXT = f"caf{chr(0xE9)} {chr(0x20AC)} {chr(0xFC)}"
-PROGRAM = f'.tag = "<no value>"\n.tpl = "{{{{ .Values.secret }}}}"\n  .text = "{TEXT}"\n'
+PROGRAM = (
+    f'.tag = "<no value>"\n.tpl = "{{{{ .Values.secret }}}}"\n  .text = "{TEXT}"\n'
+)
 TABLE = "abbreviation,offset\nAEST,+10:00\n"
 CONFIG = {"absent": "<no value>", "template": "{{ .Values.secret }}", "text": TEXT}
 
@@ -67,20 +69,62 @@ THIN_CONFIGMAPS = ("-config", "-transforms", "-enrichment")
 # Each module-level reader of a thin chart's config file: (module, function, the
 # golden it reads, the arguments after the render).
 READERS = [
-    ("test_transport", "transform_config", ("dfe-transform-vrl", "slim", "local"),
-     ("dfe-transform-vrl",)),
+    (
+        "test_transport",
+        "transform_config",
+        ("dfe-transform-vrl", "slim", "local"),
+        ("dfe-transform-vrl",),
+    ),
     ("test_receiver_loader", "receiver_config", ("dfe-receiver", "slim", "local"), ()),
-    ("test_vrl_offset_reset", "app_source", ("dfe-transform-vrl", "single", "local"), ()),
-    ("test_vector_offset_reset", "app_source", ("dfe-transform-vector", "single", "local"), ()),
-    ("test_enrichment_tables", "config", ("dfe-transform-vrl", "single", "local"),
-     ("dfe-transform-vrl",)),
-    ("test_render_properties", "config_file", ("dfe-loader", "scale", "aws"), ("dfe-loader",)),
+    (
+        "test_vrl_offset_reset",
+        "app_source",
+        ("dfe-transform-vrl", "single", "local"),
+        (),
+    ),
+    (
+        "test_vector_offset_reset",
+        "app_source",
+        ("dfe-transform-vector", "single", "local"),
+        (),
+    ),
+    (
+        "test_enrichment_tables",
+        "config",
+        ("dfe-transform-vrl", "single", "local"),
+        ("dfe-transform-vrl",),
+    ),
+    (
+        "test_render_properties",
+        "config_file",
+        ("dfe-loader", "scale", "aws"),
+        ("dfe-loader",),
+    ),
     ("test_config_authority", "mounted_config", ("dfe-archiver", "slim", "local"), ()),
-    ("test_app_env_contract", "config_file", ("dfe-fetcher", "single", "aws"), ("dfe-fetcher",)),
-    ("test_transform_loader", "app_config", ("dfe-transform-vector", "slim", "local"),
-     ("dfe-transform-vector",)),
-    ("test_elastic_transform_config", "_config", ("dfe-transform-elastic", "single", "local"), ()),
-    ("test_message_size_chain", "config_file", ("dfe-receiver", "scale", "aws"), ("dfe-receiver",)),
+    (
+        "test_app_env_contract",
+        "config_file",
+        ("dfe-fetcher", "single", "aws"),
+        ("dfe-fetcher",),
+    ),
+    (
+        "test_transform_loader",
+        "app_config",
+        ("dfe-transform-vector", "slim", "local"),
+        ("dfe-transform-vector",),
+    ),
+    (
+        "test_elastic_transform_config",
+        "_config",
+        ("dfe-transform-elastic", "single", "local"),
+        (),
+    ),
+    (
+        "test_message_size_chain",
+        "config_file",
+        ("dfe-receiver", "scale", "aws"),
+        ("dfe-receiver",),
+    ),
 ]
 
 
@@ -94,7 +138,12 @@ def _b64(text: str) -> str:
 
 
 def _configmap(**maps: dict) -> dict:
-    return {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "probe"}, **maps}
+    return {
+        "apiVersion": "v1",
+        "kind": "ConfigMap",
+        "metadata": {"name": "probe"},
+        **maps,
+    }
 
 
 def _as_the_library_writes(docs: list[dict]) -> list[dict]:
@@ -102,8 +151,14 @@ def _as_the_library_writes(docs: list[dict]) -> list[dict]:
     out = copy.deepcopy(docs)
     for doc in out:
         name = doc.get("metadata", {}).get("name", "")
-        if doc.get("kind") == "ConfigMap" and name.endswith(THIN_CONFIGMAPS) and "data" in doc:
-            doc["binaryData"] = {key: _b64(value) for key, value in doc.pop("data").items()}
+        if (
+            doc.get("kind") == "ConfigMap"
+            and name.endswith(THIN_CONFIGMAPS)
+            and "data" in doc
+        ):
+            doc["binaryData"] = {
+                key: _b64(value) for key, value in doc.pop("data").items()
+            }
     return out
 
 
@@ -123,7 +178,9 @@ def test_the_config_file_keeps_the_text_helm_strips_from_data() -> None:
     files = configmap_files(_fixture()["dfe-transform-vrl-config"])
     assert list(files) == ["config.yaml"]
     assert "  absent: <no value>\n" in files["config.yaml"]
-    assert yaml.safe_load(files["config.yaml"])["fixture"] == OVERLAY["config"]["fixture"]
+    assert (
+        yaml.safe_load(files["config.yaml"])["fixture"] == OVERLAY["config"]["fixture"]
+    )
 
 
 def test_the_fixture_is_every_configmap_the_overlay_renders() -> None:
@@ -135,7 +192,9 @@ def test_the_fixture_is_every_configmap_the_overlay_renders() -> None:
 
 
 def test_data_reads_as_written() -> None:
-    assert configmap_files(_configmap(data={"a.yaml": "a: 1\n"})) == {"a.yaml": "a: 1\n"}
+    assert configmap_files(_configmap(data={"a.yaml": "a: 1\n"})) == {
+        "a.yaml": "a: 1\n"
+    }
 
 
 def test_both_maps_are_read_together() -> None:
@@ -161,7 +220,9 @@ def test_a_key_in_both_maps_is_refused() -> None:
     ids=["alphabet", "padding", "not-utf8"],
 )
 def test_a_value_that_is_not_base64_utf8_is_refused(value: str) -> None:
-    with pytest.raises(ValueError, match=r"ConfigMap/probe binaryData\[a\] is not base64"):
+    with pytest.raises(
+        ValueError, match=r"ConfigMap/probe binaryData\[a\] is not base64"
+    ):
         configmap_files(_configmap(binaryData={"a": value}))
 
 
@@ -183,7 +244,9 @@ def test_env_takes_nothing_from_binarydata() -> None:
         "metadata": {"name": "app"},
         "spec": {"template": {"spec": {"containers": [container]}}},
     }
-    assert effective_env([env, workload], "Deployment/app") == {"*<configMap app-env>": "<absent>"}
+    assert effective_env([env, workload], "Deployment/app") == {
+        "*<configMap app-env>": "<absent>"
+    }
 
 
 def test_the_gate_still_names_a_move_between_the_maps() -> None:
@@ -206,7 +269,9 @@ def test_every_thin_configmap_reads_the_same_from_binarydata(service: str) -> No
         moved = {object_id(d): d for d in _as_the_library_writes(docs)}
         for doc in docs:
             if doc.get("kind") == "ConfigMap":
-                assert configmap_files(moved[object_id(doc)]) == configmap_files(doc), cell
+                assert configmap_files(moved[object_id(doc)]) == configmap_files(doc), (
+                    cell
+                )
 
 
 @pytest.mark.parametrize(
@@ -220,7 +285,9 @@ def test_each_config_reader_reads_the_same_from_binarydata(
     reader = getattr(importlib.import_module(module), function)
     docs = golden(*cell)
     moved = _as_the_library_writes(docs)
-    assert any("binaryData" in d for d in moved), f"{cell} holds no thin-chart ConfigMap"
+    assert any("binaryData" in d for d in moved), (
+        f"{cell} holds no thin-chart ConfigMap"
+    )
     expected = reader(docs, *args)
     assert expected, f"{module}.{function} read nothing from {cell}"
     assert reader(moved, *args) == expected

@@ -52,7 +52,9 @@ PROGRAM = "# a filebeat program\n" * 8
 TABLE = "zone,offset\nUTC,0\n"
 
 # dfe-ops carries no extension, so it is loaded by path rather than imported.
-_loader = importlib.machinery.SourceFileLoader("dfeops_source_cases", str(SCRIPTS / "dfe-ops"))
+_loader = importlib.machinery.SourceFileLoader(
+    "dfeops_source_cases", str(SCRIPTS / "dfe-ops")
+)
 _spec = importlib.util.spec_from_loader("dfeops_source_cases", _loader)
 dfeops = importlib.util.module_from_spec(_spec)
 sys.modules["dfeops_source_cases"] = dfeops
@@ -61,8 +63,15 @@ _loader.exec_module(dfeops)
 
 def parse(*argv: str):
     return build_parser().parse_args(
-        ["--ui-url", "https://dfe.example", "--engine-url", "https://dfe.example",
-         "--engine-repo", "/nowhere", *argv]
+        [
+            "--ui-url",
+            "https://dfe.example",
+            "--engine-url",
+            "https://dfe.example",
+            "--engine-repo",
+            "/nowhere",
+            *argv,
+        ]
     )
 
 
@@ -90,7 +99,9 @@ class FakePage:
     #: Where the console's create goes, so a predicate keyed on it is exercised.
     CREATE_URL = "https://dfe.example/api/v1/sources"
 
-    def __init__(self, missing: tuple[str, ...] = (), created_reply: object = None) -> None:
+    def __init__(
+        self, missing: tuple[str, ...] = (), created_reply: object = None
+    ) -> None:
         self.missing = missing
         self.visited: list[str] = []
         self.typed: list[str] = []
@@ -228,31 +239,47 @@ class FakeEngine:
     all the way to the archive without a cluster.
     """
 
-    ON_DISK: ClassVar[dict[str, int]] = {"filebeat.vrl": len(PROGRAM), "timezones.csv": len(TABLE)}
+    ON_DISK: ClassVar[dict[str, int]] = {
+        "filebeat.vrl": len(PROGRAM),
+        "timezones.csv": len(TABLE),
+    }
 
     #: appmgmt/appconfig.py RESTART_HINT, as a released engine renders it.
-    RESTART_HINT: ClassVar[str] = "restart required: make apply SERVICES=dfe-transform-vrl"
+    RESTART_HINT: ClassVar[str] = (
+        "restart required: make apply SERVICES=dfe-transform-vrl"
+    )
     #: The same hint from an engine that predates `make apply`.
-    LEGACY_RESTART_HINT: ClassVar[str] = "restart required: docker compose restart dfe-transform-vrl"
+    LEGACY_RESTART_HINT: ClassVar[str] = (
+        "restart required: docker compose restart dfe-transform-vrl"
+    )
 
     #: The receiver's hint when a source changes where it sends records.
     RECEIVER_HINT: ClassVar[str] = "restart required: make apply SERVICES=dfe-receiver"
 
-    def __init__(self, transform: str = "vrl", variant: str = "", committed: bool = True,
-                 restart_required: tuple[str, ...] = (RESTART_HINT,),
-                 deploy_restarts: tuple[str, ...] = (),
-                 source_restarts: tuple[str, ...] = (),
-                 archiver: bool = True,
-                 deploy_topics: dict | None = None,
-                 deploy_status: int = 200,
-                 transports: tuple[str, ...] | None = None) -> None:
+    def __init__(
+        self,
+        transform: str = "vrl",
+        variant: str = "",
+        committed: bool = True,
+        restart_required: tuple[str, ...] = (RESTART_HINT,),
+        deploy_restarts: tuple[str, ...] = (),
+        source_restarts: tuple[str, ...] = (),
+        archiver: bool = True,
+        deploy_topics: dict | None = None,
+        deploy_status: int = 200,
+        transports: tuple[str, ...] | None = None,
+    ) -> None:
         self.base = "https://dfe.example"
         self.verify = False
         self.token = "t"
         self.restart_required = restart_required
         self.deploy_restarts = deploy_restarts
         #: The topic lists the deploy reports, and the status it answers with.
-        self.deploy_topics = deploy_topics if deploy_topics is not None else {"topics_ensured": ["a_land"]}
+        self.deploy_topics = (
+            deploy_topics
+            if deploy_topics is not None
+            else {"topics_ensured": ["a_land"]}
+        )
         self.deploy_status = deploy_status
         #: What /system/deployment says the deployment carries. None names no transport.
         self.transports = transports
@@ -265,7 +292,11 @@ class FakeEngine:
             attached["engine"] = transform
         if variant:
             attached["variant"] = variant
-        self.source = {"current": "1.0.0", "deployed_version": "1.0.0", "transform": attached}
+        self.source = {
+            "current": "1.0.0",
+            "deployed_version": "1.0.0",
+            "transform": attached,
+        }
         self.committed = committed
         self.calls: list[tuple[str, str]] = []
         self.written: dict[str, str] = {}
@@ -275,19 +306,42 @@ class FakeEngine:
         self.calls.append((method, path))
         if method == "PUT" and "/files/" in path:
             self.written[path] = str((body or {}).get("content") or "")
-            return reply(200, {"changed": True, "reload": "roll",
-                               "restart_required": list(self.restart_required)})
+            return reply(
+                200,
+                {
+                    "changed": True,
+                    "reload": "roll",
+                    "restart_required": list(self.restart_required),
+                },
+            )
         if method == "GET" and "/files/" in path:
             if not self.committed:
                 return reply(404, {"message": "no such file"})
             return reply(200, {"size_bytes": self.ON_DISK[path.rsplit("/", 1)[-1]]})
         if method == "GET" and path.endswith("/status"):
-            return reply(200, {"reporting": True, "uptime_seconds": 3, "telemetry_name": "dfe-fetcher-x"})
+            return reply(
+                200,
+                {
+                    "reporting": True,
+                    "uptime_seconds": 3,
+                    "telemetry_name": "dfe-fetcher-x",
+                },
+            )
         if path == "/apps":
-            listed = [{"service": service, "instances": [self.instance]}
-                      for service in ("dfe-transform-vrl", "dfe-transform-elastic", "dfe-fetcher")]
-            listed.append({"service": "dfe-archiver",
-                           "instances": ["default"] if self.archiver else []})
+            listed = [
+                {"service": service, "instances": [self.instance]}
+                for service in (
+                    "dfe-transform-vrl",
+                    "dfe-transform-elastic",
+                    "dfe-fetcher",
+                )
+            ]
+            listed.append(
+                {
+                    "service": "dfe-archiver",
+                    "instances": ["default"] if self.archiver else [],
+                }
+            )
             return reply(200, listed)
         if method == "POST" and path == "/sources":
             self.sent[path] = dict(body or {})
@@ -297,16 +351,34 @@ class FakeEngine:
         if method == "POST" and path.endswith("/deploy"):
             if self.deploy_status != 200:
                 return reply(self.deploy_status, {"message": "upstream timed out"})
-            return reply(200, {"applied": True, **self.deploy_topics,
-                               "apps_synced": ["deploy instance"],
-                               "restart_required": list(self.deploy_restarts)})
+            return reply(
+                200,
+                {
+                    "applied": True,
+                    **self.deploy_topics,
+                    "apps_synced": ["deploy instance"],
+                    "restart_required": list(self.deploy_restarts),
+                },
+            )
         if path == "/system/deployment" and self.transports is not None:
-            return reply(200, {"transports": {"default": self.transports[0],
-                                              "available": list(self.transports)}})
+            return reply(
+                200,
+                {
+                    "transports": {
+                        "default": self.transports[0],
+                        "available": list(self.transports),
+                    }
+                },
+            )
         if method == "PUT" and path.startswith("/sources/"):
             self.sent[path] = dict(body or {})
-            self.source = {**self.source, "transform": dict((body or {}).get("transform") or {})}
-            return reply(200, {**self.source, "restart_required": list(self.source_restarts)})
+            self.source = {
+                **self.source,
+                "transform": dict((body or {}).get("transform") or {}),
+            }
+            return reply(
+                200, {**self.source, "restart_required": list(self.source_restarts)}
+            )
         if method == "GET" and path.startswith("/sources/"):
             return reply(200, self.source)
         return reply(200, {})
@@ -340,9 +412,16 @@ class FakeStore:
 def a_run(driver, engine, args, name, transform_repo: Path, receiver: str = ""):
     engine.instance = name
     return cases.Run(
-        driver=driver, engine=engine, store=FakeStore(), args=args, name=name, run_id="src-test",
-        engine_repo=Path("/nowhere"), transform_repo=transform_repo,
-        receiver_url=receiver, verify=False,
+        driver=driver,
+        engine=engine,
+        store=FakeStore(),
+        args=args,
+        name=name,
+        run_id="src-test",
+        engine_repo=Path("/nowhere"),
+        transform_repo=transform_repo,
+        receiver_url=receiver,
+        verify=False,
     )
 
 
@@ -419,15 +498,27 @@ class TestWhichCaseARunGets:
         fetched = cases.build(parse("--case", "cloudwatch"))
 
         assert (pushed.service, pushed.instance_step, pushed.reporting_step) == (
-            "dfe-transform-vrl", "transform-instance", "transform-reporting")
+            "dfe-transform-vrl",
+            "transform-instance",
+            "transform-reporting",
+        )
         assert (elastic.service, elastic.instance_step, elastic.reporting_step) == (
-            "dfe-transform-elastic", "transform-instance", "transform-reporting")
+            "dfe-transform-elastic",
+            "transform-instance",
+            "transform-reporting",
+        )
         assert (fetched.service, fetched.instance_step, fetched.reporting_step) == (
-            "dfe-fetcher", "fetcher-instance", "fetcher-reporting")
+            "dfe-fetcher",
+            "fetcher-instance",
+            "fetcher-reporting",
+        )
 
         vector = cases.build(parse("--case", "vector"))
         assert (vector.service, vector.instance_step, vector.reporting_step) == (
-            "dfe-transform-vector", "transform-instance", "transform-reporting")
+            "dfe-transform-vector",
+            "transform-instance",
+            "transform-reporting",
+        )
 
     def test_a_run_mints_its_own_source_name_so_two_runs_never_collide(self):
         assert cases.build(parse()).name != cases.build(parse()).name
@@ -451,7 +542,14 @@ class TestWhichCaseARunGets:
 
     def test_a_source_the_deployment_authored_is_not_a_stray(self):
         """The sweep deletes, so a real source that merely starts like ours must survive."""
-        for owned in ("filebeat", "elastic", "elasticsearch", "fbprod", "cwlogs", "onboarding"):
+        for owned in (
+            "filebeat",
+            "elastic",
+            "elasticsearch",
+            "fbprod",
+            "cwlogs",
+            "onboarding",
+        ):
             assert not steps.RUN_NAME.fullmatch(owned)
 
     def test_the_fetched_case_authors_a_schema_under_its_own_name(self):
@@ -463,12 +561,20 @@ class TestWhichCaseARunGets:
     def test_only_the_pushed_case_has_files_to_write_after_the_deploy(self):
         fetched = cases.build(parse("--case", "cloudwatch"))
 
-        assert fetched.provision(a_run(FakeDriver(FakePage()), FakeEngine(), parse(), "cw1", Path("/"))) == []
+        assert (
+            fetched.provision(
+                a_run(FakeDriver(FakePage()), FakeEngine(), parse(), "cw1", Path("/"))
+            )
+            == []
+        )
 
     def test_the_companion_checkout_is_the_cases_own(self):
         """Both pushed cases read one corpus archive; a fetched source reads no repo."""
         assert cases.build(parse()).companion_repo == "dfe-transform-vrl"
-        assert cases.build(parse("--case", "elastic")).companion_repo == "dfe-transform-vrl"
+        assert (
+            cases.build(parse("--case", "elastic")).companion_repo
+            == "dfe-transform-vrl"
+        )
         assert cases.build(parse("--case", "cloudwatch")).companion_repo == ""
 
 
@@ -476,10 +582,27 @@ class TestWhichCaseARunGets:
 # LookupEvents return it, plus the call's log group, account and region that
 # dfe-fetcher stamps on (crates/rest/src/hooks/cloudwatch_logs.rs).
 PRODUCER_KEYS = {
-    "cloudwatch_logs": {"eventId", "logStreamName", "timestamp", "ingestionTime", "message",
-                        "logGroupName", "awsAccountId", "awsRegion"},
-    "cloudtrail": {"EventId", "EventName", "ReadOnly", "AccessKeyId", "EventTime",
-                   "EventSource", "Username", "Resources", "CloudTrailEvent"},
+    "cloudwatch_logs": {
+        "eventId",
+        "logStreamName",
+        "timestamp",
+        "ingestionTime",
+        "message",
+        "logGroupName",
+        "awsAccountId",
+        "awsRegion",
+    },
+    "cloudtrail": {
+        "EventId",
+        "EventName",
+        "ReadOnly",
+        "AccessKeyId",
+        "EventTime",
+        "EventSource",
+        "Username",
+        "Resources",
+        "CloudTrailEvent",
+    },
 }
 
 
@@ -499,7 +622,10 @@ class TestTheFetchedSchemaAndItsProof:
     @pytest.mark.parametrize("service", sorted(fetcher.AWS_CASES))
     def test_every_authored_column_reads_a_key_the_producer_writes(self, service):
         """A column reading a key nobody writes lands empty on every row, and nothing else fails."""
-        read = {column.expr.removeprefix("@source: ") for column in fetcher.AWS_CASES[service].columns}
+        read = {
+            column.expr.removeprefix("@source: ")
+            for column in fetcher.AWS_CASES[service].columns
+        }
 
         assert read - PRODUCER_KEYS[service] == set()
 
@@ -512,31 +638,48 @@ class TestTheFetchedSchemaAndItsProof:
     def test_the_proof_holds_every_key_the_fetcher_stamps(self):
         stamped = {"logGroupName", "awsAccountId", "awsRegion"}
         case = fetcher.CLOUDWATCH_LOGS
-        stamping = {column.name for column in case.columns if column.expr.removeprefix("@source: ") in stamped}
+        stamping = {
+            column.name
+            for column in case.columns
+            if column.expr.removeprefix("@source: ") in stamped
+        }
 
         assert stamping <= set(case.proof_columns)
 
-    @pytest.mark.parametrize(("carrying", "status"), [
-        pytest.param(3, "done", id="every_row_stamped"),
-        pytest.param(0, "failed", id="expected_fail_a_stamp_missing"),
-        pytest.param(1, "failed", id="expected_fail_most_rows_unstamped"),
-    ])
-    def test_the_fetched_columns_row_asks_for_every_proof_column(self, carrying, status):
+    @pytest.mark.parametrize(
+        ("carrying", "status"),
+        [
+            pytest.param(3, "done", id="every_row_stamped"),
+            pytest.param(0, "failed", id="expected_fail_a_stamp_missing"),
+            pytest.param(1, "failed", id="expected_fail_most_rows_unstamped"),
+        ],
+    )
+    def test_the_fetched_columns_row_asks_for_every_proof_column(
+        self, carrying, status
+    ):
         case = cases.build(parse("--case", "cloudwatch"))
         driver, store = FakeDriver(FakePage()), ProofStore(landed=3, carrying=carrying)
-        run = a_run(driver, FakeEngine(), parse("--case", "cloudwatch"), case.name, Path("/"))
+        run = a_run(
+            driver, FakeEngine(), parse("--case", "cloudwatch"), case.name, Path("/")
+        )
         run.store = store
 
         case.prove(run)
 
         assert driver.status("fetched-columns") == status
-        assert all(f"{column} != ''" in store.asked[-1] for column in case.upstream.proof_columns)
+        assert all(
+            f"{column} != ''" in store.asked[-1]
+            for column in case.upstream.proof_columns
+        )
 
-    @pytest.mark.parametrize(("name", "row"), [
-        pytest.param("filebeat", "landed", id="pushed_with_no_receiver"),
-        pytest.param("elastic", "landed", id="elastic_with_no_receiver"),
-        pytest.param("cloudwatch", "fetched", id="fetched_with_no_datastore"),
-    ])
+    @pytest.mark.parametrize(
+        ("name", "row"),
+        [
+            pytest.param("filebeat", "landed", id="pushed_with_no_receiver"),
+            pytest.param("elastic", "landed", id="elastic_with_no_receiver"),
+            pytest.param("cloudwatch", "fetched", id="fetched_with_no_datastore"),
+        ],
+    )
     def test_a_proof_that_cannot_run_reads_unproven_never_absent(self, name, row):
         """A run that proved no data path must say so, not leave a table that reads green."""
         case = cases.build(parse("--case", name))
@@ -552,26 +695,35 @@ class TestTheFetchedSchemaAndItsProof:
 
 class TestTheConsoleOrApiDecision:
     def test_a_console_that_did_the_work_reads_done(self):
-        assert steps.console_outcome("the console set it", "", "") == ("done", "the console set it")
+        assert steps.console_outcome("the console set it", "", "") == (
+            "done",
+            "the console set it",
+        )
 
     def test_a_missing_control_reads_api_fallback_and_says_why(self):
-        status, detail = steps.console_outcome("", "the console could not: TimeoutError: no tab", "set by API")
+        status, detail = steps.console_outcome(
+            "", "the console could not: TimeoutError: no tab", "set by API"
+        )
 
         assert status == "api-fallback"
         assert detail == "set by API (the console could not: TimeoutError: no tab)"
 
     def test_the_reason_is_one_line_however_long_the_error_was(self):
-        reason = steps.refusal(TimeoutError("locator resolved to nothing\nCall log:\n  - waiting"))
+        reason = steps.refusal(
+            TimeoutError("locator resolved to nothing\nCall log:\n  - waiting")
+        )
 
         assert "\n" not in reason
-        assert reason == "the console could not: TimeoutError: locator resolved to nothing"
+        assert (
+            reason == "the console could not: TimeoutError: locator resolved to nothing"
+        )
 
     def test_a_playwright_timeout_still_names_the_control_it_waited_on(self):
         error = TimeoutError(
             "Locator.click: Timeout 30000ms exceeded.\n"
             "Call log:\n"
-            "  - waiting for get_by_role(\"tab\", name=\"Table Settings\", exact=True)\n"
-            "  -   locator resolved to <div class=\"ant-tabs-tab\">...</div>\n"
+            '  - waiting for get_by_role("tab", name="Table Settings", exact=True)\n'
+            '  -   locator resolved to <div class="ant-tabs-tab">...</div>\n'
             "  - attempting click action\n"
         )
 
@@ -581,7 +733,11 @@ class TestTheConsoleOrApiDecision:
             assert 'get_by_role("tab", name="Table Settings", exact=True)' in line
 
     def test_the_locator_line_is_bounded(self):
-        error = TimeoutError("Locator.click: Timeout 1ms exceeded.\nCall log:\n  - waiting for locator(\"" + "x" * 2000 + "\")")
+        error = TimeoutError(
+            'Locator.click: Timeout 1ms exceeded.\nCall log:\n  - waiting for locator("'
+            + "x" * 2000
+            + '")'
+        )
 
         assert len(steps.failure_line(error)) <= steps.FAILURE_LINE_MAX
 
@@ -594,7 +750,10 @@ class TestTheConsoleOrApiDecision:
 
         status, detail = steps.console_outcome("", "no control", "did it by API")
 
-        assert wizard.exit_code([wizard.StepResult("attach-transform", status, detail)]) == 0
+        assert (
+            wizard.exit_code([wizard.StepResult("attach-transform", status, detail)])
+            == 0
+        )
 
 
 class TestTheFilebeatCaseCreate:
@@ -609,7 +768,10 @@ class TestTheFilebeatCaseCreate:
         driver, _, _ = self._create()
 
         assert driver.rows == [
-            "add-source-configuration", "add-source-meta-schema", "add-source", "attach-transform"
+            "add-source-configuration",
+            "add-source-meta-schema",
+            "add-source",
+            "attach-transform",
         ]
 
     def test_the_schema_is_picked_on_the_table_settings_tab_by_field(self):
@@ -619,7 +781,12 @@ class TestTheFilebeatCaseCreate:
 
         assert "tab:Table Settings" in visited
         assert "button:Override Defaults" in visited
-        for field in ("schema_meta_schema", "schema_meta_schema_version", "header_type", "header_version"):
+        for field in (
+            "schema_meta_schema",
+            "schema_meta_schema_version",
+            "header_type",
+            "header_version",
+        ):
             assert f"locator:{steps.field_select(field)}" in visited
 
     def test_the_meta_schema_is_picked_with_no_define_schema_radio_in_front(self):
@@ -665,7 +832,11 @@ class TestTheFilebeatCaseCreate:
     def test_every_create_row_is_done_however_the_transform_was_attached(self):
         for missing in ((), ("tab:Transform",)):
             driver, _, _ = self._create(missing=missing)
-            for slug in ("add-source-configuration", "add-source-meta-schema", "add-source"):
+            for slug in (
+                "add-source-configuration",
+                "add-source-meta-schema",
+                "add-source",
+            ):
                 assert driver.status(slug) == "done"
 
 
@@ -687,7 +858,9 @@ class TestWhatTheCreateHandsTheRestartStep:
         assert "expect_response" in page.visited
 
     def test_a_create_that_asked_for_nothing_hands_back_nothing(self):
-        _, _, hints = self._created(FakePage(created_reply={"restart_required": []}), FakeEngine())
+        _, _, hints = self._created(
+            FakePage(created_reply={"restart_required": []}), FakeEngine()
+        )
 
         assert hints == []
 
@@ -716,7 +889,10 @@ class TestWhatTheCreateHandsTheRestartStep:
 
     def test_the_fetched_case_hands_back_its_own_creates_restarts(self):
         engine = FakeEngine(source_restarts=(FakeEngine.RECEIVER_HINT,))
-        body = {"source": "cw1", "fetcher": {"config": {"services": [{"name": "cloudtrail"}]}}}
+        body = {
+            "source": "cw1",
+            "fetcher": {"config": {"services": [{"name": "cloudtrail"}]}},
+        }
 
         detail, hints = fetcher.create_source(engine, body)
 
@@ -764,10 +940,14 @@ class TestTheFilebeatCaseProvision:
         driver = FakeDriver(FakePage(missing=missing))
         engine = FakeEngine(committed=committed)
         case = cases.build(parse())
-        hints = case.provision(a_run(driver, engine, parse(), case.name, transform_repo))
+        hints = case.provision(
+            a_run(driver, engine, parse(), case.name, transform_repo)
+        )
         return driver, engine, case, hints
 
-    def test_the_console_commits_both_files_and_the_row_reads_done(self, transform_repo):
+    def test_the_console_commits_both_files_and_the_row_reads_done(
+        self, transform_repo
+    ):
         driver, _, _, hints = self._provision(transform_repo)
 
         assert driver.rows == ["upload-program"]
@@ -776,7 +956,9 @@ class TestTheFilebeatCaseProvision:
         assert "timezones.csv" in driver.detail("upload-program")
         assert hints == []
 
-    def test_it_opens_the_sources_processing_tab_for_the_instance_it_wrote_to(self, transform_repo):
+    def test_it_opens_the_sources_processing_tab_for_the_instance_it_wrote_to(
+        self, transform_repo
+    ):
         driver, _, case, _ = self._provision(transform_repo)
         opened = [v for v in driver.page.visited if v.startswith("goto:")]
 
@@ -797,18 +979,34 @@ class TestTheFilebeatCaseProvision:
         assert TABLE in driver.page.typed
 
     def test_a_console_without_the_editor_falls_back_to_the_api(self, transform_repo):
-        driver, engine, case, _ = self._provision(transform_repo, missing=("button:New file",))
+        driver, engine, case, _ = self._provision(
+            transform_repo, missing=("button:New file",)
+        )
 
         assert driver.status("upload-program") == "api-fallback"
-        assert engine.written[f"/apps/{case.service}/{case.name}/files/transforms/filebeat.vrl"] == PROGRAM
-        assert engine.written[f"/apps/{case.service}/{case.name}/files/enrichment/timezones.csv"] == TABLE
+        assert (
+            engine.written[
+                f"/apps/{case.service}/{case.name}/files/transforms/filebeat.vrl"
+            ]
+            == PROGRAM
+        )
+        assert (
+            engine.written[
+                f"/apps/{case.service}/{case.name}/files/enrichment/timezones.csv"
+            ]
+            == TABLE
+        )
 
-    def test_the_fallback_carries_the_restarts_the_writes_asked_for(self, transform_repo):
+    def test_the_fallback_carries_the_restarts_the_writes_asked_for(
+        self, transform_repo
+    ):
         _, _, _, hints = self._provision(transform_repo, missing=("button:New file",))
 
         assert hints == [FakeEngine.RESTART_HINT] * 2
 
-    def test_a_commit_the_engine_never_took_is_a_fallback_not_a_pass(self, transform_repo, monkeypatch):
+    def test_a_commit_the_engine_never_took_is_a_fallback_not_a_pass(
+        self, transform_repo, monkeypatch
+    ):
         """The console's own notice is per panel, so the engine is what is asked."""
         monkeypatch.setattr(cases, "COMMIT_DEADLINE", 0.0)
         driver, _, _, _ = self._provision(transform_repo, committed=False)
@@ -816,15 +1014,21 @@ class TestTheFilebeatCaseProvision:
         assert driver.status("upload-program") == "api-fallback"
         assert "was not committed" in driver.detail("upload-program")
 
-    def test_the_console_drives_the_transform_card_it_actually_renders(self, transform_repo):
+    def test_the_console_drives_the_transform_card_it_actually_renders(
+        self, transform_repo
+    ):
         driver = FakeDriver(TransformCardPage(TransformCardPage.RUNNING))
         case = cases.build(parse())
 
         case.provision(a_run(driver, FakeEngine(), parse(), case.name, transform_repo))
 
-        assert driver.status("upload-program") == "done", driver.detail("upload-program")
+        assert driver.status("upload-program") == "done", driver.detail(
+            "upload-program"
+        )
 
-    def test_expected_fail_a_transform_with_no_instance_yet_offers_no_editor(self, transform_repo):
+    def test_expected_fail_a_transform_with_no_instance_yet_offers_no_editor(
+        self, transform_repo
+    ):
         driver = FakeDriver(TransformCardPage(TransformCardPage.NOT_YET_RUNNING))
         case = cases.build(parse())
 
@@ -858,7 +1062,11 @@ class TransformCardPage(FakePage):
             raise TimeoutError(f"no heading {name} on the Processing tab")
         if role == "radio":
             # Playwright matches a pattern name against the accessible name by search.
-            named = [o for o in self.options if isinstance(name, re.Pattern) and name.search(o)]
+            named = [
+                o
+                for o in self.options
+                if isinstance(name, re.Pattern) and name.search(o)
+            ]
             if named != [self.options[0]] or "Running" not in named[0]:
                 raise TimeoutError(f"no radio named {name}")
         return super().get_by_role(role, name, exact)
@@ -890,7 +1098,8 @@ class TestTheElasticCase:
         # How far the console got is the finding, so the row names what it set.
         assert "'engine': 'elastic'" in driver.detail("attach-transform")
         assert engine.sent[f"/sources/{case.name}"]["transform"] == {
-            "engine": "elastic", "variant": cases.ElasticCase.VARIANT,
+            "engine": "elastic",
+            "variant": cases.ElasticCase.VARIANT,
         }
 
     def test_a_console_that_carried_both_needs_no_fallback(self):
@@ -905,7 +1114,9 @@ class TestTheElasticCase:
         driver = FakeDriver(FakePage())
         case = cases.build(parse("--case", "elastic"))
 
-        hints = case.provision(a_run(driver, FakeEngine(), parse(), case.name, Path("/")))
+        hints = case.provision(
+            a_run(driver, FakeEngine(), parse(), case.name, Path("/"))
+        )
 
         assert hints == []
         assert driver.rows == ["upload-program"]
@@ -921,22 +1132,44 @@ class TestTheElasticCase:
     def _feed(self, monkeypatch, case):
         asked: dict[str, tuple[str, ...]] = {}
 
-        def routed(receiver_url, verify, engine_repo, corpus_file, store, name, run, deadline,
-                   modules=()):
+        def routed(
+            receiver_url,
+            verify,
+            engine_repo,
+            corpus_file,
+            store,
+            name,
+            run,
+            deadline,
+            modules=(),
+        ):
             asked["routed"] = modules
             return f"routed into dfe.{name} after 1 probe pass(es)"
 
-        def posted(receiver_url, verify, engine_repo, corpus_file, run, per_module, modules=()):
+        def posted(
+            receiver_url, verify, engine_repo, corpus_file, run, per_module, modules=()
+        ):
             asked["posted"] = modules
             return 7
 
         monkeypatch.setattr(steps, "wait_routed", routed)
         monkeypatch.setattr(steps, "post_corpus", posted)
         driver = FakeDriver(FakePage())
-        case.feed(a_run(driver, FakeEngine(), parse(), case.name, Path("/"), "https://rx.example"))
+        case.feed(
+            a_run(
+                driver,
+                FakeEngine(),
+                parse(),
+                case.name,
+                Path("/"),
+                "https://rx.example",
+            )
+        )
         return driver, asked
 
-    def test_both_the_probe_and_the_payload_are_narrowed_to_that_module(self, monkeypatch):
+    def test_both_the_probe_and_the_payload_are_narrowed_to_that_module(
+        self, monkeypatch
+    ):
         driver, asked = self._feed(monkeypatch, cases.build(parse("--case", "elastic")))
 
         assert asked == {"routed": ("cisco_ios",), "posted": ("cisco_ios",)}
@@ -985,12 +1218,17 @@ class TestTheVectorCase:
         case = cases.build(parse("--case", "vector"))
 
         assert case.MODULES == ("cisco_ios",)
-        assert (case.MATCH_FIELD, case.MATCH_VALUE) == ("data_stream.dataset", "cisco_ios.log")
+        assert (case.MATCH_FIELD, case.MATCH_VALUE) == (
+            "data_stream.dataset",
+            "cisco_ios.log",
+        )
 
     def test_the_transform_body_names_the_engine_and_nothing_else(self):
         """No variant: the pipeline is the file this case writes, not a compiled-in
         transform selected by name."""
-        assert cases.build(parse("--case", "vector"))._transform_body() == {"engine": "vector"}
+        assert cases.build(parse("--case", "vector"))._transform_body() == {
+            "engine": "vector"
+        }
 
     def test_the_program_is_read_from_the_program_checkout(self, tmp_path):
         """The one behaviour a wrong repo would break silently: the run would
@@ -1015,7 +1253,9 @@ class TestTheVectorCase:
 
     def test_without_a_program_repo_a_case_still_reads_the_corpus_one(self):
         """Every other case keeps one checkout, so programs() must fall back to the corpus."""
-        run = a_run(FakeDriver(FakePage()), FakeEngine(), parse(), "fbdeadbeef", Path("/corpus"))
+        run = a_run(
+            FakeDriver(FakePage()), FakeEngine(), parse(), "fbdeadbeef", Path("/corpus")
+        )
 
         assert run.programs() == Path("/corpus")
 
@@ -1023,48 +1263,100 @@ class TestTheVectorCase:
 class TestTheCorpusFilter:
     """post_corpus reads the archive through dfe-engine's wrapper, which caps per module."""
 
-    def test_a_case_with_no_modules_asks_for_every_one_the_wrapper_names(self, corpus_module):
-        steps.post_corpus("https://rx.example", False, Path("/nowhere"), Path("c.tar.gz"),
-                          "run", 20)
+    def test_a_case_with_no_modules_asks_for_every_one_the_wrapper_names(
+        self, corpus_module
+    ):
+        steps.post_corpus(
+            "https://rx.example", False, Path("/nowhere"), Path("c.tar.gz"), "run", 20
+        )
 
         assert corpus_module.asked == [(FakeCorpus.MODULES, 20)]
 
     def test_a_named_module_is_the_only_one_read(self, corpus_module):
-        steps.post_corpus("https://rx.example", False, Path("/nowhere"), Path("c.tar.gz"),
-                          "run", 20, ("cisco_ios",))
+        steps.post_corpus(
+            "https://rx.example",
+            False,
+            Path("/nowhere"),
+            Path("c.tar.gz"),
+            "run",
+            20,
+            ("cisco_ios",),
+        )
 
         assert corpus_module.asked == [(("cisco_ios",), 20)]
 
     def test_the_routing_probe_carries_the_same_filter(self, corpus_module):
-        detail = steps.wait_routed("https://rx.example", False, Path("/nowhere"),
-                                   Path("c.tar.gz"), FakeStore(), "el1", "src-test", 0.0,
-                                   ("cisco_ios",))
+        detail = steps.wait_routed(
+            "https://rx.example",
+            False,
+            Path("/nowhere"),
+            Path("c.tar.gz"),
+            FakeStore(),
+            "el1",
+            "src-test",
+            0.0,
+            ("cisco_ios",),
+        )
 
         assert corpus_module.asked == [(("cisco_ios",), 1)]
         assert detail.startswith("NOT routed")
 
-    def test_a_routed_probe_names_how_many_reached_the_catch_all_first(self, corpus_module):
+    def test_a_routed_probe_names_how_many_reached_the_catch_all_first(
+        self, corpus_module
+    ):
         store = RoutingStore(routed=1, strayed=2)
 
-        detail = steps.wait_routed("https://rx.example", False, Path("/nowhere"),
-                                   Path("c.tar.gz"), store, "fb1", "src-test", 0.0, ("cisco_ios",))
+        detail = steps.wait_routed(
+            "https://rx.example",
+            False,
+            Path("/nowhere"),
+            Path("c.tar.gz"),
+            store,
+            "fb1",
+            "src-test",
+            0.0,
+            ("cisco_ios",),
+        )
 
-        assert detail == "routed into dfe.fb1 after 1 probe pass(es), 2 probe(s) landed in dfe.main"
+        assert (
+            detail
+            == "routed into dfe.fb1 after 1 probe pass(es), 2 probe(s) landed in dfe.main"
+        )
         probes = steps.marked("src-test", steps.PROBE)
         assert any(" FROM main " in sql and probes in sql for sql in store.asked)
 
-    def test_an_unrouted_probe_names_how_many_reached_the_catch_all(self, corpus_module):
-        detail = steps.wait_routed("https://rx.example", False, Path("/nowhere"),
-                                   Path("c.tar.gz"), RoutingStore(routed=0, strayed=0), "fb1",
-                                   "src-test", 0.0, ("cisco_ios",))
+    def test_an_unrouted_probe_names_how_many_reached_the_catch_all(
+        self, corpus_module
+    ):
+        detail = steps.wait_routed(
+            "https://rx.example",
+            False,
+            Path("/nowhere"),
+            Path("c.tar.gz"),
+            RoutingStore(routed=0, strayed=0),
+            "fb1",
+            "src-test",
+            0.0,
+            ("cisco_ios",),
+        )
 
         assert detail.startswith("NOT routed into dfe.fb1")
         assert detail.endswith(", 0 probe(s) landed in dfe.main")
 
-    def test_a_catch_all_that_cannot_be_read_is_named_rather_than_raised(self, corpus_module):
-        detail = steps.wait_routed("https://rx.example", False, Path("/nowhere"),
-                                   Path("c.tar.gz"), RoutingStore(routed=1, strayed=-1), "fb1",
-                                   "src-test", 0.0, ("cisco_ios",))
+    def test_a_catch_all_that_cannot_be_read_is_named_rather_than_raised(
+        self, corpus_module
+    ):
+        detail = steps.wait_routed(
+            "https://rx.example",
+            False,
+            Path("/nowhere"),
+            Path("c.tar.gz"),
+            RoutingStore(routed=1, strayed=-1),
+            "fb1",
+            "src-test",
+            0.0,
+            ("cisco_ios",),
+        )
 
         assert detail.startswith("routed into dfe.fb1")
         assert detail.endswith(", dfe.main could not be read: RuntimeError")
@@ -1103,7 +1395,10 @@ class ShippingCorpus:
 
     MODULES = ("cisco_umbrella", "cisco_ios", "cisco_meraki")
     LINES: ClassVar[dict[str, list[str]]] = {
-        "cisco_ios": ["<189>1: Jan  6 20:52:12: %SYS-5-CONFIG_I: one", "<189>2: Jan  6 20:52:13: %SYS-5-CONFIG_I: two"],
+        "cisco_ios": [
+            "<189>1: Jan  6 20:52:12: %SYS-5-CONFIG_I: one",
+            "<189>2: Jan  6 20:52:13: %SYS-5-CONFIG_I: two",
+        ],
         "cisco_meraki": ["<134>1 1599000000.1 mx events dhcp lease"],
         "cisco_umbrella": ['"2026-01-01 00:00:00","a","b","c","d","e","f"'],
     }
@@ -1112,25 +1407,36 @@ class ShippingCorpus:
         #: The source.ip each line's expected event carries, None where the event has none.
         self.expected_ip: dict[str, list[str | None]] = {}
         for module, lines in self.LINES.items():
-            self.expected_ip[module] = [f"192.0.2.{n}" for n in range(1, len(lines) + 1)]
+            self.expected_ip[module] = [
+                f"192.0.2.{n}" for n in range(1, len(lines) + 1)
+            ]
 
     def samples(self, _path, *, modules, limit):
-        return [FakeSample(module, line, f"test-{module}.log")
-                for module in modules for line in self.LINES[module][:limit]]
+        return [
+            FakeSample(module, line, f"test-{module}.log")
+            for module in modules
+            for line in self.LINES[module][:limit]
+        ]
 
     def goldens(self, _path, *, modules):
         """Each module's expected events, keyed by the log's name the way the wrapper keys them."""
         return {
             f"test-{module}.log-expected.json": {
-                "expected": [{"source": {"ip": ip}} if ip else {"message": "no address"}
-                             for ip in self.expected_ip[module]],
+                "expected": [
+                    {"source": {"ip": ip}} if ip else {"message": "no address"}
+                    for ip in self.expected_ip[module]
+                ],
             }
             for module in modules
         }
 
     def wrap_all(self, items, source="filebeat", run=""):
         return [
-            {"message": item.line, "tags": [f"corpus_module:{item.module}", f"e2e_run:{run}"], "_source": source}
+            {
+                "message": item.line,
+                "tags": [f"corpus_module:{item.module}", f"e2e_run:{run}"],
+                "_source": source,
+            }
             for item in items
         ]
 
@@ -1146,9 +1452,12 @@ def _archive(path: Path, members: tuple[str, ...]) -> Path:
 
 
 CORPUS_PATHS = (
-    "cisco_ios/log/test-asr920.log", "cisco_ios/log/test-asr920.log-expected.json",
-    "cisco_ios/manifest.yml", "cisco_meraki/log/test-events.log",
-    "cisco_umbrella/log/test-umbrella-dnslogs.log", "LICENSE.txt",
+    "cisco_ios/log/test-asr920.log",
+    "cisco_ios/log/test-asr920.log-expected.json",
+    "cisco_ios/manifest.yml",
+    "cisco_meraki/log/test-events.log",
+    "cisco_umbrella/log/test-umbrella-dnslogs.log",
+    "LICENSE.txt",
 )
 
 
@@ -1171,7 +1480,9 @@ class TwoLogCorpus:
         }
 
     def samples(self, _path, *, modules, limit):
-        return [FakeSample("cisco_ios", line, name) for name, line in self.LINES[:limit]]
+        return [
+            FakeSample("cisco_ios", line, name) for name, line in self.LINES[:limit]
+        ]
 
     def goldens(self, _path, *, modules):
         return self.expected
@@ -1183,7 +1494,11 @@ class TestTheExpectedCount:
     @staticmethod
     def _count(per_module: int) -> int:
         return steps.expected_carrying(
-            Path("/nowhere"), Path("c.tar.gz"), per_module, ("cisco_ios",), "source.ip",
+            Path("/nowhere"),
+            Path("c.tar.gz"),
+            per_module,
+            ("cisco_ios",),
+            "source.ip",
         )
 
     def test_each_log_is_read_from_its_own_first_event(self, monkeypatch):
@@ -1224,71 +1539,130 @@ class TestTheShippersIdentifier:
         }
 
     def test_expected_fail_a_module_under_two_data_streams_is_refused(self, tmp_path):
-        archive = _archive(tmp_path / "corpus.tar.gz", (*CORPUS_PATHS, "cisco_ios/metrics/test-x.log"))
+        archive = _archive(
+            tmp_path / "corpus.tar.gz", (*CORPUS_PATHS, "cisco_ios/metrics/test-x.log")
+        )
 
         with pytest.raises(ValueError, match="cisco_ios"):
             steps.corpus_datasets(archive)
 
-    def test_every_record_is_the_agent_envelope_with_the_vendor_line_as_message(self, tmp_path, shipping_corpus):
+    def test_every_record_is_the_agent_envelope_with_the_vendor_line_as_message(
+        self, tmp_path, shipping_corpus
+    ):
         archive = _archive(tmp_path / "corpus.tar.gz", CORPUS_PATHS)
 
-        bodies = steps.corpus_bodies(Path("/nowhere"), archive, "src-run", 20, ("cisco_ios",))
+        bodies = steps.corpus_bodies(
+            Path("/nowhere"), archive, "src-run", 20, ("cisco_ios",)
+        )
 
         assert [body["message"] for body in bodies] == ShippingCorpus.LINES["cisco_ios"]
         for body in bodies:
-            assert set(body) == {"agent", "data_stream", "input", "message", "tags", "_e2e"}
-            assert body["agent"] == {"type": "filebeat", "name": steps.AGENT_NAME,
-                                     "version": steps.beats.SHIPPER_VERSION}
-            assert body["data_stream"] == {"dataset": "cisco_ios.log", "namespace": "default", "type": "logs"}
+            assert set(body) == {
+                "agent",
+                "data_stream",
+                "input",
+                "message",
+                "tags",
+                "_e2e",
+            }
+            assert body["agent"] == {
+                "type": "filebeat",
+                "name": steps.AGENT_NAME,
+                "version": steps.beats.SHIPPER_VERSION,
+            }
+            assert body["data_stream"] == {
+                "dataset": "cisco_ios.log",
+                "namespace": "default",
+                "type": "logs",
+            }
             assert body["input"] == {"type": "tcp"}
             assert "e2e_run:src-run" in body["tags"]
 
-    def test_every_record_carries_the_run_marker_at_the_root(self, tmp_path, shipping_corpus):
+    def test_every_record_carries_the_run_marker_at_the_root(
+        self, tmp_path, shipping_corpus
+    ):
         """Every posted body, corpus or probe, carries its run and role in a root `_e2e` object."""
         archive = _archive(tmp_path / "corpus.tar.gz", CORPUS_PATHS)
 
-        corpus = steps.corpus_bodies(Path("/nowhere"), archive, "src-run", 20, ("cisco_ios",))
-        probes = steps.corpus_bodies(Path("/nowhere"), archive, "src-run", 1, ("cisco_ios",), steps.PROBE)
+        corpus = steps.corpus_bodies(
+            Path("/nowhere"), archive, "src-run", 20, ("cisco_ios",)
+        )
+        probes = steps.corpus_bodies(
+            Path("/nowhere"), archive, "src-run", 1, ("cisco_ios",), steps.PROBE
+        )
 
         assert corpus
-        assert all(body["_e2e"] == {"run": "src-run", "kind": "corpus"} for body in corpus)
-        assert [body["_e2e"] for body in probes] == [{"run": "src-run", "kind": "probe"}]
+        assert all(
+            body["_e2e"] == {"run": "src-run", "kind": "corpus"} for body in corpus
+        )
+        assert [body["_e2e"] for body in probes] == [
+            {"run": "src-run", "kind": "probe"}
+        ]
 
     def test_the_routing_probe_is_marked_as_a_probe(self, corpus_module, monkeypatch):
         sent: list[tuple[str, str]] = []
 
-        def post(receiver_url, verify, engine_repo, corpus_file, run, per_module, modules=(), kind=""):
+        def post(
+            receiver_url,
+            verify,
+            engine_repo,
+            corpus_file,
+            run,
+            per_module,
+            modules=(),
+            kind="",
+        ):
             sent.append((run, kind))
             return 1
 
         monkeypatch.setattr(steps, "post_corpus", post)
-        steps.wait_routed("https://rx.example", False, Path("/nowhere"), Path("c.tar.gz"),
-                          FakeStore(), "fb1", "src-run", 0.0, ("cisco_ios",))
+        steps.wait_routed(
+            "https://rx.example",
+            False,
+            Path("/nowhere"),
+            Path("c.tar.gz"),
+            FakeStore(),
+            "fb1",
+            "src-run",
+            0.0,
+            ("cisco_ios",),
+        )
 
         assert sent == [("src-run", "probe")]
 
-    def test_the_records_the_filebeat_case_posts_all_carry_the_dataset_it_matches(self, tmp_path, shipping_corpus):
+    def test_the_records_the_filebeat_case_posts_all_carry_the_dataset_it_matches(
+        self, tmp_path, shipping_corpus
+    ):
         case = cases.build(parse())
         archive = _archive(tmp_path / "corpus.tar.gz", CORPUS_PATHS)
 
-        bodies = steps.corpus_bodies(Path("/nowhere"), archive, "src-run", 20, case.MODULES)
+        bodies = steps.corpus_bodies(
+            Path("/nowhere"), archive, "src-run", 20, case.MODULES
+        )
 
         assert bodies
         assert all(_walk(body, case.MATCH_FIELD) == case.MATCH_VALUE for body in bodies)
 
-    def test_the_other_modules_would_miss_the_source_which_is_why_they_are_not_fed(self, tmp_path, shipping_corpus):
+    def test_the_other_modules_would_miss_the_source_which_is_why_they_are_not_fed(
+        self, tmp_path, shipping_corpus
+    ):
         case = cases.build(parse())
         archive = _archive(tmp_path / "corpus.tar.gz", CORPUS_PATHS)
 
         everything = steps.corpus_bodies(Path("/nowhere"), archive, "src-run", 20)
-        missing = {_walk(body, case.MATCH_FIELD) for body in everything} - {case.MATCH_VALUE}
+        missing = {_walk(body, case.MATCH_FIELD) for body in everything} - {
+            case.MATCH_VALUE
+        }
 
         assert missing == {"cisco_meraki.log", "cisco_umbrella.log"}
 
     def test_the_match_is_the_shippers_identifier_not_one_this_suite_invents(self):
         for name in ("filebeat", "elastic", "vector"):
             case = cases.build(parse("--case", name))
-            assert (case.MATCH_FIELD, case.MATCH_VALUE) == ("data_stream.dataset", "cisco_ios.log"), name
+            assert (case.MATCH_FIELD, case.MATCH_VALUE) == (
+                "data_stream.dataset",
+                "cisco_ios.log",
+            ), name
             assert case.MODULES == ("cisco_ios",), name
 
     def test_the_console_is_told_the_field_and_the_dataset(self):
@@ -1301,25 +1675,52 @@ class TestTheShippersIdentifier:
         assert driver.page.typed[3:5] == ["data_stream.dataset", "cisco_ios.log"]
 
     def test_the_logstash_agent_stamps_the_same_dataset(self, tmp_path):
-        pair = steps.beats.Pair(network="n", receiver_url="http://rx/ingest", workdir=tmp_path, run_id="src-run")
+        pair = steps.beats.Pair(
+            network="n",
+            receiver_url="http://rx/ingest",
+            workdir=tmp_path,
+            run_id="src-run",
+        )
 
-        steps.beats.write_inputs(pair, ["a"], cases.FilebeatCase.MATCH_VALUE,
-                                 steps.MARKER, steps.run_marker("src-run", steps.CORPUS))
+        steps.beats.write_inputs(
+            pair,
+            ["a"],
+            cases.FilebeatCase.MATCH_VALUE,
+            steps.MARKER,
+            steps.run_marker("src-run", steps.CORPUS),
+        )
 
         config = (tmp_path / "filebeat.yml").read_text(encoding="utf-8")
         assert "target: data_stream" in config
         assert "dataset: cisco_ios.log" in config
 
-    def test_the_logstash_feed_hands_the_agent_this_runs_corpus_marker(self, monkeypatch, transform_repo):
+    def test_the_logstash_feed_hands_the_agent_this_runs_corpus_marker(
+        self, monkeypatch, transform_repo
+    ):
         told: list[tuple] = []
-        monkeypatch.setattr(steps, "wait_routed", lambda *a, **k: "routed into dfe.fb1 after 1 probe pass(es)")
+        monkeypatch.setattr(
+            steps,
+            "wait_routed",
+            lambda *a, **k: "routed into dfe.fb1 after 1 probe pass(es)",
+        )
         monkeypatch.setattr(steps, "corpus_lines", lambda *a, **k: ["one"])
         monkeypatch.setattr(cases.beats, "write_inputs", lambda *a, **k: told.append(a))
-        monkeypatch.setattr(cases.beats, "start_logstash", lambda pair: (False, "not started here"))
+        monkeypatch.setattr(
+            cases.beats, "start_logstash", lambda pair: (False, "not started here")
+        )
         args = parse("--via", "logstash", "--beats-network", "dfe_default")
         case = cases.build(args)
 
-        case.feed(a_run(FakeDriver(FakePage()), FakeEngine(), args, case.name, transform_repo, "https://rx.example"))
+        case.feed(
+            a_run(
+                FakeDriver(FakePage()),
+                FakeEngine(),
+                args,
+                case.name,
+                transform_repo,
+                "https://rx.example",
+            )
+        )
 
         assert told[0][3:] == ("_e2e", {"run": "src-test", "kind": "corpus"})
 
@@ -1343,16 +1744,23 @@ class ScriptedStore(FakeStore):
 class TestTheDatasetRow:
     def test_every_row_carrying_the_dataset_is_done(self):
         assert steps.dataset_outcome(ScriptedStore(12, 12), "fb1", "cisco_ios.log") == (
-            "done", "12 of 12 rows in dfe.fb1 carry data_stream.dataset cisco_ios.log")
+            "done",
+            "12 of 12 rows in dfe.fb1 carry data_stream.dataset cisco_ios.log",
+        )
 
     def test_expected_fail_a_row_without_it_fails_the_step(self):
-        status, detail = steps.dataset_outcome(ScriptedStore(12, 11), "fb1", "cisco_ios.log")
+        status, detail = steps.dataset_outcome(
+            ScriptedStore(12, 11), "fb1", "cisco_ios.log"
+        )
 
         assert status == "failed"
         assert detail.startswith("11 of 12")
 
     def test_expected_fail_an_empty_table_proves_nothing(self):
-        assert steps.dataset_outcome(ScriptedStore(0, 0), "fb1", "cisco_ios.log")[0] == "failed"
+        assert (
+            steps.dataset_outcome(ScriptedStore(0, 0), "fb1", "cisco_ios.log")[0]
+            == "failed"
+        )
 
     def test_the_rows_are_read_by_the_field_the_receiver_matched(self):
         store = ScriptedStore(1, 1)
@@ -1375,7 +1783,9 @@ class TestTheDatasetRow:
     def test_the_pushed_case_records_it_beside_landed(self, shipping_corpus):
         driver = FakeDriver(FakePage())
         case = cases.build(parse())
-        run = a_run(driver, FakeEngine(), parse(), case.name, Path("/"), "https://rx.example")
+        run = a_run(
+            driver, FakeEngine(), parse(), case.name, Path("/"), "https://rx.example"
+        )
         run.store = ScriptedStore(5, 5)
 
         case.prove(run)
@@ -1407,15 +1817,33 @@ class LocalClickHouse:
 
     def query(self, sql: str) -> list[list]:
         done = subprocess.run(
-            [CLICKHOUSE, "local", "--table", self.table, "--structure", self.STRUCTURE,
-             "--input-format", "JSONEachRow", "--output-format", "JSONCompact", "--query", sql],
+            [
+                CLICKHOUSE,
+                "local",
+                "--table",
+                self.table,
+                "--structure",
+                self.STRUCTURE,
+                "--input-format",
+                "JSONEachRow",
+                "--output-format",
+                "JSONCompact",
+                "--query",
+                sql,
+            ],
             input="\n".join(self._line(record) for record in self.records),
-            capture_output=True, text=True, encoding="utf-8", errors="replace",
-            check=False, timeout=60,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+            timeout=60,
         )
         # Datastore.query's contract: a query the server refuses raises RuntimeError.
         if done.returncode != 0:
-            raise RuntimeError(f"datastore refused the query: {done.returncode} {done.stderr[:300]}")
+            raise RuntimeError(
+                f"datastore refused the query: {done.returncode} {done.stderr[:300]}"
+            )
         return json.loads(done.stdout)["data"]
 
     def scalar(self, sql: str) -> int:
@@ -1431,7 +1859,11 @@ class TestTheQueriesAgainstClickHouse:
     TRANSFORMED: ClassVar[dict] = {
         "@timestamp": "2026-02-08T04:00:47.272Z",
         "agent": {"name": "dfe-acceptance", "type": "filebeat", "version": "8.0.0"},
-        "data_stream": {"dataset": "cisco_ios.log", "namespace": "default", "type": "logs"},
+        "data_stream": {
+            "dataset": "cisco_ios.log",
+            "namespace": "default",
+            "type": "logs",
+        },
         "event": {"action": "deny", "code": "IPACCESSLOGRP"},
         "message": "list 177 denied igmp 192.168.100.197 -> 224.0.0.22, 1 packet",
         "source": {"address": "192.168.100.197", "ip": "192.168.100.197"},
@@ -1442,14 +1874,22 @@ class TestTheQueriesAgainstClickHouse:
         store = LocalClickHouse("fb1", [self.TRANSFORMED, self.TRANSFORMED])
 
         assert steps.dataset_outcome(store, "fb1", "cisco_ios.log") == (
-            "done", "2 of 2 rows in dfe.fb1 carry data_stream.dataset cisco_ios.log")
+            "done",
+            "2 of 2 rows in dfe.fb1 carry data_stream.dataset cisco_ios.log",
+        )
 
     def test_expected_fail_a_row_that_lost_the_dataset_is_counted_out(self):
-        lost = {key: value for key, value in self.TRANSFORMED.items() if key != "data_stream"}
+        lost = {
+            key: value
+            for key, value in self.TRANSFORMED.items()
+            if key != "data_stream"
+        }
         store = LocalClickHouse("fb1", [self.TRANSFORMED, lost])
 
         assert steps.dataset_outcome(store, "fb1", "cisco_ios.log") == (
-            "failed", "1 of 2 rows in dfe.fb1 carry data_stream.dataset cisco_ios.log")
+            "failed",
+            "1 of 2 rows in dfe.fb1 carry data_stream.dataset cisco_ios.log",
+        )
 
     @staticmethod
     def posted(run: str, kind: str) -> dict:
@@ -1480,11 +1920,22 @@ class TestTheQueriesAgainstClickHouse:
         ]
         store = LocalClickHouse("fb1", [*rows, self.TRANSFORMED])
 
-        assert steps.wait_rows(store, "fb1", 2, 0.0, steps.marked("src-0123", steps.CORPUS)) == 2
-        assert steps.wait_rows(store, "fb1", 1, 0.0, steps.marked("src-0123", steps.PROBE)) == 1
+        assert (
+            steps.wait_rows(
+                store, "fb1", 2, 0.0, steps.marked("src-0123", steps.CORPUS)
+            )
+            == 2
+        )
+        assert (
+            steps.wait_rows(store, "fb1", 1, 0.0, steps.marked("src-0123", steps.PROBE))
+            == 1
+        )
 
     def test_a_row_off_the_agent_is_found_by_its_file_path(self):
-        shipped = {**self.TRANSFORMED, "log": {"file": {"path": steps.beats.AGENT_PATH}}}
+        shipped = {
+            **self.TRANSFORMED,
+            "log": {"file": {"path": steps.beats.AGENT_PATH}},
+        }
         store = LocalClickHouse("fb1", [shipped, self.TRANSFORMED])
 
         carrying, keys, refused = steps.beats.envelope_evidence(store, "fb1")
@@ -1498,7 +1949,11 @@ class TestTheQueriesAgainstClickHouse:
         return {
             **TestTheQueriesAgainstClickHouse.TRANSFORMED,
             "agent": {"type": agent_type, "version": steps.beats.SHIPPER_VERSION},
-            "data_stream": {"dataset": "cisco_ios.log", "namespace": namespace, "type": "logs"},
+            "data_stream": {
+                "dataset": "cisco_ios.log",
+                "namespace": namespace,
+                "type": "logs",
+            },
             "log": {"file": {"path": steps.beats.AGENT_PATH}},
         }
 
@@ -1583,8 +2038,13 @@ class Pipeline:
     database = "default"
     TRANSFORMED_IP = "192.0.2.10"
 
-    def __init__(self, table: str, backend: str, lose: tuple[int, ...] = (),
-                 bare: range = range(0)) -> None:
+    def __init__(
+        self,
+        table: str,
+        backend: str,
+        lose: tuple[int, ...] = (),
+        bare: range = range(0),
+    ) -> None:
         self.table, self.backend = table, backend
         self.lose, self.bare = lose, bare
         self.received = 0
@@ -1607,7 +2067,12 @@ class Pipeline:
             record = {**body, "tags": ["preserve_original_event"]}
             if transformed:
                 record["source"] = {"ip": self.TRANSFORMED_IP}
-            self.landed.append({"_json": record, "source_ip": self.TRANSFORMED_IP if transformed else None})
+            self.landed.append(
+                {
+                    "_json": record,
+                    "source_ip": self.TRANSFORMED_IP if transformed else None,
+                }
+            )
         self.in_flight = []
 
     def monotonic(self) -> float:
@@ -1643,7 +2108,12 @@ class Accepted:
         return False
 
 
-@pytest.fixture(params=["python", pytest.param("clickhouse", marks=pytest.mark.requires_tool("clickhouse"))])
+@pytest.fixture(
+    params=[
+        "python",
+        pytest.param("clickhouse", marks=pytest.mark.requires_tool("clickhouse")),
+    ]
+)
 def backend(request):
     """Every count read in Python everywhere, and by ClickHouse itself where the binary is."""
     return request.param
@@ -1661,13 +2131,22 @@ class TestTheLandedCount:
         store = Pipeline(case.name, backend, **pipeline)
         monkeypatch.setattr(steps.urllib.request, "urlopen", store.urlopen)
         monkeypatch.setattr(steps, "time", store)
-        run = a_run(driver, FakeEngine(), parse(), case.name, transform_repo, "https://rx.example")
+        run = a_run(
+            driver,
+            FakeEngine(),
+            parse(),
+            case.name,
+            transform_repo,
+            "https://rx.example",
+        )
         run.store = store
         case.feed(run)
         case.prove(run)
         return driver, store
 
-    def test_every_corpus_row_landing_is_the_pass(self, monkeypatch, transform_repo, shipping_corpus, backend):
+    def test_every_corpus_row_landing_is_the_pass(
+        self, monkeypatch, transform_repo, shipping_corpus, backend
+    ):
         driver, _ = self._feed_and_prove(monkeypatch, transform_repo, backend)
 
         assert driver.status("routed") == "done"
@@ -1678,7 +2157,9 @@ class TestTheLandedCount:
         self, monkeypatch, transform_repo, shipping_corpus, backend
     ):
         """Two probes then the corpus; the second probe lands after routing reads done."""
-        driver, store = self._feed_and_prove(monkeypatch, transform_repo, backend, lose=(2,))
+        driver, store = self._feed_and_prove(
+            monkeypatch, transform_repo, backend, lose=(2,)
+        )
 
         assert store.received == 2 + len(ShippingCorpus.LINES["cisco_ios"])
         assert driver.status("landed") == "failed", driver.detail("landed")
@@ -1687,7 +2168,9 @@ class TestTheLandedCount:
     def test_expected_fail_a_transformed_probe_is_not_a_transformed_corpus_row(
         self, monkeypatch, transform_repo, shipping_corpus, backend
     ):
-        driver, _ = self._feed_and_prove(monkeypatch, transform_repo, backend, bare=range(2, 100))
+        driver, _ = self._feed_and_prove(
+            monkeypatch, transform_repo, backend, bare=range(2, 100)
+        )
 
         assert driver.status("landed") == "done", driver.detail("landed")
         assert driver.status("transformed") == "failed", driver.detail("transformed")
@@ -1696,7 +2179,9 @@ class TestTheLandedCount:
         self, monkeypatch, transform_repo, shipping_corpus, backend
     ):
         """The bundled program passes a line it does not classify through, untransformed."""
-        driver, _ = self._feed_and_prove(monkeypatch, transform_repo, backend, bare=range(3, 4))
+        driver, _ = self._feed_and_prove(
+            monkeypatch, transform_repo, backend, bare=range(3, 4)
+        )
 
         assert driver.status("landed") == "done", driver.detail("landed")
         detail = driver.detail("transformed")
@@ -1707,7 +2192,9 @@ class TestTheLandedCount:
         self, monkeypatch, transform_repo, shipping_corpus, backend
     ):
         shipping_corpus.expected_ip["cisco_ios"][1] = None
-        driver, _ = self._feed_and_prove(monkeypatch, transform_repo, backend, bare=range(3, 4))
+        driver, _ = self._feed_and_prove(
+            monkeypatch, transform_repo, backend, bare=range(3, 4)
+        )
 
         assert driver.status("transformed") == "done", driver.detail("transformed")
         assert "the corpus expects 1" in driver.detail("transformed")
@@ -1746,7 +2233,9 @@ class TestTheRestartStep:
 
     def test_the_service_is_the_one_the_engine_s_hint_names(self, monkeypatch):
         """appconfig.RESTART_HINT names the service as `SERVICES=<service>`."""
-        driver, ran = self._apply(monkeypatch, ["docker", "restart"], [FakeEngine.RESTART_HINT])
+        driver, ran = self._apply(
+            monkeypatch, ["docker", "restart"], [FakeEngine.RESTART_HINT]
+        )
 
         assert driver.status("restart") == "done"
         assert ran == [["docker", "restart", self.SERVICE]]
@@ -1758,7 +2247,9 @@ class TestTheRestartStep:
         assert ran == [["docker", "restart", "dfe-transform-vrl-fb0147f03c"]]
 
     def test_an_older_engine_s_hint_ends_in_the_service(self, monkeypatch):
-        _, ran = self._apply(monkeypatch, ["docker", "restart"], [FakeEngine.LEGACY_RESTART_HINT])
+        _, ran = self._apply(
+            monkeypatch, ["docker", "restart"], [FakeEngine.LEGACY_RESTART_HINT]
+        )
 
         assert ran == [["docker", "restart", self.SERVICE]]
 
@@ -1796,22 +2287,34 @@ class TestTheRestartStep:
         assert driver.status("restart") == "failed"
         return driver.detail("restart")
 
-    def test_a_refusal_names_the_line_that_says_why_not_the_banner_above_it(self, monkeypatch):
+    def test_a_refusal_names_the_line_that_says_why_not_the_banner_above_it(
+        self, monkeypatch
+    ):
         """make prints the resolved profile before anything can fail, on the same stream."""
-        detail = self._refused(monkeypatch, self.BANNER + (
-            "Error response from daemon: No such image: dfe-transform-vrl\n"
-            "make[1]: *** [Makefile:535: apply-services] Error 1\n"
-            "make: *** [Makefile:525: apply] Error 2\n"
-        ))
+        detail = self._refused(
+            monkeypatch,
+            self.BANNER
+            + (
+                "Error response from daemon: No such image: dfe-transform-vrl\n"
+                "make[1]: *** [Makefile:535: apply-services] Error 1\n"
+                "make: *** [Makefile:525: apply] Error 2\n"
+            ),
+        )
 
-        assert detail.endswith("REFUSED: Error response from daemon: No such image: dfe-transform-vrl")
+        assert detail.endswith(
+            "REFUSED: Error response from daemon: No such image: dfe-transform-vrl"
+        )
         assert "Using profile" not in detail
 
     def test_a_refusal_make_itself_raised_is_named(self, monkeypatch):
-        detail = self._refused(monkeypatch, self.BANNER + (
-            "Makefile:73: *** 'SERVICES' contains names not in the resolved stack: x.  Stop.\n"
-            "make: *** [Makefile:525: apply] Error 2\n"
-        ))
+        detail = self._refused(
+            monkeypatch,
+            self.BANNER
+            + (
+                "Makefile:73: *** 'SERVICES' contains names not in the resolved stack: x.  Stop.\n"
+                "make: *** [Makefile:525: apply] Error 2\n"
+            ),
+        )
 
         assert "'SERVICES' contains names not in the resolved stack" in detail
 
@@ -1838,7 +2341,10 @@ class TestTheRestartStep:
         driver = FakeDriver(FakePage())
         steps.apply_restarts(driver, ["docker", "restart"], [FakeEngine.RESTART_HINT])
 
-        assert len(driver.detail("restart")) <= steps.FAILURE_LINE_MAX + len(self.SERVICE) + 20
+        assert (
+            len(driver.detail("restart"))
+            <= steps.FAILURE_LINE_MAX + len(self.SERVICE) + 20
+        )
 
 
 class TestTheDeployRow:
@@ -1857,8 +2363,10 @@ class TestTheDeployRow:
 
     def test_a_topic_the_engine_could_not_create_fails_the_step_by_name(self):
         failed = [f"{self.NAME}_land", f"{self.NAME}_load"]
-        engine = FakeEngine(deploy_topics={"topics_ensured": [], "topics_failed": failed},
-                            transports=("bus",))
+        engine = FakeEngine(
+            deploy_topics={"topics_ensured": [], "topics_failed": failed},
+            transports=("bus",),
+        )
 
         driver = self._deploy(engine)
 
@@ -1867,14 +2375,20 @@ class TestTheDeployRow:
         assert "engine log" in driver.detail("deploy")
 
     def test_a_refused_topic_fails_the_step_whatever_the_engine_says_it_carries(self):
-        engine = FakeEngine(deploy_topics={"topics_ensured": [f"{self.NAME}_load"],
-                                           "topics_failed": [f"{self.NAME}_land"]})
+        engine = FakeEngine(
+            deploy_topics={
+                "topics_ensured": [f"{self.NAME}_load"],
+                "topics_failed": [f"{self.NAME}_land"],
+            }
+        )
 
         assert self._deploy(engine).status("deploy") == "failed"
 
     def test_a_bus_deployment_that_made_no_topic_fails_the_step(self):
-        engine = FakeEngine(deploy_topics={"topics_ensured": [], "topics_failed": []},
-                            transports=("bus",))
+        engine = FakeEngine(
+            deploy_topics={"topics_ensured": [], "topics_failed": []},
+            transports=("bus",),
+        )
 
         driver = self._deploy(engine)
 
@@ -1887,15 +2401,19 @@ class TestTheDeployRow:
         assert self._deploy(engine).status("deploy") == "done"
 
     def test_a_brokerless_deployment_makes_no_topic_and_passes(self):
-        engine = FakeEngine(deploy_topics={"topics_ensured": [], "topics_failed": []},
-                            transports=("direct",))
+        engine = FakeEngine(
+            deploy_topics={"topics_ensured": [], "topics_failed": []},
+            transports=("direct",),
+        )
 
         assert self._deploy(engine).status("deploy") == "done"
 
     def test_the_topics_it_made_are_named_on_the_pass(self):
         made = [f"{self.NAME}_land", f"{self.NAME}_load"]
-        engine = FakeEngine(deploy_topics={"topics_ensured": made, "topics_failed": []},
-                            transports=("bus",))
+        engine = FakeEngine(
+            deploy_topics={"topics_ensured": made, "topics_failed": []},
+            transports=("bus",),
+        )
 
         driver = self._deploy(engine)
 
@@ -1932,13 +2450,26 @@ class TestTheOrderTheRunnerWalks:
         steps_seen = self._walk(case, driver, engine, transform_repo)
 
         assert steps_seen == [
-            "add-source-configuration", "add-source-meta-schema", "add-source", "attach-transform",
-            "deploy", "hyperdx-source", "upload-program", "restart", "table",
-            "transform-instance", "transform-reporting", "record-ceiling", "archived", "observe",
+            "add-source-configuration",
+            "add-source-meta-schema",
+            "add-source",
+            "attach-transform",
+            "deploy",
+            "hyperdx-source",
+            "upload-program",
+            "restart",
+            "table",
+            "transform-instance",
+            "transform-reporting",
+            "record-ceiling",
+            "archived",
+            "observe",
         ]
         assert driver.status("observe") == "done"
 
-    def test_the_elastic_case_walks_the_same_rows_with_nothing_to_upload(self, transform_repo):
+    def test_the_elastic_case_walks_the_same_rows_with_nothing_to_upload(
+        self, transform_repo
+    ):
         driver, engine = FakeDriver(FakePage()), FakeEngine(transform="elastic")
         case = cases.build(parse("--case", "elastic"))
         case.feed = lambda run: None
@@ -1946,21 +2477,38 @@ class TestTheOrderTheRunnerWalks:
         steps_seen = self._walk(case, driver, engine, transform_repo)
 
         assert steps_seen == [
-            "add-source-configuration", "add-source-meta-schema", "add-source", "attach-transform",
-            "deploy", "hyperdx-source", "upload-program", "restart", "table",
-            "transform-instance", "transform-reporting", "record-ceiling", "archived", "observe",
+            "add-source-configuration",
+            "add-source-meta-schema",
+            "add-source",
+            "attach-transform",
+            "deploy",
+            "hyperdx-source",
+            "upload-program",
+            "restart",
+            "table",
+            "transform-instance",
+            "transform-reporting",
+            "record-ceiling",
+            "archived",
+            "observe",
         ]
         assert driver.status("upload-program") == "skipped"
         assert driver.status("transform-instance") == "done"
 
-    def test_the_files_are_written_after_the_deploy_that_makes_the_instance(self, transform_repo):
+    def test_the_files_are_written_after_the_deploy_that_makes_the_instance(
+        self, transform_repo
+    ):
         driver, engine = FakeDriver(FakePage()), FakeEngine()
         case = cases.build(parse())
         case.feed = lambda run: None
         case.prove = lambda run: None
         order = self._walk(case, driver, engine, transform_repo)
 
-        assert order.index("deploy") < order.index("upload-program") < order.index("restart")
+        assert (
+            order.index("deploy")
+            < order.index("upload-program")
+            < order.index("restart")
+        )
 
     def test_the_reporting_row_is_read_after_the_feed(self, transform_repo):
         driver, engine = FakeDriver(FakePage()), FakeEngine()
@@ -1969,7 +2517,11 @@ class TestTheOrderTheRunnerWalks:
         case.prove = lambda run: None
         order = self._walk(case, driver, engine, transform_repo)
 
-        assert order.index("transform-instance") < order.index("feed") < order.index("transform-reporting")
+        assert (
+            order.index("transform-instance")
+            < order.index("feed")
+            < order.index("transform-reporting")
+        )
 
     def test_a_case_with_no_files_skips_that_row_entirely(self, transform_repo):
         driver, engine = FakeDriver(FakePage()), FakeEngine()
@@ -1980,11 +2532,21 @@ class TestTheOrderTheRunnerWalks:
         order = self._walk(case, driver, engine, transform_repo)
 
         assert "upload-program" not in order
-        assert order == ["deploy", "hyperdx-source", "restart", "table",
-                         "fetcher-instance", "fetcher-reporting", "record-ceiling", "archived",
-                         "observe"]
+        assert order == [
+            "deploy",
+            "hyperdx-source",
+            "restart",
+            "table",
+            "fetcher-instance",
+            "fetcher-reporting",
+            "record-ceiling",
+            "archived",
+            "observe",
+        ]
 
-    def test_the_restart_step_is_skipped_when_nothing_asked_for_one(self, transform_repo):
+    def test_the_restart_step_is_skipped_when_nothing_asked_for_one(
+        self, transform_repo
+    ):
         driver, engine = FakeDriver(FakePage()), FakeEngine()
         case = cases.build(parse())
         case.feed = lambda run: None
@@ -2007,7 +2569,9 @@ class TestTheOrderTheRunnerWalks:
 
     def test_a_restart_the_consoles_create_asked_for_is_heard_too(self, transform_repo):
         """On a direct tier the create rewrites the receiver's destinations, and only it says so."""
-        driver = FakeDriver(FakePage(created_reply={"restart_required": [FakeEngine.RECEIVER_HINT]}))
+        driver = FakeDriver(
+            FakePage(created_reply={"restart_required": [FakeEngine.RECEIVER_HINT]})
+        )
         engine = FakeEngine(restart_required=())
         case = cases.build(parse())
         case.feed = lambda run: None
@@ -2025,11 +2589,15 @@ class TestTheObserveStep:
 
     def test_rows_in_the_embedded_search_are_the_pass(self):
         assert steps.observe_outcome("fb1", self.FRAME, "", True, "12 Results") == (
-            "done", "Observe search over fb1: 12 Results")
+            "done",
+            "Observe search over fb1: 12 Results",
+        )
 
     def test_a_frame_the_browser_refused_names_the_console_error(self):
         blocked = "Framing 'http://box:8091/' violates the following Content Security Policy directive"
-        status, detail = steps.observe_outcome("fb1", "chrome-error://chromewebdata/", blocked, False, "")
+        status, detail = steps.observe_outcome(
+            "fb1", "chrome-error://chromewebdata/", blocked, False, ""
+        )
 
         assert status == "failed"
         assert "did not load" in detail
@@ -2055,7 +2623,9 @@ class TestTheObserveStep:
     def test_a_count_with_a_thousands_separator_is_a_pass(self):
         assert steps.results_count("1,050 Results") == 1050
         assert steps.observe_outcome("cw1", self.FRAME, "", True, "1,050 Results") == (
-            "done", "Observe search over cw1: 1,050 Results")
+            "done",
+            "Observe search over cw1: 1,050 Results",
+        )
 
     def test_zero_rows_is_a_failed_row_that_quotes_the_line(self):
         status, detail = steps.observe_outcome("fb1", self.FRAME, "", True, "0 Results")
@@ -2064,7 +2634,10 @@ class TestTheObserveStep:
         assert "0 Results" in detail
 
     def test_a_search_that_never_answered_says_so(self):
-        assert "no results line" in steps.observe_outcome("fb1", self.FRAME, "", True, "")[1]
+        assert (
+            "no results line"
+            in steps.observe_outcome("fb1", self.FRAME, "", True, "")[1]
+        )
 
     def test_a_frame_already_open_on_the_source_skips_the_dropdown(self):
         """The frame picks a source of its own; when it is this one there is no option to pick."""
@@ -2104,8 +2677,14 @@ class TestTheReportingVerdict:
 
         database = "dfe"
 
-        def __init__(self, info: int = 6, samples: int = 0, since: int = 4,
-                     raises: bool = False, table: bool = True) -> None:
+        def __init__(
+            self,
+            info: int = 6,
+            samples: int = 0,
+            since: int = 4,
+            raises: bool = False,
+            table: bool = True,
+        ) -> None:
             self.info, self.samples, self.since = info, samples, since
             self.raises, self.table = raises, table
 
@@ -2191,7 +2770,10 @@ class TestTheReportingVerdict:
         """The old row read its own message back: "not reporting after 900s" contains
         "reporting after", so a timed-out wait recorded done."""
         state, detail = steps.reporting_verdict(
-            FakeStore(), self.SERVICE, f"{self.SERVICE}/el1 not reporting after 900s; last 200", {}
+            FakeStore(),
+            self.SERVICE,
+            f"{self.SERVICE}/el1 not reporting after 900s; last 200",
+            {},
         )
 
         assert state == "failed"
@@ -2202,7 +2784,13 @@ class TestTheReportingVerdict:
         engine.instance = "someone-else"
 
         steps.record_instance_up(
-            driver, engine, self.SERVICE, "el1", "transform-instance", 0.0, 0.0,
+            driver,
+            engine,
+            self.SERVICE,
+            "el1",
+            "transform-instance",
+            0.0,
+            0.0,
         )
 
         assert driver.status("transform-instance") == "failed"
@@ -2213,7 +2801,13 @@ class TestTheReportingVerdict:
         engine.instance = "el1"
 
         steps.record_instance_up(
-            driver, engine, self.SERVICE, "el1", "transform-instance", 0.0, 0.0,
+            driver,
+            engine,
+            self.SERVICE,
+            "el1",
+            "transform-instance",
+            0.0,
+            0.0,
         )
 
         assert driver.rows == ["transform-instance"]
@@ -2227,13 +2821,22 @@ class TestTheReportingVerdict:
             pytest.param(0, 0, "unproven", id="no_export_since_the_feed"),
         ],
     )
-    def test_the_row_reads_what_was_published_since_the_feed(self, info, samples, state):
+    def test_the_row_reads_what_was_published_since_the_feed(
+        self, info, samples, state
+    ):
         driver = FakeDriver(FakePage())
-        reported = (self.UP, {"reporting": True, "telemetry_name": f"{self.SERVICE}-el1"})
+        reported = (
+            self.UP,
+            {"reporting": True, "telemetry_name": f"{self.SERVICE}-el1"},
+        )
 
         steps.record_reporting(
-            driver, self.IdleStore(info=info, samples=samples), self.SERVICE,
-            "transform-reporting", reported, time.monotonic(),
+            driver,
+            self.IdleStore(info=info, samples=samples),
+            self.SERVICE,
+            "transform-reporting",
+            reported,
+            time.monotonic(),
         )
 
         assert driver.status("transform-reporting") == state
@@ -2246,16 +2849,28 @@ class TestTheReportingVerdict:
         def query(sql):
             if "info" in sql:
                 store.info, store.samples = next(reads)
-            return [[store.samples, store.since]] if "pipeline_idle" in sql else [[store.info, 2]]
+            return (
+                [[store.samples, store.since]]
+                if "pipeline_idle" in sql
+                else [[store.info, 2]]
+            )
 
         store.query = query
         monkeypatch.setattr(steps, "WORK_DEADLINE", 60.0)
         monkeypatch.setattr(steps, "WORK_POLL_SECONDS", 0.0)
         driver = FakeDriver(FakePage())
-        reported = (self.UP, {"reporting": True, "telemetry_name": f"{self.SERVICE}-el1"})
+        reported = (
+            self.UP,
+            {"reporting": True, "telemetry_name": f"{self.SERVICE}-el1"},
+        )
 
         steps.record_reporting(
-            driver, store, self.SERVICE, "transform-reporting", reported, time.monotonic()
+            driver,
+            store,
+            self.SERVICE,
+            "transform-reporting",
+            reported,
+            time.monotonic(),
         )
 
         assert driver.status("transform-reporting") == "done"
@@ -2264,8 +2879,12 @@ class TestTheReportingVerdict:
         driver = FakeDriver(FakePage())
 
         steps.record_reporting(
-            driver, self.IdleStore(), self.SERVICE, "transform-reporting",
-            (f"{self.SERVICE}/el1 not reporting after 900s; last 200", {}), time.monotonic(),
+            driver,
+            self.IdleStore(),
+            self.SERVICE,
+            "transform-reporting",
+            (f"{self.SERVICE}/el1 not reporting after 900s; last 200", {}),
+            time.monotonic(),
         )
 
         assert driver.status("transform-reporting") == "failed"
@@ -2273,65 +2892,142 @@ class TestTheReportingVerdict:
     def test_an_unproven_row_is_not_a_failure_either(self):
         from acceptance.onboarding import wizard
 
-        assert wizard.exit_code([wizard.StepResult("transform-reporting", "unproven", "")]) == 0
+        assert (
+            wizard.exit_code([wizard.StepResult("transform-reporting", "unproven", "")])
+            == 0
+        )
 
 
 class TestTheLogstashVariation:
     """The same corpus lines, reaching the receiver the way a deployment sends them."""
 
-    def test_a_run_pushes_the_wrapped_body_by_default(self, monkeypatch, transform_repo):
+    def test_a_run_pushes_the_wrapped_body_by_default(
+        self, monkeypatch, transform_repo
+    ):
         posted: list[int] = []
-        monkeypatch.setattr(steps, "wait_routed", lambda *a, **k: "routed into dfe.fb1 after 1 probe pass(es)")
+        monkeypatch.setattr(
+            steps,
+            "wait_routed",
+            lambda *a, **k: "routed into dfe.fb1 after 1 probe pass(es)",
+        )
         monkeypatch.setattr(steps, "post_corpus", lambda *a, **k: posted.append(1) or 7)
         driver = FakeDriver(FakePage())
         case = cases.build(parse())
 
-        case.feed(a_run(driver, FakeEngine(), parse(), case.name, transform_repo, "https://rx.example"))
+        case.feed(
+            a_run(
+                driver,
+                FakeEngine(),
+                parse(),
+                case.name,
+                transform_repo,
+                "https://rx.example",
+            )
+        )
 
         assert posted == [1]
         assert "posted 7 corpus records" in driver.detail("feed")
 
-    def test_the_switch_needs_the_network_the_stack_runs_on(self, monkeypatch, transform_repo):
-        monkeypatch.setattr(steps, "wait_routed", lambda *a, **k: "routed into dfe.fb1 after 1 probe pass(es)")
+    def test_the_switch_needs_the_network_the_stack_runs_on(
+        self, monkeypatch, transform_repo
+    ):
+        monkeypatch.setattr(
+            steps,
+            "wait_routed",
+            lambda *a, **k: "routed into dfe.fb1 after 1 probe pass(es)",
+        )
         args = parse("--via", "logstash")
         driver = FakeDriver(FakePage())
         case = cases.build(args)
 
-        case.feed(a_run(driver, FakeEngine(), args, case.name, transform_repo, "https://rx.example"))
+        case.feed(
+            a_run(
+                driver,
+                FakeEngine(),
+                args,
+                case.name,
+                transform_repo,
+                "https://rx.example",
+            )
+        )
 
         assert driver.status("feed") == "skipped"
         assert "--beats-network" in driver.detail("feed")
 
-    def test_it_stands_the_pair_up_and_reports_what_it_shipped(self, monkeypatch, transform_repo):
+    def test_it_stands_the_pair_up_and_reports_what_it_shipped(
+        self, monkeypatch, transform_repo
+    ):
         started: list[str] = []
-        monkeypatch.setattr(steps, "wait_routed", lambda *a, **k: "routed into dfe.fb1 after 1 probe pass(es)")
+        monkeypatch.setattr(
+            steps,
+            "wait_routed",
+            lambda *a, **k: "routed into dfe.fb1 after 1 probe pass(es)",
+        )
         monkeypatch.setattr(steps, "corpus_lines", lambda *a, **k: ["one", "two"])
         monkeypatch.setattr(cases.beats, "write_inputs", lambda *a, **k: None)
-        monkeypatch.setattr(cases.beats, "start_logstash",
-                            lambda pair: (started.append("logstash"), (True, "logstash up"))[1])
-        monkeypatch.setattr(cases.beats, "start_filebeat",
-                            lambda pair: (started.append("filebeat"), (True, "filebeat up"))[1])
-        monkeypatch.setattr(cases.beats, "published", lambda pair, wanted: (wanted, f"filebeat published {wanted}"))
+        monkeypatch.setattr(
+            cases.beats,
+            "start_logstash",
+            lambda pair: (started.append("logstash"), (True, "logstash up"))[1],
+        )
+        monkeypatch.setattr(
+            cases.beats,
+            "start_filebeat",
+            lambda pair: (started.append("filebeat"), (True, "filebeat up"))[1],
+        )
+        monkeypatch.setattr(
+            cases.beats,
+            "published",
+            lambda pair, wanted: (wanted, f"filebeat published {wanted}"),
+        )
         args = parse("--via", "logstash", "--beats-network", "dfe_default")
         driver = FakeDriver(FakePage())
         case = cases.build(args)
 
-        case.feed(a_run(driver, FakeEngine(), args, case.name, transform_repo, "https://rx.example"))
+        case.feed(
+            a_run(
+                driver,
+                FakeEngine(),
+                args,
+                case.name,
+                transform_repo,
+                "https://rx.example",
+            )
+        )
 
         assert started == ["logstash", "filebeat"]
         assert driver.status("feed") == "done"
         assert "lumberjack to logstash" in driver.detail("feed")
 
-    def test_a_logstash_that_never_listened_stops_the_feed(self, monkeypatch, transform_repo):
-        monkeypatch.setattr(steps, "wait_routed", lambda *a, **k: "routed into dfe.fb1 after 1 probe pass(es)")
+    def test_a_logstash_that_never_listened_stops_the_feed(
+        self, monkeypatch, transform_repo
+    ):
+        monkeypatch.setattr(
+            steps,
+            "wait_routed",
+            lambda *a, **k: "routed into dfe.fb1 after 1 probe pass(es)",
+        )
         monkeypatch.setattr(steps, "corpus_lines", lambda *a, **k: ["one"])
         monkeypatch.setattr(cases.beats, "write_inputs", lambda *a, **k: None)
-        monkeypatch.setattr(cases.beats, "start_logstash", lambda pair: (False, "never ran its pipeline"))
+        monkeypatch.setattr(
+            cases.beats,
+            "start_logstash",
+            lambda pair: (False, "never ran its pipeline"),
+        )
         args = parse("--via", "logstash", "--beats-network", "dfe_default")
         driver = FakeDriver(FakePage())
         case = cases.build(args)
 
-        case.feed(a_run(driver, FakeEngine(), args, case.name, transform_repo, "https://rx.example"))
+        case.feed(
+            a_run(
+                driver,
+                FakeEngine(),
+                args,
+                case.name,
+                transform_repo,
+                "https://rx.example",
+            )
+        )
 
         assert driver.status("logstash") == "failed"
         assert driver.status("feed") == "failed"
@@ -2339,12 +3035,18 @@ class TestTheLogstashVariation:
     def test_the_pair_comes_down_with_the_run(self, monkeypatch, transform_repo):
         """Every container the suite starts is removed in the same run."""
         stopped: list[object] = []
-        monkeypatch.setattr(cases.beats, "stop", lambda pair: stopped.append(pair) or "both removed")
+        monkeypatch.setattr(
+            cases.beats, "stop", lambda pair: stopped.append(pair) or "both removed"
+        )
         args = parse("--via", "logstash", "--beats-network", "dfe_default")
         case = cases.build(args)
-        case._pair = cases.beats.Pair(network="n", receiver_url="u", workdir=transform_repo, run_id="r")
+        case._pair = cases.beats.Pair(
+            network="n", receiver_url="u", workdir=transform_repo, run_id="r"
+        )
 
-        rows = case.cleanup(a_run(FakeDriver(FakePage()), FakeEngine(), args, case.name, transform_repo))
+        rows = case.cleanup(
+            a_run(FakeDriver(FakePage()), FakeEngine(), args, case.name, transform_repo)
+        )
 
         assert len(stopped) == 1
         assert [row.slug for row in rows] == ["beats-removed"]
@@ -2353,7 +3055,18 @@ class TestTheLogstashVariation:
         args = parse()
         case = cases.build(args)
 
-        assert case.cleanup(a_run(FakeDriver(FakePage()), FakeEngine(), args, case.name, transform_repo)) == []
+        assert (
+            case.cleanup(
+                a_run(
+                    FakeDriver(FakePage()),
+                    FakeEngine(),
+                    args,
+                    case.name,
+                    transform_repo,
+                )
+            )
+            == []
+        )
 
 
 class ReceiverEngine(FakeEngine):
@@ -2372,38 +3085,71 @@ class ReceiverEngine(FakeEngine):
     def call(self, method, path, body=None):
         if path == "/apps":
             listed = super().call(method, path, body)
-            return reply(200, [*listed.body, {"service": "dfe-receiver", "instances": ["default"]}])
+            return reply(
+                200,
+                [*listed.body, {"service": "dfe-receiver", "instances": ["default"]}],
+            )
         if not path.startswith(self.ROUTE):
             return super().call(method, path, body)
         self.calls.append((method, path))
         if method == "GET":
-            fields = [{"path": p, "is_set": p in self.held, "value": self.held.get(p)}
-                      for p in steps.beats.LUMBERJACK_SWITCHES]
+            fields = [
+                {"path": p, "is_set": p in self.held, "value": self.held.get(p)}
+                for p in steps.beats.LUMBERJACK_SWITCHES
+            ]
             return reply(200, {"fields": fields, "unknown": []})
         if self.refuse:
-            return reply(self.refuse, {"code": "chart_derived", "message": "the deployment decides this"})
+            return reply(
+                self.refuse,
+                {"code": "chart_derived", "message": "the deployment decides this"},
+            )
         if method == "PUT":
             self.changes.append(dict((body or {}).get("changes") or {}))
         if method == "DELETE":
             self.cleared += re.findall(r"path=([^&]+)", path)
-        return reply(200, {"changed": True, "restart_required": [FakeEngine.RECEIVER_HINT]})
+        return reply(
+            200, {"changed": True, "restart_required": [FakeEngine.RECEIVER_HINT]}
+        )
 
 
 class TestTheBeatsVariation:
     """Filebeat alone, shipping lumberjack straight to the receiver's own listener."""
 
-    ARGS = ("--via", "beats", "--beats-network", "dfe_default", "--restart-exec", "make apply SERVICES=")
+    ARGS = (
+        "--via",
+        "beats",
+        "--beats-network",
+        "dfe_default",
+        "--restart-exec",
+        "make apply SERVICES=",
+    )
 
     def _feed(self, monkeypatch, transform_repo, engine, restart_code=0):
         started: list[str] = []
         ran: list[list[str]] = []
-        monkeypatch.setattr(steps, "wait_routed", lambda *a, **k: "routed into dfe.fb1 after 1 probe pass(es)")
+        monkeypatch.setattr(
+            steps,
+            "wait_routed",
+            lambda *a, **k: "routed into dfe.fb1 after 1 probe pass(es)",
+        )
         monkeypatch.setattr(steps, "corpus_lines", lambda *a, **k: ["one", "two"])
-        monkeypatch.setattr(cases.beats, "start_logstash",
-                            lambda pair: (started.append("logstash"), (True, "logstash up"))[1])
-        monkeypatch.setattr(cases.beats, "start_filebeat",
-                            lambda pair: (started.append(f"filebeat to {pair.target}"), (True, "up"))[1])
-        monkeypatch.setattr(cases.beats, "published", lambda pair, wanted: (wanted, f"filebeat published {wanted}"))
+        monkeypatch.setattr(
+            cases.beats,
+            "start_logstash",
+            lambda pair: (started.append("logstash"), (True, "logstash up"))[1],
+        )
+        monkeypatch.setattr(
+            cases.beats,
+            "start_filebeat",
+            lambda pair: (started.append(f"filebeat to {pair.target}"), (True, "up"))[
+                1
+            ],
+        )
+        monkeypatch.setattr(
+            cases.beats,
+            "published",
+            lambda pair, wanted: (wanted, f"filebeat published {wanted}"),
+        )
 
         def fake_run(argv, **_kwargs):
             ran.append(list(argv))
@@ -2413,7 +3159,9 @@ class TestTheBeatsVariation:
         args = parse(*self.ARGS)
         driver = FakeDriver(FakePage())
         case = cases.build(args)
-        run = a_run(driver, engine, args, case.name, transform_repo, "https://rx.example")
+        run = a_run(
+            driver, engine, args, case.name, transform_repo, "https://rx.example"
+        )
         run.args.shots_dir = str(transform_repo / "shots")
         case.feed(run)
         return driver, case, run, started, ran
@@ -2439,16 +3187,24 @@ class TestTheBeatsVariation:
         assert driver.status("feed") == "done"
         assert "straight to the receiver at dfe-receiver:5044" in driver.detail("feed")
 
-    def test_the_listener_is_open_before_filebeat_starts(self, monkeypatch, transform_repo):
+    def test_the_listener_is_open_before_filebeat_starts(
+        self, monkeypatch, transform_repo
+    ):
         driver, *_ = self._feed(monkeypatch, transform_repo, ReceiverEngine())
 
         rows = driver.rows
-        assert rows.index("receiver-lumberjack") < rows.index("receiver-restart") < rows.index("filebeat")
+        assert (
+            rows.index("receiver-lumberjack")
+            < rows.index("receiver-restart")
+            < rows.index("filebeat")
+        )
 
     def test_expected_fail_an_engine_refusing_the_switch_names_the_env_fallback(
         self, monkeypatch, transform_repo
     ):
-        driver, case, run, started, _ = self._feed(monkeypatch, transform_repo, ReceiverEngine(refuse=409))
+        driver, case, run, started, _ = self._feed(
+            monkeypatch, transform_repo, ReceiverEngine(refuse=409)
+        )
 
         assert driver.status("receiver-lumberjack") == "failed"
         assert steps.beats.LUMBERJACK_ENV in driver.detail("receiver-lumberjack")
@@ -2457,28 +3213,43 @@ class TestTheBeatsVariation:
         # Nothing was written, so there is nothing to put back.
         assert case.cleanup(run) == []
 
-    def test_expected_fail_a_receiver_that_would_not_restart_ships_nothing(self, monkeypatch, transform_repo):
-        driver, *_, started, _ = self._feed(monkeypatch, transform_repo, ReceiverEngine(), restart_code=2)
+    def test_expected_fail_a_receiver_that_would_not_restart_ships_nothing(
+        self, monkeypatch, transform_repo
+    ):
+        driver, *_, started, _ = self._feed(
+            monkeypatch, transform_repo, ReceiverEngine(), restart_code=2
+        )
 
         assert driver.status("receiver-restart") == "failed"
         assert driver.status("feed") == "failed"
         assert started == []
 
-    def test_the_teardown_clears_what_the_overlay_never_set(self, monkeypatch, transform_repo):
+    def test_the_teardown_clears_what_the_overlay_never_set(
+        self, monkeypatch, transform_repo
+    ):
         engine = ReceiverEngine()
         _, case, run, _, ran = self._feed(monkeypatch, transform_repo, engine)
-        monkeypatch.setattr(cases.beats, "stop", lambda pair: "dfe-src-filebeat-src-test removed")
+        monkeypatch.setattr(
+            cases.beats, "stop", lambda pair: "dfe-src-filebeat-src-test removed"
+        )
 
         rows = case.cleanup(run)
 
-        assert [row.slug for row in rows] == ["beats-removed", "receiver-lumberjack-restored"]
+        assert [row.slug for row in rows] == [
+            "beats-removed",
+            "receiver-lumberjack-restored",
+        ]
         assert rows[1].status == "done", rows[1].detail
         assert sorted(engine.cleared) == sorted(steps.beats.LUMBERJACK_SWITCHES)
-        assert len(engine.changes) == 1, "nothing is written back that the overlay did not hold"
+        assert len(engine.changes) == 1, (
+            "nothing is written back that the overlay did not hold"
+        )
         # The restore is applied the same way the switch was.
         assert ran[-1] == ["make", "apply", "SERVICES=", "dfe-receiver"]
 
-    def test_the_teardown_writes_back_what_the_overlay_already_set(self, monkeypatch, transform_repo):
+    def test_the_teardown_writes_back_what_the_overlay_already_set(
+        self, monkeypatch, transform_repo
+    ):
         engine = ReceiverEngine(held={"config.lumberjack.enabled": False})
         _, case, run, _, _ = self._feed(monkeypatch, transform_repo, engine)
         monkeypatch.setattr(cases.beats, "stop", lambda pair: "removed")
@@ -2503,14 +3274,18 @@ class TestTheBeatsVariation:
         assert "may still be open" in rows[-1].detail
 
     @pytest.mark.parametrize("failing", ["the source lookup only", "every call"])
-    @pytest.mark.parametrize("error", [OSError("connection refused"), RuntimeError("login refused")])
+    @pytest.mark.parametrize(
+        "error", [OSError("connection refused"), RuntimeError("login refused")]
+    )
     def test_the_teardown_cleans_up_even_when_the_engine_cannot_be_reached(
         self, monkeypatch, transform_repo, failing, error
     ):
         engine = ReceiverEngine()
         driver, case, run, _, _ = self._feed(monkeypatch, transform_repo, engine)
         stopped: list[str] = []
-        monkeypatch.setattr(cases.beats, "stop", lambda pair: (stopped.append("stop"), "removed")[1])
+        monkeypatch.setattr(
+            cases.beats, "stop", lambda pair: (stopped.append("stop"), "removed")[1]
+        )
         served = engine.call
 
         def unreachable(method, path, body=None):
@@ -2534,12 +3309,16 @@ class TestTheBeatsVariation:
         else:
             assert restored.status == "done", restored.detail
 
-    def test_the_proof_holds_both_shipped_routes_to_the_same_fields(self, shipping_corpus):
+    def test_the_proof_holds_both_shipped_routes_to_the_same_fields(
+        self, shipping_corpus
+    ):
         for via in cases.SHIPPED:
             args = parse("--via", via)
             driver = FakeDriver(FakePage())
             case = cases.build(args)
-            run = a_run(driver, FakeEngine(), args, case.name, Path("/"), "https://rx.example")
+            run = a_run(
+                driver, FakeEngine(), args, case.name, Path("/"), "https://rx.example"
+            )
             run.store = ScriptedStore(5, 5)
 
             case.prove(run)
@@ -2550,7 +3329,9 @@ class TestTheBeatsVariation:
         """The POSTed envelope carries no file path, so there is no agent row to judge."""
         driver = FakeDriver(FakePage())
         case = cases.build(parse())
-        run = a_run(driver, FakeEngine(), parse(), case.name, Path("/"), "https://rx.example")
+        run = a_run(
+            driver, FakeEngine(), parse(), case.name, Path("/"), "https://rx.example"
+        )
         run.store = ScriptedStore(5, 5)
 
         case.prove(run)
@@ -2578,7 +3359,14 @@ class TestWhatTheRunTidiesUp:
     def test_the_pushed_case_has_nothing_of_its_own_to_remove(self):
         case = cases.build(parse())
 
-        assert case.cleanup(a_run(FakeDriver(FakePage()), FakeEngine(), parse(), case.name, Path("/"))) == []
+        assert (
+            case.cleanup(
+                a_run(
+                    FakeDriver(FakePage()), FakeEngine(), parse(), case.name, Path("/")
+                )
+            )
+            == []
+        )
 
 
 # --- the syslog case ----------------------------------------------------------
@@ -2635,7 +3423,10 @@ class Collector:
                 if not chunk:
                     break
                 held += chunk
-                if self.close_over and max(map(len, held.split(b"\n"))) > self.close_over:
+                if (
+                    self.close_over
+                    and max(map(len, held.split(b"\n"))) > self.close_over
+                ):
                     break
         self.streams.append(held)
 
@@ -2650,7 +3441,10 @@ class Collector:
     def settle(self, want_streams: int = 0, want_datagrams: int = 0) -> None:
         end = time.monotonic() + 5
         while time.monotonic() < end:
-            if len(self.streams) >= want_streams and len(self.datagrams) >= want_datagrams:
+            if (
+                len(self.streams) >= want_streams
+                and len(self.datagrams) >= want_datagrams
+            ):
                 return
             time.sleep(0.02)
 
@@ -2688,18 +3482,24 @@ class TestTheSyslogFraming:
             ("udp", lambda body: body),
         ],
     )
-    def test_each_transport_frames_the_message_the_way_rfc_6587_and_a_datagram_do(self, transport, framed):
+    def test_each_transport_frames_the_message_the_way_rfc_6587_and_a_datagram_do(
+        self, transport, framed
+    ):
         chosen = next(t for t in syslog.TRANSPORTS if t.slug == transport)
         body = syslog.message(LINE, RUN_TAG, STAMP)
 
         assert syslog.frame(chosen, body) == framed(body)
 
-    def test_a_message_carries_the_run_as_its_hostname_and_the_vendor_line_unchanged(self):
+    def test_a_message_carries_the_run_as_its_hostname_and_the_vendor_line_unchanged(
+        self,
+    ):
         body = syslog.message(LINE, RUN_TAG, STAMP).decode()
 
         assert body == f"<134>{STAMP} {RUN_TAG} replay: {LINE}"
 
-    def test_the_oversize_message_is_past_the_receivers_limit_and_the_good_one_is_not(self):
+    def test_the_oversize_message_is_past_the_receivers_limit_and_the_good_one_is_not(
+        self,
+    ):
         assert len(syslog.oversize(RUN_TAG, STAMP)) > syslog.MAX_MESSAGE
         assert len(syslog.message(LINE, RUN_TAG, STAMP)) < syslog.MAX_MESSAGE
 
@@ -2711,25 +3511,33 @@ class TestTheSyslogFraming:
         assert all(line and not line.startswith("<") for line in lines)
 
     def test_the_vendored_corpus_names_the_commit_it_was_taken_at(self):
-        assert "9e06976b" in (syslog.FIXTURES / "SOURCE.txt").read_text(encoding="utf-8")
+        assert "9e06976b" in (syslog.FIXTURES / "SOURCE.txt").read_text(
+            encoding="utf-8"
+        )
 
     def test_the_cases_vendors_are_the_ones_the_demo_defines(self):
         assert set(syslog.VENDOR_SOURCES) == set(syslog.VENDORS)
         for vendor in syslog.VENDORS:
             body = syslog.vendor_body(vendor, "sy00000000")
-            assert body["match"] == {"field": "_source", "operator": "equals", "value": vendor}
+            assert body["match"] == {
+                "field": "_source",
+                "operator": "equals",
+                "value": vendor,
+            }
         assert syslog.intake_body("sy00000000")["match"]["value"] == "syslog"
 
 
 class TestTheReceiverCounters:
-    EXPOSITION = "\n".join([
-        "# TYPE receiver_requests_total counter",
-        'receiver_requests_total{transport="syslog"} 44',
-        'receiver_requests_total{transport="http"} 7',
-        'dfe_receiver_records_dropped_total{transport="syslog",reason="unavailable"} 2',
-        'dfe_receiver_records_dropped_total{transport="syslog",reason="rejected"} 1',
-        'dfe_receiver_records_dropped_total{transport="flow",reason="rejected"} 9',
-    ])
+    EXPOSITION = "\n".join(
+        [
+            "# TYPE receiver_requests_total counter",
+            'receiver_requests_total{transport="syslog"} 44',
+            'receiver_requests_total{transport="http"} 7',
+            'dfe_receiver_records_dropped_total{transport="syslog",reason="unavailable"} 2',
+            'dfe_receiver_records_dropped_total{transport="syslog",reason="rejected"} 1',
+            'dfe_receiver_records_dropped_total{transport="flow",reason="rejected"} 9',
+        ]
+    )
 
     @pytest.mark.parametrize(
         ("name", "labels", "want"),
@@ -2754,7 +3562,10 @@ class TestTheReceiverCounters:
         other = 'receiver_requests_total{transport="syslog"} 6\n'
 
         assert syslog.counters_of([self.EXPOSITION, other]) == {
-            "accepted": 50, "dropped": 3, "oversize": 0, "parse_failed": 0,
+            "accepted": 50,
+            "dropped": 3,
+            "oversize": 0,
+            "parse_failed": 0,
         }
 
     @pytest.mark.parametrize(
@@ -2762,10 +3573,17 @@ class TestTheReceiverCounters:
         [
             pytest.param("pod/a pod/b", "", 88, id="every-pod-summed"),
             pytest.param("", "", "no running receiver pod", id="no-pod"),
-            pytest.param("pod/a pod/b", "pod/b", "metrics in pod/b did not answer", id="one-pod-silent"),
+            pytest.param(
+                "pod/a pod/b",
+                "pod/b",
+                "metrics in pod/b did not answer",
+                id="one-pod-silent",
+            ),
         ],
     )
-    def test_the_pod_counters_come_from_every_running_receiver_pod(self, tmp_path, pods, failing, want):
+    def test_the_pod_counters_come_from_every_running_receiver_pod(
+        self, tmp_path, pods, failing, want
+    ):
         kubectl = tmp_path / "kubectl"
         kubectl.write_text(
             "#!/bin/bash\n"
@@ -2787,9 +3605,14 @@ class TestTheReceiverCounters:
 class TestTheSyslogSenders:
     def _frames(self, transport: str) -> list[bytes]:
         chosen = next(t for t in syslog.TRANSPORTS if t.slug == transport)
-        return [syslog.frame(chosen, syslog.message(f"{LINE} {n}", RUN_TAG, STAMP)) for n in range(3)]
+        return [
+            syslog.frame(chosen, syslog.message(f"{LINE} {n}", RUN_TAG, STAMP))
+            for n in range(3)
+        ]
 
-    @pytest.mark.parametrize("prefix", [(), ("env",)], ids=["direct", "through-an-exec-prefix"])
+    @pytest.mark.parametrize(
+        "prefix", [(), ("env",)], ids=["direct", "through-an-exec-prefix"]
+    )
     @pytest.mark.parametrize("transport", ["tcp-lf", "tcp-octet"])
     def test_tcp_frames_arrive_whole_and_in_order(self, collector, prefix, transport):
         frames = self._frames(transport)
@@ -2800,7 +3623,9 @@ class TestTheSyslogSenders:
         assert note == ""
         assert collector.streams == [b"".join(frames)]
 
-    @pytest.mark.parametrize("prefix", [(), ("env",)], ids=["direct", "through-an-exec-prefix"])
+    @pytest.mark.parametrize(
+        "prefix", [(), ("env",)], ids=["direct", "through-an-exec-prefix"]
+    )
     def test_each_datagram_is_its_own_packet(self, collector, prefix):
         frames = self._frames("udp")
 
@@ -2816,18 +3641,24 @@ class TestTheSyslogSenders:
         good = syslog.frame(lf, syslog.message(LINE, RUN_TAG, STAMP))
         big = syslog.frame(lf, syslog.oversize(RUN_TAG, STAMP))
 
-        note = syslog.send_tcp("127.0.0.1", lenient_collector.tcp_port, [good, big, good], watch=1)
+        note = syslog.send_tcp(
+            "127.0.0.1", lenient_collector.tcp_port, [good, big, good], watch=1
+        )
         lenient_collector.settle(want_streams=1)
 
         assert note == ""
         assert lenient_collector.streams[0].count(good) == 2
 
-    def test_a_receiver_that_closes_on_the_oversize_frame_is_named_and_the_next_frame_is_lost(self, collector):
+    def test_a_receiver_that_closes_on_the_oversize_frame_is_named_and_the_next_frame_is_lost(
+        self, collector
+    ):
         lf = syslog.TRANSPORTS[0]
         good = syslog.frame(lf, syslog.message(LINE, RUN_TAG, STAMP))
         big = syslog.frame(lf, syslog.oversize(RUN_TAG, STAMP))
 
-        note = syslog.send_tcp("127.0.0.1", collector.tcp_port, [good, big, good], watch=1)
+        note = syslog.send_tcp(
+            "127.0.0.1", collector.tcp_port, [good, big, good], watch=1
+        )
         collector.settle(want_streams=1)
 
         assert "closed the connection after frame 2" in note
@@ -2841,28 +3672,49 @@ class TestTheSyslogSenders:
 
 class TestTheSyslogVerdicts:
     BEFORE: ClassVar[dict[str, int]] = {
-        "accepted": 100, "dropped": 0, "oversize": 0, "parse_failed": 0,
+        "accepted": 100,
+        "dropped": 0,
+        "oversize": 0,
+        "parse_failed": 0,
     }
 
     @pytest.mark.parametrize(
         ("after", "status", "named"),
         [
-            ({"accepted": 244, "dropped": 2, "oversize": 2, "parse_failed": 0}, "done", ""),
+            (
+                {"accepted": 244, "dropped": 2, "oversize": 2, "parse_failed": 0},
+                "done",
+                "",
+            ),
             # A receiver that closes on the oversize frame counts nothing.
-            ({"accepted": 242, "dropped": 0, "oversize": 0, "parse_failed": 0}, "failed",
-             "reason=oversize} rose 0, 2 oversize"),
+            (
+                {"accepted": 242, "dropped": 0, "oversize": 0, "parse_failed": 0},
+                "failed",
+                "reason=oversize} rose 0, 2 oversize",
+            ),
             # A drop under another reason, such as the kernel's UDP buffer.
-            ({"accepted": 244, "dropped": 5, "oversize": 2, "parse_failed": 0}, "failed",
-             "rose 5 in all, 2 expected"),
+            (
+                {"accepted": 244, "dropped": 5, "oversize": 2, "parse_failed": 0},
+                "failed",
+                "rose 5 in all, 2 expected",
+            ),
             # A line the listener took and could not parse.
-            ({"accepted": 244, "dropped": 2, "oversize": 2, "parse_failed": 1}, "failed",
-             "parse_failures_total rose 1"),
+            (
+                {"accepted": 244, "dropped": 2, "oversize": 2, "parse_failed": 1},
+                "failed",
+                "parse_failures_total rose 1",
+            ),
             # A UDP burst that did not all arrive.
-            ({"accepted": 230, "dropped": 2, "oversize": 2, "parse_failed": 0}, "failed",
-             "rose 130, 144 good"),
+            (
+                {"accepted": 230, "dropped": 2, "oversize": 2, "parse_failed": 0},
+                "failed",
+                "rose 130, 144 good",
+            ),
         ],
     )
-    def test_the_receivers_counters_must_agree_with_what_was_sent(self, after, status, named):
+    def test_the_receivers_counters_must_agree_with_what_was_sent(
+        self, after, status, named
+    ):
         got, detail = syslog.counters_outcome(144, 2, self.BEFORE, after)
 
         assert got == status
@@ -2880,13 +3732,17 @@ class TestTheSyslogVerdicts:
     def test_a_table_must_hold_exactly_what_was_sent_to_it(self, landed, status):
         hops = syslog.hop_report(42, 40, sum(landed.values()), 0, 0)
 
-        got, detail = syslog.phase_outcome({"cisco-asa": 22, "fortinet": 20}, landed, hops, "")
+        got, detail = syslog.phase_outcome(
+            {"cisco-asa": 22, "fortinet": 20}, landed, hops, ""
+        )
 
         assert got == status
         assert f"cisco-asa {landed['cisco-asa']} of 22" in detail
 
     def test_a_sender_note_fails_a_row_whose_tables_are_whole(self):
-        got, _ = syslog.phase_outcome({"cisco-asa": 1}, {"cisco-asa": 1}, "", "the receiver closed it")
+        got, _ = syslog.phase_outcome(
+            {"cisco-asa": 1}, {"cisco-asa": 1}, "", "the receiver closed it"
+        )
 
         assert got == "failed"
 
@@ -2895,9 +3751,13 @@ class TestTheSyslogVerdicts:
 
         assert "receiver accepted 42, vendor tables got 30" in hops
         assert "3 run-tagged row(s) reached dfe.main unrouted" in hops
-        assert "Rows stopped at the loader: 42 accepted, 30 in the vendor tables" in hops
+        assert (
+            "Rows stopped at the loader: 42 accepted, 30 in the vendor tables" in hops
+        )
         assert "may not have subscribed the new topic" in hops
-        assert "Lost before the receiver counted it" in syslog.hop_report(42, 30, 30, 0, 0)
+        assert "Lost before the receiver counted it" in syslog.hop_report(
+            42, 30, 30, 0, 0
+        )
         assert "Lost" not in syslog.hop_report(42, 42, 42, 0, 0)
         assert "receiver accepted unread" in syslog.hop_report(42, None, 0, 0, 0)
 
@@ -2905,14 +3765,24 @@ class TestTheSyslogVerdicts:
 class TestTheSyslogOverlay:
     """The receiver overlay leaves syslog off, and the case opens it at the contract's ports."""
 
-    def test_the_case_not_the_overlay_switches_syslog_on_at_the_ports_the_contract_opens(self):
+    def test_the_case_not_the_overlay_switches_syslog_on_at_the_ports_the_contract_opens(
+        self,
+    ):
         values = yaml.safe_load(
-            (SCRIPTS.parent / "argocd/values/apps/dfe-receiver/values.yaml").read_text(encoding="utf-8")
+            (SCRIPTS.parent / "argocd/values/apps/dfe-receiver/values.yaml").read_text(
+                encoding="utf-8"
+            )
         )
         contract = json.loads(
-            (SCRIPTS / "tests/fixtures/contracts/dfe-receiver.json").read_text(encoding="utf-8")
+            (SCRIPTS / "tests/fixtures/contracts/dfe-receiver.json").read_text(
+                encoding="utf-8"
+            )
         )
-        opened = {(p["protocol"], p["port"]) for p in contract["extra_ports"] if p["name"] in ("syslog", "syslog-udp")}
+        opened = {
+            (p["protocol"], p["port"])
+            for p in contract["extra_ports"]
+            if p["name"] in ("syslog", "syslog-udp")
+        }
         args = parse("--case", "syslog")
 
         assert "syslog" not in (values.get("config") or {})
@@ -2932,7 +3802,9 @@ class SyslogStore(FakeStore):
         self.rows = dict.fromkeys(tables.values(), 0)
         self.by_vendor = tables
         self.tagged: collections.Counter[tuple[str, str]] = collections.Counter()
-        self.history: collections.defaultdict[tuple[str, str], list[int]] = collections.defaultdict(list)
+        self.history: collections.defaultdict[tuple[str, str], list[int]] = (
+            collections.defaultdict(list)
+        )
 
     def land(self, table: str, frame: bytes) -> None:
         """One row in *table*, tagged with the hostname in the frame's syslog header."""
@@ -2960,11 +3832,18 @@ class SyslogStore(FakeStore):
         if self.replicas is None:
             raise RuntimeError("datastore refused the query: 400 CLUSTER_DOESNT_EXIST")
         table = re.search(r"`([\w.-]+)`\)", sql).group(1)
-        count = self.scalar(sql.replace(f"clusterAllReplicas(getMacro('cluster'), dfe, `{table}`)", f"`{table}`"))
+        count = self.scalar(
+            sql.replace(
+                f"clusterAllReplicas(getMacro('cluster'), dfe, `{table}`)", f"`{table}`"
+            )
+        )
         seen = self.history[table, sql]
         seen.append(count)
         late = seen[-1 - self.trails] if len(seen) > self.trails else 0
-        return [[self.replicas[0], count], *([host, late] for host in self.replicas[1:])]
+        return [
+            [self.replicas[0], count],
+            *([host, late] for host in self.replicas[1:]),
+        ]
 
 
 class NoVendorSources(ReceiverEngine):
@@ -3010,18 +3889,34 @@ class TestTheSyslogCase:
                     store.land(case.tables[vendor], piece)
                 return ""
 
-            monkeypatch.setattr(syslog, "send_tcp", lambda host, port, frames, prefix=(), watch=-1: deliver(frames))
-            monkeypatch.setattr(syslog, "send_udp", lambda host, port, frames, prefix=(): deliver(frames))
+            monkeypatch.setattr(
+                syslog,
+                "send_tcp",
+                lambda host, port, frames, prefix=(), watch=-1: deliver(frames),
+            )
+            monkeypatch.setattr(
+                syslog,
+                "send_udp",
+                lambda host, port, frames, prefix=(): deliver(frames),
+            )
             case.feed(run)
             return case, driver
 
         return go
 
-    def test_the_default_ports_are_the_ones_the_receiver_contract_opens_for_syslog(self):
+    def test_the_default_ports_are_the_ones_the_receiver_contract_opens_for_syslog(
+        self,
+    ):
         contract = json.loads(
-            (SCRIPTS / "tests/fixtures/contracts/dfe-receiver.json").read_text(encoding="utf-8")
+            (SCRIPTS / "tests/fixtures/contracts/dfe-receiver.json").read_text(
+                encoding="utf-8"
+            )
         )
-        ports = {(e["protocol"], e["port"]) for e in contract["extra_ports"] if e["name"].startswith("syslog")}
+        ports = {
+            (e["protocol"], e["port"])
+            for e in contract["extra_ports"]
+            if e["name"].startswith("syslog")
+        }
         args = parse("--case", "syslog")
 
         assert ("TCP", args.syslog_port) in ports
@@ -3031,13 +3926,19 @@ class TestTheSyslogCase:
         case = cases.build(parse("--case", "syslog"))
 
         assert isinstance(case, cases.SyslogCase)
-        assert (case.service, case.observes, case.archives) == ("dfe-transform-elastic", False, False)
+        assert (case.service, case.observes, case.archives) == (
+            "dfe-transform-elastic",
+            False,
+            False,
+        )
         assert case.console is False
         assert cases.FilebeatCase.console is True
         assert steps.RUN_NAME.fullmatch(case.name)
         assert case.tables == {"cisco-asa": "cisco-asa", "fortinet": "fortinet"}
 
-    def test_a_receiver_that_keeps_every_line_passes_every_transport_with_tls_not_covered(self, feeding):
+    def test_a_receiver_that_keeps_every_line_passes_every_transport_with_tls_not_covered(
+        self, feeding
+    ):
         _, driver = feeding(False)
 
         for slug in ("syslog-tcp-lf", "syslog-tcp-octet", "syslog-udp"):
@@ -3048,12 +3949,21 @@ class TestTheSyslogCase:
     @pytest.mark.parametrize(
         ("replicas", "trails", "spread"),
         [
-            pytest.param(("ch-0",), 0, "cisco-asa first on ch-0 at 0s, every replica at 0s", id="one-replica"),
             pytest.param(
-                ("ch-0", "ch-1"), 1, "cisco-asa first on ch-0 at 0s, not on every replica after 0s",
+                ("ch-0",),
+                0,
+                "cisco-asa first on ch-0 at 0s, every replica at 0s",
+                id="one-replica",
+            ),
+            pytest.param(
+                ("ch-0", "ch-1"),
+                1,
+                "cisco-asa first on ch-0 at 0s, not on every replica after 0s",
                 id="a-replica-still-fetching",
             ),
-            pytest.param(None, 0, "cisco-asa first on the datastore at 0s", id="no-cluster"),
+            pytest.param(
+                None, 0, "cisco-asa first on the datastore at 0s", id="no-cluster"
+            ),
         ],
     )
     def test_the_rows_are_counted_on_the_fullest_replica_and_the_lag_is_named(
@@ -3069,10 +3979,17 @@ class TestTheSyslogCase:
         _, driver = feeding(False, misplace="-tcp-lf ")
 
         assert driver.status("syslog-tcp-lf") == "failed"
-        assert "by tag: cisco-asa 42, fortinet 0, intake 0, dfe.main 0;" in driver.detail("syslog-tcp-lf")
-        assert driver.status("syslog-tcp-octet") == "done", driver.detail("syslog-tcp-octet")
+        assert (
+            "by tag: cisco-asa 42, fortinet 0, intake 0, dfe.main 0;"
+            in driver.detail("syslog-tcp-lf")
+        )
+        assert driver.status("syslog-tcp-octet") == "done", driver.detail(
+            "syslog-tcp-octet"
+        )
 
-    def test_a_receiver_that_closes_on_the_oversize_frame_fails_the_tcp_rows_and_says_so(self, feeding):
+    def test_a_receiver_that_closes_on_the_oversize_frame_fails_the_tcp_rows_and_says_so(
+        self, feeding
+    ):
         _, driver = feeding(True)
 
         # The good line after the oversize frame never arrives, so each TCP table is one short.
@@ -3081,9 +3998,13 @@ class TestTheSyslogCase:
         assert "closed the connection" in driver.detail("syslog-tcp-lf")
         assert driver.status("syslog-udp") == "done"
 
-    def test_the_counters_are_unproven_without_a_metrics_url_rather_than_passed(self, feeding):
+    def test_the_counters_are_unproven_without_a_metrics_url_rather_than_passed(
+        self, feeding
+    ):
         case, driver = feeding(False)
-        run = a_run(driver, FakeEngine(), parse("--case", "syslog"), case.name, Path("/"))
+        run = a_run(
+            driver, FakeEngine(), parse("--case", "syslog"), case.name, Path("/")
+        )
         run.store = SyslogStore(case.tables)
 
         case.prove(run)
@@ -3102,7 +4023,9 @@ class TestTheSyslogCase:
         assert driver.status("feed") == "unproven"
 
     @pytest.mark.parametrize(("resets", "outcome"), [(1, 7), (3, 7), (4, "raises")])
-    def test_a_count_survives_a_reset_connection_up_to_its_retries(self, monkeypatch, resets, outcome):
+    def test_a_count_survives_a_reset_connection_up_to_its_retries(
+        self, monkeypatch, resets, outcome
+    ):
         monkeypatch.setattr(time, "sleep", lambda _s: None)
 
         class Resetting(FakeStore):
@@ -3137,7 +4060,11 @@ class TestTheSyslogCase:
 
         hints = case.create(run)
 
-        posted = [path for method, path in engine.calls if method == "POST" and path == "/sources"]
+        posted = [
+            path
+            for method, path in engine.calls
+            if method == "POST" and path == "/sources"
+        ]
         assert len(posted) == 3
         assert ("PATCH", "/sources/cisco-asa") in engine.calls
         assert engine.changes == [dict(syslog.SYSLOG_SWITCHES)]
@@ -3145,7 +4072,9 @@ class TestTheSyslogCase:
         # A dormant vendor source runs no transform, so its deploy names nothing to restart.
         assert hints == [FakeEngine.RECEIVER_HINT]
 
-    def test_a_vendor_source_the_deployment_already_holds_is_used_and_never_removed(self):
+    def test_a_vendor_source_the_deployment_already_holds_is_used_and_never_removed(
+        self,
+    ):
         args = parse("--case", "syslog")
         case = cases.build(args)
         engine = ReceiverEngine()
@@ -3153,7 +4082,11 @@ class TestTheSyslogCase:
 
         case.create(run)
 
-        posted = [path for method, path in engine.calls if method == "POST" and path == "/sources"]
+        posted = [
+            path
+            for method, path in engine.calls
+            if method == "POST" and path == "/sources"
+        ]
         assert len(posted) == 1
         assert case._made == {}
 
@@ -3165,11 +4098,14 @@ class TestTheStrayQueryAgainstClickHouse:
         case = cases.build(args)
         run = a_run(FakeDriver(FakePage()), FakeEngine(), args, case.name, Path("/"))
         run.run_id = RUN_TAG
-        run.store = LocalClickHouse("main", [
-            {"hostname": f"{RUN_TAG}-probe"},
-            {"hostname": f"{RUN_TAG}-udp"},
-            {"hostname": "src-other-udp"},
-        ])
+        run.store = LocalClickHouse(
+            "main",
+            [
+                {"hostname": f"{RUN_TAG}-probe"},
+                {"hostname": f"{RUN_TAG}-udp"},
+                {"hostname": "src-other-udp"},
+            ],
+        )
 
         assert case._strayed(run) == 1
 

@@ -50,7 +50,9 @@ def _pod(
     init: list | None = None,
     requests: dict | None = None,
 ) -> dict:
-    spec: dict = {"containers": [{"name": "app", "resources": {"requests": requests or {}}}]}
+    spec: dict = {
+        "containers": [{"name": "app", "resources": {"requests": requests or {}}}]
+    }
     if node:
         spec["nodeName"] = node
     status: dict = {"phase": phase, "conditions": conditions or []}
@@ -58,7 +60,11 @@ def _pod(
         status["containerStatuses"] = containers
     if init is not None:
         status["initContainerStatuses"] = init
-    return {"metadata": {"name": name, "namespace": namespace}, "spec": spec, "status": status}
+    return {
+        "metadata": {"name": name, "namespace": namespace},
+        "spec": spec,
+        "status": status,
+    }
 
 
 def _ready_container(name: str = "app") -> dict:
@@ -82,7 +88,10 @@ def test_an_unscheduled_pod_carries_the_schedulers_own_verdict() -> None:
         ],
     )
     lines = report_mod.pod_lines([pod], GLOBS)
-    assert lines[0] == "pod dfe-test/dfe-receiver-6fb4bff97-2pcvr phase=Pending node=<none>"
+    assert (
+        lines[0]
+        == "pod dfe-test/dfe-receiver-6fb4bff97-2pcvr phase=Pending node=<none>"
+    )
     assert lines[1] == f"  PodScheduled=False Unschedulable: {UNSCHEDULABLE}"
 
 
@@ -121,7 +130,11 @@ def test_an_init_container_still_running_and_a_crash_both_show() -> None:
                 "restartCount": 1,
                 "state": {"running": {}},
                 "lastState": {
-                    "terminated": {"exitCode": 1, "reason": "Error", "message": "engine not up"}
+                    "terminated": {
+                        "exitCode": 1,
+                        "reason": "Error",
+                        "message": "engine not up",
+                    }
                 },
             },
             {
@@ -142,13 +155,18 @@ def test_an_init_container_still_running_and_a_crash_both_show() -> None:
     )
     text = "\n".join(report_mod.pod_lines([pod], GLOBS))
     assert "init container wait-for-engine running, not finished" in text
-    assert "init container wait-for-engine restarted 1x, last exit 1 (Error): engine not up" in text
+    assert (
+        "init container wait-for-engine restarted 1x, last exit 1 (Error): engine not up"
+        in text
+    )
     assert "container runner waiting PodInitializing" in text
 
 
 def test_ready_finished_and_unjudged_pods_are_left_out() -> None:
     pods = [
-        _pod("dfe-engine-0", phase="Running", node="n1", containers=[_ready_container()]),
+        _pod(
+            "dfe-engine-0", phase="Running", node="n1", containers=[_ready_container()]
+        ),
         _pod("migrate-job-x", phase="Succeeded", node="n1"),
         _pod("calico-node-y", namespace="calico-system"),
     ]
@@ -169,7 +187,9 @@ def test_kube_system_is_read_whatever_the_globs_say() -> None:
             },
         ],
     )
-    assert report_mod.pod_lines([pod], ["dfe-*"])[0].startswith("pod kube-system/karpenter-")
+    assert report_mod.pod_lines([pod], ["dfe-*"])[0].startswith(
+        "pod kube-system/karpenter-"
+    )
 
 
 def test_a_running_pod_with_a_container_not_ready_is_reported() -> None:
@@ -178,10 +198,17 @@ def test_a_running_pod_with_a_container_not_ready_is_reported() -> None:
         phase="Running",
         node="n1",
         containers=[
-            {"name": "loader", "ready": False, "restartCount": 0, "state": {"running": {}}}
+            {
+                "name": "loader",
+                "ready": False,
+                "restartCount": 0,
+                "state": {"running": {}},
+            }
         ],
     )
-    assert report_mod.pod_lines([pod], GLOBS)[1] == "  container loader running, not ready"
+    assert (
+        report_mod.pod_lines([pod], GLOBS)[1] == "  container loader running, not ready"
+    )
 
 
 # --- events ----------------------------------------------------------------------------
@@ -211,9 +238,15 @@ def _event(
 
 def test_only_the_newest_warning_per_object_and_reason_is_kept_newest_first() -> None:
     events = [
-        _event("FailedScheduling", "dfe-ui-1", when="2026-10-10T05:30:00Z", message="old"),
         _event(
-            "FailedScheduling", "dfe-ui-1", when="2026-10-10T05:40:00Z", message="new", count=40
+            "FailedScheduling", "dfe-ui-1", when="2026-10-10T05:30:00Z", message="old"
+        ),
+        _event(
+            "FailedScheduling",
+            "dfe-ui-1",
+            when="2026-10-10T05:40:00Z",
+            message="new",
+            count=40,
         ),
         _event("Pulled", "dfe-ui-1", type_="Normal"),
         _event("FailedMount", "dfe-engine-1", when="2026-10-10T05:35:00Z"),
@@ -221,7 +254,10 @@ def test_only_the_newest_warning_per_object_and_reason_is_kept_newest_first() ->
     ]
     lines = report_mod.event_lines(events, GLOBS)
     assert len(lines) == 2
-    assert lines[0] == "2026-10-10T05:40:00Z dfe-test Pod/dfe-ui-1 FailedScheduling x40: new"
+    assert (
+        lines[0]
+        == "2026-10-10T05:40:00Z dfe-test Pod/dfe-ui-1 FailedScheduling x40: new"
+    )
     assert "FailedMount" in lines[1]
 
 
@@ -242,7 +278,10 @@ def test_a_nodeclaim_event_is_kept_wherever_it_landed() -> None:
 
 def test_an_events_v1_shape_is_read_too() -> None:
     event = {
-        "metadata": {"namespace": "dfe-test", "creationTimestamp": "2026-10-10T05:30:00Z"},
+        "metadata": {
+            "namespace": "dfe-test",
+            "creationTimestamp": "2026-10-10T05:30:00Z",
+        },
         "regarding": {"kind": "Pod", "name": "dfe-ui-2"},
         "reason": "FailedScheduling",
         "type": "Warning",
@@ -295,7 +334,11 @@ def test_each_node_shows_what_is_requested_against_what_it_can_hold() -> None:
             "broker-a",
             labels={"dfe.hyperi.io/workload": "kafka-broker"},
             taints=[
-                {"key": "dfe.hyperi.io/workload", "value": "kafka-broker", "effect": "NoSchedule"}
+                {
+                    "key": "dfe.hyperi.io/workload",
+                    "value": "kafka-broker",
+                    "effect": "NoSchedule",
+                }
             ],
         ),
     ]
@@ -307,7 +350,12 @@ def test_each_node_shows_what_is_requested_against_what_it_can_hold() -> None:
             phase="Running",
             requests={"cpu": "1500m", "memory": "1Gi"},
         ),
-        _pod("done", node="system-a", phase="Succeeded", requests={"cpu": "4", "memory": "4Gi"}),
+        _pod(
+            "done",
+            node="system-a",
+            phase="Succeeded",
+            requests={"cpu": "4", "memory": "4Gi"},
+        ),
     ]
     lines = report_mod.node_lines(nodes, pods)
     assert lines[0] == "2 node(s)"
@@ -322,12 +370,15 @@ def test_each_node_shows_what_is_requested_against_what_it_can_hold() -> None:
 
 
 def test_a_large_init_container_is_what_the_scheduler_counts() -> None:
-    pod = _pod("p", node="n1", phase="Running", requests={"cpu": "100m", "memory": "128Mi"})
+    pod = _pod(
+        "p", node="n1", phase="Running", requests={"cpu": "100m", "memory": "128Mi"}
+    )
     pod["spec"]["initContainers"] = [
         {"name": "i", "resources": {"requests": {"cpu": "1", "memory": "1Gi"}}}
     ]
     assert (
-        "requested cpu 1.00/1.93 memory 1.0/7.0Gi" in report_mod.node_lines([_node("n1")], [pod])[1]
+        "requested cpu 1.00/1.93 memory 1.0/7.0Gi"
+        in report_mod.node_lines([_node("n1")], [pod])[1]
     )
 
 
@@ -350,7 +401,10 @@ def test_a_nodepool_shows_its_limit_against_what_it_holds() -> None:
 
 def test_a_nodeclaim_that_never_launched_names_the_step_and_why() -> None:
     claim = {
-        "metadata": {"name": "general-x7k2p", "labels": {"karpenter.sh/nodepool": "general"}},
+        "metadata": {
+            "name": "general-x7k2p",
+            "labels": {"karpenter.sh/nodepool": "general"},
+        },
         "status": {
             "conditions": [
                 {
@@ -359,7 +413,11 @@ def test_a_nodeclaim_that_never_launched_names_the_step_and_why() -> None:
                     "reason": "LaunchFailed",
                     "message": "creating instance, UnauthorizedOperation: You are not authorized",
                 },
-                {"type": "Registered", "status": "Unknown", "reason": "AwaitingReconciliation"},
+                {
+                    "type": "Registered",
+                    "status": "Unknown",
+                    "reason": "AwaitingReconciliation",
+                },
             ]
         },
     }
@@ -396,13 +454,24 @@ def test_the_controllers_newest_distinct_errors_are_kept() -> None:
         [
             json.dumps({"level": "INFO", "message": "starting"}),
             json.dumps(
-                {"level": "ERROR", "message": "failed launching nodeclaim", "error": "denied"}
+                {
+                    "level": "ERROR",
+                    "message": "failed launching nodeclaim",
+                    "error": "denied",
+                }
             ),
             json.dumps(
-                {"level": "ERROR", "message": "failed launching nodeclaim", "error": "denied"}
+                {
+                    "level": "ERROR",
+                    "message": "failed launching nodeclaim",
+                    "error": "denied",
+                }
             ),
             "not json, but an ERROR all the same",
-            *(json.dumps({"level": "ERROR", "message": f"m{i}", "error": "e"}) for i in range(12)),
+            *(
+                json.dumps({"level": "ERROR", "message": f"m{i}", "error": "e"})
+                for i in range(12)
+            ),
         ]
     )
     lines = report_mod.log_error_lines(log)
@@ -418,9 +487,14 @@ def test_an_unbound_claim_is_listed_and_a_bound_one_is_not() -> None:
             "spec": {"storageClassName": "gp3"},
             "status": {"phase": "Pending"},
         },
-        {"metadata": {"name": "data-1", "namespace": "dfe-test"}, "status": {"phase": "Bound"}},
+        {
+            "metadata": {"name": "data-1", "namespace": "dfe-test"},
+            "status": {"phase": "Bound"},
+        },
     ]
-    assert report_mod.pvc_lines(claims, GLOBS) == ["pvc dfe-test/data-0 Pending class=gp3"]
+    assert report_mod.pvc_lines(claims, GLOBS) == [
+        "pvc dfe-test/data-0 Pending class=gp3"
+    ]
 
 
 def test_an_application_out_of_sync_carries_its_conditions() -> None:
@@ -431,7 +505,10 @@ def test_an_application_out_of_sync_carries_its_conditions() -> None:
                 "sync": {"status": "Unknown"},
                 "health": {"status": "Missing"},
                 "conditions": [
-                    {"type": "ComparisonError", "message": "no matches for kind NodePool"}
+                    {
+                        "type": "ComparisonError",
+                        "message": "no matches for kind NodePool",
+                    }
                 ],
                 "operationState": {
                     "phase": "Failed",
@@ -478,7 +555,9 @@ print(json.dumps({"items": fixture.get("items", {}).get(resource, [])}))
 """
 
 
-def _run_cli(tmp_path: Path, fixture: dict, *, kubectl: bool = True) -> subprocess.CompletedProcess:
+def _run_cli(
+    tmp_path: Path, fixture: dict, *, kubectl: bool = True
+) -> subprocess.CompletedProcess:
     bindir = tmp_path / "bin"
     bindir.mkdir()
     if kubectl:
@@ -488,7 +567,9 @@ def _run_cli(tmp_path: Path, fixture: dict, *, kubectl: bool = True) -> subproce
     fixture_file = tmp_path / "fixture.json"
     fixture_file.write_text(json.dumps(fixture), encoding="utf-8", newline="\n")
     env = {
-        "PATH": f"{bindir}{os.pathsep}{Path(sys.executable).parent}" if kubectl else str(bindir),
+        "PATH": f"{bindir}{os.pathsep}{Path(sys.executable).parent}"
+        if kubectl
+        else str(bindir),
         "FAKE_KUBECTL_FIXTURE": str(fixture_file),
     }
     return subprocess.run(
@@ -525,7 +606,11 @@ def test_the_cli_reads_every_section_and_exits_zero(tmp_path: Path) -> None:
         {
             "items": {"pods": [pod], "nodes": [_node("system-a")]},
             "logs": json.dumps(
-                {"level": "ERROR", "message": "failed launching nodeclaim", "error": "denied"}
+                {
+                    "level": "ERROR",
+                    "message": "failed launching nodeclaim",
+                    "error": "denied",
+                }
             ),
         },
     )

@@ -44,7 +44,9 @@ from _oci import FakeRegistry  # noqa: E402
 
 
 def _load(name: str, filename: str | None = None):
-    spec = importlib.util.spec_from_file_location(name, SCRIPTS / (filename or f"{name}.py"))
+    spec = importlib.util.spec_from_file_location(
+        name, SCRIPTS / (filename or f"{name}.py")
+    )
     mod = importlib.util.module_from_spec(spec)
     sys.modules[name] = mod
     spec.loader.exec_module(mod)
@@ -59,7 +61,9 @@ DIGEST = "sha256:" + "a" * 64
 
 
 def _completed(rc: int = 0, stdout: str = "", stderr: str = ""):
-    return subprocess.CompletedProcess(args=[], returncode=rc, stdout=stdout, stderr=stderr)
+    return subprocess.CompletedProcess(
+        args=[], returncode=rc, stdout=stdout, stderr=stderr
+    )
 
 
 class FakeGh:
@@ -85,7 +89,9 @@ class FakeGh:
                 if not self.pr_created:
                     return _completed(1, "", "no pull requests found for branch")
                 return _completed(0, json.dumps({"number": 7, "state": "OPEN"}))
-            return _completed(0, json.dumps({"title": "fix: land it", "body": "why it lands\n"}))
+            return _completed(
+                0, json.dumps({"title": "fix: land it", "body": "why it lands\n"})
+            )
 
         if cmd[:3] == ["gh", "pr", "create"]:
             self.pr_created = True
@@ -99,22 +105,36 @@ class FakeGh:
                 return _completed(1, "", "HTTP 403: read denied")
             if "--status" in cmd:
                 if self.in_flight and cmd[cmd.index("--status") + 1] == "in_progress":
-                    return _completed(0, json.dumps([{
-                        "databaseId": 99,
-                        "status": "in_progress",
-                        "url": "https://example.invalid/run/99",
-                    }]))
+                    return _completed(
+                        0,
+                        json.dumps(
+                            [
+                                {
+                                    "databaseId": 99,
+                                    "status": "in_progress",
+                                    "url": "https://example.invalid/run/99",
+                                }
+                            ]
+                        ),
+                    )
                 return _completed(0, "[]")
             merged = any(c[:3] == ["gh", "pr", "merge"] for c in self.calls)
             run_id = 200 if merged else 100
-            return _completed(0, json.dumps([{
-                "databaseId": run_id,
-                "status": "completed",
-                "conclusion": "success",
-                "headBranch": "main",
-                "createdAt": "2026-01-01T00:00:00Z",
-                "url": f"https://example.invalid/run/{run_id}",
-            }]))
+            return _completed(
+                0,
+                json.dumps(
+                    [
+                        {
+                            "databaseId": run_id,
+                            "status": "completed",
+                            "conclusion": "success",
+                            "headBranch": "main",
+                            "createdAt": "2026-01-01T00:00:00Z",
+                            "url": f"https://example.invalid/run/{run_id}",
+                        }
+                    ]
+                ),
+            )
 
         if cmd[:2] == ["gh", "api"]:
             path = next((c for c in cmd if c.startswith("/")), "")
@@ -202,8 +222,8 @@ def test_ship_chains_the_five_verbs_and_prints_one_line(monkeypatch, capsys, tmp
 
     assert rc == 0
     assert captured.out == f"SHIPPED {REPO} {TAG} {DIGEST}\n"
-    assert _in_order(_steps(fake.calls), ["open", "merge", "wait", "latest"]), (
-        _steps(fake.calls)
+    assert _in_order(_steps(fake.calls), ["open", "merge", "wait", "latest"]), _steps(
+        fake.calls
     )
     # The digest read names the tag `latest` returned, so it ran after it.
     assert _digest_read(registry)
@@ -241,7 +261,9 @@ def test_ship_waits_for_the_run_the_merge_triggered(monkeypatch, capsys, tmp_pat
         for i, c in enumerate(fake.calls)
         if c[:3] == ["gh", "run", "list"] and "--status" not in c
     ]
-    merged_at = next(i for i, c in enumerate(fake.calls) if c[:3] == ["gh", "pr", "merge"])
+    merged_at = next(
+        i for i, c in enumerate(fake.calls) if c[:3] == ["gh", "pr", "merge"]
+    )
     assert any(i < merged_at for i in waits), "the pre-merge run id is never recorded"
     assert any(i > merged_at for i in waits), "nothing waits after the merge"
 
@@ -417,7 +439,11 @@ def main() -> int:
             return result
 
     failures = 0
-    tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_") and callable(f)]
+    tests = [
+        (n, f)
+        for n, f in sorted(globals().items())
+        if n.startswith("test_") and callable(f)
+    ]
     for name, fn in tests:
         mp = _MP()
         out_buf, err_buf = io.StringIO(), io.StringIO()
@@ -431,7 +457,10 @@ def main() -> int:
             if "capsys" in params:
                 kw["capsys"] = _Caps(out_buf, err_buf)
             try:
-                with contextlib.redirect_stdout(out_buf), contextlib.redirect_stderr(err_buf):
+                with (
+                    contextlib.redirect_stdout(out_buf),
+                    contextlib.redirect_stderr(err_buf),
+                ):
                     fn(**kw)
                 print(f"PASS  {name}")
             except Exception as exc:

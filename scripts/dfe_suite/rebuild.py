@@ -389,7 +389,9 @@ def _release_path(*, forced: bool, configured: bool) -> str:
     """Which release path a Rust rebuild takes, and why, as one log line."""
     config = ".hyperi-ci.yaml sets build.skip_optimize: true"
     if forced and configured:
-        return f"consented workflow_dispatch -- --release-unoptimized given, and {config}"
+        return (
+            f"consented workflow_dispatch -- --release-unoptimized given, and {config}"
+        )
     if configured:
         return (
             f"consented workflow_dispatch -- {config}, and hyperi-ci refuses a "
@@ -423,7 +425,9 @@ def _check_unoptimized_caller(repo: Path) -> Path:
     """
     workflow = repo / ".github" / "workflows" / CI_WORKFLOW_FILE
     if not workflow.is_file():
-        raise FleetError(f"{workflow} is not there -- nothing to dispatch the release through")
+        raise FleetError(
+            f"{workflow} is not there -- nothing to dispatch the release through"
+        )
     gaps = _consent_gaps(_load_yaml(workflow))
     if gaps:
         raise FleetError(
@@ -439,7 +443,16 @@ def _local_gate(repo: Path, features: Sequence[str], *, run_tests: bool) -> None
     """Run clippy, and nextest unless ``run_tests`` is False, in the checkout."""
     say("gate: clippy (all targets, gate features, -D warnings)")
     run(
-        ["cargo", "clippy", "--workspace", "--all-targets", *features, "--", "-D", "warnings"],
+        [
+            "cargo",
+            "clippy",
+            "--workspace",
+            "--all-targets",
+            *features,
+            "--",
+            "-D",
+            "warnings",
+        ],
         cwd=repo,
         capture=False,
     )
@@ -525,7 +538,9 @@ def rebuild_rust(
     if target and not dry_run:
         os.environ["CARGO_TARGET_DIR"] = target
 
-    say(f"{app} -> {package} {version} (repo {slug}, target {target or 'cargo default'})")
+    say(
+        f"{app} -> {package} {version} (repo {slug}, target {target or 'cargo default'})"
+    )
     if dry_run:
         say("DRY RUN -- nothing will be changed or pushed")
 
@@ -533,7 +548,9 @@ def rebuild_rust(
 
     configured = _skip_optimize(repo)
     unoptimized = release_unoptimized or configured
-    say(f"release path: {_release_path(forced=release_unoptimized, configured=configured)}")
+    say(
+        f"release path: {_release_path(forced=release_unoptimized, configured=configured)}"
+    )
 
     dispatch: list[str] = []
     if unoptimized:
@@ -563,15 +580,23 @@ def rebuild_rust(
         say("[dry-run] would regenerate the Dockerfile and docs/ artefacts")
         say(f"[dry-run] would gate on {gates}, then commit '{subject}'")
         if unoptimized:
-            say(f"[dry-run] would land it on {slug} main via a PR without the release trailer")
-            say("[dry-run] would wait for the merge's push run, then dispatch the release:")
+            say(
+                f"[dry-run] would land it on {slug} main via a PR without the release trailer"
+            )
+            say(
+                "[dry-run] would wait for the merge's push run, then dispatch the release:"
+            )
             say(f"[dry-run]   {' '.join(dispatch)}")
             if watch:
-                say("[dry-run] would follow the dispatched run until the GitHub release moves")
+                say(
+                    "[dry-run] would follow the dispatched run until the GitHub release moves"
+                )
             else:
                 say("[dry-run] would return once the dispatch is sent (--no-watch)")
         else:
-            say(f"[dry-run] would land it on {slug} main via a PR and follow the release")
+            say(
+                f"[dry-run] would land it on {slug} main via a PR and follow the release"
+            )
         say("dry run complete -- nothing changed, nothing pushed")
         return 0
 
@@ -653,7 +678,9 @@ def rebuild_rust(
         return 0
 
     if not watch:
-        say(f"merged {merged[:12]} -- not watching (--no-watch). Check: gh run list -R {slug}")
+        say(
+            f"merged {merged[:12]} -- not watching (--no-watch). Check: gh run list -R {slug}"
+        )
         return 0
 
     follow_release(
@@ -711,11 +738,15 @@ def _assert_locked(repo: Path, version: str, *, package: str = "scalo") -> None:
         FleetError: If the package is absent from the lock or resolved elsewhere.
     """
     lock = (repo / "uv.lock").read_text(encoding="utf-8")
-    match = re.search(rf'name\s*=\s*"{re.escape(package)}"\s*\nversion\s*=\s*"([^"]+)"', lock)
+    match = re.search(
+        rf'name\s*=\s*"{re.escape(package)}"\s*\nversion\s*=\s*"([^"]+)"', lock
+    )
     if not match:
         raise FleetError(f"{package} not found in uv.lock")
     if match.group(1) != version:
-        raise FleetError(f"uv.lock resolved {package} {match.group(1)}, expected {version}")
+        raise FleetError(
+            f"uv.lock resolved {package} {match.group(1)}, expected {version}"
+        )
     say(f"lock confirms {package} {version}")
 
 
@@ -804,7 +835,9 @@ def rebuild_python(
     assert merged is not None
 
     if not watch:
-        say(f"merged {merged[:12]} -- not watching (--no-watch). Check: gh run list -R {slug}")
+        say(
+            f"merged {merged[:12]} -- not watching (--no-watch). Check: gh run list -R {slug}"
+        )
         return 0
 
     follow_release(

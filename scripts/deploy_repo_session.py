@@ -48,15 +48,25 @@ def read_admin(kubeconfig: str | None, namespace: str, secret: str) -> tuple[str
     """The (username, password) of the Forgejo admin Secret, read in this process."""
     out = subprocess.run(
         _kubectl(kubeconfig, "-n", namespace, "get", "secret", secret, "-o", "json"),
-        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
     )
     if out.returncode != 0:
-        raise SessionError(f"cannot read secret {namespace}/{secret}: {out.stderr.strip().splitlines()[-1:] or ['no detail']}")
+        raise SessionError(
+            f"cannot read secret {namespace}/{secret}: {out.stderr.strip().splitlines()[-1:] or ['no detail']}"
+        )
     try:
         data = json.loads(out.stdout)["data"]
-        return base64.b64decode(data["username"]).decode(), base64.b64decode(data["password"]).decode()
+        return base64.b64decode(data["username"]).decode(), base64.b64decode(
+            data["password"]
+        ).decode()
     except (KeyError, ValueError) as exc:
-        raise SessionError(f"secret {namespace}/{secret} lacks a username and password: {exc!r}") from exc
+        raise SessionError(
+            f"secret {namespace}/{secret} lacks a username and password: {exc!r}"
+        ) from exc
 
 
 def git_auth_env(user: str, password: str) -> dict[str, str]:
@@ -109,13 +119,25 @@ class BundledRepo:
         user, password = read_admin(self.kubeconfig, self.namespace, self.secret)
         port = free_port()
         forward = subprocess.Popen(
-            _kubectl(self.kubeconfig, "-n", self.namespace, "port-forward", self.service, f"{port}:{FORGEJO_REMOTE_PORT}"),
-            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace",
+            _kubectl(
+                self.kubeconfig,
+                "-n",
+                self.namespace,
+                "port-forward",
+                self.service,
+                f"{port}:{FORGEJO_REMOTE_PORT}",
+            ),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
         )
         try:
             self._wait_ready(port, forward)
             session = Session(
-                f"http://127.0.0.1:{port}/{self.owner or user}/{self.repo}.git", git_auth_env(user, password)
+                f"http://127.0.0.1:{port}/{self.owner or user}/{self.repo}.git",
+                git_auth_env(user, password),
             )
             self._attach(checkout, session)
             yield session
@@ -128,27 +150,58 @@ class BundledRepo:
         deadline = time.monotonic() + self.ready_timeout
         while time.monotonic() < deadline:
             if forward.poll() is not None:
-                reason = (forward.stderr.read() if forward.stderr else "").strip().splitlines()[-1:]
-                raise SessionError(f"port-forward to {self.namespace}/{self.service} exited: {reason or 'no detail'}")
-            with contextlib.suppress(OSError), socket.create_connection(("127.0.0.1", port), timeout=1):
+                reason = (
+                    (forward.stderr.read() if forward.stderr else "")
+                    .strip()
+                    .splitlines()[-1:]
+                )
+                raise SessionError(
+                    f"port-forward to {self.namespace}/{self.service} exited: {reason or 'no detail'}"
+                )
+            with (
+                contextlib.suppress(OSError),
+                socket.create_connection(("127.0.0.1", port), timeout=1),
+            ):
                 return
             time.sleep(0.5)
-        raise SessionError(f"port-forward to {self.namespace}/{self.service} not ready after {self.ready_timeout:.0f}s")
+        raise SessionError(
+            f"port-forward to {self.namespace}/{self.service} not ready after {self.ready_timeout:.0f}s"
+        )
 
     def _attach(self, checkout: Path, session: Session) -> None:
         """Clone into `checkout` when it holds no repo, else retarget its origin at this session."""
         env = {**os.environ, **session.git_env}
         if (checkout / ".git").exists():
             run = subprocess.run(
-                ["git", "-C", str(checkout), "remote", "set-url", "origin", session.url],
-                capture_output=True, text=True, encoding="utf-8", errors="replace", env=env, check=False,
+                [
+                    "git",
+                    "-C",
+                    str(checkout),
+                    "remote",
+                    "set-url",
+                    "origin",
+                    session.url,
+                ],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                env=env,
+                check=False,
             )
         else:
             checkout.parent.mkdir(parents=True, exist_ok=True)
             run = subprocess.run(
                 ["git", "clone", "--quiet", session.url, str(checkout)],
-                capture_output=True, text=True, encoding="utf-8", errors="replace", env=env, check=False,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                env=env,
+                check=False,
             )
         if run.returncode != 0:
             detail = run.stderr.strip().splitlines()[-1:] or ["no detail"]
-            raise SessionError(f"cannot attach {checkout} to the deploy repo: {detail[0]}")
+            raise SessionError(
+                f"cannot attach {checkout} to the deploy repo: {detail[0]}"
+            )

@@ -125,7 +125,9 @@ def test_a_chart_lookup_waits_out_two_429s_and_then_answers(monkeypatch, slept) 
     assert slept == [4.0, 8.0]
 
 
-def test_a_chart_pull_waits_out_a_429_and_then_unpacks(monkeypatch, slept, tmp_path) -> None:
+def test_a_chart_pull_waits_out_a_429_and_then_unpacks(
+    monkeypatch, slept, tmp_path
+) -> None:
     attempts: list[list[str]] = []
 
     def helm_pull(cmd: list[str], *_args: object, **_kwargs: object):
@@ -191,8 +193,13 @@ def test_the_failure_reaches_the_gate_as_a_named_error_not_a_pass(
     assert "public.ecr.aws rate limited" in broken[0]
 
 
-def test_a_server_error_that_never_clears_is_not_called_a_rate_limit(monkeypatch, slept) -> None:
-    serve(monkeypatch, FakeRegistry(docker=[(1, "", "ERROR: 503 Service Unavailable")] * 5))
+def test_a_server_error_that_never_clears_is_not_called_a_rate_limit(
+    monkeypatch, slept
+) -> None:
+    serve(
+        monkeypatch,
+        FakeRegistry(docker=[(1, "", "ERROR: 503 Service Unavailable")] * 5),
+    )
 
     _found, err = pins.ref_platforms("quay.io/strimzi/operator:1.2.0", gate_budget())
 
@@ -208,7 +215,9 @@ def test_a_server_error_that_never_clears_is_not_called_a_rate_limit(monkeypatch
         ("helm", "Error: chart not found: karpenter version 9.9.9"),
     ],
 )
-def test_an_absence_or_an_auth_error_is_not_retried(monkeypatch, slept, tool, stderr) -> None:
+def test_an_absence_or_an_auth_error_is_not_retried(
+    monkeypatch, slept, tool, stderr
+) -> None:
     registry = serve(monkeypatch, FakeRegistry(**{tool: [(1, "", stderr)]}))
 
     if tool == "docker":

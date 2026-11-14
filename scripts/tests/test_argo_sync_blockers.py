@@ -44,9 +44,14 @@ FILLED_OIDC = (
 
 def render(chart: str, *sets: str) -> list[dict]:
     cmd = [
-        "helm", "template", "t", str(chart_dir(chart)),
-        "-f", str(VALUES / "common.yaml"),
-        "-f", str(VALUES / "aws.yaml"),
+        "helm",
+        "template",
+        "t",
+        str(chart_dir(chart)),
+        "-f",
+        str(VALUES / "common.yaml"),
+        "-f",
+        str(VALUES / "aws.yaml"),
     ]
     for entry in sets:
         cmd += ["--set", entry]
@@ -63,7 +68,7 @@ def secret_refs(docs: list[dict]) -> list[tuple[str, str]]:
         template = (doc.get("spec") or {}).get("template") or {}
         for container in (template.get("spec") or {}).get("containers") or []:
             for env in container.get("env") or []:
-                ref = ((env.get("valueFrom") or {}).get("secretKeyRef") or {})
+                ref = (env.get("valueFrom") or {}).get("secretKeyRef") or {}
                 if ref:
                     refs.append((env["name"], ref.get("name", "")))
     return refs
@@ -81,8 +86,11 @@ def test_kafbat_takes_the_oidc_secret_once_the_block_is_filled() -> None:
     """The degrade must not become a ceiling -- a filled block still gets
     OAUTH2 and the secret the deployer named."""
     refs = dict(secret_refs(render("kafbat", *FILLED_OIDC)))
-    expect("the client secret is taken from the named secret",
-           refs.get("OAUTH_CLIENT_SECRET") == "dfe-kafbat-oidc", f"got {refs}")
+    expect(
+        "the client secret is taken from the named secret",
+        refs.get("OAUTH_CLIENT_SECRET") == "dfe-kafbat-oidc",
+        f"got {refs}",
+    )
 
 
 def test_the_platform_appset_sets_the_namespace_the_policies_target() -> None:
@@ -92,11 +100,15 @@ def test_the_platform_appset_sets_the_namespace_the_policies_target() -> None:
     lines = (APPSETS / "layer2-platform.yaml").read_text(encoding="utf-8").splitlines()
     read = '.metadata.annotations "dfe.hyperi.io/dfe_namespace"'
     paired = [
-        i for i, ln in enumerate(lines)
+        i
+        for i, ln in enumerate(lines)
         if read in ln and i and "name: dfeNamespaces[0]" in lines[i - 1]
     ]
-    expect("layer2-platform lands dfe_namespace on dfeNamespaces[0]", paired != [],
-           "the chart would keep its own default namespace")
+    expect(
+        "layer2-platform lands dfe_namespace on dfeNamespaces[0]",
+        paired != [],
+        "the chart would keep its own default namespace",
+    )
 
 
 def test_every_layer2_appset_states_the_deployments_posture() -> None:
@@ -106,15 +118,23 @@ def test_every_layer2_appset_states_the_deployments_posture() -> None:
     find by posture -- the Gateway, the routes and the public certificates."""
     for appset in ("layer2-data.yaml", "layer2-platform.yaml", "layer2-edge.yaml"):
         body = (APPSETS / appset).read_text(encoding="utf-8")
-        for key, annotation in (("env", "dfe.hyperi.io/env"), ("cloud", "dfe.hyperi.io/cloud")):
+        for key, annotation in (
+            ("env", "dfe.hyperi.io/env"),
+            ("cloud", "dfe.hyperi.io/cloud"),
+        ):
             lines = body.splitlines()
             paired = [
-                i for i, ln in enumerate(lines)
+                i
+                for i, ln in enumerate(lines)
                 if f'.metadata.annotations "{annotation}"' in ln
-                and i and f"name: {key}" in lines[i - 1]
+                and i
+                and f"name: {key}" in lines[i - 1]
             ]
-            expect(f"{appset} passes {key} from {annotation}", paired != [],
-                   f"{key} stays at the chart default")
+            expect(
+                f"{appset} passes {key} from {annotation}",
+                paired != [],
+                f"{key} stays at the chart default",
+            )
 
 
 def main() -> int:

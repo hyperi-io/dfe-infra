@@ -36,7 +36,8 @@ TEMPLATES = sorted((BOOTSTRAP / "templates").glob("*.tpl"))
 
 ENVSUBST = shutil.which("envsubst")
 needs_envsubst = pytest.mark.skipif(
-    ENVSUBST is None, reason="envsubst is not installed, so there is nothing to compare against"
+    ENVSUBST is None,
+    reason="envsubst is not installed, so there is nothing to compare against",
 )
 
 # Every name a template writes after a `$`, `${NAME:-x}` forms included, so those are
@@ -57,7 +58,9 @@ def _names(template: Path) -> list[str]:
 
 
 def _render(command: list[str], stdin: bytes, env: dict[str, str]) -> bytes:
-    done = subprocess.run(command, input=stdin, env=env, capture_output=True, check=False)
+    done = subprocess.run(
+        command, input=stdin, env=env, capture_output=True, check=False
+    )
     assert done.returncode == 0, done.stderr.decode("utf-8", "replace")
     return done.stdout
 
@@ -92,7 +95,9 @@ def test_every_template_bootstrap_renders_is_covered() -> None:
 @needs_envsubst
 @pytest.mark.parametrize("state", ["set", "unset", "empty"])
 @pytest.mark.parametrize("template", TEMPLATES, ids=lambda t: t.name)
-def test_every_template_renders_as_envsubst_renders_it(template: Path, state: str) -> None:
+def test_every_template_renders_as_envsubst_renders_it(
+    template: Path, state: str
+) -> None:
     names = _names(template)
     assert names, f"{template.name} names no variable"
     expected, got = _both(template.read_bytes(), _env_for(names, state))
@@ -152,13 +157,16 @@ def test_edge_cases_render_as_envsubst_renders_them(text: bytes) -> None:
 def test_both_forms_take_the_value_and_an_unset_name_renders_empty() -> None:
     env = {b"NAME": b"value"}
     assert (
-        render_env.render(b"a=$NAME b=${NAME} c=${GONE} d=$GONE.", env) == b"a=value b=value c= d=."
+        render_env.render(b"a=$NAME b=${NAME} c=${GONE} d=$GONE.", env)
+        == b"a=value b=value c= d=."
     )
 
 
 def test_a_name_runs_to_its_last_name_character() -> None:
     env = {b"NAME": b"short", b"NAME_2": b"long"}
-    assert render_env.render(b"$NAME_2 $NAME-2 ${NAME}_2", env) == b"long short-2 short_2"
+    assert (
+        render_env.render(b"$NAME_2 $NAME-2 ${NAME}_2", env) == b"long short-2 short_2"
+    )
 
 
 def test_a_shell_default_and_a_go_template_are_left_as_written() -> None:
@@ -173,13 +181,18 @@ def test_a_value_is_written_once_and_never_read_for_references() -> None:
 
 def test_bytes_that_are_not_utf8_pass_through() -> None:
     env = {b"RAW": b"\xff\x00\xfe"}
-    assert render_env.render(b"\xe2\x80\x94 $RAW \xc3", env) == b"\xe2\x80\x94 \xff\x00\xfe \xc3"
+    assert (
+        render_env.render(b"\xe2\x80\x94 $RAW \xc3", env)
+        == b"\xe2\x80\x94 \xff\x00\xfe \xc3"
+    )
 
 
 def test_the_cli_renders_stdin_to_stdout_from_its_environment() -> None:
     env = {"PATH": os.environ.get("PATH", os.defpath), "DFE_PROFILE": "scale"}
     got = _render(
-        [sys.executable, str(RENDER_ENV)], b'profile: "${DFE_PROFILE}"\nzone: "$GONE"\n', env
+        [sys.executable, str(RENDER_ENV)],
+        b'profile: "${DFE_PROFILE}"\nzone: "$GONE"\n',
+        env,
     )
     assert got == b'profile: "scale"\nzone: ""\n'
 
@@ -194,12 +207,16 @@ def test_the_cli_refuses_an_argument_it_does_not_take() -> None:
     assert done.returncode == 2
 
 
-def test_bootstrap_renders_every_template_through_render_env_and_never_envsubst() -> None:
+def test_bootstrap_renders_every_template_through_render_env_and_never_envsubst() -> (
+    None
+):
     lines = (BOOTSTRAP / "bootstrap.sh").read_text(encoding="utf-8").splitlines()
     code = [line for line in lines if not line.lstrip().startswith("#")]
     assert [line for line in code if re.search(r"\benvsubst\b", line)] == []
     renders = [
-        line for line in code if "render_env.py" in line and not line.lstrip().startswith("echo ")
+        line
+        for line in code
+        if "render_env.py" in line and not line.lstrip().startswith("echo ")
     ]
     # The cluster secret, the AWS StorageClass, the MetalLB pool and both secret store bodies.
     assert len(renders) == 5, renders

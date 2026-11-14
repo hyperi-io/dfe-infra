@@ -106,7 +106,9 @@ class BuildLinks:
             Its raw URL for an image, its blob URL otherwise, or None when no member
             holds it.
         """
-        for path, (repo, ref) in sorted(self.members.items(), key=lambda item: -len(item[0])):
+        for path, (repo, ref) in sorted(
+            self.members.items(), key=lambda item: -len(item[0])
+        ):
             if resolved != path and not resolved.startswith(f"{path}/"):
                 continue
             inside = resolved[len(path) :].lstrip("/")
@@ -132,7 +134,9 @@ def load_pages(entry: Mapping[str, object], content: Path = CONTENT) -> list[Pag
     """
     manifest = content / "_manifests" / f"{entry['name']}.json"
     if not manifest.is_file():
-        raise SystemExit(f"error: {manifest} is missing: the page-manifest plugin did not run")
+        raise SystemExit(
+            f"error: {manifest} is missing: the page-manifest plugin did not run"
+        )
     tree = f"content/{entry['name']}/"
     openapi = entry.get("openapi") or {}
     api = f"content/{openapi['output']}/" if openapi else None
@@ -140,14 +144,20 @@ def load_pages(entry: Mapping[str, object], content: Path = CONTENT) -> list[Pag
     for raw in json.loads(manifest.read_text(encoding="utf-8")):
         source = raw["source"]
         if not source.startswith(tree):
-            raise SystemExit(f"error: {raw['permalink']} comes from {source}, outside {tree}")
+            raise SystemExit(
+                f"error: {raw['permalink']} comes from {source}, outside {tree}"
+            )
         if api and source.startswith(api):
             continue
-        pages.append(Page(raw["title"], source, raw["permalink"], raw.get("description") or ""))
+        pages.append(
+            Page(raw["title"], source, raw["permalink"], raw.get("description") or "")
+        )
     return sorted(pages, key=lambda page: page.permalink)
 
 
-def rewrite_links(text: str, page: Page, by_source: Mapping[str, Page], build: BuildLinks) -> str:
+def rewrite_links(
+    text: str, page: Page, by_source: Mapping[str, Page], build: BuildLinks
+) -> str:
     """Point each relative link at another page's markdown copy, or at the file on GitHub.
 
     Args:
@@ -174,12 +184,18 @@ def rewrite_links(text: str, page: Page, by_source: Mapping[str, Page], build: B
         resolved = posixpath.normpath(posixpath.join(page_dir, path))
         candidates = [resolved]
         if path.endswith("/") or not posixpath.splitext(path)[1]:
-            candidates += [f"{resolved}/README.md", f"{resolved}/index.md", f"{resolved}.md"]
+            candidates += [
+                f"{resolved}/README.md",
+                f"{resolved}/index.md",
+                f"{resolved}.md",
+            ]
         found = next((by_source[c] for c in candidates if c in by_source), None)
         anchor = f"#{fragment}" if hash_mark else ""
         if found:
             new = build.markdown_url(found.permalink) + anchor
-        elif resolved.startswith(tree) and (github := build.on_github(resolved[len(tree) :])):
+        elif resolved.startswith(tree) and (
+            github := build.on_github(resolved[len(tree) :])
+        ):
             new = github + anchor
         else:
             return match.group(0)
@@ -253,7 +269,8 @@ def load_tasks(path: Path = TASKS_FILE) -> Mapping[str, object]:
     tree = yaml_subset.parse(path.read_text(encoding="utf-8"), source=str(path))
     tasks = tree.get("tasks")
     if not isinstance(tasks, dict) or not all(
-        isinstance(task, dict) and {"page", "expect"} <= task.keys() for task in tasks.values()
+        isinstance(task, dict) and {"page", "expect"} <= task.keys()
+        for task in tasks.values()
     ):
         raise SystemExit(f"error: {path.name}: every task needs a page and an expect")
     return tasks
@@ -299,10 +316,14 @@ def finish(
             missing.append(page.permalink)
             continue
         text = copy.read_text(encoding="utf-8")
-        copy.write_text(rewrite_links(text, page, by_source, build), encoding="utf-8", newline="\n")
+        copy.write_text(
+            rewrite_links(text, page, by_source, build), encoding="utf-8", newline="\n"
+        )
         add_alternate(html, md)
     if missing:
-        raise SystemExit(f"error: {len(missing)} page(s) with no .md copy or HTML: {missing[:5]}")
+        raise SystemExit(
+            f"error: {len(missing)} page(s) with no .md copy or HTML: {missing[:5]}"
+        )
 
     root = build_dir / base_url.strip("/")
     openapi = entry.get("openapi") or {}
@@ -312,10 +333,14 @@ def finish(
         spec.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(content / str(openapi["raw"]), spec)
     elif entry.get("listed"):
-        raise SystemExit(f"error: {entry['name']}: no OpenAPI spec, so no API reference")
+        raise SystemExit(
+            f"error: {entry['name']}: no OpenAPI spec, so no API reference"
+        )
     else:
         # The preview follows each member's default branch, which can lack a spec.
-        tasks = {name: task for name, task in tasks.items() if task["page"] != OPENAPI_FILE}
+        tasks = {
+            name: task for name, task in tasks.items() if task["page"] != OPENAPI_FILE
+        }
     bundles = sorted((root / BUNDLE_DIR).glob("*.txt"))
     index = (root / LLMS).read_text(encoding="utf-8").rstrip("\n")
     lines = ["", "", "## Section bundles", ""]
@@ -331,6 +356,7 @@ def finish(
     problems = dead_links(root, build_dir) + failed_tasks(root, tasks)
     if problems:
         raise SystemExit(
-            f"error: {entry['name']}: the agent layer fails:\n  " + "\n  ".join(problems)
+            f"error: {entry['name']}: the agent layer fails:\n  "
+            + "\n  ".join(problems)
         )
     return len(pages)

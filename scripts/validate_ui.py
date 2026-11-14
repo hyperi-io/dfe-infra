@@ -80,7 +80,10 @@ def validate(url: str, shot: str | None, settle_ms: int) -> int:
     with sync_playwright() as p:
         browser = p.chromium.launch()
         page = browser.new_page(viewport={"width": 1440, "height": 900})
-        page.on("console", lambda m: console_errors.append(m.text) if m.type == "error" else None)
+        page.on(
+            "console",
+            lambda m: console_errors.append(m.text) if m.type == "error" else None,
+        )
         page.on("pageerror", lambda e: page_errors.append(str(e)))
 
         resp = page.goto(url, wait_until="domcontentloaded", timeout=60000)
@@ -98,7 +101,9 @@ def validate(url: str, shot: str | None, settle_ms: int) -> int:
         browser.close()
 
     font_ok = EXPECT_FONT.lower() in (info["bodyFont"] or "").lower()
-    checks.append(("font-inter", font_ok, "" if font_ok else f"body font={info['bodyFont']!r}"))
+    checks.append(
+        ("font-inter", font_ok, "" if font_ok else f"body font={info['bodyFont']!r}")
+    )
 
     palette_ok = bool(info["props"])
     checks.append(
@@ -111,7 +116,11 @@ def validate(url: str, shot: str | None, settle_ms: int) -> int:
 
     stuck = any(m in (info["text"] or "") for m in STUCK_MARKERS)
     checks.append(
-        ("not-stuck", not stuck, "" if not stuck else f"app stuck on splash: {info['text']!r}")
+        (
+            "not-stuck",
+            not stuck,
+            "" if not stuck else f"app stuck on splash: {info['text']!r}",
+        )
     )
 
     # A TOP bar sits at top:0 AND is short (a bar). A full-height LEFT sidebar also
@@ -145,7 +154,9 @@ def validate(url: str, shot: str | None, settle_ms: int) -> int:
         if not ok:
             failures += 1
     if console_errors or page_errors:
-        print(f"\n  console errors ({len(console_errors)}), page errors ({len(page_errors)}):")
+        print(
+            f"\n  console errors ({len(console_errors)}), page errors ({len(page_errors)}):"
+        )
         for e in (console_errors + page_errors)[:20]:
             print(f"    - {e[:200]}")
     print(f"\n{len(checks) - failures}/{len(checks)} checks passed.")
@@ -155,8 +166,12 @@ def validate(url: str, shot: str | None, settle_ms: int) -> int:
 def main() -> int:
     ap = argparse.ArgumentParser(description="Headless-browser DFE UI validator.")
     ap.add_argument("--url", default="http://localhost:8080")
-    ap.add_argument("--shot", default=None, help="save a full-page screenshot to this path")
-    ap.add_argument("--settle-ms", type=int, default=6000, help="wait after load for SPA hydrate")
+    ap.add_argument(
+        "--shot", default=None, help="save a full-page screenshot to this path"
+    )
+    ap.add_argument(
+        "--settle-ms", type=int, default=6000, help="wait after load for SPA hydrate"
+    )
     args = ap.parse_args()
     return validate(args.url, args.shot, args.settle_ms)
 

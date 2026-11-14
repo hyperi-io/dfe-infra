@@ -51,6 +51,7 @@ def _engine_checkout_is_the_pin(monkeypatch: pytest.MonkeyPatch) -> None:
     """These tests are about what the stage does after the checkout gates, which have their own tests."""
     monkeypatch.setattr(dfeops, "_checkout_gate", lambda *_args: 0)
 
+
 from acceptance import clients  # noqa: E402
 
 APP_NAMESPACE = "dfe-aws-test"
@@ -120,7 +121,9 @@ def test_a_datastore_speaks_plain_http_unless_told_otherwise(plain_server) -> No
 
 def test_a_secure_datastore_opens_tls_before_it_sends_anything(plain_server) -> None:
     """A plain listener answers a TLS hello with HTTP, which no handshake accepts."""
-    store = clients.Datastore("127.0.0.1", plain_server.server_port, "default", secure=True)
+    store = clients.Datastore(
+        "127.0.0.1", plain_server.server_port, "default", secure=True
+    )
     with pytest.raises(urllib.error.URLError) as refused:
         store.query("SELECT 7")
     assert isinstance(refused.value.reason, ssl.SSLError)
@@ -128,12 +131,22 @@ def test_a_secure_datastore_opens_tls_before_it_sends_anything(plain_server) -> 
 
 
 def test_the_suite_env_names_the_datastore_and_its_scheme() -> None:
-    store = clients.Datastore.from_env({
-        "DFE_E2E_CH_HOST": HOST, "DFE_E2E_CH_PORT": "8443", "DFE_E2E_CH_USER": "dfe_writer",
-        "DFE_E2E_CH_PASSWORD": "from-env", "DFE_E2E_CH_DB": "dfe2", "DFE_E2E_CH_SECURE": "true",
-    })
+    store = clients.Datastore.from_env(
+        {
+            "DFE_E2E_CH_HOST": HOST,
+            "DFE_E2E_CH_PORT": "8443",
+            "DFE_E2E_CH_USER": "dfe_writer",
+            "DFE_E2E_CH_PASSWORD": "from-env",
+            "DFE_E2E_CH_DB": "dfe2",
+            "DFE_E2E_CH_SECURE": "true",
+        }
+    )
     assert (store.host, store.port, store.user, store.database, store.secure) == (
-        HOST, 8443, "dfe_writer", "dfe2", True,
+        HOST,
+        8443,
+        "dfe_writer",
+        "dfe2",
+        True,
     )
     assert store.password == "from-env"
     assert "from-env" not in repr(store)
@@ -141,9 +154,15 @@ def test_the_suite_env_names_the_datastore_and_its_scheme() -> None:
 
 def test_a_suite_env_without_a_scheme_keeps_plain_http() -> None:
     """dfe-ops forwards an in-cluster server onto localhost, which serves plain HTTP."""
-    store = clients.Datastore.from_env({"DFE_E2E_CH_HOST": "localhost", "DFE_E2E_CH_PORT": "18123"})
+    store = clients.Datastore.from_env(
+        {"DFE_E2E_CH_HOST": "localhost", "DFE_E2E_CH_PORT": "18123"}
+    )
     assert (store.host, store.port, store.user, store.database, store.secure) == (
-        "localhost", 18123, "default", "dfe", False,
+        "localhost",
+        18123,
+        "default",
+        "dfe",
+        False,
     )
 
 
@@ -166,22 +185,36 @@ def _acceptance(
     DFE_E2E_CH_* keys it handed the runner (empty when the runner never started),
     and the cluster-secret reads it made.
     """
-    did: dict = {"forwards": [], "probed": [], "secrets": [], "ch": {}, "cluster_reads": []}
+    did: dict = {
+        "forwards": [],
+        "probed": [],
+        "secrets": [],
+        "ch": {},
+        "cluster_reads": [],
+    }
 
     class Done:
         returncode = 0
 
     def fake_run(cmd, *, env=None, **_kwargs):
         if "run.py" in str(cmd[1]):
-            did["ch"] = {k: v for k, v in (env or {}).items() if k.startswith("DFE_E2E_CH_")}
+            did["ch"] = {
+                k: v for k, v in (env or {}).items() if k.startswith("DFE_E2E_CH_")
+            }
             did["sink"] = (env or {}).get(dfeops.ALERT_SINK_VAR)
         return Done()
 
-    def kubectl_json(base: list[str], *argv: str, **_kwargs: object) -> tuple[int, dict, str]:
+    def kubectl_json(
+        base: list[str], *argv: str, **_kwargs: object
+    ) -> tuple[int, dict, str]:
         did["cluster_reads"].append([*base, *argv])
         if annotations is None:
             return 1, {}, "Forbidden"
-        return 0, {"metadata": {"annotations": annotations}, "data": {"config": "c2VjcmV0"}}, ""
+        return (
+            0,
+            {"metadata": {"annotations": annotations}, "data": {"config": "c2VjcmV0"}},
+            "",
+        )
 
     def secret_value(_kube: list[str], namespace: str, name: str, key: str) -> str:
         did["secrets"].append((namespace, name, key))
@@ -191,7 +224,9 @@ def _acceptance(
         did["probed"].append(url)
         return answering
 
-    monkeypatch.setattr(dfeops, "_forward", lambda *args, **_k: did["forwards"].append(args))
+    monkeypatch.setattr(
+        dfeops, "_forward", lambda *args, **_k: did["forwards"].append(args)
+    )
     monkeypatch.setattr(dfeops, "_forward_ready", lambda *_a, **_k: True)
     monkeypatch.setattr(dfeops, "_datastore_ready", datastore_ready)
     monkeypatch.setattr(dfeops, "_kubectl_json", kubectl_json)
@@ -199,14 +234,30 @@ def _acceptance(
     monkeypatch.setattr(dfeops, "_secret_value", secret_value)
     monkeypatch.setattr(dfeops, "_pods_of", lambda *_a, **_k: [])
     monkeypatch.setattr(dfeops, "_resolves", lambda _host: True)
-    monkeypatch.setattr(dfeops, "admin_credential", lambda *_a, **_k: ("admin", "minted"))
+    monkeypatch.setattr(
+        dfeops, "admin_credential", lambda *_a, **_k: ("admin", "minted")
+    )
     monkeypatch.setattr(dfeops.subprocess, "run", fake_run)
     # The run copies the whole environment into the runner's, so it starts from one holding nothing.
-    monkeypatch.setattr(dfeops.os, "environ", {"DFE_NAMESPACE": APP_NAMESPACE, "PATH": "/usr/bin:/bin", **(environ or {})})
-    args = dfeops.build_parser().parse_args([
-        "acceptance", "--repo", "/nonexistent/dfe-engine", "--suite", "source",
-        "--ui-url", "https://dfe.example", "--shots-dir", str(tmp_path / "shots"), *argv,
-    ])
+    monkeypatch.setattr(
+        dfeops.os,
+        "environ",
+        {"DFE_NAMESPACE": APP_NAMESPACE, "PATH": "/usr/bin:/bin", **(environ or {})},
+    )
+    args = dfeops.build_parser().parse_args(
+        [
+            "acceptance",
+            "--repo",
+            "/nonexistent/dfe-engine",
+            "--suite",
+            "source",
+            "--ui-url",
+            "https://dfe.example",
+            "--shots-dir",
+            str(tmp_path / "shots"),
+            *argv,
+        ]
+    )
     assert dfeops.cmd_acceptance(args) == expect
     return did
 
@@ -227,7 +278,9 @@ def test_an_external_datastore_is_dialled_directly_with_no_forward(
     }
     # The copy clickhouse-cluster projects for the apps, never the server's own namespace.
     assert did["secrets"] == [(APP_NAMESPACE, "clickhouse-admin-password", "password")]
-    assert did["cluster_reads"] == [["kubectl", "-n", "argocd", "get", "secret", "dfe-cluster"]]
+    assert did["cluster_reads"] == [
+        ["kubectl", "-n", "argocd", "get", "secret", "dfe-cluster"]
+    ]
 
 
 def test_a_plaintext_external_datastore_is_dialled_in_plaintext(
@@ -235,16 +288,23 @@ def test_a_plaintext_external_datastore_is_dialled_in_plaintext(
 ) -> None:
     did = _acceptance(monkeypatch, tmp_path, PLAINTEXT)
     assert did["probed"] == [f"http://{HOST}:8123/ping"]
-    assert (did["ch"]["DFE_E2E_CH_SECURE"], did["ch"]["DFE_E2E_CH_PORT"]) == ("false", "8123")
+    assert (did["ch"]["DFE_E2E_CH_SECURE"], did["ch"]["DFE_E2E_CH_PORT"]) == (
+        "false",
+        "8123",
+    )
     assert did["ch"]["DFE_E2E_CH_USER"] == "dfe_writer"
 
 
-def test_a_named_ch_user_wins_over_the_cluster_secret(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_a_named_ch_user_wins_over_the_cluster_secret(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     did = _acceptance(monkeypatch, tmp_path, EXTERNAL, "--ch-user", "dfe_reader")
     assert did["ch"]["DFE_E2E_CH_USER"] == "dfe_reader"
 
 
-@pytest.mark.parametrize("annotations", [IN_CLUSTER, {}, None], ids=["in_cluster", "no-facts", "unreadable"])
+@pytest.mark.parametrize(
+    "annotations", [IN_CLUSTER, {}, None], ids=["in_cluster", "no-facts", "unreadable"]
+)
 def test_an_in_cluster_datastore_keeps_its_forward(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, annotations: dict[str, str] | None
 ) -> None:
@@ -273,9 +333,14 @@ def test_expected_fail_an_external_datastore_that_never_answers_stops_the_run_wi
     assert HOST not in err
 
 
-@pytest.mark.parametrize("missing", ["dfe.hyperi.io/clickhouse_host", "dfe.hyperi.io/clickhouse_port"])
+@pytest.mark.parametrize(
+    "missing", ["dfe.hyperi.io/clickhouse_host", "dfe.hyperi.io/clickhouse_port"]
+)
 def test_expected_fail_an_external_server_with_no_address_is_refused(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture, missing: str
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture,
+    missing: str,
 ) -> None:
     did = _acceptance(monkeypatch, tmp_path, {**EXTERNAL, missing: ""}, expect=1)
     assert (did["forwards"], did["ch"]) == ([], {})
@@ -294,13 +359,18 @@ def test_the_readiness_probe_names_no_address(capsys: pytest.CaptureFixture) -> 
     ("target", "url"),
     [
         ("svc/dfe-receiver", "http://dfe-receiver.dfe.svc.cluster.local:8080/ingest"),
-        ("service/edge-receiver", "http://edge-receiver.dfe.svc.cluster.local:8080/ingest"),
+        (
+            "service/edge-receiver",
+            "http://edge-receiver.dfe.svc.cluster.local:8080/ingest",
+        ),
         ("pod/dfe-receiver-0", ""),
         ("deploy/dfe-receiver", ""),
         ("svc/", ""),
     ],
 )
-def test_the_alert_sink_is_the_receiver_service_as_a_pod_reaches_it(target: str, url: str) -> None:
+def test_the_alert_sink_is_the_receiver_service_as_a_pod_reaches_it(
+    target: str, url: str
+) -> None:
     assert dfeops.alert_sink_url(target, "dfe") == url
 
 
@@ -308,7 +378,10 @@ def test_the_alert_sink_is_the_receiver_service_as_a_pod_reaches_it(target: str,
     ("environ", "sink"),
     [
         ({}, f"http://dfe-receiver.{APP_NAMESPACE}.svc.cluster.local:8080/ingest"),
-        ({"DFE_E2E_ALERT_SINK_URL": "https://ingest.example/ingest"}, "https://ingest.example/ingest"),
+        (
+            {"DFE_E2E_ALERT_SINK_URL": "https://ingest.example/ingest"},
+            "https://ingest.example/ingest",
+        ),
     ],
     ids=["in-cluster-default", "callers-own-wins"],
 )

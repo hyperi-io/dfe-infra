@@ -74,8 +74,12 @@ def _newest_tags(org: str, app: str) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--app", action="append", help="check only these apps")
-    parser.add_argument("--org", default=DEFAULT_ORG, help=f"GH org (default {DEFAULT_ORG})")
-    parser.add_argument("--stack", help="stack version to check (default: the `current` pointer)")
+    parser.add_argument(
+        "--org", default=DEFAULT_ORG, help=f"GH org (default {DEFAULT_ORG})"
+    )
+    parser.add_argument(
+        "--stack", help="stack version to check (default: the `current` pointer)"
+    )
     args = parser.parse_args()
 
     stack, apps, digests = load_pins(args.stack)
@@ -96,7 +100,9 @@ def main() -> int:
             continue
         digest = digests.get(app)
         if digest is None and SKIP_WITHOUT_DIGEST:
-            skipped.append(f"  [skip]    {app} {version} -- no digest pin (not yet published)")
+            skipped.append(
+                f"  [skip]    {app} {version} -- no digest pin (not yet published)"
+            )
             continue
 
         try:
@@ -125,10 +131,14 @@ def main() -> int:
     if failures:
         print("\nImage pins do NOT resolve:", file=sys.stderr)
         print("\n".join(failures), file=sys.stderr)
-        print(f"\n{len(failures)} problem(s); {checked} pin(s) verified.", file=sys.stderr)
+        print(
+            f"\n{len(failures)} problem(s); {checked} pin(s) verified.", file=sys.stderr
+        )
         return 1
 
-    print(f"\nOK -- {checked} image pin(s) exist in the registry with the pinned digest.")
+    print(
+        f"\nOK -- {checked} image pin(s) exist in the registry with the pinned digest."
+    )
     return 0
 
 

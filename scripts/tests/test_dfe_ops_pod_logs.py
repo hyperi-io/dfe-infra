@@ -54,6 +54,7 @@ def _engine_checkout_is_the_pin(monkeypatch: pytest.MonkeyPatch) -> None:
     """These tests are about what the stage does after the checkout gates, which have their own tests."""
     monkeypatch.setattr(dfeops, "_checkout_gate", lambda *_args: 0)
 
+
 SELF_CMD = [sys.executable, str(SCRIPT)]
 NAMESPACE = "dfe"
 # Credential values planted in the logs. None may reach a file.
@@ -62,30 +63,50 @@ WAIT = 20.0  # seconds a lifecycle test waits for the follower to reach a state
 
 
 def _ago(seconds: float) -> str:
-    return (datetime.now(UTC) - timedelta(seconds=seconds)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return (datetime.now(UTC) - timedelta(seconds=seconds)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
 
 
 def _stamp(moment: str) -> str:
     return datetime.fromisoformat(moment).strftime("%Y%m%dT%H%M%SZ")
 
 
-def _pod(name: str, *, init: list[dict] | None = None, main: list[dict] | None = None) -> dict:
+def _pod(
+    name: str, *, init: list[dict] | None = None, main: list[dict] | None = None
+) -> dict:
     """A pod as the API returns it: name, namespace and container statuses."""
     return {
         "metadata": {"name": name, "namespace": NAMESPACE},
-        "spec": {"containers": [{"name": "c", "env": [{"name": "TOKEN", "value": PLANTED[1]}]}]},
-        "status": {"initContainerStatuses": init or [], "containerStatuses": main or []},
+        "spec": {
+            "containers": [
+                {"name": "c", "env": [{"name": "TOKEN", "value": PLANTED[1]}]}
+            ]
+        },
+        "status": {
+            "initContainerStatuses": init or [],
+            "containerStatuses": main or [],
+        },
     }
 
 
 def _running(name: str, cid: str, started: str, *, last: dict | None = None) -> dict:
-    status = {"name": name, "containerID": cid, "state": {"running": {"startedAt": started}}}
+    status = {
+        "name": name,
+        "containerID": cid,
+        "state": {"running": {"startedAt": started}},
+    }
     status["lastState"] = {"terminated": last} if last else {}
     return status
 
 
 def _ended(cid: str, started: str, finished: str) -> dict:
-    return {"containerID": cid, "startedAt": started, "finishedAt": finished, "exitCode": 1}
+    return {
+        "containerID": cid,
+        "startedAt": started,
+        "finishedAt": finished,
+        "exitCode": 1,
+    }
 
 
 # --- which runs it reads -----------------------------------------------------------------
@@ -101,17 +122,23 @@ def test_a_restarted_container_is_its_crashed_run_then_its_current_one() -> None
         ("containerd://aaa", True),
         ("containerd://bbb", False),
     ]
-    assert {(run.namespace, run.pod, run.container) for run in runs} == {(NAMESPACE, "p", "app")}
+    assert {(run.namespace, run.pod, run.container) for run in runs} == {
+        (NAMESPACE, "p", "app")
+    }
 
 
 def test_a_run_that_ended_before_the_follower_started_is_not_read() -> None:
     old = _ended("containerd://old", _ago(4000), _ago(3600))
     init = [{"name": "wait-for-engine", "state": {"terminated": old}, "lastState": {}}]
-    pod = _pod("p", init=init, main=[_running("app", "containerd://new", _ago(3500), last=old)])
+    pod = _pod(
+        "p", init=init, main=[_running("app", "containerd://new", _ago(3500), last=old)]
+    )
     assert [run.container_id for run in pl.runs_of(pod, SINCE)] == ["containerd://new"]
 
 
-def test_a_container_terminated_in_the_window_is_read_and_a_waiting_one_is_not() -> None:
+def test_a_container_terminated_in_the_window_is_read_and_a_waiting_one_is_not() -> (
+    None
+):
     ended = _ended("containerd://done", _ago(30), _ago(10))
     init = [{"name": "wait", "state": {"terminated": ended}, "lastState": {}}]
     waiting = {"name": "app", "state": {"waiting": {"reason": "ContainerCreating"}}}
@@ -130,7 +157,9 @@ def test_a_crash_loop_in_backoff_leaves_its_last_run_to_read() -> None:
         "lastState": {"terminated": crashed},
     }
     runs = pl.runs_of(_pod("p", main=[waiting]), SINCE)
-    assert [(run.container_id, run.previous) for run in runs] == [("containerd://ccc", True)]
+    assert [(run.container_id, run.previous) for run in runs] == [
+        ("containerd://ccc", True)
+    ]
 
 
 def test_a_pod_with_no_name_or_no_status_has_no_run() -> None:
@@ -141,9 +170,18 @@ def test_a_pod_with_no_name_or_no_status_has_no_run() -> None:
 
 
 def test_a_runs_file_is_named_by_pod_container_and_its_own_start() -> None:
-    run = pl.Run(NAMESPACE, "dfe-fetcher-x-1", "dfe-fetcher", "containerd://0123456789abcdef",
-                 "2026-10-18T22:48:03Z", False)
-    assert pl.run_path(run) == Path(NAMESPACE) / "dfe-fetcher-x-1.dfe-fetcher.20261018T224803Z.log"
+    run = pl.Run(
+        NAMESPACE,
+        "dfe-fetcher-x-1",
+        "dfe-fetcher",
+        "containerd://0123456789abcdef",
+        "2026-10-18T22:48:03Z",
+        False,
+    )
+    assert (
+        pl.run_path(run)
+        == Path(NAMESPACE) / "dfe-fetcher-x-1.dfe-fetcher.20261018T224803Z.log"
+    )
     unstarted = pl.Run(NAMESPACE, "p", "c", "containerd://0123456789abcdef", "", True)
     assert pl.run_path(unstarted).name == "p.c.0123456789ab.log"
 
@@ -187,13 +225,18 @@ def test_the_proxy_admits_only_pod_lists_and_pod_logs_in_the_named_namespaces() 
 # --- one run's file and the caps --------------------------------------------------------
 
 
-def test_a_run_keeps_its_head_and_its_newest_tail_with_a_line_between(tmp_path: Path) -> None:
+def test_a_run_keeps_its_head_and_its_newest_tail_with_a_line_between(
+    tmp_path: Path,
+) -> None:
     log = pl.RunLog(tmp_path / "ns" / "p.c.1.log", head=10, tail=10)
     for line in (b"aaaa\n", b"bbbb\n", b"cccc\n", b"dddd\n", b"eeee\n"):
         log.write(line)
     kept = log.close()
     text = (tmp_path / "ns" / "p.c.1.log").read_text(encoding="utf-8")
-    assert text == "aaaa\nbbbb\n*** 5 bytes past this run's first 10 not kept ***\ndddd\neeee\n"
+    assert (
+        text
+        == "aaaa\nbbbb\n*** 5 bytes past this run's first 10 not kept ***\ndddd\neeee\n"
+    )
     assert kept == len(text.encode())
     assert log.dropped == 5
 
@@ -256,15 +299,21 @@ def test_no_more_than_max_streams_are_open_at_once(
     assert follower.claim(_run("a", "1")) is not None
     assert follower.claim(_run("b", "2")) is not None
     assert follower.claim(_run("c", "3")) is None
-    assert "2 streams are already open" in (follower.out / fe.INDEX).read_text(encoding="utf-8")
+    assert "2 streams are already open" in (follower.out / fe.INDEX).read_text(
+        encoding="utf-8"
+    )
     follower.release(_run("a", "1"), 0)
     assert follower.claim(_run("c", "3")) is not None
 
 
 def test_two_runs_with_the_same_name_get_two_files(tmp_path: Path) -> None:
     follower = _follower(tmp_path)
-    first = follower.claim(pl.Run(NAMESPACE, "p", "c", "containerd://aaaaaaaaaaaa1", "", False))
-    second = follower.claim(pl.Run(NAMESPACE, "p", "c", "containerd://aaaaaaaaaaaa2", "", False))
+    first = follower.claim(
+        pl.Run(NAMESPACE, "p", "c", "containerd://aaaaaaaaaaaa1", "", False)
+    )
+    second = follower.claim(
+        pl.Run(NAMESPACE, "p", "c", "containerd://aaaaaaaaaaaa2", "", False)
+    )
     assert first is not None
     assert second is not None
     assert first != second
@@ -351,40 +400,74 @@ def _scenario() -> tuple[dict, dict[str, str]]:
     """
     crashed = _ended("containerd://crashed-run", _ago(20), _ago(15))
     current_start = _ago(5)
-    transform = _pod(CRASHED, main=[
-        _running("dfe-transform-vrl", "containerd://current-run", current_start, last=crashed)
-    ])
+    transform = _pod(
+        CRASHED,
+        main=[
+            _running(
+                "dfe-transform-vrl",
+                "containerd://current-run",
+                current_start,
+                last=crashed,
+            )
+        ],
+    )
     init_done = _ended("containerd://init-run", _ago(45), _ago(40))
     fetcher_start = _ago(30)
     fetcher = _pod(
         DELETED,
-        init=[{"name": "wait-for-engine", "state": {"terminated": init_done}, "lastState": {}}],
+        init=[
+            {
+                "name": "wait-for-engine",
+                "state": {"terminated": init_done},
+                "lastState": {},
+            }
+        ],
         main=[_running("dfe-fetcher", "containerd://fetcher-run", fetcher_start)],
     )
     old_init = _ended("containerd://old-init", _ago(4000), _ago(3600))
     old = _pod(
         OLD,
-        init=[{"name": "wait-for-engine", "state": {"terminated": old_init}, "lastState": {}}],
-        main=[{"name": "dfe-receiver", "state": {"waiting": {"reason": "ContainerCreating"}}}],
+        init=[
+            {
+                "name": "wait-for-engine",
+                "state": {"terminated": old_init},
+                "lastState": {},
+            }
+        ],
+        main=[
+            {
+                "name": "dfe-receiver",
+                "state": {"waiting": {"reason": "ContainerCreating"}},
+            }
+        ],
     )
     events = [{"type": "ADDED", "object": pod} for pod in (transform, fetcher, old)]
     events.append({"type": "MODIFIED", "object": transform})
     logs = {
-        f"{CRASHED}/dfe-transform-vrl/previous": {"lines": [
-            "2026-10-18T22:48:01Z starting",
-            f"2026-10-18T22:48:02Z ERROR SASL authentication failed password={PLANTED[0]}",
-            "2026-10-18T22:48:03Z panic: the program did not compile",
-        ]},
-        f"{CRASHED}/dfe-transform-vrl": {"lines": [
-            f"2026-10-18T22:48:20Z DEBUG Authorization: Bearer {PLANTED[1]}",
-            "2026-10-18T22:48:21Z starting again",
-        ], "hold": True},
-        f"{DELETED}/wait-for-engine": {"lines": ["2026-10-18T22:47:00Z the engine answered"]},
-        f"{DELETED}/dfe-fetcher": {"lines": [
-            "2026-10-18T22:47:10Z polling",
-            f"2026-10-18T22:47:11Z key {PLANTED[2]}",
-            "2026-10-18T22:47:12Z received SIGTERM, draining",
-        ]},
+        f"{CRASHED}/dfe-transform-vrl/previous": {
+            "lines": [
+                "2026-10-18T22:48:01Z starting",
+                f"2026-10-18T22:48:02Z ERROR SASL authentication failed password={PLANTED[0]}",
+                "2026-10-18T22:48:03Z panic: the program did not compile",
+            ]
+        },
+        f"{CRASHED}/dfe-transform-vrl": {
+            "lines": [
+                f"2026-10-18T22:48:20Z DEBUG Authorization: Bearer {PLANTED[1]}",
+                "2026-10-18T22:48:21Z starting again",
+            ],
+            "hold": True,
+        },
+        f"{DELETED}/wait-for-engine": {
+            "lines": ["2026-10-18T22:47:00Z the engine answered"]
+        },
+        f"{DELETED}/dfe-fetcher": {
+            "lines": [
+                "2026-10-18T22:47:10Z polling",
+                f"2026-10-18T22:47:11Z key {PLANTED[2]}",
+                "2026-10-18T22:47:12Z received SIGTERM, draining",
+            ]
+        },
     }
     files = {
         "crashed": f"{CRASHED}.dfe-transform-vrl.{_stamp(crashed['startedAt'])}.log",
@@ -396,12 +479,16 @@ def _scenario() -> tuple[dict, dict[str, str]]:
 
 
 @pytest.fixture
-def fake_kubectl(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> tuple[Path, dict[str, str]]:
+def fake_kubectl(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> tuple[Path, dict[str, str]]:
     """A fake kubectl first and alone on PATH, serving the scenario. Returns its request log."""
     bindir = tmp_path / "bin"
     bindir.mkdir()
     fake = bindir / "kubectl"
-    fake.write_text(FAKE_KUBECTL.format(python=sys.executable), encoding="utf-8", newline="\n")
+    fake.write_text(
+        FAKE_KUBECTL.format(python=sys.executable), encoding="utf-8", newline="\n"
+    )
     fake.chmod(0o755)
     script, files = _scenario()
     script_file = tmp_path / "script.json"
@@ -475,7 +562,10 @@ def test_a_deleted_pod_and_a_crashed_run_each_leave_their_log(
     assert sorted(path.name for path in logs.iterdir()) == sorted(files.values())
     index = _index(out)
     assert f"{NAMESPACE}/{files['deleted']}: the stream ended, " in index
-    assert f"{NAMESPACE}/{files['current']}: still open when the follower stopped, " in index
+    assert (
+        f"{NAMESPACE}/{files['current']}: still open when the follower stopped, "
+        in index
+    )
     assert "stopped " in index.splitlines()[-1]
     assert "its owner closed standard input. 4 run(s) followed, 4 file(s)" in index
     for path in out.rglob("*"):
@@ -501,7 +591,9 @@ def test_it_asks_for_pod_lists_and_pod_logs_alone_and_the_window_only(
     gets = [entry for entry in entries if entry.get("method")]
     assert {entry["method"] for entry in gets} == {"GET"}
     for entry in gets:
-        assert re.fullmatch(rf"/api/v1/namespaces/{NAMESPACE}/pods(/[^/]+/log)?", entry["path"])
+        assert re.fullmatch(
+            rf"/api/v1/namespaces/{NAMESPACE}/pods(/[^/]+/log)?", entry["path"]
+        )
         assert OLD not in entry["path"]
     reads = [entry for entry in gets if entry["path"].endswith("/log")]
     previous = [entry for entry in reads if "previous" in entry["query"]]
@@ -539,7 +631,9 @@ def test_a_sigterm_stops_it_with_every_tail_written(
     finally:
         pl.finish(owned, keep=True)
     assert ": SIGTERM. " in _index(out)
-    assert "starting again" in (out / NAMESPACE / files["current"]).read_text(encoding="utf-8")
+    assert "starting again" in (out / NAMESPACE / files["current"]).read_text(
+        encoding="utf-8"
+    )
     _until(lambda: not _alive(_proxy_pid(log)), "the proxy is gone")
 
 
@@ -550,9 +644,23 @@ def test_it_stops_itself_at_max_seconds(
     out = tmp_path / "out"
     started = time.monotonic()
     done = subprocess.run(
-        [*SELF_CMD, "pod-logs", "--out", str(out), "--namespace", NAMESPACE, "--max-seconds", "2"],
-        stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8",
-        errors="replace", timeout=60, check=False,
+        [
+            *SELF_CMD,
+            "pod-logs",
+            "--out",
+            str(out),
+            "--namespace",
+            NAMESPACE,
+            "--max-seconds",
+            "2",
+        ],
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=60,
+        check=False,
     )
     assert done.returncode == 0, done.stderr
     assert time.monotonic() - started < 2 + pl.JOIN_TIMEOUT + pl.PROXY_STOP
@@ -561,17 +669,26 @@ def test_it_stops_itself_at_max_seconds(
 
 
 def test_a_proxy_that_never_serves_is_named_and_it_still_exits_zero(
-    monkeypatch: pytest.MonkeyPatch, fake_kubectl: tuple[Path, dict[str, str]], tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
+    fake_kubectl: tuple[Path, dict[str, str]],
+    tmp_path: Path,
 ) -> None:
     monkeypatch.setenv("FAKE_KUBECTL_EXIT", "3")
     out = tmp_path / "out"
     done = subprocess.run(
         [*SELF_CMD, "pod-logs", "--out", str(out), "--namespace", NAMESPACE],
-        stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8",
-        errors="replace", timeout=60, check=False,
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=60,
+        check=False,
     )
     assert done.returncode == 0, done.stderr
-    assert "the kubectl proxy exited 3 before it served. 0 run(s) followed" in _index(out)
+    assert "the kubectl proxy exited 3 before it served. 0 run(s) followed" in _index(
+        out
+    )
 
 
 def test_no_kubectl_is_named_and_it_still_exits_zero(
@@ -583,8 +700,13 @@ def test_no_kubectl_is_named_and_it_still_exits_zero(
     out = tmp_path / "out"
     done = subprocess.run(
         [*SELF_CMD, "pod-logs", "--out", str(out), "--namespace", NAMESPACE],
-        stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8",
-        errors="replace", timeout=60, check=False,
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=60,
+        check=False,
     )
     assert done.returncode == 0, done.stderr
     assert "could not start kubectl" in _index(out)
@@ -592,9 +714,21 @@ def test_no_kubectl_is_named_and_it_still_exits_zero(
 
 def test_a_namespace_that_is_not_a_dns_label_is_refused(tmp_path: Path) -> None:
     done = subprocess.run(
-        [*SELF_CMD, "pod-logs", "--out", str(tmp_path / "out"), "--namespace", "dfe|.*"],
-        stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8",
-        errors="replace", timeout=60, check=False,
+        [
+            *SELF_CMD,
+            "pod-logs",
+            "--out",
+            str(tmp_path / "out"),
+            "--namespace",
+            "dfe|.*",
+        ],
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=60,
+        check=False,
     )
     assert done.returncode == 2
     assert "not a namespace name" in done.stderr
@@ -612,13 +746,25 @@ def test_the_stage_directory_is_timestamped_under_the_root() -> None:
 
 def _acceptance_args(root: Path, *extra: str) -> argparse.Namespace:
     return dfeops.build_parser().parse_args(
-        ["acceptance", "--repo", "/nowhere", "--namespace", NAMESPACE, "--kubeconfig", "/k/config",
-         "--diagnostics-dir", str(root), *extra]
+        [
+            "acceptance",
+            "--repo",
+            "/nowhere",
+            "--namespace",
+            NAMESPACE,
+            "--kubeconfig",
+            "/k/config",
+            "--diagnostics-dir",
+            str(root),
+            *extra,
+        ]
     )
 
 
 def test_a_failed_acceptance_keeps_the_pod_logs_it_followed(
-    monkeypatch: pytest.MonkeyPatch, fake_kubectl: tuple[Path, dict[str, str]], tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
+    fake_kubectl: tuple[Path, dict[str, str]],
+    tmp_path: Path,
 ) -> None:
     """The edge suite refuses with no allow list, after the follower has started."""
     for name in ("DFE_RUN_INGEST_ALLOW_CIDR", "DFE_KUBE_CONTEXT", "DFE_KUBE_SERVER"):
@@ -634,7 +780,9 @@ def test_a_failed_acceptance_keeps_the_pod_logs_it_followed(
 
 
 def test_a_passing_acceptance_keeps_what_its_follower_wrote(
-    monkeypatch: pytest.MonkeyPatch, fake_kubectl: tuple[Path, dict[str, str]], tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
+    fake_kubectl: tuple[Path, dict[str, str]],
+    tmp_path: Path,
 ) -> None:
     """A green run's pod logs are evidence too. The run is replaced by one that starts the follower."""
     _log, files = fake_kubectl
@@ -657,12 +805,22 @@ def test_a_passing_acceptance_keeps_what_its_follower_wrote(
 
 
 def test_acceptance_without_the_flag_starts_no_follower(
-    monkeypatch: pytest.MonkeyPatch, fake_kubectl: tuple[Path, dict[str, str]], tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
+    fake_kubectl: tuple[Path, dict[str, str]],
+    tmp_path: Path,
 ) -> None:
     log, _files = fake_kubectl
     monkeypatch.delenv("DFE_RUN_INGEST_ALLOW_CIDR", raising=False)
     args = dfeops.build_parser().parse_args(
-        ["acceptance", "--repo", "/nowhere", "--namespace", NAMESPACE, "--suite", "edge"]
+        [
+            "acceptance",
+            "--repo",
+            "/nowhere",
+            "--namespace",
+            NAMESPACE,
+            "--suite",
+            "edge",
+        ]
     )
     assert dfeops.cmd_acceptance(args) == 1
     assert _requests(log) == []

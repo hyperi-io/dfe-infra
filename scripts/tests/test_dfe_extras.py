@@ -41,7 +41,15 @@ from types import ModuleType
 import pytest
 import yaml
 
-from _gate import APPSETS, CLOUDS, INSTANCE, PROFILES, golden, object_id, render_differences
+from _gate import (
+    APPSETS,
+    CLOUDS,
+    INSTANCE,
+    PROFILES,
+    golden,
+    object_id,
+    render_differences,
+)
 from _weave import REPO_ROOT, helm, render_app, render_extras, weave
 
 EXTRAS_PATH = "helm/charts/dfe-extras"
@@ -158,7 +166,11 @@ def keyed(docs: list[dict]) -> dict[ObjectId, dict]:
 
 def env_data(docs: list[dict]) -> dict[str, str]:
     """The data of the one <fullname>-env ConfigMap a render holds; empty where it holds none."""
-    found = [d for d in docs if d["kind"] == "ConfigMap" and d["metadata"]["name"].endswith("-env")]
+    found = [
+        d
+        for d in docs
+        if d["kind"] == "ConfigMap" and d["metadata"]["name"].endswith("-env")
+    ]
     assert len(found) <= 1, [d["metadata"]["name"] for d in found]
     return (found[0].get("data") or {}) if found else {}
 
@@ -166,7 +178,9 @@ def env_data(docs: list[dict]) -> dict[str, str]:
 # --------------------------------------------------------------------- the checks
 
 
-def against_golden(extras: list[dict], whole: list[dict], thin: set[ObjectId]) -> list[str]:
+def against_golden(
+    extras: list[dict], whole: list[dict], thin: set[ObjectId]
+) -> list[str]:
     """How a dfe-extras render departs from the dfe-extras part of a golden; empty is a pass.
 
     The golden's dfe-extras part is every object the thin chart cannot name.
@@ -188,7 +202,9 @@ def collisions(extras: list[dict], service: str) -> list[ObjectId]:
 @pytest.mark.parametrize("cloud", CLOUDS)
 @pytest.mark.parametrize("profile", PROFILES)
 @pytest.mark.parametrize("service", COMPONENTS)
-def test_dfe_extras_renders_its_part_of_each_golden(service: str, profile: str, cloud: str) -> None:
+def test_dfe_extras_renders_its_part_of_each_golden(
+    service: str, profile: str, cloud: str
+) -> None:
     """Rendered with the instance values and appset the golden's cell takes."""
     options = {"appset": APPSETS[service]} if service in APPSETS else {}
     overlay = INSTANCE.get(service, {}).get(cloud)
@@ -205,21 +221,35 @@ def test_dfe_extras_renders_its_part_of_each_golden(service: str, profile: str, 
 # nothing. Values are illustrative, never a deployment's own.
 SCENARIOS = [
     pytest.param(
-        "dfe-engine", "scale", "aws",
+        "dfe-engine",
+        "scale",
+        "aws",
         {"huntRunner": {"autoscaling": {"enabled": True}}},
         {"present": [("ScaledObject", "dfe-hunt-runner-scaler")]},
         id="engine-hunt-runner-autoscaling",
     ),
     pytest.param(
-        "dfe-engine", "slim", "local",
-        {"seedAuth": {"seedAccounts": [{"username": "alice", "password": "example-only"}]}},
+        "dfe-engine",
+        "slim",
+        "local",
+        {
+            "seedAuth": {
+                "seedAccounts": [{"username": "alice", "password": "example-only"}]
+            }
+        },
         {"present": [("Secret", "dfe-engine-seed-accounts")]},
         id="engine-seed-accounts",
     ),
     pytest.param(
-        "dfe-engine", "single", "local",
+        "dfe-engine",
+        "single",
+        "local",
         {
-            "auth": {"jwtSecret": "pinned", "adminPassword": "pinned", "breakglassPassword": "pinned"},
+            "auth": {
+                "jwtSecret": "pinned",
+                "adminPassword": "pinned",
+                "breakglassPassword": "pinned",
+            },
             "huntRunner": {"clickhouse": {"password": "pinned"}},
         },
         {
@@ -234,30 +264,58 @@ SCENARIOS = [
         id="engine-pinned-secrets",
     ),
     pytest.param(
-        "dfe-engine", "single", "aws",
+        "dfe-engine",
+        "single",
+        "aws",
         {
-            "auth": {"jwtSecretCreate": False, "adminSecretCreate": False, "breakglassSecretCreate": False},
+            "auth": {
+                "jwtSecretCreate": False,
+                "adminSecretCreate": False,
+                "breakglassSecretCreate": False,
+            },
             "huntRunner": {"clickhouse": {"passwordSecretCreate": False}},
         },
-        {"absent": [("ExternalSecret", "dfe-engine-jwt"), ("ExternalSecret", "hunt-runner-clickhouse")]},
+        {
+            "absent": [
+                ("ExternalSecret", "dfe-engine-jwt"),
+                ("ExternalSecret", "hunt-runner-clickhouse"),
+            ]
+        },
         id="engine-deployment-supplies-secrets",
     ),
     pytest.param(
-        "dfe-engine", "slim", "local",
+        "dfe-engine",
+        "slim",
+        "local",
         {"gitops": {"enabled": False}},
-        {"present": [("Deployment", "dfe-hunt-runner")], "unset": ["DFE_ENGINE_GITOPS_ENABLED"]},
+        {
+            "present": [("Deployment", "dfe-hunt-runner")],
+            "unset": ["DFE_ENGINE_GITOPS_ENABLED"],
+        },
         id="engine-without-gitops",
     ),
     pytest.param(
-        "dfe-engine", "mesh", "aws",
+        "dfe-engine",
+        "mesh",
+        "aws",
         {"kedaShim": {"enabled": False}, "huntRunner": {"enabled": False}},
-        {"absent": [("Deployment", "dfe-keda-shim"), ("Deployment", "dfe-hunt-runner")]},
+        {
+            "absent": [
+                ("Deployment", "dfe-keda-shim"),
+                ("Deployment", "dfe-hunt-runner"),
+            ]
+        },
         id="engine-shim-and-runner-off",
     ),
     pytest.param(
-        "dfe-engine", "scale", "local",
+        "dfe-engine",
+        "scale",
+        "local",
         {
-            "clickhouse": {"mode": "external", "tls": {"enabled": True, "ca": {"secretName": "ch-ca"}}},
+            "clickhouse": {
+                "mode": "external",
+                "tls": {"enabled": True, "ca": {"secretName": "ch-ca"}},
+            },
             "api": {"maxSessionMinutes": 30, "docsEnabled": "false"},
             "auth": {"loginThrottle": {"enabled": "false", "usernameFailures": 3}},
             "authConfig": {"caBundleConfigMap": "ca-bundle"},
@@ -274,31 +332,54 @@ SCENARIOS = [
         id="engine-tls-and-dials",
     ),
     pytest.param(
-        "dfe-engine", "single", "local",
+        "dfe-engine",
+        "single",
+        "local",
         {"fullnameOverride": "dfe-engine"},
-        {"present": [("ConfigMap", "dfe-engine-app-catalogue"), ("ConfigMap", "dfe-engine-env")]},
+        {
+            "present": [
+                ("ConfigMap", "dfe-engine-app-catalogue"),
+                ("ConfigMap", "dfe-engine-env"),
+            ]
+        },
         id="engine-fullname-override-keeps-names",
     ),
     pytest.param(
-        "dfe-ui", "slim", "aws",
+        "dfe-ui",
+        "slim",
+        "aws",
         {"config": {"secretStoreName": "example-store"}},
-        {"present": [("ExternalSecret", "dfe-ui-nextauth")], "absent": [("Password", "dfe-ui-nextauth-gen")]},
+        {
+            "present": [("ExternalSecret", "dfe-ui-nextauth")],
+            "absent": [("Password", "dfe-ui-nextauth-gen")],
+        },
         id="ui-secret-store",
     ),
     pytest.param(
-        "dfe-ui", "single", "local",
+        "dfe-ui",
+        "single",
+        "local",
         {"config": {"nextauthSecretName": ""}},
         {"absent": [("ExternalSecret", "dfe-ui-nextauth")]},
         id="ui-no-nextauth-secret",
     ),
     pytest.param(
-        "dfe-hyperdx", "scale", "aws",
+        "dfe-hyperdx",
+        "scale",
+        "aws",
         {"sessionSecret": {"create": False}, "tokenEncryption": {"create": False}},
-        {"absent": [("ExternalSecret", "dfe-hyperdx-session"), ("Password", "dfe-hyperdx-token-encryption-gen")]},
+        {
+            "absent": [
+                ("ExternalSecret", "dfe-hyperdx-session"),
+                ("Password", "dfe-hyperdx-token-encryption-gen"),
+            ]
+        },
         id="hyperdx-keys-supplied",
     ),
     pytest.param(
-        "dfe-hyperdx", "slim", "local",
+        "dfe-hyperdx",
+        "slim",
+        "local",
         {
             "dfeAuth": {"mode": "header-dev"},
             "localAuthPages": {"enabled": True},
@@ -321,26 +402,40 @@ SCENARIOS = [
     ),
     # The load balancer door's ingest policy is the thin chart's, from the ports its load balancers serve.
     pytest.param(
-        "dfe-receiver", "single", "local",
-        {"exposure": {"groups": {"ingest": {"door": "loadbalancer", "allow": ["198.51.100.0/24"]}}}},
+        "dfe-receiver",
+        "single",
+        "local",
+        {
+            "exposure": {
+                "groups": {
+                    "ingest": {"door": "loadbalancer", "allow": ["198.51.100.0/24"]}
+                }
+            }
+        },
         {"absent": [("NetworkPolicy", "dfe-receiver-ingest")]},
         id="receiver-loadbalancer",
     ),
     pytest.param(
-        "dfe-receiver", "single", "local",
+        "dfe-receiver",
+        "single",
+        "local",
         {"exposure": {"groups": {"ingest": {"door": "tunnel"}}}},
         {"present": [("NetworkPolicy", "dfe-receiver-ingest")]},
         id="receiver-tunnel",
     ),
     # No public door renders no tunnel policy either.
     pytest.param(
-        "dfe-receiver", "single", "local",
+        "dfe-receiver",
+        "single",
+        "local",
         {"exposure": {"groups": {"ingest": {"enabled": False, "door": "tunnel"}}}},
         {"absent": [("NetworkPolicy", "dfe-receiver-ingest")]},
         id="receiver-ingest-off",
     ),
     pytest.param(
-        "dfe-receiver", "scale", "aws",
+        "dfe-receiver",
+        "scale",
+        "aws",
         {"kafka": {"securityProtocol": "SASL_SSL"}},
         {
             "env": {
@@ -352,13 +447,20 @@ SCENARIOS = [
         id="receiver-tls-broker",
     ),
     pytest.param(
-        "dfe-receiver", "mesh", "local",
+        "dfe-receiver",
+        "mesh",
+        "local",
         {},
-        {"env": {"DFE_RECEIVER_DLQ_ENABLED": "false"}, "unset": ["DFE_RECEIVER_KAFKA_BROKERS"]},
+        {
+            "env": {"DFE_RECEIVER_DLQ_ENABLED": "false"},
+            "unset": ["DFE_RECEIVER_KAFKA_BROKERS"],
+        },
         id="receiver-direct",
     ),
     pytest.param(
-        "dfe-loader", "single", "aws",
+        "dfe-loader",
+        "single",
+        "aws",
         # A deployment's own admin user stays the engine's: the loader connects as its own.
         {"clickhouse": {"user": "loader", "tls": {"enabled": False}}},
         {
@@ -371,8 +473,14 @@ SCENARIOS = [
         id="loader-plaintext-clickhouse",
     ),
     pytest.param(
-        "dfe-loader", "slim", "local",
-        {"clickhouse": {"tls": {"ca": {"secretName": "", "configMapName": "example-ca-bundle"}}}},
+        "dfe-loader",
+        "slim",
+        "local",
+        {
+            "clickhouse": {
+                "tls": {"ca": {"secretName": "", "configMapName": "example-ca-bundle"}}
+            }
+        },
         {
             "env": {
                 "DFE_LOADER_TRANSPORT": "grpc",
@@ -384,47 +492,86 @@ SCENARIOS = [
         id="loader-ca-from-configmap",
     ),
     pytest.param(
-        "dfe-receiver", "mesh", "aws",
+        "dfe-receiver",
+        "mesh",
+        "aws",
         {"exposure": {"networkPolicy": {"enabled": False}}},
-        {"absent": [("NetworkPolicy", "dfe-receiver-ingest")], "present": [("GRPCRoute", "dfe-receiver-mesh")]},
+        {
+            "absent": [("NetworkPolicy", "dfe-receiver-ingest")],
+            "present": [("GRPCRoute", "dfe-receiver-mesh")],
+        },
         id="receiver-policy-off",
     ),
     pytest.param(
-        "dfe-transform-vrl", "mesh", "local",
-        {"component": "transform-vrl-acme", "fullnameOverride": "dfe-transform-vrl-acme", "imageComponent": "transform-vrl"},
-        {"present": [("Service", "dfe-transform-vrl-acme-mesh"), ("GRPCRoute", "dfe-transform-vrl-acme-mesh")]},
+        "dfe-transform-vrl",
+        "mesh",
+        "local",
+        {
+            "component": "transform-vrl-acme",
+            "fullnameOverride": "dfe-transform-vrl-acme",
+            "imageComponent": "transform-vrl",
+        },
+        {
+            "present": [
+                ("Service", "dfe-transform-vrl-acme-mesh"),
+                ("GRPCRoute", "dfe-transform-vrl-acme-mesh"),
+            ]
+        },
         id="transform-instance",
     ),
     pytest.param(
-        "dfe-transform-vector", "mesh", "aws",
-        {"component": "transform-vector-acme", "fullnameOverride": "dfe-transform-vector-acme"},
+        "dfe-transform-vector",
+        "mesh",
+        "aws",
+        {
+            "component": "transform-vector-acme",
+            "fullnameOverride": "dfe-transform-vector-acme",
+        },
         {"present": [("BackendTrafficPolicy", "dfe-transform-vector-acme-mesh")]},
         id="transform-instance-with-fullname-override",
     ),
     pytest.param(
-        "dfe-loader", "mesh", "local",
+        "dfe-loader",
+        "mesh",
+        "local",
         {"mesh": {"routePolicy": {"enabled": False}}},
-        {"present": [("GRPCRoute", "dfe-loader-mesh")], "absent": [("BackendTrafficPolicy", "dfe-loader-mesh")]},
+        {
+            "present": [("GRPCRoute", "dfe-loader-mesh")],
+            "absent": [("BackendTrafficPolicy", "dfe-loader-mesh")],
+        },
         id="loader-route-policy-off",
     ),
     pytest.param(
-        "culvert", "scale", "aws",
+        "culvert",
+        "scale",
+        "aws",
         {
-            "peers": {"classes": {"admin": {"enabled": True, "adminCIDRs": ["192.0.2.10/32"]}}},
-            "networkPolicy": {"extraEgress": [{"to": [{"ipBlock": {"cidr": "198.51.100.0/24"}}]}]},
+            "peers": {
+                "classes": {"admin": {"enabled": True, "adminCIDRs": ["192.0.2.10/32"]}}
+            },
+            "networkPolicy": {
+                "extraEgress": [{"to": [{"ipBlock": {"cidr": "198.51.100.0/24"}}]}]
+            },
         },
         {"present": [("NetworkPolicy", "dfe-culvert")]},
         id="culvert-admin-and-extra-egress",
     ),
     pytest.param(
-        "culvert", "single", "aws",
+        "culvert",
+        "single",
+        "aws",
         {"networkPolicy": {"enabled": False}},
         {"absent": [("NetworkPolicy", "dfe-culvert")]},
         id="culvert-policy-off",
     ),
     pytest.param(
-        "culvert", "single", "aws",
-        {"pki": {"mode": "external", "existingSecret": "culvert-pki-example"}, "vpn": {"dns": ["192.0.2.53"]}},
+        "culvert",
+        "single",
+        "aws",
+        {
+            "pki": {"mode": "external", "existingSecret": "culvert-pki-example"},
+            "vpn": {"dns": ["192.0.2.53"]},
+        },
         {
             "env": {
                 "CULVERT_PKI_MODE": "external",
@@ -437,12 +584,24 @@ SCENARIOS = [
         id="culvert-external-pki",
     ),
     pytest.param(
-        "culvert", "scale", "local",
+        "culvert",
+        "scale",
+        "local",
         {
             "listeners": [
                 *CULVERT_LISTENERS["listeners"],
-                {"name": "openvpn-tcp", "port": 1194, "protocol": "TCP", "exposed": True},
-                {"name": "oauth2-udp", "port": 9000, "protocol": "TCP", "exposed": True},
+                {
+                    "name": "openvpn-tcp",
+                    "port": 1194,
+                    "protocol": "TCP",
+                    "exposed": True,
+                },
+                {
+                    "name": "oauth2-udp",
+                    "port": 9000,
+                    "protocol": "TCP",
+                    "exposed": True,
+                },
             ],
             "vpn": {
                 "oidc": {
@@ -466,7 +625,9 @@ SCENARIOS = [
 ]
 
 
-@pytest.mark.parametrize(("service", "profile", "cloud", "overlay", "expect"), SCENARIOS)
+@pytest.mark.parametrize(
+    ("service", "profile", "cloud", "overlay", "expect"), SCENARIOS
+)
 def test_dfe_extras_follows_each_conditional(
     service: str, profile: str, cloud: str, overlay: dict, expect: dict
 ) -> None:
@@ -485,13 +646,32 @@ def test_dfe_extras_follows_each_conditional(
         assert name not in env, f"{name} is set where the component reads it unset"
 
 
-@pytest.mark.parametrize(("profile", "cloud"), [(p, c) for p in PROFILES for c in CLOUDS])
-def test_the_engine_may_hard_refresh_argo_applications_and_nothing_else_there(profile: str, cloud: str) -> None:
+@pytest.mark.parametrize(
+    ("profile", "cloud"), [(p, c) for p in PROFILES for c in CLOUDS]
+)
+def test_the_engine_may_hard_refresh_argo_applications_and_nothing_else_there(
+    profile: str, cloud: str
+) -> None:
     docs = golden("dfe-engine", profile, cloud)
-    (role,) = [d for d in docs if d["kind"] == "Role" and d["metadata"]["name"] == "dfe-engine-argo-refresh"]
-    (binding,) = [d for d in docs if d["kind"] == "RoleBinding" and d["metadata"]["name"] == "dfe-engine-argo-refresh"]
+    (role,) = [
+        d
+        for d in docs
+        if d["kind"] == "Role" and d["metadata"]["name"] == "dfe-engine-argo-refresh"
+    ]
+    (binding,) = [
+        d
+        for d in docs
+        if d["kind"] == "RoleBinding"
+        and d["metadata"]["name"] == "dfe-engine-argo-refresh"
+    ]
     assert role["metadata"]["namespace"] == binding["metadata"]["namespace"] == "argocd"
-    assert role["rules"] == [{"apiGroups": ["argoproj.io"], "resources": ["applications"], "verbs": ["get", "list", "patch"]}]
+    assert role["rules"] == [
+        {
+            "apiGroups": ["argoproj.io"],
+            "resources": ["applications"],
+            "verbs": ["get", "list", "patch"],
+        }
+    ]
     assert binding["roleRef"]["name"] == role["metadata"]["name"]
     (subject,) = binding["subjects"]
     assert subject["kind"] == "ServiceAccount"
@@ -500,7 +680,9 @@ def test_the_engine_may_hard_refresh_argo_applications_and_nothing_else_there(pr
 
 def test_the_e2e_posture_reaches_the_engine_env() -> None:
     """The appset's e2eServer parameter beats every values file, so the posture is a cluster fact."""
-    docs = render("dfe-engine", "slim", "local", annotations={"dfe.hyperi.io/e2e_server": "true"})
+    docs = render(
+        "dfe-engine", "slim", "local", annotations={"dfe.hyperi.io/e2e_server": "true"}
+    )
     env = keyed(docs)[("ConfigMap", "dfe-engine-env")]["data"]
     assert (env["DFE_ENGINE_ENV"], env["DFE_ENGINE_E2E_SERVER"]) == ("test", "true")
 
@@ -534,7 +716,9 @@ def test_an_object_renamed_after_the_render_departs_from_its_golden() -> None:
     moved = copy.deepcopy(runner)
     moved["metadata"]["name"] = "dfe-hunt-runner-v2"
     docs = [d for d in docs if d is not runner] + [moved]
-    problems = against_golden(docs, golden("dfe-engine", "single", "local"), thin_ids("dfe-engine"))
+    problems = against_golden(
+        docs, golden("dfe-engine", "single", "local"), thin_ids("dfe-engine")
+    )
     assert "only left: Deployment/dfe-hunt-runner" in problems, problems
     assert "only right: Deployment/dfe-hunt-runner-v2" in problems, problems
 
@@ -592,8 +776,13 @@ def ingest(**fields: object) -> dict:
     return {"exposure": {"groups": {"ingest": fields}}}
 
 
-@pytest.mark.parametrize(("mode", "door"), [("public", "loadbalancer"), ("internal", "gateway"), ("vpn", "tunnel")])
-def test_expected_fail_the_retired_exposure_mode_names_its_door(mode: str, door: str) -> None:
+@pytest.mark.parametrize(
+    ("mode", "door"),
+    [("public", "loadbalancer"), ("internal", "gateway"), ("vpn", "tunnel")],
+)
+def test_expected_fail_the_retired_exposure_mode_names_its_door(
+    mode: str, door: str
+) -> None:
     with pytest.raises(RenderError) as refused:
         render("dfe-receiver", "single", "aws", infra={"exposure": {"mode": mode}})
     message = " ".join(str(refused.value).split())
@@ -604,29 +793,94 @@ def test_expected_fail_the_retired_exposure_mode_names_its_door(mode: str, door:
 @pytest.mark.parametrize(
     ("overlay", "message"),
     [
-        pytest.param({"exposure": {"public": {"loadBalancerSourceRanges": SENDERS}}},
-                     "exposure.public.loadBalancerSourceRanges is retired", id="retired-source-ranges"),
-        pytest.param(ingest(allow=SENDERS, deny=["198.51.100.7/32"]),
-                     "exposure.groups.ingest.deny is [198.51.100.7/32] on door loadbalancer", id="deny-on-lb"),
-        pytest.param(ingest(enabled="true"), "exposure.groups.ingest.enabled is true (a string)", id="quoted-enabled"),
-        pytest.param(ingest(door="public"), 'exposure.groups.ingest.door is "public"', id="unknown-door"),
-        pytest.param(ingest(allow=["198.51.100.7"]), 'carries "198.51.100.7", which is not a CIDR', id="bare-address"),
-        pytest.param(ingest(allow=["0.0.0.0/00"]), 'carries "0.0.0.0/00", which is not a CIDR', id="leading-zero-prefix"),
-        pytest.param(ingest(allow="198.51.100.0/24"), "never a comma-separated string", id="string-list"),
-        pytest.param({"exposure": {"groups": {"ingest": {"allow": SENDERS}}, "public": {"serviceType": "NodePort"}}},
-                     'exposure.public.serviceType "NodePort"', id="allow-on-nodeport"),
-        pytest.param({"exposure": {"public": {"annotations": {
-            "service.beta.kubernetes.io/aws-load-balancer-security-groups": "sg-0"}}}},
-                     "aws-load-balancer-security-groups", id="named-security-group"),
-        pytest.param({"exposure": {"public": {"eipAllocations": ["eipalloc-1", "eipalloc-2"],
-                                              "subnets": ["subnet-1"]}}},
-                     "names 2 Elastic IPs and exposure.public.subnets 1 subnets", id="eip-count"),
-        pytest.param({"exposure": {"public": {"eipAllocations": ["eipalloc-1"], "subnets": ["subnet-1"],
-                                              "annotations": {}}}},
-                     "an Elastic IP attaches only to an internet-facing NLB", id="eip-internal"),
+        pytest.param(
+            {"exposure": {"public": {"loadBalancerSourceRanges": SENDERS}}},
+            "exposure.public.loadBalancerSourceRanges is retired",
+            id="retired-source-ranges",
+        ),
+        pytest.param(
+            ingest(allow=SENDERS, deny=["198.51.100.7/32"]),
+            "exposure.groups.ingest.deny is [198.51.100.7/32] on door loadbalancer",
+            id="deny-on-lb",
+        ),
+        pytest.param(
+            ingest(enabled="true"),
+            "exposure.groups.ingest.enabled is true (a string)",
+            id="quoted-enabled",
+        ),
+        pytest.param(
+            ingest(door="public"),
+            'exposure.groups.ingest.door is "public"',
+            id="unknown-door",
+        ),
+        pytest.param(
+            ingest(allow=["198.51.100.7"]),
+            'carries "198.51.100.7", which is not a CIDR',
+            id="bare-address",
+        ),
+        pytest.param(
+            ingest(allow=["0.0.0.0/00"]),
+            'carries "0.0.0.0/00", which is not a CIDR',
+            id="leading-zero-prefix",
+        ),
+        pytest.param(
+            ingest(allow="198.51.100.0/24"),
+            "never a comma-separated string",
+            id="string-list",
+        ),
+        pytest.param(
+            {
+                "exposure": {
+                    "groups": {"ingest": {"allow": SENDERS}},
+                    "public": {"serviceType": "NodePort"},
+                }
+            },
+            'exposure.public.serviceType "NodePort"',
+            id="allow-on-nodeport",
+        ),
+        pytest.param(
+            {
+                "exposure": {
+                    "public": {
+                        "annotations": {
+                            "service.beta.kubernetes.io/aws-load-balancer-security-groups": "sg-0"
+                        }
+                    }
+                }
+            },
+            "aws-load-balancer-security-groups",
+            id="named-security-group",
+        ),
+        pytest.param(
+            {
+                "exposure": {
+                    "public": {
+                        "eipAllocations": ["eipalloc-1", "eipalloc-2"],
+                        "subnets": ["subnet-1"],
+                    }
+                }
+            },
+            "names 2 Elastic IPs and exposure.public.subnets 1 subnets",
+            id="eip-count",
+        ),
+        pytest.param(
+            {
+                "exposure": {
+                    "public": {
+                        "eipAllocations": ["eipalloc-1"],
+                        "subnets": ["subnet-1"],
+                        "annotations": {},
+                    }
+                }
+            },
+            "an Elastic IP attaches only to an internet-facing NLB",
+            id="eip-internal",
+        ),
     ],
 )
-def test_expected_fail_a_receiver_door_that_would_not_do_what_it_says_is_refused(overlay: dict, message: str) -> None:
+def test_expected_fail_a_receiver_door_that_would_not_do_what_it_says_is_refused(
+    overlay: dict, message: str
+) -> None:
     with pytest.raises(RenderError) as refused:
         render("dfe-receiver", "single", "gcp", overlay=overlay)
     said = " ".join(str(refused.value).split())
@@ -648,23 +902,54 @@ def test_a_culvert_on_the_receivers_listeners_is_refused() -> None:
     ("overlay", "message"),
     [
         ({"replicas": 2}, "replicas is 2"),
-        ({"pki": {"mode": "external"}}, "pki.mode is external with no pki.existingSecret"),
-        ({"vpn": {"oidc": {"enabled": True, "existingSecret": "x"}}}, "no listener named oauth2-udp"),
-        ({"oidc": {"issuer": "https://idp.example.com"}}, "this chart no longer reads it"),
         (
-            {"peers": {"classes": {"admin": {"enabled": True}, "appliance": {"isolation": False}}}},
+            {"pki": {"mode": "external"}},
+            "pki.mode is external with no pki.existingSecret",
+        ),
+        (
+            {"vpn": {"oidc": {"enabled": True, "existingSecret": "x"}}},
+            "no listener named oauth2-udp",
+        ),
+        (
+            {"oidc": {"issuer": "https://idp.example.com"}},
+            "this chart no longer reads it",
+        ),
+        (
+            {
+                "peers": {
+                    "classes": {
+                        "admin": {"enabled": True},
+                        "appliance": {"isolation": False},
+                    }
+                }
+            },
             "opening every appliance to every other one",
         ),
         (
-            {"peers": {"classes": {"admin": {"enabled": True, "adminCIDRs": ["0.0.0.0/0"]}}}},
+            {
+                "peers": {
+                    "classes": {"admin": {"enabled": True, "adminCIDRs": ["0.0.0.0/0"]}}
+                }
+            },
             "carries 0.0.0.0/0",
         ),
         (
-            {"peers": {"classes": {"admin": {"enabled": True, "adminCIDRs": ["100.64.9.0/24"]}}}},
+            {
+                "peers": {
+                    "classes": {
+                        "admin": {"enabled": True, "adminCIDRs": ["100.64.9.0/24"]}
+                    }
+                }
+            },
             "names a peer source",
         ),
         (
-            {"exposure": {"serviceType": "NodePort", "loadBalancerSourceRanges": ["198.51.100.0/24"]}},
+            {
+                "exposure": {
+                    "serviceType": "NodePort",
+                    "loadBalancerSourceRanges": ["198.51.100.0/24"],
+                }
+            },
             "only filters on that field for a LoadBalancer",
         ),
     ],
@@ -680,20 +965,32 @@ def test_culverts_refusals(overlay: dict, message: str) -> None:
     [
         ({"config": {"protocol": "wireguard"}}, "wireguard"),
         ({"config": {"protocol": "both"}}, "both"),
-        ({"config": {"protocol": "openvpn"}, "configOverrides": {"protocol": "both"}}, "both"),
+        (
+            {
+                "config": {"protocol": "openvpn"},
+                "configOverrides": {"protocol": "both"},
+            },
+            "both",
+        ),
     ],
     ids=["wireguard", "both", "override"],
 )
-def test_a_culvert_protocol_in_its_profile_is_refused(overlay: dict, protocol: str) -> None:
+def test_a_culvert_protocol_in_its_profile_is_refused(
+    overlay: dict, protocol: str
+) -> None:
     """The contract would open a second wireguard port beside apps/culvert/values.yaml's."""
-    with pytest.raises(RenderError, match=re.escape(f'config.protocol is "{protocol}"')) as refused:
+    with pytest.raises(
+        RenderError, match=re.escape(f'config.protocol is "{protocol}"')
+    ) as refused:
         render("culvert", "scale", "aws", overlay=overlay)
     assert "through CULVERT_PROTOCOL" in str(refused.value)
 
 
 def test_an_openvpn_profile_protocol_renders() -> None:
     """The control: a protocol that opens no gated port is left alone."""
-    assert render("culvert", "scale", "aws", overlay={"config": {"protocol": "openvpn"}})
+    assert render(
+        "culvert", "scale", "aws", overlay={"config": {"protocol": "openvpn"}}
+    )
 
 
 @pytest.mark.parametrize(
@@ -729,9 +1026,13 @@ def test_a_fullname_override_outside_the_project_fails() -> None:
     ids=["project", "global-project", "empty-project", "empty-global-project"],
 )
 @pytest.mark.parametrize("service", COMPONENTS)
-def test_a_project_other_than_dfe_is_refused(service: str, infra: dict, path: str, value: str) -> None:
+def test_a_project_other_than_dfe_is_refused(
+    service: str, infra: dict, path: str, value: str
+) -> None:
     """Every component's names and the engine's prefix assume dfe, so either key refuses a rename."""
-    with pytest.raises(RenderError, match=re.escape(f'dfe-extras: {path} is "{value}"')) as refused:
+    with pytest.raises(
+        RenderError, match=re.escape(f'dfe-extras: {path} is "{value}"')
+    ) as refused:
         render(service, "scale", "aws", infra=infra)
     assert 'assume the project is "dfe"' in str(refused.value)
 
@@ -754,7 +1055,9 @@ OTLP = "OTEL_EXPORTER_OTLP_ENDPOINT"
 def _extras_otlp(docs: list[dict], workload: str) -> list[str]:
     """The OTLP endpoints the one dfe-extras Deployment whose name holds ``workload`` exports to."""
     (deployment,) = [
-        d for d in docs if d["kind"] == "Deployment" and workload in d["metadata"]["name"]
+        d
+        for d in docs
+        if d["kind"] == "Deployment" and workload in d["metadata"]["name"]
     ]
     env = deployment["spec"]["template"]["spec"]["containers"][0].get("env") or []
     return [entry["value"] for entry in env if entry["name"] == OTLP]
@@ -764,12 +1067,23 @@ def _extras_otlp(docs: list[dict], workload: str) -> list[str]:
 @pytest.mark.parametrize(
     ("infra", "want"),
     [
-        ({"telemetry": {"mode": "receiver"}}, r"http://dfe-receiver\.[a-z0-9-]+\.svc\.cluster\.local:4317"),
         (
-            {"telemetry": {"mode": "external", "externalEndpoint": "https://otlp.example.net:4318"}},
+            {"telemetry": {"mode": "receiver"}},
+            r"http://dfe-receiver\.[a-z0-9-]+\.svc\.cluster\.local:4317",
+        ),
+        (
+            {
+                "telemetry": {
+                    "mode": "external",
+                    "externalEndpoint": "https://otlp.example.net:4318",
+                }
+            },
             r"https://otlp\.example\.net:4318",
         ),
-        ({"otel": {"endpoint": "collector.example.net:4317"}}, r"collector\.example\.net:4317"),
+        (
+            {"otel": {"endpoint": "collector.example.net:4317"}},
+            r"collector\.example\.net:4317",
+        ),
         ({"telemetry": {"mode": "prometheus"}}, None),
     ],
     ids=["receiver", "external", "override-as-written", "prometheus"],
@@ -788,10 +1102,20 @@ def test_the_engines_extra_workloads_export_where_the_thin_charts_do(
 
 @pytest.mark.parametrize("mode", ["hyperdex", "HyperDX", "otlp", "none"])
 @pytest.mark.parametrize("service", COMPONENTS)
-def test_a_telemetry_mode_no_endpoint_resolves_from_is_refused(service: str, mode: str) -> None:
+def test_a_telemetry_mode_no_endpoint_resolves_from_is_refused(
+    service: str, mode: str
+) -> None:
     """Every component, since each resolves its OTLP endpoint from the one template."""
-    with pytest.raises(RenderError, match=re.escape(f'dfe-extras: telemetry.mode is "{mode}"')) as refused:
-        render(service, "scale", "aws", overlay=base_overlay(service, "aws"), infra={"telemetry": {"mode": mode}})
+    with pytest.raises(
+        RenderError, match=re.escape(f'dfe-extras: telemetry.mode is "{mode}"')
+    ) as refused:
+        render(
+            service,
+            "scale",
+            "aws",
+            overlay=base_overlay(service, "aws"),
+            infra={"telemetry": {"mode": mode}},
+        )
     assert "hyperdx, receiver, external, prometheus" in str(refused.value)
 
 
@@ -815,7 +1139,9 @@ def test_each_known_telemetry_mode_renders(telemetry: dict | None) -> None:
 
 def test_receiver_mode_with_the_receivers_otlp_listener_off_fails() -> None:
     with pytest.raises(RenderError, match=re.escape("config.otlp.enabled is not true")):
-        render("dfe-receiver", "scale", "aws", infra={"telemetry": {"mode": "receiver"}})
+        render(
+            "dfe-receiver", "scale", "aws", infra={"telemetry": {"mode": "receiver"}}
+        )
 
 
 @pytest.mark.parametrize(
@@ -826,15 +1152,27 @@ def test_receiver_mode_with_the_receivers_otlp_listener_off_fails() -> None:
     ],
     ids=["listener-on", "named-endpoint"],
 )
-def test_receiver_mode_renders_once_something_listens(overlay: dict | None, telemetry: dict) -> None:
-    assert render("dfe-receiver", "scale", "aws", overlay=overlay, infra={"telemetry": telemetry})
+def test_receiver_mode_renders_once_something_listens(
+    overlay: dict | None, telemetry: dict
+) -> None:
+    assert render(
+        "dfe-receiver", "scale", "aws", overlay=overlay, infra={"telemetry": telemetry}
+    )
 
 
-def test_culvert_in_receiver_mode_reaches_the_receivers_otlp_port_not_the_collector() -> None:
+def test_culvert_in_receiver_mode_reaches_the_receivers_otlp_port_not_the_collector() -> (
+    None
+):
     docs = render("culvert", "scale", "aws", infra={"telemetry": {"mode": "receiver"}})
     (policy,) = [d for d in docs if d["kind"] == "NetworkPolicy"]
-    otlp = [rule for rule in policy["spec"]["egress"] if {"port": 4317, "protocol": "TCP"} in rule.get("ports", [])]
-    receiver = {"podSelector": {"matchLabels": {"app.kubernetes.io/name": "dfe-receiver"}}}
+    otlp = [
+        rule
+        for rule in policy["spec"]["egress"]
+        if {"port": 4317, "protocol": "TCP"} in rule.get("ports", [])
+    ]
+    receiver = {
+        "podSelector": {"matchLabels": {"app.kubernetes.io/name": "dfe-receiver"}}
+    }
     assert [rule["to"] for rule in otlp] == [[receiver]]
 
 
@@ -845,7 +1183,11 @@ def test_culvert_in_receiver_mode_reaches_the_receivers_otlp_port_not_the_collec
 def test_helm_lint_strict_is_clean(name: str) -> None:
     out = subprocess.run(
         [helm(), "lint", "--strict", str(EXTRAS), "--set", f"chartName={name}"],
-        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
     )
     assert out.returncode == 0, out.stdout + out.stderr
 
@@ -854,7 +1196,11 @@ def test_helm_lint_strict_is_clean(name: str) -> None:
 def test_a_component_with_no_dfe_only_objects_renders_nothing(name: str) -> None:
     out = subprocess.run(
         [helm(), "template", "x", str(EXTRAS), "--set", f"chartName={name}"],
-        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
     )
     assert out.returncode == 0, out.stderr
     assert [d for d in yaml.safe_load_all(out.stdout) if isinstance(d, dict)] == []
@@ -862,9 +1208,13 @@ def test_a_component_with_no_dfe_only_objects_renders_nothing(name: str) -> None
 
 def test_each_profile_declares_the_transport_its_kafka_mode_runs() -> None:
     """extras.transports restates profile-<p>.yaml's kafka.mode as bus or direct."""
-    extras = yaml.safe_load((EXTRAS / "values.yaml").read_text(encoding="utf-8"))["extras"]
+    extras = yaml.safe_load((EXTRAS / "values.yaml").read_text(encoding="utf-8"))[
+        "extras"
+    ]
     for profile in PROFILES:
-        values = yaml.safe_load((VALUES / f"profile-{profile}.yaml").read_text(encoding="utf-8"))
+        values = yaml.safe_load(
+            (VALUES / f"profile-{profile}.yaml").read_text(encoding="utf-8")
+        )
         runs = "direct" if values["kafka"]["mode"] == "disabled" else "bus"
         assert extras["transports"][profile] == runs, profile
 

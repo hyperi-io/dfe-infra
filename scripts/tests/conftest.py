@@ -39,14 +39,14 @@ def _available_mb() -> float | None:
                 break
         else:
             return None
-    except (OSError, ValueError):
+    except OSError, ValueError:
         return None
     try:
         limit = Path("/sys/fs/cgroup/memory.max").read_text(encoding="utf-8").strip()
         used = int(Path("/sys/fs/cgroup/memory.current").read_text(encoding="utf-8"))
         if limit != "max":
             available = min(available, (int(limit) - used) / 1024 / 1024)
-    except (OSError, ValueError):
+    except OSError, ValueError:
         pass
     return available
 
@@ -68,7 +68,9 @@ def auto_workers() -> int:
     return max(1, min(cpu_budget, int(available * memory_share // WORKER_MEM_MB)))
 
 
-@pytest.hookimpl(optionalhook=True)  # absent under `-p no:xdist`, where the hook has no spec
+@pytest.hookimpl(
+    optionalhook=True
+)  # absent under `-p no:xdist`, where the hook has no spec
 def pytest_xdist_auto_num_workers(config):
     if config.option.numprocesses not in ("auto", "logical"):
         return None
@@ -88,7 +90,10 @@ def tool_gate(tool: str, found: str | None, ci: bool) -> tuple[str, str] | None:
     if found is not None:
         return None
     if ci:
-        return "fail", f"{tool} is not on PATH under CI, so the workflow's install step has not run"
+        return (
+            "fail",
+            f"{tool} is not on PATH under CI, so the workflow's install step has not run",
+        )
     return "skip", f"needs {tool} on PATH"
 
 

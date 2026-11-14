@@ -46,11 +46,16 @@ HELPERS = ("run", "dfe_release_values", "dfe_have_crd", "dfe_should_install")
 DOMAIN = "single.dfe.test"
 CACHE_HOST = "valkey.argocd.svc.cluster.local"
 # The user-supplied values a release bootstrap.sh installed carries.
-OUR_VALUES = {"redis": {"enabled": False}, "externalRedis": {"host": CACHE_HOST, "port": 6379}}
+OUR_VALUES = {
+    "redis": {"enabled": False},
+    "externalRedis": {"host": CACHE_HOST, "port": 6379},
+}
 
 
 def _load_release_module():
-    spec = importlib.util.spec_from_file_location("argocd_release", BOOTSTRAP_DIR / "argocd_release.py")
+    spec = importlib.util.spec_from_file_location(
+        "argocd_release", BOOTSTRAP_DIR / "argocd_release.py"
+    )
     module = importlib.util.module_from_spec(spec)
     sys.modules["argocd_release"] = module
     spec.loader.exec_module(module)
@@ -62,16 +67,27 @@ argocd_release = _load_release_module()
 
 def pinned_version() -> str:
     out = subprocess.run(
-        [sys.executable, str(BOOTSTRAP_DIR / "read_versions.py"),
-         "--file", str(REPO_ROOT / "versions.yaml"), "bootstrap.argocd"],
-        capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
+        [
+            sys.executable,
+            str(BOOTSTRAP_DIR / "read_versions.py"),
+            "--file",
+            str(REPO_ROOT / "versions.yaml"),
+            "bootstrap.argocd",
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=True,
     )
     return out.stdout.strip()
 
 
 # --- the verdict -------------------------------------------------------------
 def release(chart: str = "argo-cd-9.5.21") -> list[dict]:
-    return [{"name": "argocd", "namespace": "argocd", "status": "deployed", "chart": chart}]
+    return [
+        {"name": "argocd", "namespace": "argocd", "status": "deployed", "chart": chart}
+    ]
 
 
 def test_the_release_this_bootstrap_installs_is_ours() -> None:
@@ -88,7 +104,10 @@ def test_a_stock_helm_install_of_the_same_name_and_chart_is_not_ours() -> None:
 
 
 def test_an_argo_wired_to_another_cache_is_not_ours() -> None:
-    values = {"redis": {"enabled": False}, "externalRedis": {"host": "redis.shared.svc"}}
+    values = {
+        "redis": {"enabled": False},
+        "externalRedis": {"host": "redis.shared.svc"},
+    }
     assert not argocd_release.verdict(release(), values, "valkey")[0]
 
 
@@ -98,7 +117,9 @@ def test_the_bundled_redis_left_on_is_not_ours() -> None:
 
 
 def test_a_release_named_argocd_on_another_chart_is_not_ours() -> None:
-    ours, why = argocd_release.verdict(release("platform-argo-2.0.0"), OUR_VALUES, "valkey")
+    ours, why = argocd_release.verdict(
+        release("platform-argo-2.0.0"), OUR_VALUES, "valkey"
+    )
     assert not ours
     assert "platform-argo-2.0.0" in why
 
@@ -111,16 +132,25 @@ def test_no_release_is_not_ours() -> None:
 
 def test_a_renamed_cache_service_is_followed() -> None:
     """DFE_VALKEY_SERVICE renames the Service; the wiring moves with it."""
-    values = {"redis": {"enabled": False}, "externalRedis": {"host": "cache.argocd.svc.cluster.local"}}
+    values = {
+        "redis": {"enabled": False},
+        "externalRedis": {"host": "cache.argocd.svc.cluster.local"},
+    }
     assert argocd_release.verdict(release(), values, "cache")[0]
     assert not argocd_release.verdict(release(), values, "valkey")[0]
 
 
 @pytest.mark.parametrize(
     ("chart", "name"),
-    [("argo-cd-10.9.0", "argo-cd"), ("argo-cd-10.0.0-rc1", "argo-cd"), ("argocd", "argocd")],
+    [
+        ("argo-cd-10.9.0", "argo-cd"),
+        ("argo-cd-10.0.0-rc1", "argo-cd"),
+        ("argocd", "argocd"),
+    ],
 )
-def test_the_chart_name_is_read_off_helm_lists_name_dash_version(chart: str, name: str) -> None:
+def test_the_chart_name_is_read_off_helm_lists_name_dash_version(
+    chart: str, name: str
+) -> None:
     assert argocd_release.chart_name(chart) == name
 
 
@@ -150,7 +180,9 @@ def test_the_install_bootstrap_runs_is_one_it_then_recognises(tmp_path: Path) ->
 
 
 def test_argo_is_told_the_name_the_gateway_publishes_it_under(tmp_path: Path) -> None:
-    label = yaml.safe_load(COMMON_VALUES.read_text(encoding="utf-8"))["hostnames"]["argocd"]
+    label = yaml.safe_load(COMMON_VALUES.read_text(encoding="utf-8"))["hostnames"][
+        "argocd"
+    ]
     _, calls = run_step(tmp_path, {"crd": False, "server": False})
     (install,) = helm_upgrades(calls)
     assert f"global.domain={label}.{DOMAIN}" in install.split()
@@ -196,7 +228,9 @@ def step_script() -> str:
     return "\n".join(["set -euo pipefail", *helpers, *lines[start:end]]) + "\n"
 
 
-def run_step(tmp_path: Path, fixture: dict) -> tuple[subprocess.CompletedProcess, list[str]]:
+def run_step(
+    tmp_path: Path, fixture: dict
+) -> tuple[subprocess.CompletedProcess, list[str]]:
     """The step against one fake cluster; returns its output and every call it made."""
     bindir = tmp_path / "bin"
     bindir.mkdir(parents=True)
@@ -217,14 +251,23 @@ def run_step(tmp_path: Path, fixture: dict) -> tuple[subprocess.CompletedProcess
         "DFE_DOMAIN": DOMAIN,
     }
     out = subprocess.run(
-        ["bash", "-c", step_script()], env=env,
-        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
+        ["bash", "-c", step_script()],
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
     )
     return out, log.read_text(encoding="utf-8").splitlines()
 
 
 def helm_upgrades(calls: list[str]) -> list[str]:
-    return [call for call in calls if call.startswith("helm upgrade --install argocd argo/argo-cd")]
+    return [
+        call
+        for call in calls
+        if call.startswith("helm upgrade --install argocd argo/argo-cd")
+    ]
 
 
 OURS = {"releases": release(), "values": OUR_VALUES, "crd": True, "server": True}
@@ -238,7 +281,9 @@ def test_our_own_release_is_upgraded_in_place(tmp_path: Path) -> None:
     assert len(helm_upgrades(calls)) == 1, calls
 
 
-def test_the_upgrade_carries_the_pinned_chart_and_every_install_flag(tmp_path: Path) -> None:
+def test_the_upgrade_carries_the_pinned_chart_and_every_install_flag(
+    tmp_path: Path,
+) -> None:
     _, calls = run_step(tmp_path, OURS)
     (upgrade,) = helm_upgrades(calls)
     argv = upgrade.split()
@@ -265,7 +310,9 @@ def test_a_foreign_stock_argo_is_adopted_and_never_touched(tmp_path: Path) -> No
     assert "Using existing ArgoCD" in out.stdout
 
 
-def test_an_argo_no_helm_release_owns_is_adopted_and_never_touched(tmp_path: Path) -> None:
+def test_an_argo_no_helm_release_owns_is_adopted_and_never_touched(
+    tmp_path: Path,
+) -> None:
     out, calls = run_step(tmp_path, {"releases": [], "crd": True, "server": True})
     assert out.returncode == 0, out.stderr
     assert helm_upgrades(calls) == [], calls

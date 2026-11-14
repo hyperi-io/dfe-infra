@@ -61,7 +61,11 @@ VRL_MOUNT = file_set(VRL, "enrichment")["mount_path"]
 # One mounted table, the shape dfe-engine writes into the per-instance overlay.
 MOUNTED = {
     "fileSets": {"enrichment": {"files": [TABLE_FILE]}},
-    "config": {"enrichment_tables": [{"name": "timezones", "path": f"{VRL_MOUNT}/timezones.csv"}]},
+    "config": {
+        "enrichment_tables": [
+            {"name": "timezones", "path": f"{VRL_MOUNT}/timezones.csv"}
+        ]
+    },
 }
 
 # The same table declared with its key column, as an engine entry the operator edited.
@@ -95,29 +99,46 @@ def mounts(docs: list[dict], app: str) -> dict[str, dict]:
 
 def test_a_mounted_table_is_registered() -> None:
     entries = file_set(VRL, "enrichment").get("entries_path")
-    expect("the catalogue has the engine register each vrl table in its config",
-           entries == "config.enrichment_tables", f"got {entries!r}")
+    expect(
+        "the catalogue has the engine register each vrl table in its config",
+        entries == "config.enrichment_tables",
+        f"got {entries!r}",
+    )
     docs = render_app(VRL, *DIAL_CELL, overlay=MOUNTED)
-    expect("the set mounts where the catalogue tells the engine it lands",
-           mounts(docs, VRL)["fileset-enrichment"]["mountPath"] == VRL_MOUNT,
-           f"got {mounts(docs, VRL)['fileset-enrichment']!r}, catalogue {VRL_MOUNT}")
+    expect(
+        "the set mounts where the catalogue tells the engine it lands",
+        mounts(docs, VRL)["fileset-enrichment"]["mountPath"] == VRL_MOUNT,
+        f"got {mounts(docs, VRL)['fileset-enrichment']!r}, catalogue {VRL_MOUNT}",
+    )
     tables = config(docs, VRL).get("enrichment_tables")
-    expect("one mounted table renders one entry", tables == [
-        {"name": "timezones", "path": f"{VRL_MOUNT}/timezones.csv"},
-    ], f"got {tables!r}")
+    expect(
+        "one mounted table renders one entry",
+        tables
+        == [
+            {"name": "timezones", "path": f"{VRL_MOUNT}/timezones.csv"},
+        ],
+        f"got {tables!r}",
+    )
 
 
 def test_the_registered_path_is_where_the_file_lands() -> None:
     """A path the mount does not serve fails to compile the same way."""
     docs = render_app(VRL, *DIAL_CELL, overlay=MOUNTED)
     entry = config(docs, VRL)["enrichment_tables"][0]
-    data = configmap_files(next(d for d in docs if object_id(d) == f"ConfigMap/{VRL}-enrichment"))
+    data = configmap_files(
+        next(d for d in docs if object_id(d) == f"ConfigMap/{VRL}-enrichment")
+    )
     mount = mounts(docs, VRL)["fileset-enrichment"]
-    expect("the entry points into the mount",
-           entry["path"] == f"{mount['mountPath']}/timezones.csv",
-           f"entry {entry['path']} vs mount {mount['mountPath']}")
-    expect("and the file is the ConfigMap key served there", list(data) == ["timezones.csv"],
-           f"got {list(data)}")
+    expect(
+        "the entry points into the mount",
+        entry["path"] == f"{mount['mountPath']}/timezones.csv",
+        f"entry {entry['path']} vs mount {mount['mountPath']}",
+    )
+    expect(
+        "and the file is the ConfigMap key served there",
+        list(data) == ["timezones.csv"],
+        f"got {list(data)}",
+    )
 
 
 def test_no_tables_adds_no_key() -> None:
@@ -125,30 +146,47 @@ def test_no_tables_adds_no_key() -> None:
     for profile in ("slim", "single", "scale", "mesh"):
         for cloud in CLOUDS:
             cfg = config(golden(VRL, profile, cloud), VRL)
-            expect(f"no mounted table adds no enrichment_tables key [{profile}/{cloud}]",
-                   "enrichment_tables" not in cfg, f"got {cfg.get('enrichment_tables')!r}")
+            expect(
+                f"no mounted table adds no enrichment_tables key [{profile}/{cloud}]",
+                "enrichment_tables" not in cfg,
+                f"got {cfg.get('enrichment_tables')!r}",
+            )
 
 
 def test_a_declared_table_is_left_alone() -> None:
     """The engine's own entry wins -- a derived duplicate would drop key_columns."""
-    tables = config(render_app(VRL, *DIAL_CELL, overlay=DECLARED), VRL).get("enrichment_tables")
-    expect("a declared table is not derived a second time", tables == [
-        {
-            "name": "timezones",
-            "path": f"{VRL_MOUNT}/timezones.csv",
-            "key_columns": ["abbreviation"],
-        },
-    ], f"got {tables!r}")
+    tables = config(render_app(VRL, *DIAL_CELL, overlay=DECLARED), VRL).get(
+        "enrichment_tables"
+    )
+    expect(
+        "a declared table is not derived a second time",
+        tables
+        == [
+            {
+                "name": "timezones",
+                "path": f"{VRL_MOUNT}/timezones.csv",
+                "key_columns": ["abbreviation"],
+            },
+        ],
+        f"got {tables!r}",
+    )
 
 
 def test_the_vector_chart_registers_nothing() -> None:
     """dfe-transform-vector has no enrichment field in its config schema at all
     (dfe-transform-vector docs/config-schema.yaml), so an entry there is inert."""
     entries = file_set(VECTOR, "enrichment").get("entries_path")
-    expect("the catalogue names no entries for the vector set", not entries, f"got {entries!r}")
+    expect(
+        "the catalogue names no entries for the vector set",
+        not entries,
+        f"got {entries!r}",
+    )
     cfg = config(render_app(VECTOR, *DIAL_CELL, overlay=VECTOR_MOUNTED), VECTOR)
-    expect("dfe-transform-vector renders no enrichment_tables key",
-           "enrichment_tables" not in cfg, f"got {cfg.get('enrichment_tables')!r}")
+    expect(
+        "dfe-transform-vector renders no enrichment_tables key",
+        "enrichment_tables" not in cfg,
+        f"got {cfg.get('enrichment_tables')!r}",
+    )
 
 
 def vector_mounts() -> dict[str, dict]:
@@ -159,12 +197,17 @@ def test_the_vector_tables_land_where_the_bundled_pipeline_reads_them() -> None:
     """A transform file names its table by absolute path, so Vector exits 78 on
     `No such file or directory` when the file lands anywhere else."""
     mount = vector_mounts()["fileset-enrichment"]["mountPath"]
-    expect("the vector enrichment set mounts at the pipeline's data dir",
-           f"{mount}/timezones.csv" == BUNDLED_VECTOR_TIMEZONES,
-           f"mounted at {mount}, the pipeline reads {BUNDLED_VECTOR_TIMEZONES}")
+    expect(
+        "the vector enrichment set mounts at the pipeline's data dir",
+        f"{mount}/timezones.csv" == BUNDLED_VECTOR_TIMEZONES,
+        f"mounted at {mount}, the pipeline reads {BUNDLED_VECTOR_TIMEZONES}",
+    )
     catalogued = file_set(VECTOR, "enrichment")["mount_path"]
-    expect("and where the catalogue says it lands", mount == catalogued,
-           f"mounted at {mount}, catalogue {catalogued}")
+    expect(
+        "and where the catalogue says it lands",
+        mount == catalogued,
+        f"mounted at {mount}, catalogue {catalogued}",
+    )
 
 
 def test_no_vector_volume_mounts_inside_another() -> None:
@@ -176,16 +219,22 @@ def test_no_vector_volume_mounts_inside_another() -> None:
         for inner in found
         if inner["mountPath"].startswith(outer["mountPath"].rstrip("/") + "/")
     ]
-    expect("no vector volume sits inside another directory volume", not nested, f"got {nested}")
+    expect(
+        "no vector volume sits inside another directory volume",
+        not nested,
+        f"got {nested}",
+    )
 
 
 def test_the_vector_config_file_still_reaches_the_cmd_path() -> None:
     """The image CMD reads /etc/dfe-transform-vector/config.yaml."""
     config_mount = vector_mounts()["config"]
-    expect("the config file mounts at the CMD path",
-           (config_mount["mountPath"], config_mount.get("subPath"))
-           == ("/etc/dfe-transform-vector/config.yaml", "config.yaml"),
-           f"got {config_mount}")
+    expect(
+        "the config file mounts at the CMD path",
+        (config_mount["mountPath"], config_mount.get("subPath"))
+        == ("/etc/dfe-transform-vector/config.yaml", "config.yaml"),
+        f"got {config_mount}",
+    )
 
 
 def main() -> int:

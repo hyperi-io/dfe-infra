@@ -68,7 +68,9 @@ def _hash(
 
 
 def test_the_hash_ignores_the_order_inputs_arrive_in() -> None:
-    reordered = _hash(build_args=list(reversed(ARGS)), platforms=list(reversed(PLATFORMS)))
+    reordered = _hash(
+        build_args=list(reversed(ARGS)), platforms=list(reversed(PLATFORMS))
+    )
     expect("reordered build args and platforms hash the same", _hash() == reordered)
     expect("and the hash is a sha256 hex digest", len(_hash()) == 64, _hash())
 
@@ -81,7 +83,9 @@ def test_every_input_moves_the_hash() -> None:
         "a different platform list": _hash(platforms=["linux/amd64"]),
         "an edited file": _hash(files={**FILES, "Dockerfile": "FROM debian:trixie\n"}),
         "an added file": _hash(files={**FILES, "extra.conf": "x\n"}),
-        "a renamed file": _hash(files={"Dockerfile": "FROM debian\n", "init.sh": "#!/bin/sh\n"}),
+        "a renamed file": _hash(
+            files={"Dockerfile": "FROM debian\n", "init.sh": "#!/bin/sh\n"}
+        ),
         "a different base image hash": _hash(base_inputs=HASH_A),
     }
     for what, moved in sorted(variants.items()):
@@ -97,7 +101,10 @@ def test_a_cloud_image_follows_its_base_image_inputs() -> None:
 
 def test_context_files_name_paths_relative_to_the_context() -> None:
     files = dict(_context({"Dockerfile": "x", "conf/a.yaml": "y"}))
-    expect("every file is listed by its POSIX path", sorted(files) == ["Dockerfile", "conf/a.yaml"])
+    expect(
+        "every file is listed by its POSIX path",
+        sorted(files) == ["Dockerfile", "conf/a.yaml"],
+    )
 
 
 def test_the_committed_base_context_covers_every_file_docker_receives() -> None:
@@ -111,7 +118,10 @@ def test_decide_reads_what_the_published_tag_carries() -> None:
     cases = {
         "an absent tag": (None, ti.Reason.ABSENT),
         "an unannotated tag": (ti.Published("sha256:1", None), ti.Reason.UNANNOTATED),
-        "a tag carrying another hash": (ti.Published("sha256:1", HASH_B), ti.Reason.CHANGED),
+        "a tag carrying another hash": (
+            ti.Published("sha256:1", HASH_B),
+            ti.Reason.CHANGED,
+        ),
         "a tag carrying this hash": (ti.Published("sha256:1", HASH_A), ti.Reason.MATCH),
     }
     for name, (published, want) in sorted(cases.items()):
@@ -123,8 +133,16 @@ def test_an_absent_tag_builds_and_a_match_skips() -> None:
     flags = ti.build_flags(ARGS)
     built = ti.plan_outputs(ti.Reason.ABSENT, HASH_A, flags)
     skipped = ti.plan_outputs(ti.Reason.MATCH, HASH_A, flags)
-    expect("an absent tag builds", built is not None and built["build"] == "true", f"{built}")
-    expect("a matching tag skips", skipped is not None and skipped["build"] == "false", f"{skipped}")
+    expect(
+        "an absent tag builds",
+        built is not None and built["build"] == "true",
+        f"{built}",
+    )
+    expect(
+        "a matching tag skips",
+        skipped is not None and skipped["build"] == "false",
+        f"{skipped}",
+    )
     expect(
         "both hand the build the hashed flags",
         built is not None and built["flags"] == " ".join(flags),
@@ -164,7 +182,11 @@ def test_the_refusal_says_what_to_bump() -> None:
             "the inputs changed under the published tag r:t" in line,
             line,
         )
-        expect(f"the {name} tag says to bump the family pin", "toolbox.dfe-toolbox" in line, line)
+        expect(
+            f"the {name} tag says to bump the family pin",
+            "toolbox.dfe-toolbox" in line,
+            line,
+        )
         expect(f"the {name} tag names the digest it keeps", "sha256:d1" in line, line)
 
 
@@ -193,9 +215,13 @@ def test_the_build_flags_carry_the_build_args_and_the_merge_carries_the_hash() -
     """Each platform builds from the same args, and only the merged index holds the hash."""
     flags = ti.build_flags(ARGS)
     expect(
-        "every hashed build arg is passed", flags == [f"--build-arg={a}" for a in ARGS], f"{flags}"
+        "every hashed build arg is passed",
+        flags == [f"--build-arg={a}" for a in ARGS],
+        f"{flags}",
     )
-    expect("no flag holds whitespace", all(" " not in flag for flag in flags), f"{flags}")
+    expect(
+        "no flag holds whitespace", all(" " not in flag for flag in flags), f"{flags}"
+    )
     expect(
         "the annotation is index-level",
         ti.index_annotation(HASH_A) == f"index:{ti.INPUTS_ANNOTATION}={HASH_A}",
@@ -246,7 +272,10 @@ def test_verify_fails_unless_the_pushed_index_carries_the_hash() -> None:
     platform_cases = {
         "an index holding exactly the hashed platforms passes": ({*PLATFORMS}, False),
         "an index the merge lost arm64 from fails": ({"linux/amd64"}, True),
-        "an index holding a platform nobody hashed fails": ({*PLATFORMS, "linux/s390x"}, True),
+        "an index holding a platform nobody hashed fails": (
+            {*PLATFORMS, "linux/s390x"},
+            True,
+        ),
         "an index whose platforms could not be read fails": (None, True),
     }
     for name, (found, fails) in sorted(platform_cases.items()):
@@ -289,18 +318,32 @@ def test_every_image_job_builds_only_what_it_hashed() -> None:
     }
     for name in BUILD_JOBS:
         job = jobs[name]
-        expect(f"{name} takes the planned flags", job["env"].get("PLANNED_FLAGS") == planned[name])
+        expect(
+            f"{name} takes the planned flags",
+            job["env"].get("PLANNED_FLAGS") == planned[name],
+        )
         builds = _runs(job, "docker buildx build")
         expect(f"{name} has one build step", len(builds) == 1, f"{len(builds)}")
         for build in builds:
             run = build["run"]
             expect(f"{name} builds with the planned flags", '"${flags[@]}"' in run, run)
             for flag in ("--build-arg", "--annotation"):
-                expect(f"{name}'s build step sets no {flag} of its own", flag not in run, run)
-            expect(f"{name} builds the matrix platform alone", '--platform "linux/${ARCH}"' in run)
+                expect(
+                    f"{name}'s build step sets no {flag} of its own",
+                    flag not in run,
+                    run,
+                )
+            expect(
+                f"{name} builds the matrix platform alone",
+                '--platform "linux/${ARCH}"' in run,
+            )
             expect(f"{name} records provenance", "--provenance=true" in run, run)
             expect(f"{name} records an SBOM", "--sbom=true" in run, run)
-            expect(f"{name} pushes by digest, never a tag", "push-by-digest=true" in run, run)
+            expect(
+                f"{name} pushes by digest, never a tag",
+                "push-by-digest=true" in run,
+                run,
+            )
             expect(f"{name} tags nothing", "--tag" not in run, run)
 
 
@@ -315,15 +358,28 @@ def test_each_platform_builds_on_a_runner_of_its_own_architecture() -> None:
     for name in BUILD_JOBS:
         job = workflow["jobs"][name]
         targets = job["strategy"]["matrix"]["target"]
-        expect(f"{name} builds on one native runner per arch", targets == want, f"{targets}")
+        expect(
+            f"{name} builds on one native runner per arch",
+            targets == want,
+            f"{targets}",
+        )
         archs = sorted(f"linux/{target['arch']}" for target in targets)
-        expect(f"{name} builds every hashed platform", archs == sorted(hashed), f"{archs}")
-        expect(f"{name} runs on the matrix runner", job["runs-on"] == "${{ matrix.target.runner }}")
+        expect(
+            f"{name} builds every hashed platform", archs == sorted(hashed), f"{archs}"
+        )
+        expect(
+            f"{name} runs on the matrix runner",
+            job["runs-on"] == "${{ matrix.target.runner }}",
+        )
         build = _runs(job, "docker buildx build")[0]["run"]
         guard = build.index("{{.Server.Arch}}") < build.index("docker buildx build")
-        expect(f"{name} refuses a runner of another arch before it builds", guard, build)
+        expect(
+            f"{name} refuses a runner of another arch before it builds", guard, build
+        )
     text = WORKFLOW.read_text(encoding="utf-8")
-    expect("nothing sets up QEMU", "setup-qemu-action" not in text and "binfmt" not in text)
+    expect(
+        "nothing sets up QEMU", "setup-qemu-action" not in text and "binfmt" not in text
+    )
 
 
 def test_the_merge_joins_the_digests_under_the_tag_with_the_hash() -> None:
@@ -331,7 +387,11 @@ def test_the_merge_joins_the_digests_under_the_tag_with_the_hash() -> None:
     builds = {"base-merge": "base-build", "cloud-merge": "cloud-build"}
     for name in MERGE_JOBS:
         job = jobs[name]
-        expect(f"{name} waits on its builds", builds[name] in job["needs"], f"{job['needs']}")
+        expect(
+            f"{name} waits on its builds",
+            builds[name] in job["needs"],
+            f"{job['needs']}",
+        )
         creates = _runs(job, "docker buildx imagetools create")
         expect(f"{name} joins the digests once", len(creates) == 1, f"{len(creates)}")
         run = creates[0]["run"] if creates else ""
@@ -339,21 +399,47 @@ def test_the_merge_joins_the_digests_under_the_tag_with_the_hash() -> None:
             f"{name} annotates the index with the planned hash",
             '--annotation "${ANNOTATION}"' in run,
         )
-        expect(f"{name} pushes the family tag", '"${IMAGE_PREFIX}/${IMAGE}:${TAG}"' in run, run)
-        expect(f"{name} moves latest beside it", '"${IMAGE_PREFIX}/${IMAGE}:latest"' in run, run)
-        expect(f"{name} refuses a platform with no digest", "sha256:*" in run and "exit 1" in run)
+        expect(
+            f"{name} pushes the family tag",
+            '"${IMAGE_PREFIX}/${IMAGE}:${TAG}"' in run,
+            run,
+        )
+        expect(
+            f"{name} moves latest beside it",
+            '"${IMAGE_PREFIX}/${IMAGE}:latest"' in run,
+            run,
+        )
+        expect(
+            f"{name} refuses a platform with no digest",
+            "sha256:*" in run and "exit 1" in run,
+        )
         expect(
             f"{name} takes the annotation the plan emitted",
             "annotation" in job["env"].get("ANNOTATION", ""),
             f"{job['env']}",
         )
         steps = job["steps"]
-        create = next(i for i, s in enumerate(steps) if "imagetools create" in s.get("run", ""))
-        reads = [i for i, s in enumerate(steps) if "toolbox_inputs.py verify" in s.get("run", "")]
-        expect(f"{name} reads the index back after the push", len(reads) == 1 and reads[0] > create)
+        create = next(
+            i for i, s in enumerate(steps) if "imagetools create" in s.get("run", "")
+        )
+        reads = [
+            i
+            for i, s in enumerate(steps)
+            if "toolbox_inputs.py verify" in s.get("run", "")
+        ]
+        expect(
+            f"{name} reads the index back after the push",
+            len(reads) == 1 and reads[0] > create,
+        )
         verify = steps[reads[0]]["run"] if reads else ""
-        expect(f"{name} checks the hashed platforms", '--platform "${PLATFORMS}"' in verify, verify)
-        expect(f"{name} checks the planned hash", '--inputs "${INPUTS}"' in verify, verify)
+        expect(
+            f"{name} checks the hashed platforms",
+            '--platform "${PLATFORMS}"' in verify,
+            verify,
+        )
+        expect(
+            f"{name} checks the planned hash", '--inputs "${INPUTS}"' in verify, verify
+        )
 
 
 def test_the_cloud_images_hash_the_base_image_inputs() -> None:
@@ -367,11 +453,14 @@ def test_the_cloud_images_hash_the_base_image_inputs() -> None:
             run,
         )
     cloud = jobs["cloud-build"]
-    expect("the cloud images wait on base's merged index", "base-merge" in cloud["needs"])
+    expect(
+        "the cloud images wait on base's merged index", "base-merge" in cloud["needs"]
+    )
     expect(
         "and build only after it merged or was already published",
         all(
-            f'contains(fromJSON(\'["success", "skipped"]\'), needs.{job}.result)' in cloud["if"]
+            f'contains(fromJSON(\'["success", "skipped"]\'), needs.{job}.result)'
+            in cloud["if"]
             for job in ("base-build", "base-merge")
         ),
         cloud["if"],
@@ -389,14 +478,18 @@ def test_a_refusal_fails_the_job_before_any_login() -> None:
     jobs = _workflow()["jobs"]
     plan = jobs["plan"]
     uses = [s.get("uses", "") for s in plan["steps"]]
-    expect("the plan never logs in", not any("login-action" in u for u in uses), f"{uses}")
+    expect(
+        "the plan never logs in", not any("login-action" in u for u in uses), f"{uses}"
+    )
     expect("the plan asks for no package scope", "permissions" not in plan)
     for name, job in sorted(_publishing_jobs().items()):
         expect(f"{name} runs after the plan", "plan" in job["needs"], f"{job['needs']}")
         logins = [s for s in job["steps"] if "docker/login-action" in s.get("uses", "")]
         expect(f"{name} logs in once", len(logins) == 1, f"{logins}")
     for name in BUILD_JOBS:
-        setups = [s for s in jobs[name]["steps"] if "setup-buildx-action" in s.get("uses", "")]
+        setups = [
+            s for s in jobs[name]["steps"] if "setup-buildx-action" in s.get("uses", "")
+        ]
         expect(f"{name} sets up buildx once", len(setups) == 1, f"{setups}")
     expect(
         "base builds only when its plan says so",
@@ -434,16 +527,31 @@ def test_a_pull_request_plans_every_image_and_pushes_nothing() -> None:
         f"{workflow['permissions']}",
     )
     job = workflow["jobs"]["plan"]
-    expect("the plan runs on pull requests too", "github.event_name" not in job["if"], job["if"])
+    expect(
+        "the plan runs on pull requests too",
+        "github.event_name" not in job["if"],
+        job["if"],
+    )
     runs = [s.get("run", "") for s in job["steps"]]
     plans = [r for r in runs if "toolbox_inputs.py plan" in r]
     expect("it plans all four images", len(plans) == 4, f"{len(plans)}")
     for image in ("base", "aws", "gcp", "azure"):
-        expect(f"including dfe-toolbox-{image}", any(f"dfe-toolbox-{image}:" in r for r in plans))
-    expect("each over the hashed platforms", all('--platform "${PLATFORMS}"' in r for r in plans))
+        expect(
+            f"including dfe-toolbox-{image}",
+            any(f"dfe-toolbox-{image}:" in r for r in plans),
+        )
+    expect(
+        "each over the hashed platforms",
+        all('--platform "${PLATFORMS}"' in r for r in plans),
+    )
     uses = [s.get("uses", "") for s in job["steps"]]
-    expect("it never sets up buildx", not any("setup-buildx" in u for u in uses), f"{uses}")
-    expect("it never builds or pushes", not any("buildx build" in r or "--push" in r for r in runs))
+    expect(
+        "it never sets up buildx", not any("setup-buildx" in u for u in uses), f"{uses}"
+    )
+    expect(
+        "it never builds or pushes",
+        not any("buildx build" in r or "--push" in r for r in runs),
+    )
     for name, publishing in sorted(_publishing_jobs().items()):
         expect(
             f"{name} cannot run on a pull request",

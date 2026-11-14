@@ -51,7 +51,9 @@ STRIMZI_VERSION = "1.2.0"
 # default of STRIMZI_LABELS_EXCLUSION_PATTERN, operator-common/.../Labels.java:105-106,
 # which the chart leaves unset (values.yaml labelsExclusionPattern: ""). Upstream
 # leaves the dots unescaped; escaping them changes nothing for a real label key.
-EXCLUDED = re.compile(r"(^app\.kubernetes\.io/(?!part-of).*|^kustomize\.toolkit\.fluxcd\.io.*)")
+EXCLUDED = re.compile(
+    r"(^app\.kubernetes\.io/(?!part-of).*|^kustomize\.toolkit\.fluxcd\.io.*)"
+)
 
 
 def copied(cr_labels: dict[str, str]) -> dict[str, str]:
@@ -88,7 +90,9 @@ def pool_pod_labels(
     }
 
 
-def component_pod_labels(cluster: str, kafka_labels: dict[str, str], kind: str) -> dict[str, str]:
+def component_pod_labels(
+    cluster: str, kafka_labels: dict[str, str], kind: str
+) -> dict[str, str]:
     """Labels on an entity-operator or Cruise Control pod.
 
     AbstractModel.java:113-123 calls Labels.generateDefaultLabels (Labels.java:
@@ -119,7 +123,12 @@ def render(sets: tuple[str, ...] = ()) -> tuple[dict, ...]:
     for s in sets:
         cmd += ["--set", s]
     out = subprocess.run(
-        cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False
+        cmd,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
     )
     if out.returncode != 0:
         raise SystemExit(f"helm template failed for {sets}:\n{out.stderr}")
@@ -142,10 +151,17 @@ def pods_of(docs: tuple[dict, ...]) -> list[Pod]:
     node_id = 0
     for pool in of_kind(docs, "KafkaNodePool"):
         meta, spec = pool["metadata"], pool["spec"]
-        tsc = ((spec.get("template") or {}).get("pod") or {}).get("topologySpreadConstraints") or []
+        tsc = ((spec.get("template") or {}).get("pod") or {}).get(
+            "topologySpreadConstraints"
+        ) or []
         for _ in range(int(spec["replicas"])):
-            labels = pool_pod_labels(cluster, meta["name"], meta.get("labels") or {}, node_id,
-                                     set(spec["roles"]))
+            labels = pool_pod_labels(
+                cluster,
+                meta["name"],
+                meta.get("labels") or {},
+                node_id,
+                set(spec["roles"]),
+            )
             pods.append((labels["strimzi.io/pod-name"], labels, tsc))
             node_id += 1
     kafka_labels = kafka["metadata"].get("labels") or {}
@@ -153,7 +169,9 @@ def pods_of(docs: tuple[dict, ...]) -> list[Pod]:
     if "cruiseControl" in kafka["spec"]:
         others.append("cruise-control")
     for kind in others:
-        pods.append((f"{cluster}-{kind}", component_pod_labels(cluster, kafka_labels, kind), []))
+        pods.append(
+            (f"{cluster}-{kind}", component_pod_labels(cluster, kafka_labels, kind), [])
+        )
     return pods
 
 
@@ -163,30 +181,42 @@ def peers(labels: dict[str, str], pods: list[Pod]) -> set[str]:
     A pool with the broker role spreads against every broker; a controller-only
     pool against every controller. A combined pool's brokers ARE its controllers.
     """
-    role = ("strimzi.io/broker-role" if labels["strimzi.io/broker-role"] == "true"
-            else "strimzi.io/controller-role")
+    role = (
+        "strimzi.io/broker-role"
+        if labels["strimzi.io/broker-role"] == "true"
+        else "strimzi.io/controller-role"
+    )
     return {n for n, lab, _ in pods if lab.get(role) == "true"}
 
 
 def check_spread(label: str, docs: tuple[dict, ...]) -> None:
     pods = pods_of(docs)
     pool_pods = [p for p in pods if "strimzi.io/pool-name" in p[1]]
-    expect(f"{label}: the render has pool pods to check", len(pool_pods) > 1,
-           f"got {len(pool_pods)}")
+    expect(
+        f"{label}: the render has pool pods to check",
+        len(pool_pods) > 1,
+        f"got {len(pool_pods)}",
+    )
     for name, labels, constraints in pool_pods:
         c = hostname_constraint(label, name, constraints)
         if c is None:
             continue
         selector = c.get("labelSelector") or {}
         only_labels = set(selector) == {"matchLabels"} and not c.get("matchLabelKeys")
-        expect(f"{label}: {name} selector is matchLabels only", only_labels,
-               f"labelSelector {selector!r}, matchLabelKeys {c.get('matchLabelKeys')!r}")
+        expect(
+            f"{label}: {name} selector is matchLabels only",
+            only_labels,
+            f"labelSelector {selector!r}, matchLabelKeys {c.get('matchLabelKeys')!r}",
+        )
         if only_labels:
             got = counted(selector["matchLabels"], pods)
             want = peers(labels, pods)
-            expect(f"{label}: {name} spread counts exactly its peers", got == want,
-                   f"selector {selector['matchLabels']} counts {sorted(got)}, "
-                   f"peers are {sorted(want)}")
+            expect(
+                f"{label}: {name} spread counts exactly its peers",
+                got == want,
+                f"selector {selector['matchLabels']} counts {sorted(got)}, "
+                f"peers are {sorted(want)}",
+            )
         assert_constraint_shape(label, name, c)
 
 
@@ -194,10 +224,12 @@ def test_fixture_matches_the_pinned_strimzi() -> None:
     """A fixture recorded for one operator is not evidence about the next."""
     doc = yaml.safe_load(VERSIONS.read_text(encoding="utf-8"))
     pinned = doc["stacks"][doc["current"]]["operators"]["strimzi-kafka-operator"]
-    expect("Strimzi pin matches the version the label fixture was read from",
-           pinned == STRIMZI_VERSION,
-           f"versions.yaml pins {pinned}; re-read the pod labels at that tag and update "
-           f"pool_pod_labels, component_pod_labels and STRIMZI_VERSION")
+    expect(
+        "Strimzi pin matches the version the label fixture was read from",
+        pinned == STRIMZI_VERSION,
+        f"versions.yaml pins {pinned}; re-read the pod labels at that tag and update "
+        f"pool_pod_labels, component_pod_labels and STRIMZI_VERSION",
+    )
 
 
 def test_combined_pool_spreads_its_brokers() -> None:
@@ -207,24 +239,34 @@ def test_combined_pool_spreads_its_brokers() -> None:
 
 def test_dedicated_pools_spread_apart() -> None:
     """controllerPool on: brokers count brokers, controllers count controllers."""
-    check_spread("dedicated controllers", render(("kafka.controllerPool.enabled=true",)))
+    check_spread(
+        "dedicated controllers", render(("kafka.controllerPool.enabled=true",))
+    )
 
 
 def test_the_other_strimzi_pods_are_in_the_count() -> None:
     """The exact-peers checks only prove exclusion if these pods are there to exclude."""
     names = {n for n, _, _ in pods_of(render())}
     for other in ("dfe-kafka-entity-operator", "dfe-kafka-cruise-control"):
-        expect(f"the default render runs {other} beside the pool", other in names,
-               f"pods {sorted(names)}")
+        expect(
+            f"the default render runs {other} beside the pool",
+            other in names,
+            f"pods {sorted(names)}",
+        )
 
 
 def test_spread_off_renders_none() -> None:
-    docs = render(("kafka.podSpread.enabled=false", "kafka.controllerPool.enabled=true"))
+    docs = render(
+        ("kafka.podSpread.enabled=false", "kafka.controllerPool.enabled=true")
+    )
     for pool in of_kind(docs, "KafkaNodePool"):
-        pod = ((pool["spec"].get("template") or {}).get("pod") or {})
+        pod = (pool["spec"].get("template") or {}).get("pod") or {}
         tsc = pod.get("topologySpreadConstraints")
-        expect(f"podSpread.enabled=false renders no spread on {pool['metadata']['name']}",
-               not tsc, f"got {tsc}")
+        expect(
+            f"podSpread.enabled=false renders no spread on {pool['metadata']['name']}",
+            not tsc,
+            f"got {tsc}",
+        )
 
 
 def main() -> int:

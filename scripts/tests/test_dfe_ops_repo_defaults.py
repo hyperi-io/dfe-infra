@@ -45,7 +45,9 @@ def test_the_environment_variable_wins(tmp_path: Path) -> None:
     previous = os.environ.get("DFE_TEST_REPO_OVERRIDE")
     os.environ["DFE_TEST_REPO_OVERRIDE"] = str(tmp_path)
     try:
-        assert dfeops._sibling_repo("dfe-engine", "DFE_TEST_REPO_OVERRIDE") == str(tmp_path)
+        assert dfeops._sibling_repo("dfe-engine", "DFE_TEST_REPO_OVERRIDE") == str(
+            tmp_path
+        )
     finally:
         if previous is None:
             os.environ.pop("DFE_TEST_REPO_OVERRIDE", None)
@@ -80,7 +82,9 @@ def test_no_absolute_developer_path_is_baked_into_a_default() -> None:
     for name in ("acceptance", "ui"):
         sub = parser._subparsers._group_actions[0].choices[name]
         for action in sub._actions:
-            if not isinstance(action.default, str) or not action.default.startswith("/"):
+            if not isinstance(action.default, str) or not action.default.startswith(
+                "/"
+            ):
                 continue
             # A resolved sibling or env override is fine; a committed literal is not.
             assert action.default in (

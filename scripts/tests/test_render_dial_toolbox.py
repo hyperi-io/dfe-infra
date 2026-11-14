@@ -11,7 +11,7 @@
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
 """Tests for render_dial.py's toolbox.* tfvars block.
 
-    python3 -m pytest scripts/tests/test_render_dial_toolbox.py -q
+python3 -m pytest scripts/tests/test_render_dial_toolbox.py -q
 """
 
 from __future__ import annotations
@@ -146,9 +146,15 @@ def render(text: str = BASE_DIAL) -> dict[str, object]:
 def test_toolbox_defaults_to_disabled_with_no_toolbox_block() -> None:
     toolbox = render()["toolbox"]
     assert toolbox["enabled"] is False
-    assert toolbox["aws"] == {"shape_ref": render_dial.TOOLBOX_SHAPE, "operator_role_arn": ""}
+    assert toolbox["aws"] == {
+        "shape_ref": render_dial.TOOLBOX_SHAPE,
+        "operator_role_arn": "",
+    }
     assert toolbox["ttl_minutes"] == 60
-    assert toolbox["session"] == {"idle_timeout_minutes": 15, "max_duration_minutes": 240}
+    assert toolbox["session"] == {
+        "idle_timeout_minutes": 15,
+        "max_duration_minutes": 240,
+    }
     assert toolbox["session_log_retention_days"] == 90
 
 
@@ -156,22 +162,34 @@ def test_toolbox_block_values_thread_through() -> None:
     toolbox = render(BASE_DIAL + _TOOLBOX_BLOCK)["toolbox"]
     assert toolbox["enabled"] is True
     assert toolbox["aws"]["shape_ref"] == "general"
-    assert toolbox["aws"]["operator_role_arn"] == "arn:aws:iam::000000000000:role/dfe-toolbox-operator"
+    assert (
+        toolbox["aws"]["operator_role_arn"]
+        == "arn:aws:iam::000000000000:role/dfe-toolbox-operator"
+    )
     assert toolbox["ttl_minutes"] == 45
-    assert toolbox["session"] == {"idle_timeout_minutes": 10, "max_duration_minutes": 120}
+    assert toolbox["session"] == {
+        "idle_timeout_minutes": 10,
+        "max_duration_minutes": 120,
+    }
     assert toolbox["session_log_retention_days"] == 30
 
 
 def test_expected_fail_a_toolbox_instance_type_in_the_dial_is_refused() -> None:
     """The type comes off the resolved shape, so a literal one is refused with the override that pins it."""
-    pinned = BASE_DIAL + _TOOLBOX_BLOCK.replace("shape_ref: general", "instance_type: t4g.small")
-    with pytest.raises(render_dial.DialError, match=r"sizing\.overrides\.toolbox\.instance_type"):
+    pinned = BASE_DIAL + _TOOLBOX_BLOCK.replace(
+        "shape_ref: general", "instance_type: t4g.small"
+    )
+    with pytest.raises(
+        render_dial.DialError, match=r"sizing\.overrides\.toolbox\.instance_type"
+    ):
         render(pinned)
 
 
 def test_tool_versions_is_never_read_from_the_dial() -> None:
     """Even a dial that tried to name one could not -- there is no such field."""
-    with_a_bogus_pin = BASE_DIAL + _TOOLBOX_BLOCK + "  tool_versions:\n    kubectl: 1.0.0\n"
+    with_a_bogus_pin = (
+        BASE_DIAL + _TOOLBOX_BLOCK + "  tool_versions:\n    kubectl: 1.0.0\n"
+    )
     # yaml_subset has no list/inline-map syntax, so this parses as an ordinary
     # nested map like any other -- proving _toolbox() simply never looks at it.
     toolbox = render(with_a_bogus_pin)["toolbox"]
@@ -195,16 +213,29 @@ def test_tool_versions_assembles_against_the_real_versions_yaml() -> None:
     stage = parsed["stacks"][current].get("toolbox") or {}
 
     staged = (
-        "kubectl", "helm", "argocd-cli", "tofu", "yq", "aws-cli",
+        "kubectl",
+        "helm",
+        "argocd-cli",
+        "tofu",
+        "yq",
+        "aws-cli",
         "aws-session-manager-plugin",
-        "argocd-cli-arm64-sha256", "yq-arm64-sha256", "kafka-cli-signer",
+        "argocd-cli-arm64-sha256",
+        "yq-arm64-sha256",
+        "kafka-cli-signer",
     )
     for tool in staged:
         if tool in stage:
-            assert tool_versions.get(tool), f"{tool} is in {current!r}'s toolbox: stage but was not assembled"
+            assert tool_versions.get(tool), (
+                f"{tool} is in {current!r}'s toolbox: stage but was not assembled"
+            )
         else:
-            assert tool not in tool_versions, f"{tool} present despite no toolbox: stage entry in {current!r}"
-    assert tool_versions.get("clickhouse-client"), "clickhouse-client missing from tool_versions"
+            assert tool not in tool_versions, (
+                f"{tool} present despite no toolbox: stage entry in {current!r}"
+            )
+    assert tool_versions.get("clickhouse-client"), (
+        "clickhouse-client missing from tool_versions"
+    )
     assert tool_versions.get("psql"), "psql missing from tool_versions"
 
 
@@ -216,10 +247,15 @@ def test_clickhouse_client_and_psql_track_the_services_pins_not_their_own() -> N
     real = render()["toolbox"]["tool_versions"]
     versions_yaml = (REPO_ROOT / "versions.yaml").read_text(encoding="utf-8")
     current = render_dial._scalar(
-        render_dial._parse_yaml_subset(versions_yaml, source="versions.yaml"), ("current",)
+        render_dial._parse_yaml_subset(versions_yaml, source="versions.yaml"),
+        ("current",),
     )
-    services = render_dial._parse_yaml_subset(versions_yaml, source="versions.yaml")["stacks"][current]["services"]
-    assert real["clickhouse-client"] == render_dial._scalar(services, ("clickhouse-version",))
+    services = render_dial._parse_yaml_subset(versions_yaml, source="versions.yaml")[
+        "stacks"
+    ][current]["services"]
+    assert real["clickhouse-client"] == render_dial._scalar(
+        services, ("clickhouse-version",)
+    )
     assert real["psql"] == render_dial._scalar(services, ("postgresql",))
     # The Kafka CLI tarball the toolbox installs where no kcat package exists,
     # held to the same broker version for the same reason.
@@ -232,7 +268,9 @@ def test_the_kafka_cli_signer_names_the_release_the_toolbox_installs() -> None:
     would fail the bastion's boot on a key that never signed the new tarball.
     The module refuses that pair at plan, and this refuses it at the pin PR."""
     real = render()["toolbox"]["tool_versions"]
-    assert "kafka-cli-signer" in real, "the current stack's toolbox: stage pins no kafka-cli-signer"
+    assert "kafka-cli-signer" in real, (
+        "the current stack's toolbox: stage pins no kafka-cli-signer"
+    )
     signed_release, _, fingerprint = real["kafka-cli-signer"].partition(":")
     assert signed_release == real["kafka-cli"], (
         f"toolbox.kafka-cli-signer names the {signed_release} release manager, but the "
@@ -271,7 +309,9 @@ def test_tool_versions_is_empty_with_no_toolbox_stage_at_all(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     versions = tmp_path / "versions.yaml"
-    versions.write_text('current: "9.9.9"\nstacks:\n  9.9.9:\n    schema: 1\n', encoding="utf-8")
+    versions.write_text(
+        'current: "9.9.9"\nstacks:\n  9.9.9:\n    schema: 1\n', encoding="utf-8"
+    )
     monkeypatch.setattr(render_dial, "VERSIONS_FILE", versions)
     assert render()["toolbox"]["tool_versions"] == {}
 
@@ -287,7 +327,7 @@ def test_toolbox_key_is_declared_by_the_aws_root() -> None:
     """The root's variables.tf must declare toolbox, or this render's own key
     would be a prompt on an unattended plan (variables.tf carries no default
     for it)."""
-    variables_tf = (REPO_ROOT / "terraform" / "environments" / "aws" / "variables.tf").read_text(
-        encoding="utf-8"
-    )
+    variables_tf = (
+        REPO_ROOT / "terraform" / "environments" / "aws" / "variables.tf"
+    ).read_text(encoding="utf-8")
     assert 'variable "toolbox"' in variables_tf

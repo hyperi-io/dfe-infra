@@ -60,17 +60,29 @@ from _weave import REPO_ROOT, contract, render_app, weave
 # Stack objects a workload names that another Application or bootstrap provides:
 # (kind, name) -> the file that provides it, and the scenario it is limited to.
 ELSEWHERE: dict[tuple[str, str], tuple[str, str | None]] = {
-    ("Secret", "clickhouse-admin-password"): ("helm/charts/clickhouse-cluster/values.yaml", None),
+    ("Secret", "clickhouse-admin-password"): (
+        "helm/charts/clickhouse-cluster/values.yaml",
+        None,
+    ),
     # The loader's own password, minted beside the engine (engine-service-clickhouse.yaml).
     ("Secret", "loader-clickhouse"): ("helm/charts/dfe-extras/values.yaml", None),
-    ("Secret", "dfe-clickhouse-ca"): ("helm/charts/clickhouse-cluster/values.yaml", None),
-    ("Secret", "dfe-documentdb-credentials"): ("helm/charts/documentdb/values.yaml", None),
+    ("Secret", "dfe-clickhouse-ca"): (
+        "helm/charts/clickhouse-cluster/values.yaml",
+        None,
+    ),
+    ("Secret", "dfe-documentdb-credentials"): (
+        "helm/charts/documentdb/values.yaml",
+        None,
+    ),
     ("Secret", "dfe-documentdb-ca"): ("helm/charts/documentdb/values.yaml", None),
     ("Secret", "dfe-kafka-user"): ("helm/charts/kafka/templates/kafka-user.yaml", None),
     ("Secret", "dfe-deploy-repo-auth"): ("bootstrap/bootstrap.sh", None),
     ("Secret", "ghcr-pull-secret"): ("bootstrap/bootstrap.sh", None),
     # The deployer's own CA bundle, which the scenario names and supplies.
-    ("ConfigMap", "example-ca-bundle"): ("scripts/tests/_gate.py", "clickhouse-ca-configmap"),
+    ("ConfigMap", "example-ca-bundle"): (
+        "scripts/tests/_gate.py",
+        "clickhouse-ca-configmap",
+    ),
 }
 
 # Each component's Services reachable from outside, per cloud: name -> type and ports.
@@ -115,7 +127,9 @@ ENGINE = "dfe-engine"
 
 def _deployment(docs: list[dict], name: str | None = None) -> dict:
     return next(
-        d for d in docs if d["kind"] == "Deployment" and name in (None, d["metadata"]["name"])
+        d
+        for d in docs
+        if d["kind"] == "Deployment" and name in (None, d["metadata"]["name"])
     )
 
 
@@ -141,7 +155,9 @@ def rewrite_file(configmap: dict, name: str, text: str) -> None:
 
 
 @pytest.mark.parametrize(("service", "profile", "cloud", "scenario"), CELLS)
-def test_no_object_renders_twice(service: str, profile: str, cloud: str, scenario: str) -> None:
+def test_no_object_renders_twice(
+    service: str, profile: str, cloud: str, scenario: str
+) -> None:
     """Argo applies one object per (kind, name); a second copy fights the first on every sync."""
     assert rendered_twice(golden(service, profile, cloud, scenario)) == []
 
@@ -152,20 +168,27 @@ def test_an_object_both_sources_render_is_caught() -> None:
     assert rendered_twice([*docs, service]) == ["Service/dfe-hyperdx"]
 
 
-@pytest.mark.parametrize(("profile", "cloud"), [(p, k) for p in PROFILES for k in CLOUDS])
+@pytest.mark.parametrize(
+    ("profile", "cloud"), [(p, k) for p in PROFILES for k in CLOUDS]
+)
 def test_the_engine_config_claim_keeps_its_name(profile: str, cloud: str) -> None:
     """A renamed claim is pruned and comes back empty, factory-resetting accounts and orgs."""
     docs = golden(ENGINE, profile, cloud)
-    held = sorted(d["metadata"]["name"] for d in docs if d["kind"] == "PersistentVolumeClaim")
+    held = sorted(
+        d["metadata"]["name"] for d in docs if d["kind"] == "PersistentVolumeClaim"
+    )
     mounted = sorted(
         v["persistentVolumeClaim"]["claimName"]
-        for v in _deployment(docs, ENGINE)["spec"]["template"]["spec"].get("volumes") or []
+        for v in _deployment(docs, ENGINE)["spec"]["template"]["spec"].get("volumes")
+        or []
         if "persistentVolumeClaim" in v
     )
     assert (held, mounted) == (["dfe-engine-config"], ["dfe-engine-config"])
 
 
-@pytest.mark.parametrize(("profile", "cloud"), [(p, k) for p in PROFILES for k in CLOUDS])
+@pytest.mark.parametrize(
+    ("profile", "cloud"), [(p, k) for p in PROFILES for k in CLOUDS]
+)
 def test_the_engine_runs_exactly_one_pod(profile: str, cloud: str) -> None:
     """The contract's singleton: one replica, Recreate, and nothing that scales or budgets it."""
     docs = golden(ENGINE, profile, cloud)
@@ -227,7 +250,9 @@ def test_an_optional_reference_resolves() -> None:
     _main(docs)["env"].append(
         {
             "name": "X",
-            "valueFrom": {"secretKeyRef": {"name": "nowhere", "key": "k", "optional": True}},
+            "valueFrom": {
+                "secretKeyRef": {"name": "nowhere", "key": "k", "optional": True}
+            },
         }
     )
     assert unresolved_refs(docs, _elsewhere("default")) == []
@@ -243,13 +268,17 @@ def _images(path: Path) -> list[tuple[str, str]]:
         if not isinstance(doc, dict) or doc.get("kind") not in WORKLOAD_KINDS:
             continue
         pod = pod_spec(doc)
-        for container in (pod.get("initContainers") or []) + (pod.get("containers") or []):
+        for container in (pod.get("initContainers") or []) + (
+            pod.get("containers") or []
+        ):
             found.append((f"{object_id(doc)} {container['name']}", container["image"]))
     return found
 
 
 # An image reference whose tag and digest may each be a pin token, which holds a colon.
-IMAGE_RE = re.compile(r"^(?P<name>.+?):(?P<tag><pin:[^>]+>|[^:@<>]+)(?:@(?P<digest>.+))?$")
+IMAGE_RE = re.compile(
+    r"^(?P<name>.+?):(?P<tag><pin:[^>]+>|[^:@<>]+)(?:@(?P<digest>.+))?$"
+)
 
 
 def image_problems(images: list[tuple[str, str]]) -> list[str]:
@@ -280,9 +309,15 @@ def test_every_image_runs_the_pinned_tag_and_digest(
 
 def test_an_image_pinned_by_hand_is_caught() -> None:
     images = [
-        ("Deployment/x main", "registry.example.com/dfe/x:<pin:apps.dfe-ui>@<pin:digests.dfe-ui>"),
+        (
+            "Deployment/x main",
+            "registry.example.com/dfe/x:<pin:apps.dfe-ui>@<pin:digests.dfe-ui>",
+        ),
         ("Deployment/x a", "registry.example.com/dfe/x:v0.0.1@<pin:digests.dfe-ui>"),
-        ("Deployment/x b", "registry.example.com/dfe/x:<pin:apps.dfe-ui>@sha256:" + "0" * 64),
+        (
+            "Deployment/x b",
+            "registry.example.com/dfe/x:<pin:apps.dfe-ui>@sha256:" + "0" * 64,
+        ),
         ("Deployment/x c", "registry.example.com/dfe/x:<pin:apps.dfe-ui>"),
     ]
     assert image_problems(images) == [
@@ -299,7 +334,10 @@ def test_a_cronjobs_images_are_read_from_its_job_template(tmp_path: Path) -> Non
     cronjob = {
         "kind": "CronJob",
         "metadata": {"name": "c"},
-        "spec": {"schedule": "@hourly", "jobTemplate": {"spec": {"template": {"spec": pod}}}},
+        "spec": {
+            "schedule": "@hourly",
+            "jobTemplate": {"spec": {"template": {"spec": pod}}},
+        },
     }
     path = tmp_path / "render.yaml"
     path.write_text(yaml.safe_dump(cronjob), encoding="utf-8")
@@ -327,7 +365,9 @@ def test_a_reference_to_a_later_variable_fails() -> None:
     env = _main(docs)["env"]
     password = next(e for e in env if e["name"] == "MONGO_PASSWORD")
     env.remove(password)
-    env.insert(env.index(next(e for e in env if e["name"] == "MONGO_URI")) + 1, password)
+    env.insert(
+        env.index(next(e for e in env if e["name"] == "MONGO_URI")) + 1, password
+    )
     assert forward_references(docs) == [
         "Deployment/dfe-hyperdx dfe-hyperdx MONGO_URI -> MONGO_PASSWORD"
     ]
@@ -337,7 +377,9 @@ def test_a_reference_to_a_later_variable_fails() -> None:
 
 
 @pytest.mark.parametrize(("service", "profile", "cloud"), MATRIX)
-def test_every_route_backend_port_is_served(service: str, profile: str, cloud: str) -> None:
+def test_every_route_backend_port_is_served(
+    service: str, profile: str, cloud: str
+) -> None:
     """dfe-extras renders the mesh route, the thin chart the Service it sends to."""
     assert route_problems(golden(service, profile, cloud)) == []
 
@@ -345,7 +387,9 @@ def test_every_route_backend_port_is_served(service: str, profile: str, cloud: s
 def test_a_route_to_a_port_the_service_lost_is_caught() -> None:
     docs = golden("dfe-transform-vrl", "mesh", "aws")
     service = next(d for d in docs if object_id(d) == "Service/dfe-transform-vrl")
-    service["spec"]["ports"] = [p for p in service["spec"]["ports"] if p["port"] != 6000]
+    service["spec"]["ports"] = [
+        p for p in service["spec"]["ports"] if p["port"] != 6000
+    ]
     assert route_problems(docs) == [
         "GRPCRoute/dfe-transform-vrl-mesh -> Service dfe-transform-vrl port 6000, "
         "which it does not serve"
@@ -379,7 +423,9 @@ def opened_ports(docs: list[dict]) -> list[str]:
             found += [f"{object_id(doc)} {p['port']}" for p in spec.get("ports") or []]
         elif doc.get("kind") == "NetworkPolicy":
             for rule in spec.get("ingress") or []:
-                found += [f"{object_id(doc)} {p['port']}" for p in rule.get("ports") or []]
+                found += [
+                    f"{object_id(doc)} {p['port']}" for p in rule.get("ports") or []
+                ]
     return found
 
 
@@ -419,9 +465,13 @@ def test_the_receiver_never_starts_on_its_compiled_defaults(
 
 
 @pytest.mark.parametrize("profile", BUS_PROFILES)
-def test_the_receiver_reads_its_sasl_mechanism_beside_the_credential(profile: str) -> None:
+def test_the_receiver_reads_its_sasl_mechanism_beside_the_credential(
+    profile: str,
+) -> None:
     """The contract's kafka group carries the mechanism, from the Secret that holds the password."""
-    env = effective_env(golden("dfe-receiver", profile, "aws"), "Deployment/dfe-receiver")
+    env = effective_env(
+        golden("dfe-receiver", profile, "aws"), "Deployment/dfe-receiver"
+    )
     mechanism = env["DFE_RECEIVER_KAFKA_SASL_MECHANISM"]["valueFrom"]["secretKeyRef"]
     password = env["DFE_RECEIVER_KAFKA_SASL_PASSWORD"]["valueFrom"]["secretKeyRef"]
     assert mechanism["name"] == password["name"] == "dfe-kafka-user"
@@ -445,8 +495,12 @@ def test_the_loader_contract_keeps_keda_out_of_its_config() -> None:
 def test_a_receiver_service_back_on_8443_is_caught() -> None:
     docs = golden("dfe-receiver", "scale", "aws")
     service = next(d for d in docs if object_id(d) == "Service/dfe-receiver")
-    service["spec"]["ports"].append({"name": "grpc", "port": 8443, "targetPort": "grpc"})
-    assert [p for p in opened_ports(docs) if p.endswith(" 8443")] == ["Service/dfe-receiver 8443"]
+    service["spec"]["ports"].append(
+        {"name": "grpc", "port": 8443, "targetPort": "grpc"}
+    )
+    assert [p for p in opened_ports(docs) if p.endswith(" 8443")] == [
+        "Service/dfe-receiver 8443"
+    ]
 
 
 def test_a_receiver_render_with_no_delivery_path_is_caught() -> None:
@@ -480,7 +534,9 @@ def test_the_engine_keeps_its_service_account_token(
     account = next(d for d in docs if object_id(d) == "ServiceAccount/dfe-engine")
     assert pod.get("automountServiceAccountToken", True) is True
     assert account.get("automountServiceAccountToken", True) is True
-    assert [v["name"] for v in pod.get("volumes") or [] if "serviceaccount" in v["name"]] == []
+    assert [
+        v["name"] for v in pod.get("volumes") or [] if "serviceaccount" in v["name"]
+    ] == []
 
 
 # ------------------------------------------------------------------- exposure
@@ -504,7 +560,9 @@ def test_only_the_receiver_and_the_tunnel_are_exposed(service: str) -> None:
 
 def test_a_public_service_switched_on_is_caught() -> None:
     """dfe-hyperdx's contract marks 8080 public; one overlay line puts it on a load balancer."""
-    docs = render_app("dfe-hyperdx", "scale", "aws", overlay={"publicService": {"enabled": True}})
+    docs = render_app(
+        "dfe-hyperdx", "scale", "aws", overlay={"publicService": {"enabled": True}}
+    )
     assert exposed(docs) == {
         "Service/dfe-hyperdx-public": {"type": "LoadBalancer", "ports": ["8080/TCP"]}
     }
@@ -533,22 +591,31 @@ ADDRESS = "203.0.113.10"
 SENDERS = ["198.51.100.0/24"]
 SCHEME = {"service.beta.kubernetes.io/aws-load-balancer-scheme": "internet-facing"}
 SHAPE = {"loadBalancerClass": "service.k8s.aws/nlb", "annotations": SCHEME}
-OPT_IN = {"exposure": {"groups": {"ingest": {"door": "loadbalancer", "allow": SENDERS}}, "public": SHAPE}}
+OPT_IN = {
+    "exposure": {
+        "groups": {"ingest": {"door": "loadbalancer", "allow": SENDERS}},
+        "public": SHAPE,
+    }
+}
 # What each cloud's apps/dfe-receiver/<cloud>.yaml adds to the load balancer.
 CLOUD_SHAPE: dict[str, dict] = {
-    "aws": {"annotations": {
-        "service.beta.kubernetes.io/aws-load-balancer-type": "external",
-        "service.beta.kubernetes.io/aws-load-balancer-nlb-target-type": "ip",
-        "service.beta.kubernetes.io/aws-load-balancer-target-group-attributes": "preserve_client_ip.enabled=true",
-        "service.beta.kubernetes.io/aws-load-balancer-manage-backend-security-group-rules": "true",
-    }},
+    "aws": {
+        "annotations": {
+            "service.beta.kubernetes.io/aws-load-balancer-type": "external",
+            "service.beta.kubernetes.io/aws-load-balancer-nlb-target-type": "ip",
+            "service.beta.kubernetes.io/aws-load-balancer-target-group-attributes": "preserve_client_ip.enabled=true",
+            "service.beta.kubernetes.io/aws-load-balancer-manage-backend-security-group-rules": "true",
+        }
+    },
     "gcp": {"externalTrafficPolicy": "Local"},
     "azure": {"externalTrafficPolicy": "Local"},
 }
 DEAD_PORT = "8443/TCP"
 
 
-def _receiver(cloud: str, overlay: dict | None = None, annotations: dict | None = None) -> list:
+def _receiver(
+    cloud: str, overlay: dict | None = None, annotations: dict | None = None
+) -> list:
     return render_app(
         "dfe-receiver", "scale", cloud, overlay=overlay, annotations=annotations or {}
     )
@@ -578,7 +645,10 @@ def ingest_ports(docs: list[dict]) -> list[str]:
         if object_id(doc) != "NetworkPolicy/dfe-receiver-ingest":
             continue
         for rule in doc["spec"].get("ingress") or []:
-            ports += [f"{p['port']}/{p.get('protocol', 'TCP')}" for p in rule.get("ports") or []]
+            ports += [
+                f"{p['port']}/{p.get('protocol', 'TCP')}"
+                for p in rule.get("ports") or []
+            ]
     return sorted(ports)
 
 
@@ -594,7 +664,11 @@ def test_a_deployment_naming_its_senders_keeps_its_shape(cloud: str) -> None:
     facts = {"dfe.hyperi.io/receiver_address": ADDRESS}
     balancers = load_balancers(_receiver(cloud, OPT_IN, facts))
     shape = CLOUD_SHAPE[cloud]
-    annotations = {**shape.get("annotations", {}), **SCHEME, "dfe.hyperi.io/ingest-fence": "listed"}
+    annotations = {
+        **shape.get("annotations", {}),
+        **SCHEME,
+        "dfe.hyperi.io/ingest-fence": "listed",
+    }
     assert balancers == {
         "Service/dfe-receiver-public": {
             "ports": ["8080/TCP"],
@@ -636,7 +710,9 @@ def test_the_overlay_address_applies_where_the_cluster_secret_has_none() -> None
     ],
     ids=["tunnel", "group-off", "no-senders", "gateway"],
 )
-def test_expected_fail_a_receiver_with_no_load_balancer_door_renders_none(cloud: str, ingest: dict) -> None:
+def test_expected_fail_a_receiver_with_no_load_balancer_door_renders_none(
+    cloud: str, ingest: dict
+) -> None:
     group = {"door": "loadbalancer", "allow": SENDERS, **ingest}
     overlay = {"exposure": {"groups": {"ingest": group}, "public": SHAPE}}
     assert load_balancers(_receiver(cloud, overlay)) == {}
@@ -650,7 +726,10 @@ def test_expected_fail_a_receiver_with_no_load_balancer_door_renders_none(cloud:
             "publicService.enabled is true",
         ),
         (
-            {"exposure": {"groups": {"ingest": {"door": "tunnel"}}}, "publicService": {"enabled": True}},
+            {
+                "exposure": {"groups": {"ingest": {"door": "tunnel"}}},
+                "publicService": {"enabled": True},
+            },
             "publicService.enabled is true",
         ),
         (
@@ -662,12 +741,17 @@ def test_expected_fail_a_receiver_with_no_load_balancer_door_renders_none(cloud:
             "set exposure.public.serviceType instead",
         ),
         (
-            {"exposure": {"groups": {"ingest": {"allow": SENDERS}}, "public": {"serviceType": "NodePort"}}},
+            {
+                "exposure": {
+                    "groups": {"ingest": {"allow": SENDERS}},
+                    "public": {"serviceType": "NodePort"},
+                }
+            },
             "Kubernetes only filters on loadBalancerSourceRanges for a LoadBalancer",
         ),
         (
             {"exposure": {"mode": "public"}},
-            "exposure.mode is \"public\" and retired",
+            'exposure.mode is "public" and retired',
         ),
     ],
     ids=[
@@ -679,7 +763,9 @@ def test_expected_fail_a_receiver_with_no_load_balancer_door_renders_none(cloud:
         "retired-mode",
     ],
 )
-def test_a_front_door_key_that_would_reach_nothing_is_refused(overlay: dict, message: str) -> None:
+def test_a_front_door_key_that_would_reach_nothing_is_refused(
+    overlay: dict, message: str
+) -> None:
     """A load balancer with no allow-list, or an allow-list Kubernetes ignores, never renders."""
     with pytest.raises(weave().WeaveError) as refused:
         _receiver("aws", overlay)
@@ -688,7 +774,10 @@ def test_a_front_door_key_that_would_reach_nothing_is_refused(overlay: dict, mes
 
 def test_a_load_balancer_carrying_8443_is_caught() -> None:
     """The dead port put back on the load balancer fails the front-door table."""
-    dead = {**OPT_IN, "extraPorts": [{"name": "grpc-dead", "port": 8443, "public": True}]}
+    dead = {
+        **OPT_IN,
+        "extraPorts": [{"name": "grpc-dead", "port": 8443, "public": True}],
+    }
     docs = _receiver("local-dfe", dead)
     assert DEAD_PORT in load_balancers(docs)["Service/dfe-receiver-public"]["ports"]
     assert ingest_ports(docs) != ["8080/TCP"]

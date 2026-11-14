@@ -59,6 +59,7 @@ def _engine_checkout_is_the_pin(monkeypatch: pytest.MonkeyPatch) -> None:
     """These tests are about what the stage does after the checkout gates, which have their own tests."""
     monkeypatch.setattr(dfeops, "_checkout_gate", lambda *_args: 0)
 
+
 # Credential values planted in every answer. None may reach a file.
 PLANTED = (
     "hunter2-not-evidence",
@@ -87,13 +88,17 @@ def _pod(
     if owner_kind == "ReplicaSet":
         labels["pod-template-hash"] = "5d8f9c7b6"
         owner = f"{workload}-5d8f9c7b6"
-    statuses = [{"name": name, "ready": True, "restartCount": restarts} for name in containers]
+    statuses = [
+        {"name": name, "ready": True, "restartCount": restarts} for name in containers
+    ]
     return {
         "metadata": {
             "name": f"{workload}-{suffix}",
             "namespace": namespace,
             "labels": labels,
-            "ownerReferences": [{"kind": owner_kind, "name": owner, "controller": True}],
+            "ownerReferences": [
+                {"kind": owner_kind, "name": owner, "controller": True}
+            ],
         },
         "spec": {
             "nodeName": "node-a",
@@ -112,7 +117,9 @@ PER_SOURCE = f"dfe-transform-vrl-{SOURCE}"
 PODS = [
     _pod("dfe", "dfe-receiver", "a1", ("dfe-receiver",)),
     _pod("dfe", "dfe-loader", "b2", ("dfe-loader",), restarts=2),
-    _pod("dfe", "dfe-engine", "c3", ("dfe-engine", "git-sync"), init=("git-sync-init",)),
+    _pod(
+        "dfe", "dfe-engine", "c3", ("dfe-engine", "git-sync"), init=("git-sync-init",)
+    ),
     _pod("dfe", "dfe-hunt-runner", "d4", ("hunt-runner",)),
     _pod("dfe", "dfe-transform-vrl", "e5", ("dfe-transform-vrl",)),
     _pod("dfe", PER_SOURCE, "f6", ("dfe-transform-vrl",), restarts=5),
@@ -148,28 +155,48 @@ LOGGED = [
 ]
 
 
-def _application(name: str, appset: str, destination: str, *, healthy: bool = True) -> dict:
+def _application(
+    name: str, appset: str, destination: str, *, healthy: bool = True
+) -> dict:
     status: dict = {
         "sync": {"status": "Synced" if healthy else "OutOfSync", "revision": "abc1234"},
-        "health": {"status": "Healthy"} if healthy else {
+        "health": {"status": "Healthy"}
+        if healthy
+        else {
             "status": "Degraded",
             "message": f"https://user:{PLANTED[4]}@git.example/deploy is unreachable",
         },
         "operationState": {
             "phase": "Succeeded" if healthy else "Failed",
-            "message": "successfully synced" if healthy else "one or more objects failed to apply",
+            "message": "successfully synced"
+            if healthy
+            else "one or more objects failed to apply",
             "startedAt": "2026-10-17T01:00:00Z",
             "finishedAt": "2026-10-17T01:00:09Z",
         },
         "resources": [
-            {"kind": "Deployment", "namespace": destination, "name": name, "status": "Synced",
-             "health": {"status": "Healthy" if healthy else "Degraded",
-                        "message": "" if healthy else "Deployment exceeded its progress deadline"}},
+            {
+                "kind": "Deployment",
+                "namespace": destination,
+                "name": name,
+                "status": "Synced",
+                "health": {
+                    "status": "Healthy" if healthy else "Degraded",
+                    "message": ""
+                    if healthy
+                    else "Deployment exceeded its progress deadline",
+                },
+            },
         ],
     }
     if not healthy:
-        status["conditions"] = [{"type": "SyncError", "message": "the apply failed",
-                                 "lastTransitionTime": "2026-10-17T01:00:09Z"}]
+        status["conditions"] = [
+            {
+                "type": "SyncError",
+                "message": "the apply failed",
+                "lastTransitionTime": "2026-10-17T01:00:09Z",
+            }
+        ]
     return {
         "metadata": {
             "name": name,
@@ -187,7 +214,9 @@ APPS = [
     _application("clickhouse", "dfe-layer2-data", "clickhouse"),
 ]
 # As the chart renders it: the SASL Secret in env, the bus address in the ConfigMap envFrom loads.
-ENGINE_FACTS = "bootstrap=\nprotocol=\nsecret=dfe-kafka-user\nconfigmaps=dfe-engine-env\n"
+ENGINE_FACTS = (
+    "bootstrap=\nprotocol=\nsecret=dfe-kafka-user\nconfigmaps=dfe-engine-env\n"
+)
 CONFIGMAP_FACTS = "bootstrap=pkc-example.confluent.cloud:9092\nprotocol=SASL_SSL\n"
 GROUPS = f"""
 GROUP       TOPIC      PARTITION  CURRENT-OFFSET  LOG-END-OFFSET  LAG  CONSUMER-ID  HOST  CLIENT-ID
@@ -214,9 +243,7 @@ LOG_TEXT = (
     f"2026-10-17T01:00:02Z DEBUG Authorization: Bearer {PLANTED[1]}\n"
     f"2026-10-17T01:00:03Z DEBUG key {PLANTED[2]}\n"
 )
-EVENTS_TEXT = (
-    f"LAST SEEN  TYPE  REASON  OBJECT  MESSAGE\n1m  Warning  Failed  pod/x  token={PLANTED[3]}\n"
-)
+EVENTS_TEXT = f"LAST SEEN  TYPE  REASON  OBJECT  MESSAGE\n1m  Warning  Failed  pod/x  token={PLANTED[3]}\n"
 
 
 def _items(items: list[dict]) -> fe.Outcome:
@@ -266,7 +293,9 @@ def _run(
     """
     calls: list[list[str]] = []
 
-    def fake(argv: list[str], *, timeout: float, limit: int, tail: bool = False) -> fe.Outcome:
+    def fake(
+        argv: list[str], *, timeout: float, limit: int, tail: bool = False
+    ) -> fe.Outcome:
         assert 0 < timeout <= budget
         if argv[0] != "kubectl":
             assert outside is not None, argv
@@ -279,7 +308,9 @@ def _run(
     out.mkdir()
     (out / fe.INDEX).write_text("", encoding="utf-8")
     start = time.monotonic()
-    bundle = dg.Bundle(out, [], budget, start + budget - 5.0, start + budget, tf_dir=tf_dir)
+    bundle = dg.Bundle(
+        out, [], budget, start + budget - 5.0, start + budget, tf_dir=tf_dir
+    )
     dg.collect(bundle, minutes=minutes, image=image)
     return calls, out
 
@@ -304,20 +335,31 @@ def test_a_pods_deployment_is_its_replica_set_less_the_template_hash() -> None:
 
 def test_the_logged_apps_are_the_dfe_apps_hyperdx_and_its_store() -> None:
     chosen = [
-        (pod["metadata"]["namespace"], pod["metadata"]["name"]) for pod in dg.log_targets(PODS)
+        (pod["metadata"]["namespace"], pod["metadata"]["name"])
+        for pod in dg.log_targets(PODS)
     ]
     assert ("dfe", f"{PER_SOURCE}-f6") in chosen
     assert ("dfe", "dfe-hyperdx-g7") in chosen
     assert ("cnpg", "dfe-documentdb-1") in chosen
     assert {name for _, name in chosen} == {name for _, name, _ in LOGGED}
-    assert not any("keda" in name or "kafka" in name or "operator" in name for _, name in chosen)
+    assert not any(
+        "keda" in name or "kafka" in name or "operator" in name for _, name in chosen
+    )
 
 
-def test_every_pod_of_the_collector_namespace_is_read_the_provider_logs_one_included() -> None:
+def test_every_pod_of_the_collector_namespace_is_read_the_provider_logs_one_included() -> (
+    None
+):
     otel = [
         _pod("otel", "dfe-otel-collector-gateway", "a1", ("otel-collector",)),
         _pod("otel", "dfe-otel-collector-provider-logs", "b2", ("otel-collector",)),
-        _pod("otel", "dfe-otel-collector-daemonset", "c3", ("otel-collector",), owner_kind="DaemonSet"),
+        _pod(
+            "otel",
+            "dfe-otel-collector-daemonset",
+            "c3",
+            ("otel-collector",),
+            owner_kind="DaemonSet",
+        ),
         _pod("otel", "anything-else-in-the-namespace", "d4", ("main",)),
         _pod("kube-system", "dfe-otel-collector-lookalike", "e5", ("main",)),
     ]
@@ -334,7 +376,9 @@ def test_every_pod_of_the_collector_namespace_is_read_the_provider_logs_one_incl
 
 
 def test_a_documentdb_instance_is_its_cluster_and_every_container_is_read() -> None:
-    instance = next(pod for pod in PODS if pod["metadata"]["name"] == "dfe-documentdb-1")
+    instance = next(
+        pod for pod in PODS if pod["metadata"]["name"] == "dfe-documentdb-1"
+    )
     assert dg.owning_workload(instance) == "dfe-documentdb"
     assert [name for name, _ in fe.containers_of(instance)] == [
         "bootstrap-controller",
@@ -365,17 +409,26 @@ def test_dfe_namespaces_are_argo_destinations_logged_namespaces_and_argocd() -> 
     assert dg.dfe_namespaces([], []) == ["argocd"]
 
 
-def test_the_application_lines_name_the_appset_sync_health_and_what_is_degraded() -> None:
+def test_the_application_lines_name_the_appset_sync_health_and_what_is_degraded() -> (
+    None
+):
     lines = dg.application_lines(APPS)
-    degraded = next(line for line in lines if line.startswith(f"application {PER_SOURCE}-values"))
+    degraded = next(
+        line for line in lines if line.startswith(f"application {PER_SOURCE}-values")
+    )
     assert "appset dfe-layer2-apps" in degraded
     assert "sync OutOfSync" in degraded
     assert "health Degraded" in degraded
     assert "  last operation Failed" in "\n".join(lines)
-    assert any("resource Deployment dfe/" in line and "progress deadline" in line for line in lines)
+    assert any(
+        "resource Deployment dfe/" in line and "progress deadline" in line
+        for line in lines
+    )
     assert any(line.startswith("  condition SyncError") for line in lines)
     # A healthy object adds nothing past its own line and its last operation.
-    assert not [line for line in lines if "resource Deployment dfe/dfe-receiver" in line]
+    assert not [
+        line for line in lines if "resource Deployment dfe/dfe-receiver" in line
+    ]
 
 
 # --- the captures it makes -------------------------------------------------------
@@ -397,7 +450,9 @@ def test_every_capture_the_brief_names_is_issued_and_lands(
     previous = [call for call in joined if "--previous" in call]
     assert len(previous) == 2
     assert any("dfe-loader-b2 -c dfe-loader --previous" in call for call in previous)
-    assert any(f"{PER_SOURCE}-f6 -c dfe-transform-vrl --previous" in call for call in previous)
+    assert any(
+        f"{PER_SOURCE}-f6 -c dfe-transform-vrl --previous" in call for call in previous
+    )
     for name in (
         "workloads.txt",
         "argo-applications.txt",
@@ -416,7 +471,9 @@ def test_every_capture_the_brief_names_is_issued_and_lands(
         assert (out / name).is_file(), name
 
 
-def test_the_log_window_is_the_flag(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_the_log_window_is_the_flag(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     calls, _out = _run(monkeypatch, tmp_path, minutes=7)
     logs = [call for call in calls if "logs" in call and "--previous" not in call]
     assert logs
@@ -432,7 +489,12 @@ def test_the_kafka_reads_run_in_order_and_the_pod_is_deleted_last(
         next((word for word in ("apply", "wait", "exec", "delete") if word in call), "")
         for call in calls
     ]
-    assert [verb for verb in verbs if verb] == ["apply", "wait", *["exec"] * 6, "delete"]
+    assert [verb for verb in verbs if verb] == [
+        "apply",
+        "wait",
+        *["exec"] * 6,
+        "delete",
+    ]
     assert verbs[-1] == "delete"
     delete = calls[-1]
     assert delete[:3] == ["-n", "dfe", "delete"]
@@ -445,8 +507,14 @@ def test_the_stepwise_reads_name_the_loader_group_one_call_each(
     calls, _out = _run(monkeypatch, tmp_path)
     calls = _kafka_calls(calls)
     # The tool line of each client script, less the bootstrap address and client config.
-    tool = re.compile(rf'{dg.KAFKA_BIN}/(\S+) --bootstrap-server \S+ --command-config "\$P" ?(.*)')
-    tools = [" ".join(tool.search(call[-1]).groups()).strip() for call in calls if "exec" in call]
+    tool = re.compile(
+        rf'{dg.KAFKA_BIN}/(\S+) --bootstrap-server \S+ --command-config "\$P" ?(.*)'
+    )
+    tools = [
+        " ".join(tool.search(call[-1]).groups()).strip()
+        for call in calls
+        if "exec" in call
+    ]
     assert tools[2:] == [
         "kafka-broker-api-versions.sh",
         "kafka-consumer-groups.sh --list",
@@ -517,7 +585,9 @@ def test_a_cluster_that_answers_nothing_stops_after_two_reads(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     calls, out = _run(
-        monkeypatch, tmp_path, answer=lambda _args: fe.Outcome(returncode=1, error="refused")
+        monkeypatch,
+        tmp_path,
+        answer=lambda _args: fe.Outcome(returncode=1, error="refused"),
     )
     assert len(calls) == 2
     assert "not run: the API server answered neither read above" in _index(out)
@@ -537,17 +607,27 @@ def test_the_command_exits_zero_when_the_whole_collect_raises(
     assert "file(s) under" in capsys.readouterr().out
 
 
-def test_an_unwritable_dir_is_a_named_skip(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+def test_an_unwritable_dir_is_a_named_skip(
+    tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
     blocker = tmp_path / "file"
     blocker.write_text("", encoding="utf-8")
     assert dg.cmd_diagnostics(_diagnostics_args(blocker / "sub", "smoke")) == 0
     assert "cannot be written" in capsys.readouterr().err
 
 
-def _diagnostics_args(root: Path, label: str, *, budget: float = 30.0) -> argparse.Namespace:
+def _diagnostics_args(
+    root: Path, label: str, *, budget: float = 30.0
+) -> argparse.Namespace:
     return argparse.Namespace(
-        dir=str(root), label=label, kubeconfig="", context="", server="",
-        log_minutes=dg.LOG_MINUTES, budget=budget, from_terraform="",
+        dir=str(root),
+        label=label,
+        kubeconfig="",
+        context="",
+        server="",
+        log_minutes=dg.LOG_MINUTES,
+        budget=budget,
+        from_terraform="",
     )
 
 
@@ -560,7 +640,9 @@ def test_the_bundle_stops_at_its_budget_and_the_pod_delete_still_runs(
     budget = 3.0
     calls: list[list[str]] = []
 
-    def slow(argv: list[str], *, timeout: float, limit: int, tail: bool = False) -> fe.Outcome:
+    def slow(
+        argv: list[str], *, timeout: float, limit: int, tail: bool = False
+    ) -> fe.Outcome:
         calls.append(argv[1:])
         time.sleep(min(timeout, 0.4))
         return _answer(argv[1:])
@@ -568,7 +650,10 @@ def test_the_bundle_stops_at_its_budget_and_the_pod_delete_still_runs(
     monkeypatch.setattr(fe, "run_bounded", slow)
     monkeypatch.setenv(dg.KAFKA_CLI_IMAGE_ENV, IMAGE)
     started = time.monotonic()
-    assert dg.cmd_diagnostics(_diagnostics_args(tmp_path / "diag", "smoke", budget=budget)) == 0
+    assert (
+        dg.cmd_diagnostics(_diagnostics_args(tmp_path / "diag", "smoke", budget=budget))
+        == 0
+    )
     elapsed = time.monotonic() - started
     assert elapsed < budget + 1.0
     (bundle,) = (tmp_path / "diag").iterdir()
@@ -583,7 +668,9 @@ def test_no_call_is_given_more_than_the_time_left(
     start = time.monotonic()
     seen: list[tuple[float, float]] = []
 
-    def fake(argv: list[str], *, timeout: float, limit: int, tail: bool = False) -> fe.Outcome:
+    def fake(
+        argv: list[str], *, timeout: float, limit: int, tail: bool = False
+    ) -> fe.Outcome:
         seen.append((timeout, start + budget - time.monotonic()))
         return _answer(argv[1:])
 
@@ -603,7 +690,9 @@ def test_the_box_stops_a_capture_that_hangs() -> None:
     assert time.monotonic() - started < 5.0
 
 
-def test_the_box_names_a_capture_that_cannot_start(capsys: pytest.CaptureFixture) -> None:
+def test_the_box_names_a_capture_that_cannot_start(
+    capsys: pytest.CaptureFixture,
+) -> None:
     assert dfeops._run_boxed(["/nonexistent/dfe-ops"], env=None, timeout=5.0) is None
     assert "could not start" in capsys.readouterr().err
 
@@ -651,7 +740,9 @@ def test_the_engine_facts_are_bootstrap_protocol_and_secret_name() -> None:
     )
     assert dg.kafka_facts("dfe", "bootstrap=\nprotocol=\nsecret=\n") is None
     assert dg.kafka_facts("dfe", ENGINE_FACTS) is None
-    plain = dg.kafka_facts("dfe", "bootstrap=dfe-kafka.strimzi.svc:9092\nprotocol=\nsecret=\n")
+    plain = dg.kafka_facts(
+        "dfe", "bootstrap=dfe-kafka.strimzi.svc:9092\nprotocol=\nsecret=\n"
+    )
     assert plain is not None
     assert (plain.protocol, plain.secret) == ("PLAINTEXT", "")
     sasl = dg.kafka_facts("dfe", "bootstrap=b:9092\nprotocol=\nsecret=dfe-kafka-user\n")
@@ -659,7 +750,9 @@ def test_the_engine_facts_are_bootstrap_protocol_and_secret_name() -> None:
     assert sasl.protocol == "SASL_PLAINTEXT"
 
 
-def test_inline_env_outranks_the_configmaps_and_a_later_configmap_an_earlier_one() -> None:
+def test_inline_env_outranks_the_configmaps_and_a_later_configmap_an_earlier_one() -> (
+    None
+):
     """Kubernetes' own order for env and envFrom."""
     early, late = "bootstrap=early:9092\nprotocol=SASL_SSL\n", "bootstrap=late:9092\n"
     facts = dg.kafka_facts("dfe", "secret=s\nconfigmaps=a b\n", [early, late])
@@ -677,7 +770,9 @@ def test_the_bootstrap_ports_are_each_distinct_port_once() -> None:
 
 
 def test_the_client_pod_mounts_the_engines_secret_and_carries_no_credential() -> None:
-    facts = dg.KafkaFacts("dfe", "pkc-example.confluent.cloud:9092", "SASL_SSL", "dfe-kafka-user")
+    facts = dg.KafkaFacts(
+        "dfe", "pkc-example.confluent.cloud:9092", "SASL_SSL", "dfe-kafka-user"
+    )
     manifest = dg.client_manifest("dfe-diagnostics-kafka-1", "1", facts, IMAGE, [9092])
     pod, policy = manifest["items"]
     spec = pod["spec"]
@@ -692,13 +787,17 @@ def test_the_client_pod_mounts_the_engines_secret_and_carries_no_credential() ->
     assert (mount["mountPath"], mount["readOnly"]) == (dg.CREDENTIAL_MOUNT, True)
     assert policy["spec"]["egress"] == [{"ports": [{"port": 9092, "protocol": "TCP"}]}]
     assert policy["spec"]["podSelector"]["matchLabels"] == {dg.RUN_LABEL: "1"}
-    assert all(item["metadata"]["labels"][dg.RUN_LABEL] == "1" for item in manifest["items"])
+    assert all(
+        item["metadata"]["labels"][dg.RUN_LABEL] == "1" for item in manifest["items"]
+    )
     # The Secret is named, never read, so no credential field can be in the manifest.
     assert "password" not in json.dumps(manifest)
 
 
 def test_the_client_script_reads_the_credential_from_the_mounted_files() -> None:
-    facts = dg.KafkaFacts("dfe", "pkc-example.confluent.cloud:9092", "SASL_SSL", "dfe-kafka-user")
+    facts = dg.KafkaFacts(
+        "dfe", "pkc-example.confluent.cloud:9092", "SASL_SSL", "dfe-kafka-user"
+    )
     script = dg.client_script(facts, dg.GROUPS_COMMAND)
     assert f"{dg.CREDENTIAL_MOUNT}/password" in script
     assert "security.protocol=SASL_SSL" in script
@@ -731,7 +830,9 @@ def test_a_brokerless_deployment_skips_the_kafka_reads(
         return _answer(args)
 
     calls, out = _run(monkeypatch, tmp_path, answer=answer)
-    assert not any({"apply", "exec", "delete"} & set(call) for call in _kafka_calls(calls))
+    assert not any(
+        {"apply", "exec", "delete"} & set(call) for call in _kafka_calls(calls)
+    )
     assert "dfe-engine dials no Kafka bus" in _index(out)
 
 
@@ -865,7 +966,9 @@ def test_a_read_failure_is_an_error_line_or_how_the_command_ended() -> None:
     assert dg.read_failure(_text(shouted), 300.0) == shouted.splitlines()[1]
     assert dg.read_failure(None, 300.0) == "not run: the 300s budget was spent"
     refused = fe.Outcome(returncode=1, error="command terminated with exit code 1")
-    assert dg.read_failure(refused, 300.0) == "exit 1: command terminated with exit code 1"
+    assert (
+        dg.read_failure(refused, 300.0) == "exit 1: command terminated with exit code 1"
+    )
 
 
 def test_the_bundle_says_an_errored_groups_read_failed(
@@ -878,11 +981,19 @@ def test_the_bundle_says_an_errored_groups_read_failed(
 
     _calls, out = _run(monkeypatch, tmp_path, answer=answer)
     summary = (out / "kafka" / "summary.txt").read_text(encoding="utf-8")
-    assert summary.startswith("groups read FAILED: Error: Executing consumer group command failed")
+    assert summary.startswith(
+        "groups read FAILED: Error: Executing consumer group command failed"
+    )
     assert "no consumer group" not in summary
     index = _index(out)
-    assert "kafka/consumer-groups.txt: answered, but the read FAILED: Error: Executing" in index
-    assert "kafka/loader-group-offsets.txt: answered, but the read FAILED: Error: " in index
+    assert (
+        "kafka/consumer-groups.txt: answered, but the read FAILED: Error: Executing"
+        in index
+    )
+    assert (
+        "kafka/loader-group-offsets.txt: answered, but the read FAILED: Error: "
+        in index
+    )
 
 
 # --- MSK's broker logs, from the S3 bucket the terraform outputs name ---------------
@@ -898,7 +1009,9 @@ def _deliver(staging: Path) -> fe.Outcome:
     hour = staging / HOUR
     hour.mkdir(parents=True)
     older = hour / "Broker-1_10-20_a.log.gz"
-    older.write_bytes(gzip.compress(f"ERROR SASL failed password={PLANTED[0]}\n".encode()))
+    older.write_bytes(
+        gzip.compress(f"ERROR SASL failed password={PLANTED[0]}\n".encode())
+    )
     newer = hour / "Broker-2_10-21_b.log"
     newer.write_text("INFO [KafkaServer id=2] started\n", encoding="utf-8")
     os.utime(older, (1_000_000, 1_000_000))
@@ -932,7 +1045,9 @@ def test_msk_broker_logs_land_decompressed_and_redacted(
     logs = out / "kafka" / "broker-logs" / HOUR
     batch = (logs / "Broker-1_10-20_a.log").read_text(encoding="utf-8")
     assert batch == f"ERROR SASL failed password={fe.MASK}\n"
-    assert (logs / "Broker-2_10-21_b.log").read_text(encoding="utf-8").startswith("INFO")
+    assert (
+        (logs / "Broker-2_10-21_b.log").read_text(encoding="utf-8").startswith("INFO")
+    )
     index = _index(out)
     assert f"kafka/broker-logs/: aws s3 sync s3://{BUCKET}: ok, 2 log(s) kept." in index
     assert "minutes apart" in index
@@ -959,13 +1074,19 @@ def test_the_newest_broker_logs_are_kept_up_to_the_byte_limit(
 @pytest.mark.parametrize(
     ("outputs", "said"),
     [
-        ({"DFE_KAFKA_PROVIDER": "strimzi"}, "not run: the Kafka backend is strimzi, not msk"),
+        (
+            {"DFE_KAFKA_PROVIDER": "strimzi"},
+            "not run: the Kafka backend is strimzi, not msk",
+        ),
         ({"DFE_KAFKA_PROVIDER": ""}, "not run: the Kafka backend is none, not msk"),
         (
             {"DFE_KAFKA_PROVIDER": "msk", "DFE_KAFKA_BROKER_LOG_BUCKET": ""},
             "not run: no broker-log bucket, so the logs are in CloudWatch",
         ),
-        ({}, f"not run: tofu -chdir={TF_DIR} output -raw DFE_KAFKA_PROVIDER: exit 1: Error: "),
+        (
+            {},
+            f"not run: tofu -chdir={TF_DIR} output -raw DFE_KAFKA_PROVIDER: exit 1: Error: ",
+        ),
     ],
     ids=["strimzi", "no-bus", "cloudwatch-sink", "no-output"],
 )
@@ -983,7 +1104,9 @@ def test_a_refused_copy_is_one_line_and_the_bundle_still_ends(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     def refused(_staging: Path) -> fe.Outcome:
-        return fe.Outcome(returncode=1, error="fatal error: An error occurred (AccessDenied)")
+        return fe.Outcome(
+            returncode=1, error="fatal error: An error occurred (AccessDenied)"
+        )
 
     outside, _seen = _aws(MSK_OUTPUTS, sync=refused)
     calls, out = _run(monkeypatch, tmp_path, tf_dir=TF_DIR, outside=outside)
@@ -992,7 +1115,9 @@ def test_a_refused_copy_is_one_line_and_the_bundle_still_ends(
     assert "delete" in calls[-1]
 
 
-def test_a_copy_that_raises_is_recorded(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_a_copy_that_raises_is_recorded(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     def broken(_staging: Path) -> fe.Outcome:
         raise OSError("aws broke")
 
@@ -1012,7 +1137,9 @@ def test_a_corrupt_log_object_is_named_and_the_rest_are_kept(
     outside, _seen = _aws(MSK_OUTPUTS, sync=corrupt)
     _calls, out = _run(monkeypatch, tmp_path, tf_dir=TF_DIR, outside=outside)
     index = _index(out)
-    assert f"kafka/broker-logs/{HOUR}/Broker-3_10-22_c.log: not kept: BadGzipFile" in index
+    assert (
+        f"kafka/broker-logs/{HOUR}/Broker-3_10-22_c.log: not kept: BadGzipFile" in index
+    )
     assert ", 2 log(s) kept" in index
 
 
@@ -1021,8 +1148,11 @@ def test_a_dead_api_server_still_leaves_the_broker_logs(
 ) -> None:
     outside, _seen = _aws(MSK_OUTPUTS)
     _calls, out = _run(
-        monkeypatch, tmp_path, answer=lambda _args: fe.Outcome(returncode=1, error="refused"),
-        tf_dir=TF_DIR, outside=outside,
+        monkeypatch,
+        tmp_path,
+        answer=lambda _args: fe.Outcome(returncode=1, error="refused"),
+        tf_dir=TF_DIR,
+        outside=outside,
     )
     assert "not run: the API server answered neither read above" in _index(out)
     assert (out / "kafka" / "broker-logs" / HOUR / "Broker-2_10-21_b.log").is_file()
@@ -1042,7 +1172,9 @@ def test_the_image_is_the_kafka_charts_pin_unless_overridden() -> None:
     override = {dg.KAFKA_CLI_IMAGE_ENV: "mirror/kafka@sha256:d"}
     assert dg.kafka_image(override, values) == "mirror/kafka@sha256:d"
     assert dg.kafka_image({}, "kafka:\n  mode: single\n") == ""
-    real = (REPO_ROOT / "helm" / "charts" / "kafka" / "values.yaml").read_text(encoding="utf-8")
+    real = (REPO_ROOT / "helm" / "charts" / "kafka" / "values.yaml").read_text(
+        encoding="utf-8"
+    )
     assert dg.kafka_image({}, real).startswith("quay.io/strimzi/kafka:")
 
 
@@ -1084,7 +1216,10 @@ def _run_cli(
         fake.write_text(FAKE_KUBECTL, encoding="utf-8", newline="\n")
         fake.chmod(0o755)
     fixture = {
-        "json": {"get pods -A -o json": PODS, "get applications.argoproj.io -A -o json": APPS},
+        "json": {
+            "get pods -A -o json": PODS,
+            "get applications.argoproj.io -A -o json": APPS,
+        },
         "engine": ENGINE_FACTS,
         "configmap": CONFIGMAP_FACTS,
         "log": LOG_TEXT,
@@ -1093,16 +1228,34 @@ def _run_cli(
     fixture_file.write_text(json.dumps(fixture), encoding="utf-8", newline="\n")
     log = tmp_path / "calls.log"
     env = {
-        "PATH": f"{bindir}{os.pathsep}{Path(sys.executable).parent}" if kubectl else str(bindir),
+        "PATH": f"{bindir}{os.pathsep}{Path(sys.executable).parent}"
+        if kubectl
+        else str(bindir),
         "FAKE_KUBECTL_FIXTURE": str(fixture_file),
         "FAKE_KUBECTL_LOG": str(log),
         dg.KAFKA_CLI_IMAGE_ENV: IMAGE,
     }
     root = tmp_path / "diag"
     done = subprocess.run(
-        [sys.executable, str(SCRIPT), "diagnostics", "--dir", str(root), "--label", "smoke",
-         "--kubeconfig", "/k/config", "--budget", "60"],
-        capture_output=True, text=True, encoding="utf-8", errors="replace", env=env, check=False,
+        [
+            sys.executable,
+            str(SCRIPT),
+            "diagnostics",
+            "--dir",
+            str(root),
+            "--label",
+            "smoke",
+            "--kubeconfig",
+            "/k/config",
+            "--budget",
+            "60",
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env,
+        check=False,
         timeout=120,
     )
     return done, root, log
@@ -1113,7 +1266,9 @@ def test_the_cli_writes_a_bundle_and_exits_zero(tmp_path: Path) -> None:
     assert done.returncode == 0, done.stderr
     (bundle,) = root.iterdir()
     assert bundle.name.endswith("-smoke")
-    assert (bundle / "logs" / "dfe" / f"{PER_SOURCE}-f6.dfe-transform-vrl.log").is_file()
+    assert (
+        bundle / "logs" / "dfe" / f"{PER_SOURCE}-f6.dfe-transform-vrl.log"
+    ).is_file()
     calls = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
     assert all(call[:2] == ["--kubeconfig", "/k/config"] for call in calls)
     assert any("delete" in call for call in calls)
@@ -1177,7 +1332,8 @@ def _words(ran: list[list[str]]) -> list[str]:
 
 
 @pytest.mark.parametrize(
-    "stage", ["capacity-check", "preflight", "stack-deploy", "verify", "acceptance", "ui"]
+    "stage",
+    ["capacity-check", "preflight", "stack-deploy", "verify", "acceptance", "ui"],
 )
 def test_without_the_flag_no_failed_stage_captures_diagnostics(
     monkeypatch: pytest.MonkeyPatch, stage: str
@@ -1196,10 +1352,21 @@ def test_a_failed_smoke_captures_diagnostics_before_the_destroy(
     kubeconfig.write_text("", encoding="utf-8")
     root = tmp_path / "diag"
     rc, ran = _cycle(
-        monkeypatch, "--kubeconfig", str(kubeconfig), "--diagnostics-dir", str(root), fail="verify"
+        monkeypatch,
+        "--kubeconfig",
+        str(kubeconfig),
+        "--diagnostics-dir",
+        str(root),
+        fail="verify",
     )
     assert rc == 1
-    assert _words(ran) == ["stack-deploy", "verify", "diagnostics", "failure-evidence", "teardown"]
+    assert _words(ran) == [
+        "stack-deploy",
+        "verify",
+        "diagnostics",
+        "failure-evidence",
+        "teardown",
+    ]
     capture = ran[2]
     assert capture[capture.index("--dir") + 1] == str(root)
     assert capture[capture.index("--label") + 1] == "smoke"
@@ -1213,7 +1380,12 @@ def test_a_failed_smoke_captures_diagnostics_before_the_destroy(
 
 @pytest.mark.parametrize(
     ("elapsed", "minutes"),
-    [(0.0, dg.LOG_MINUTES), (29 * 60.0, dg.LOG_MINUTES), (30 * 60.0 + 1, 32), (76 * 60.0, 77)],
+    [
+        (0.0, dg.LOG_MINUTES),
+        (29 * 60.0, dg.LOG_MINUTES),
+        (30 * 60.0 + 1, 32),
+        (76 * 60.0, 77),
+    ],
 )
 def test_the_bundle_after_a_failed_stage_reads_back_past_its_start(
     elapsed: float, minutes: int
@@ -1233,7 +1405,9 @@ def test_a_failed_stage_hands_diagnostics_the_window_its_length_gives(
         return 77
 
     monkeypatch.setattr(dfeops, "stage_log_minutes", window)
-    _rc, ran = _cycle(monkeypatch, "--diagnostics-dir", str(tmp_path), fail="stack-deploy")
+    _rc, ran = _cycle(
+        monkeypatch, "--diagnostics-dir", str(tmp_path), fail="stack-deploy"
+    )
     capture = next(cmd for cmd in ran if cmd[2] == "diagnostics")
     assert capture[capture.index("--log-minutes") + 1] == "77"
     assert dfeops.build_parser().parse_args(capture[2:]).log_minutes == 77
@@ -1247,7 +1421,12 @@ def test_a_terraform_cycle_hands_diagnostics_its_terraform_dir(
     """The outputs name the Kafka backend and the bucket MSK's broker logs land in."""
     root = tmp_path / "diag"
     rc, ran = _cycle(
-        monkeypatch, "--from-terraform", TF_DIR, "--diagnostics-dir", str(root), fail="verify"
+        monkeypatch,
+        "--from-terraform",
+        TF_DIR,
+        "--diagnostics-dir",
+        str(root),
+        fail="verify",
     )
     assert rc == 1
     capture = next(cmd for cmd in ran if cmd[2] == "diagnostics")
@@ -1269,12 +1448,21 @@ def test_a_failed_acceptance_captures_diagnostics_and_the_stage_is_handed_the_di
 ) -> None:
     root = tmp_path / "diag"
     rc, ran = _cycle(
-        monkeypatch, "--acceptance-suite", "source", "--diagnostics-dir", str(root),
+        monkeypatch,
+        "--acceptance-suite",
+        "source",
+        "--diagnostics-dir",
+        str(root),
         fail="acceptance",
     )
     assert rc == 1
     assert _words(ran) == [
-        "stack-deploy", "verify", "acceptance", "diagnostics", "failure-evidence", "teardown",
+        "stack-deploy",
+        "verify",
+        "acceptance",
+        "diagnostics",
+        "failure-evidence",
+        "teardown",
     ]
     acceptance = ran[2]
     assert acceptance[acceptance.index("--diagnostics-dir") + 1] == str(root)
@@ -1286,9 +1474,16 @@ def test_a_failed_acceptance_captures_diagnostics_and_the_stage_is_handed_the_di
 def test_a_failed_deploy_captures_diagnostics_before_the_destroy(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    rc, ran = _cycle(monkeypatch, "--diagnostics-dir", str(tmp_path), fail="stack-deploy")
+    rc, ran = _cycle(
+        monkeypatch, "--diagnostics-dir", str(tmp_path), fail="stack-deploy"
+    )
     assert rc == 1
-    assert _words(ran) == ["stack-deploy", "diagnostics", "failure-evidence", "teardown"]
+    assert _words(ran) == [
+        "stack-deploy",
+        "diagnostics",
+        "failure-evidence",
+        "teardown",
+    ]
     assert ran[1][ran[1].index("--label") + 1] == "deploy+e2e"
 
 
@@ -1298,7 +1493,12 @@ def test_a_failed_ui_stage_captures_diagnostics_before_the_destroy(
     rc, ran = _cycle(monkeypatch, *UI, "--diagnostics-dir", str(tmp_path), fail="ui")
     assert rc == 1
     assert _words(ran) == [
-        "stack-deploy", "verify", "acceptance", "ui", "diagnostics", "failure-evidence",
+        "stack-deploy",
+        "verify",
+        "acceptance",
+        "ui",
+        "diagnostics",
+        "failure-evidence",
         "teardown",
     ]
     assert ran[4][ran[4].index("--label") + 1] == "ui"
@@ -1309,7 +1509,9 @@ def test_a_stage_before_the_deploy_captures_nothing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, stage: str
 ) -> None:
     """Nothing is deployed yet, so there are no app logs to read."""
-    rc, ran = _cycle(monkeypatch, "--diagnostics-dir", str(tmp_path), fail=stage, skip=())
+    rc, ran = _cycle(
+        monkeypatch, "--diagnostics-dir", str(tmp_path), fail=stage, skip=()
+    )
     assert rc == 1
     assert _words(ran)[-3:] == [stage, "failure-evidence", "teardown"]
     assert "diagnostics" not in _words(ran)
@@ -1328,7 +1530,9 @@ def test_a_passing_cycle_keeps_one_bundle_before_the_destroy(
     assert capture[capture.index("--label") + 1] == "passed"
 
 
-def test_a_passing_cycle_without_the_flag_captures_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_passing_cycle_without_the_flag_captures_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     rc, ran = _cycle(monkeypatch)
     assert rc == 0
     assert "diagnostics" not in _words(ran)
@@ -1343,7 +1547,9 @@ def test_diagnostics_that_fail_change_neither_the_verdict_nor_the_destroy(
             raise RuntimeError("the capture broke")
         return None if outcome == "timed out" else 3
 
-    rc, ran = _cycle(monkeypatch, "--diagnostics-dir", str(tmp_path), fail="verify", boxed=boxed)
+    rc, ran = _cycle(
+        monkeypatch, "--diagnostics-dir", str(tmp_path), fail="verify", boxed=boxed
+    )
     assert rc == 1
     assert _words(ran)[-1] == "teardown"
 
@@ -1370,7 +1576,10 @@ def test_the_destroy_runs_when_a_stage_raises(monkeypatch: pytest.MonkeyPatch) -
 def test_cloud_cycle_accepts_the_flag_among_the_cycle_arguments() -> None:
     """A workflow passes it after `--`, where the cycle's own parser judges it."""
     command = guard.cycle_command(
-        ["--", "--diagnostics-dir", "/runner/diagnostics"], "single", Path("/tf"), Path("/k")
+        ["--", "--diagnostics-dir", "/runner/diagnostics"],
+        "single",
+        Path("/tf"),
+        Path("/k"),
     )
     assert command[command.index("--diagnostics-dir") + 1] == "/runner/diagnostics"
 
@@ -1392,7 +1601,10 @@ def test_acceptance_with_the_flag_hands_the_runner_a_capture_that_parses() -> No
     assert prefix[1] == str(SCRIPT.resolve())
     parsed = dfeops.build_parser().parse_args([*prefix[2:], "--label", "source-fb1"])
     assert (parsed.dir, parsed.kubeconfig, parsed.context, parsed.server) == (
-        "/diag", "/k", "c", "https://192.0.2.10:6443",
+        "/diag",
+        "/k",
+        "c",
+        "https://192.0.2.10:6443",
     )
     runner = source_run.build_parser().parse_args(
         ["--ui-url", "u", "--engine-url", "e", "--engine-repo", "/r", *extra]
@@ -1411,7 +1623,9 @@ def test_the_acceptance_parser_takes_the_dir() -> None:
 
 
 def _close_out(
-    monkeypatch: pytest.MonkeyPatch, results: list[wizard.StepResult], *extra: str,
+    monkeypatch: pytest.MonkeyPatch,
+    results: list[wizard.StepResult],
+    *extra: str,
 ) -> tuple[list[str], list[wizard.StepResult]]:
     order: list[str] = []
     driver = types.SimpleNamespace(results=list(results))
@@ -1439,7 +1653,9 @@ def test_a_failed_run_captures_before_the_teardown(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     marker = tmp_path / "ran"
-    write_label = f"import pathlib, sys; pathlib.Path({str(marker)!r}).write_text(sys.argv[-1])"
+    write_label = (
+        f"import pathlib, sys; pathlib.Path({str(marker)!r}).write_text(sys.argv[-1])"
+    )
     prefix = shlex.join([sys.executable, "-c", write_label])
     order, results = _close_out(monkeypatch, FAILED, "--diagnostics-exec", prefix)
     assert order == ["capture source-fb0123abcd", "teardown"]
@@ -1454,7 +1670,9 @@ def test_a_clean_run_captures_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
     assert order == ["teardown"]
 
 
-def test_without_the_flag_the_runner_captures_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_without_the_flag_the_runner_captures_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     order, results = _close_out(monkeypatch, FAILED)
     assert order == ["teardown"]
     assert [row.slug for row in results] == ["routed"]
@@ -1466,7 +1684,12 @@ def test_a_capture_that_hangs_is_stopped_and_the_teardown_still_runs(
     prefix = shlex.join([sys.executable, "-c", "import time; time.sleep(30)"])
     started = time.monotonic()
     order, results = _close_out(
-        monkeypatch, FAILED, "--diagnostics-exec", prefix, "--diagnostics-timeout", "0.5"
+        monkeypatch,
+        FAILED,
+        "--diagnostics-exec",
+        prefix,
+        "--diagnostics-timeout",
+        "0.5",
     )
     assert time.monotonic() - started < 5.0
     assert order[-1] == "teardown"
@@ -1474,11 +1697,22 @@ def test_a_capture_that_hangs_is_stopped_and_the_teardown_still_runs(
     assert "stopped" in results[-1].detail
 
 
-def test_a_capture_that_raises_still_lets_the_teardown_run(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_capture_that_raises_still_lets_the_teardown_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     order: list[str] = []
     driver = types.SimpleNamespace(results=list(FAILED))
     args = source_run.build_parser().parse_args(
-        ["--ui-url", "u", "--engine-url", "e", "--engine-repo", "/r", "--diagnostics-exec", "x"]
+        [
+            "--ui-url",
+            "u",
+            "--engine-url",
+            "e",
+            "--engine-repo",
+            "/r",
+            "--diagnostics-exec",
+            "x",
+        ]
     )
 
     def broken(*_a: object) -> wizard.StepResult:
@@ -1509,8 +1743,13 @@ def test_a_capture_that_fails_is_a_skipped_row(prefix: list[str], detail: str) -
 def test_the_receiver_and_loader_metrics_and_each_clickhouse_servers_logs_are_read(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    server = _pod("clickhouse", "dfe-clickhouse-clickhouse-0-0", "0", ("clickhouse-server",),
-                  owner_kind="StatefulSet")
+    server = _pod(
+        "clickhouse",
+        "dfe-clickhouse-clickhouse-0-0",
+        "0",
+        ("clickhouse-server",),
+        owner_kind="StatefulSet",
+    )
     server["metadata"]["labels"][dg.CLICKHOUSE_ROLE[0]] = dg.CLICKHOUSE_ROLE[1]
 
     def answer(args: list[str]) -> fe.Outcome:
@@ -1524,7 +1763,8 @@ def test_the_receiver_and_loader_metrics_and_each_clickhouse_servers_logs_are_re
 
     calls, out = _run(monkeypatch, tmp_path, answer=answer)
     assert sorted(path.name for path in (out / "metrics" / "dfe").iterdir()) == [
-        "dfe-loader-b2.txt", "dfe-receiver-a1.txt",
+        "dfe-loader-b2.txt",
+        "dfe-receiver-a1.txt",
     ]
     assert sorted(path.name for path in (out / "clickhouse").iterdir()) == [
         "clickhouse.pods.txt",
@@ -1541,7 +1781,10 @@ def test_the_receiver_and_loader_metrics_and_each_clickhouse_servers_logs_are_re
     assert "'NewPart' AND event_time > now() - INTERVAL 60 MINUTE" in lag
     assert sum("clusterAllReplicas" in query for query in queries) == 1
     curls = sorted(call[3:6] for call in calls if "curl" in call)
-    assert curls == [["dfe-loader-b2", "-c", "dfe-loader"], ["dfe-receiver-a1", "-c", "dfe-receiver"]]
+    assert curls == [
+        ["dfe-loader-b2", "-c", "dfe-loader"],
+        ["dfe-receiver-a1", "-c", "dfe-receiver"],
+    ]
 
 
 def test_no_in_cluster_clickhouse_is_named_not_failed(

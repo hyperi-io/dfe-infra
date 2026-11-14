@@ -112,7 +112,13 @@ sys.exit({rc})
 GATE_READ = ("get", "--raw", "/metrics")
 PREFLIGHT_KUBECONFIG = "/nonexistent/kubeconfig"
 PREFLIGHT_CONTEXT = "ctx-a"
-PREFLIGHT_GATE_READ = ("--kubeconfig", PREFLIGHT_KUBECONFIG, "--context", PREFLIGHT_CONTEXT, *GATE_READ)
+PREFLIGHT_GATE_READ = (
+    "--kubeconfig",
+    PREFLIGHT_KUBECONFIG,
+    "--context",
+    PREFLIGHT_CONTEXT,
+    *GATE_READ,
+)
 
 GATE_ON = 'kubernetes_feature_enabled{name="ImageVolume",stage="BETA"} 1\n'
 GATE_OFF = 'kubernetes_feature_enabled{name="ImageVolume",stage="BETA"} 0\n'
@@ -148,7 +154,9 @@ def _run(versions: Path, *argv: str) -> tuple[int, str, str]:
 
 
 @contextlib.contextmanager
-def _kubectl(stdout: str = "", stderr: str = "", rc: int = 0, want: tuple[str, ...] = GATE_READ):
+def _kubectl(
+    stdout: str = "", stderr: str = "", rc: int = 0, want: tuple[str, ...] = GATE_READ
+):
     """A `kubectl` first on PATH that answers the argv `want` with the given output."""
     with tempfile.TemporaryDirectory() as td:
         script = Path(td) / "kubectl"
@@ -184,7 +192,9 @@ def _override(value: str | None):
 @functools.cache
 def _dfeops() -> ModuleType:
     """scripts/dfe-ops, which has no .py suffix, loaded once."""
-    loader = importlib.machinery.SourceFileLoader("dfeops_platform", str(REPO_ROOT / "scripts" / "dfe-ops"))
+    loader = importlib.machinery.SourceFileLoader(
+        "dfeops_platform", str(REPO_ROOT / "scripts" / "dfe-ops")
+    )
     spec = importlib.util.spec_from_loader("dfeops_platform", loader)
     module = importlib.util.module_from_spec(spec)
     sys.modules["dfeops_platform"] = module
@@ -199,12 +209,22 @@ def _preflight(versions: Path, minor: str, *argv: str) -> tuple[int, str]:
     --context, so a gate read has to carry both to reach a fake built for PREFLIGHT_GATE_READ.
     """
     dfeops = _dfeops()
-    args = dfeops.build_parser().parse_args([
-        "preflight", "--kubeconfig", PREFLIGHT_KUBECONFIG, "--context", PREFLIGHT_CONTEXT,
-        "--registry", "registry.example.invalid", *argv,
-    ])
+    args = dfeops.build_parser().parse_args(
+        [
+            "preflight",
+            "--kubeconfig",
+            PREFLIGHT_KUBECONFIG,
+            "--context",
+            PREFLIGHT_CONTEXT,
+            "--registry",
+            "registry.example.invalid",
+            *argv,
+        ]
+    )
     healthy = _cluster([])
-    server = {"serverVersion": {"gitVersion": f"v1.{minor}.2", "major": "1", "minor": minor}}
+    server = {
+        "serverVersion": {"gitVersion": f"v1.{minor}.2", "major": "1", "minor": minor}
+    }
 
     def run_text(cmd: list[str], env: dict | None = None) -> tuple[int, str, str]:
         if cmd[-3:] == ["version", "-o", "json"]:
@@ -216,7 +236,9 @@ def _preflight(versions: Path, minor: str, *argv: str) -> tuple[int, str]:
         mock.patch.object(dfeops, "REPO_ROOT", versions.parent),
         mock.patch.object(dfeops, "_run_text", run_text),
         mock.patch.object(argocd_release, "read", return_value=(False, "no release")),
-        mock.patch.object(urllib.request, "urlopen", side_effect=urllib.error.URLError("offline")),
+        mock.patch.object(
+            urllib.request, "urlopen", side_effect=urllib.error.URLError("offline")
+        ),
         contextlib.redirect_stderr(err),
     ):
         rc = dfeops.cmd_preflight(args)
@@ -230,11 +252,17 @@ def _committed_platform() -> dict:
 
 # --- the parser ---------------------------------------------------------------
 def test_a_floor_has_no_ceiling() -> None:
-    expect("'>=1.34' is a floor alone", check_platform.parse_requirement(">=1.34") == ("1.34", None))
+    expect(
+        "'>=1.34' is a floor alone",
+        check_platform.parse_requirement(">=1.34") == ("1.34", None),
+    )
 
 
 def test_a_range_is_floor_and_ceiling() -> None:
-    expect("'1.34-1.36' is both", check_platform.parse_requirement("1.34-1.36") == ("1.34", "1.36"))
+    expect(
+        "'1.34-1.36' is both",
+        check_platform.parse_requirement("1.34-1.36") == ("1.34", "1.36"),
+    )
 
 
 def test_a_bare_version_pins_exactly() -> None:
@@ -250,9 +278,15 @@ def test_a_v_prefixed_range_is_still_a_range() -> None:
 
 def test_build_metadata_is_not_version_parts() -> None:
     """`rke2r1` carries digits; reading them would make v1.36.4 look like 1.36.4.2.1."""
-    expect("v1.36.4+rke2r1 is 1.36.4", check_platform.as_tuple("v1.36.4+rke2r1") == (1, 36, 4))
+    expect(
+        "v1.36.4+rke2r1 is 1.36.4",
+        check_platform.as_tuple("v1.36.4+rke2r1") == (1, 36, 4),
+    )
     floor, ceiling = check_platform.parse_requirement("v1.36.4+rke2r1")
-    expect("a gitVersion is an exact pin", (floor, ceiling) == ("v1.36.4+rke2r1", "v1.36.4+rke2r1"))
+    expect(
+        "a gitVersion is an exact pin",
+        (floor, ceiling) == ("v1.36.4+rke2r1", "v1.36.4+rke2r1"),
+    )
 
 
 def test_the_eks_minor_parses() -> None:
@@ -261,7 +295,10 @@ def test_the_eks_minor_parses() -> None:
 
 
 def test_a_patch_is_not_above_a_minor_ceiling() -> None:
-    expect("1.36.4 is inside a 1.36 ceiling", not check_platform.above_ceiling((1, 36, 4), (1, 36)))
+    expect(
+        "1.36.4 is inside a 1.36 ceiling",
+        not check_platform.above_ceiling((1, 36, 4), (1, 36)),
+    )
     expect("1.37 is above it", check_platform.above_ceiling((1, 37), (1, 36)))
 
 
@@ -322,14 +359,20 @@ def test_an_unknown_stack_is_an_error() -> None:
 def test_rke2_is_checked_on_an_rke2_cluster() -> None:
     with _fixture() as versions:
         _, out, _ = _run(versions, "--actual", "v1.36.4+rke2r1")
-    expect("the rke2 floor is reported", "RKE2 v1.36.4+rke2r1 meets >=v1.34" in out, out)
+    expect(
+        "the rke2 floor is reported", "RKE2 v1.36.4+rke2r1 meets >=v1.34" in out, out
+    )
 
 
 def test_rke2_below_its_floor_is_refused() -> None:
     """A cluster inside the Kubernetes window that RKE2's own floor still refuses."""
     with _fixture() as versions:
-        ok_rc, _, _ = _run(versions, "--actual", "v1.36.4+rke2r1", "--stack", "rke2-ahead")
-        rc, _, err = _run(versions, "--actual", "v1.35.8+rke2r1", "--stack", "rke2-ahead")
+        ok_rc, _, _ = _run(
+            versions, "--actual", "v1.36.4+rke2r1", "--stack", "rke2-ahead"
+        )
+        rc, _, err = _run(
+            versions, "--actual", "v1.35.8+rke2r1", "--stack", "rke2-ahead"
+        )
     expect("an in-window RKE2 passes", ok_rc == 0, f"got {ok_rc}")
     expect("an under-floor RKE2 exits 3", rc == 3, f"got {rc}")
     expect("and names RKE2", "RKE2" in err, err)
@@ -356,10 +399,14 @@ def test_a_134_cluster_with_the_gate_off_is_refused() -> None:
         rc, out, err = _run(versions, "--actual", "1.34", "--stack", "documentdb")
     expect("1.34 with the gate off exits 3", rc == 3, f"got {rc}: {err}")
     expect("and names the gate", "ImageVolume feature gate off" in err, err)
-    expect("and does not report the cluster as meeting the floor", "meets" not in out, out)
+    expect(
+        "and does not report the cluster as meeting the floor", "meets" not in out, out
+    )
 
 
-def test_a_134_cluster_whose_gate_cannot_be_read_is_refused_naming_the_override() -> None:
+def test_a_134_cluster_whose_gate_cannot_be_read_is_refused_naming_the_override() -> (
+    None
+):
     with _fixture() as versions, _override(None):
         with _kubectl(stderr=FORBIDDEN, rc=1):
             rc, _, err = _run(versions, "--actual", "1.34", "--stack", "documentdb")
@@ -367,12 +414,18 @@ def test_a_134_cluster_whose_gate_cannot_be_read_is_refused_naming_the_override(
         expect("and names the override", "DFE_IMAGE_VOLUME_ENABLED=true" in err, err)
         with _kubectl(stdout=GATE_ABSENT):
             rc, _, err = _run(versions, "--actual", "1.34", "--stack", "documentdb")
-        expect("a scrape without the series is unreadable too", rc == 3, f"got {rc}: {err}")
+        expect(
+            "a scrape without the series is unreadable too", rc == 3, f"got {rc}: {err}"
+        )
         expect("and names the override", "DFE_IMAGE_VOLUME_ENABLED=true" in err, err)
 
 
 def test_a_134_cluster_without_kubectl_is_refused_naming_the_override() -> None:
-    with _fixture() as versions, tempfile.TemporaryDirectory() as empty, _override(None):
+    with (
+        _fixture() as versions,
+        tempfile.TemporaryDirectory() as empty,
+        _override(None),
+    ):
         previous = os.environ["PATH"]
         os.environ["PATH"] = empty
         try:
@@ -387,7 +440,11 @@ def test_the_override_admits_a_gate_that_cannot_be_read() -> None:
     with _fixture() as versions, _kubectl(stderr=FORBIDDEN, rc=1), _override("true"):
         rc, _, err = _run(versions, "--actual", "1.34", "--stack", "documentdb")
     expect("the override exits 0", rc == 0, f"got {rc}: {err}")
-    expect("and warns that the gate was not read", "WARNING" in err and "DFE_IMAGE_VOLUME_ENABLED" in err, err)
+    expect(
+        "and warns that the gate was not read",
+        "WARNING" in err and "DFE_IMAGE_VOLUME_ENABLED" in err,
+        err,
+    )
 
 
 def test_only_true_is_an_override() -> None:
@@ -401,7 +458,9 @@ def test_a_135_cluster_is_not_checked_for_the_gate() -> None:
     """The kubectl here reports the gate off, so a read on 1.35 would show as a REFUSED."""
     with _fixture() as versions, _kubectl(stdout=GATE_OFF), _override(None):
         rc, out, err = _run(versions, "--actual", "1.35", "--stack", "documentdb")
-        rc_later, _, err_later = _run(versions, "--actual", "1.36", "--stack", "documentdb")
+        rc_later, _, err_later = _run(
+            versions, "--actual", "1.36", "--stack", "documentdb"
+        )
     expect("1.35 exits 0", rc == 0, f"got {rc}: {err}")
     expect("without a gate verdict", "ImageVolume" not in out + err, out + err)
     expect("a later minor exits 0 too", rc_later == 0, f"got {rc_later}: {err_later}")
@@ -418,7 +477,9 @@ def test_the_override_is_documented_where_a_deployer_reads_it() -> None:
     """bootstrap.sh's header lists the deploy variables, and the on-prem prerequisites name the check."""
     name = check_platform.IMAGE_VOLUME_OVERRIDE_ENV
     header = (BOOTSTRAP / "bootstrap.sh").read_text(encoding="utf-8")
-    prerequisites = (REPO_ROOT / "docs" / "deployment" / "on-prem.md").read_text(encoding="utf-8")
+    prerequisites = (REPO_ROOT / "docs" / "deployment" / "on-prem.md").read_text(
+        encoding="utf-8"
+    )
     expect("bootstrap.sh's header lists the override", f"#   {name}" in header)
     expect("on-prem.md names the override", name in prerequisites)
     expect("and the gate it reads", check_platform.IMAGE_VOLUME_GATE in prerequisites)
@@ -439,10 +500,16 @@ def test_preflight_refuses_a_134_cluster_with_the_gate_off() -> None:
             rc, err = _preflight(versions, "34")
     expect("1.34 with the gate off fails", rc == 1, f"got {rc}: {err}")
     expect("and names the gate", "ImageVolume feature gate off" in err, err)
-    expect("as the only blocking issue", "PREFLIGHT FAILED (1 blocking issue(s)" in err, err)
+    expect(
+        "as the only blocking issue",
+        "PREFLIGHT FAILED (1 blocking issue(s)" in err,
+        err,
+    )
 
 
-def test_preflight_refuses_a_134_cluster_whose_gate_cannot_be_read_naming_the_override() -> None:
+def test_preflight_refuses_a_134_cluster_whose_gate_cannot_be_read_naming_the_override() -> (
+    None
+):
     with _fixture("documentdb") as versions, _override(None):
         with _kubectl(stderr=FORBIDDEN, rc=1, want=PREFLIGHT_GATE_READ):
             rc, err = _preflight(versions, "34")
@@ -450,7 +517,9 @@ def test_preflight_refuses_a_134_cluster_whose_gate_cannot_be_read_naming_the_ov
         expect("and names the override", "DFE_IMAGE_VOLUME_ENABLED=true" in err, err)
         with _kubectl(stdout=GATE_ABSENT, want=PREFLIGHT_GATE_READ):
             rc, err = _preflight(versions, "34")
-        expect("a scrape without the series is unreadable too", rc == 1, f"got {rc}: {err}")
+        expect(
+            "a scrape without the series is unreadable too", rc == 1, f"got {rc}: {err}"
+        )
         expect("and names the override", "DFE_IMAGE_VOLUME_ENABLED=true" in err, err)
 
 
@@ -459,7 +528,9 @@ def test_preflight_reads_the_gate_from_the_cluster_it_is_aimed_at() -> None:
     with _fixture("documentdb") as versions, _override(None):
         with _kubectl(stdout=GATE_ON, want=GATE_READ):
             rc, err = _preflight(versions, "34")
-    expect("a gate read of the wrong cluster does not pass", rc == 1, f"got {rc}: {err}")
+    expect(
+        "a gate read of the wrong cluster does not pass", rc == 1, f"got {rc}: {err}"
+    )
     expect("it reads as unreadable", "could not be read" in err, err)
 
 
@@ -468,18 +539,32 @@ def test_preflight_override_admits_a_gate_that_cannot_be_read() -> None:
         with _kubectl(stderr=FORBIDDEN, rc=1, want=PREFLIGHT_GATE_READ):
             rc, err = _preflight(versions, "34")
     expect("the override passes", rc == 0, f"got {rc}: {err}")
-    expect("and warns that the gate was not read", "[warn]" in err and "DFE_IMAGE_VOLUME_ENABLED" in err, err)
+    expect(
+        "and warns that the gate was not read",
+        "[warn]" in err and "DFE_IMAGE_VOLUME_ENABLED" in err,
+        err,
+    )
 
 
 def test_preflight_takes_the_override_from_the_env_file() -> None:
     """stack-deploy hands the env file to bootstrap, so the override it carries is bootstrap's."""
-    with _fixture("documentdb") as versions, tempfile.TemporaryDirectory() as td, _override(None):
+    with (
+        _fixture("documentdb") as versions,
+        tempfile.TemporaryDirectory() as td,
+        _override(None),
+    ):
         env_file = Path(td) / "deploy.env"
-        env_file.write_text('DFE_IMAGE_VOLUME_ENABLED="true"\n', encoding="utf-8", newline="\n")
+        env_file.write_text(
+            'DFE_IMAGE_VOLUME_ENABLED="true"\n', encoding="utf-8", newline="\n"
+        )
         with _kubectl(stderr=FORBIDDEN, rc=1, want=PREFLIGHT_GATE_READ):
             rc, err = _preflight(versions, "34", "--env-file", str(env_file))
     expect("the env file's override passes", rc == 0, f"got {rc}: {err}")
-    expect("and warns that the gate was not read", "[warn]" in err and "DFE_IMAGE_VOLUME_ENABLED" in err, err)
+    expect(
+        "and warns that the gate was not read",
+        "[warn]" in err and "DFE_IMAGE_VOLUME_ENABLED" in err,
+        err,
+    )
 
 
 def test_preflight_admits_only_true_as_the_override() -> None:
@@ -514,7 +599,11 @@ def test_preflight_says_when_it_cannot_tell_which_stack_it_is_checking() -> None
         with _kubectl(stdout=GATE_OFF, want=PREFLIGHT_GATE_READ):
             rc, err = _preflight(versions, "34", "--min-k8s", "1.34")
     expect("the rest of the preflight passes", rc == 0, f"got {rc}: {err}")
-    expect("and the skipped check is said out loud", "ImageVolume feature gate was not checked" in err, err)
+    expect(
+        "and the skipped check is said out loud",
+        "ImageVolume feature gate was not checked" in err,
+        err,
+    )
 
 
 def test_preflight_and_the_gate_refuse_the_same_clusters() -> None:
@@ -530,7 +619,9 @@ def test_preflight_and_the_gate_refuse_the_same_clusters() -> None:
                 for value in (None, "true"):
                     with _fixture(stack) as versions, _override(value):
                         with _kubectl(**answer):
-                            gate_rc, _, _ = _run(versions, "--actual", f"1.{minor}", "--stack", stack)
+                            gate_rc, _, _ = _run(
+                                versions, "--actual", f"1.{minor}", "--stack", stack
+                            )
                         with _kubectl(want=PREFLIGHT_GATE_READ, **answer):
                             preflight_rc, err = _preflight(versions, minor)
                     cell = f"{stack}, 1.{minor}, {label}, override {value}"
@@ -544,9 +635,16 @@ def test_preflight_and_the_gate_refuse_the_same_clusters() -> None:
 # --- the committed stack ------------------------------------------------------
 def test_the_current_stack_declares_the_platform() -> None:
     platform = _committed_platform()
-    expect("kubernetes is a range", check_platform.parse_requirement(platform["kubernetes"])[1] is not None)
+    expect(
+        "kubernetes is a range",
+        check_platform.parse_requirement(platform["kubernetes"])[1] is not None,
+    )
     for key in ("rke2", "rancher", "eks"):
-        expect(f"platform.{key} is declared", isinstance(platform.get(key), str), f"got {platform.get(key)!r}")
+        expect(
+            f"platform.{key} is declared",
+            isinstance(platform.get(key), str),
+            f"got {platform.get(key)!r}",
+        )
 
 
 def test_preflight_defaults_to_the_same_floor() -> None:
@@ -557,7 +655,11 @@ def test_preflight_defaults_to_the_same_floor() -> None:
     """
     dfeops = _dfeops()
     args = dfeops.build_parser().parse_args(["preflight"])
-    expect("an unset --min-k8s stays unset in the parser", args.min_k8s == "", f"got {args.min_k8s!r}")
+    expect(
+        "an unset --min-k8s stays unset in the parser",
+        args.min_k8s == "",
+        f"got {args.min_k8s!r}",
+    )
     expect(
         "preflight resolves it to platform.kubernetes",
         dfeops._platform_k8s_requirement() == _committed_platform()["kubernetes"],

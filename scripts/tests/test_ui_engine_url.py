@@ -27,7 +27,9 @@ from _weave import render_app
 
 
 def _internal_api_url(namespace: str, env: str, overlay: dict | None = None) -> object:
-    docs = render_app("dfe-ui", "slim", "local", namespace=namespace, env=env, overlay=overlay)
+    docs = render_app(
+        "dfe-ui", "slim", "local", namespace=namespace, env=env, overlay=overlay
+    )
     return effective_env(docs, "Deployment/dfe-ui")["INTERNAL_API_URL"]
 
 
@@ -45,12 +47,16 @@ def test_a_namespace_matching_the_env_convention_still_resolves() -> None:
 
 def test_an_explicit_url_still_wins() -> None:
     overlay = {"extraEnv": {"INTERNAL_API_URL": "http://engine.example:8000"}}
-    assert _internal_api_url("dfe-local", "test", overlay) == "http://engine.example:8000"
+    assert (
+        _internal_api_url("dfe-local", "test", overlay) == "http://engine.example:8000"
+    )
 
 
 def test_config_internal_api_url_names_an_engine_elsewhere() -> None:
     overlay = {"config": {"internalApiUrl": "http://engine.example:8000"}}
-    assert _internal_api_url("dfe-local", "test", overlay) == "http://engine.example:8000"
+    assert (
+        _internal_api_url("dfe-local", "test", overlay) == "http://engine.example:8000"
+    )
 
 
 def _hyperdx_url(domain: str, config: dict | None = None) -> object:
@@ -61,7 +67,10 @@ def _hyperdx_url(domain: str, config: dict | None = None) -> object:
 
 def test_the_hyperdx_url_follows_the_domain_and_its_config_keys() -> None:
     assert _hyperdx_url("example.test") == "https://hyperdx.example.test"
-    assert _hyperdx_url("example.test", {"hyperdxHostname": "logs"}) == "https://logs.example.test"
+    assert (
+        _hyperdx_url("example.test", {"hyperdxHostname": "logs"})
+        == "https://logs.example.test"
+    )
     explicit = {"hyperdxUrl": "https://observe.example.test", "hyperdxHostname": "logs"}
     assert _hyperdx_url("example.test", explicit) == "https://observe.example.test"
     assert _hyperdx_url("") == ""

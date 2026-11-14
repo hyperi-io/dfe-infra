@@ -59,7 +59,9 @@ def _up_args(**overrides: object) -> argparse.Namespace:
 
 
 def test_cluster_config_pins_the_node_image_and_binds_loopback() -> None:
-    config = json.loads(kind.render_cluster_config("dfe-kind", kind.KIND_NODE_IMAGE, 0, 0))
+    config = json.loads(
+        kind.render_cluster_config("dfe-kind", kind.KIND_NODE_IMAGE, 0, 0)
+    )
     assert config["kind"] == "Cluster"
     assert config["apiVersion"] == "kind.x-k8s.io/v1alpha4"
     assert config["name"] == "dfe-kind"
@@ -68,7 +70,9 @@ def test_cluster_config_pins_the_node_image_and_binds_loopback() -> None:
 
 
 def test_cluster_config_adds_workers_on_the_same_image() -> None:
-    config = json.loads(kind.render_cluster_config("x", "img@sha256:" + "a" * 64, 16443, 2))
+    config = json.loads(
+        kind.render_cluster_config("x", "img@sha256:" + "a" * 64, 16443, 2)
+    )
     assert [n["role"] for n in config["nodes"]] == ["control-plane", "worker", "worker"]
     assert {n["image"] for n in config["nodes"]} == {"img@sha256:" + "a" * 64}
     assert config["networking"]["apiServerPort"] == 16443
@@ -167,13 +171,19 @@ def test_network_subnet_refuses_a_network_with_no_ipv4() -> None:
 
 def test_front_door_takes_the_top_two_free_addresses() -> None:
     subnet = ipaddress.ip_network("198.51.100.0/24")
-    assert kind.front_door_addresses(subnet, set()) == ("198.51.100.254", "198.51.100.253")
+    assert kind.front_door_addresses(subnet, set()) == (
+        "198.51.100.254",
+        "198.51.100.253",
+    )
 
 
 def test_front_door_skips_an_address_a_container_already_holds() -> None:
     subnet = kind.network_subnet(INSPECT)
     taken = kind.network_addresses(INSPECT)
-    assert kind.front_door_addresses(subnet, taken) == ("198.51.100.253", "198.51.100.252")
+    assert kind.front_door_addresses(subnet, taken) == (
+        "198.51.100.253",
+        "198.51.100.252",
+    )
 
 
 def test_front_door_refuses_a_subnet_too_small_to_share() -> None:
@@ -218,13 +228,17 @@ def test_default_provisioner_reads_the_default_class() -> None:
 
 def test_default_provisioner_is_none_without_a_default() -> None:
     assert (
-        kind.default_provisioner({"items": [{"metadata": {"name": "x"}, "provisioner": "p"}]})
+        kind.default_provisioner(
+            {"items": [{"metadata": {"name": "x"}, "provisioner": "p"}]}
+        )
         is None
     )
 
 
 def test_storage_class_is_not_marked_default() -> None:
-    manifest = json.loads(kind.render_storage_class("local-path", "rancher.io/local-path"))
+    manifest = json.loads(
+        kind.render_storage_class("local-path", "rancher.io/local-path")
+    )
     assert manifest["kind"] == "StorageClass"
     assert manifest["metadata"]["name"] == "local-path"
     assert manifest["provisioner"] == "rancher.io/local-path"
@@ -237,7 +251,9 @@ def test_storage_class_is_not_marked_default() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_child_env_drops_every_dfe_variable_and_the_ambient_kubeconfig(tmp_path: Path) -> None:
+def test_child_env_drops_every_dfe_variable_and_the_ambient_kubeconfig(
+    tmp_path: Path,
+) -> None:
     base = {
         "PATH": "/usr/bin",
         "HOME": "/home/x",
@@ -259,7 +275,9 @@ def test_kind_facts_are_forced_over_the_operator_files() -> None:
         "DFE_CONFIG_REPO_URL": "https://git.example.com/estate/deploy.git",
         "DFE_CA_PERSIST": "true",
     }
-    defaults, facts = kind.plan_env(_up_args(), operator, {}, "198.51.100.254", "198.51.100.253")
+    defaults, facts = kind.plan_env(
+        _up_args(), operator, {}, "198.51.100.254", "198.51.100.253"
+    )
     assert facts["DFE_CLOUD"] == kind.DEFAULT_CLOUD_OVERLAY
     assert facts["DFE_STORAGE_CLASS"] == kind.DEFAULT_STORAGE_CLASS
     assert facts["DFE_GATEWAY_IP"] == "198.51.100.254"
@@ -302,7 +320,9 @@ def test_a_given_flag_beats_the_operator_files() -> None:
 
 
 def test_no_base_domain_is_added_beside_a_declared_domain() -> None:
-    defaults, facts = kind.plan_env(_up_args(), {"DFE_DOMAIN": "dfe.example.com"}, {}, "a", "b")
+    defaults, facts = kind.plan_env(
+        _up_args(), {"DFE_DOMAIN": "dfe.example.com"}, {}, "a", "b"
+    )
     assert "DFE_BASE_DOMAIN" not in defaults
     assert "DFE_BASE_DOMAIN" not in facts
 
@@ -360,7 +380,9 @@ def _env_files(argv: list[str]) -> list[str]:
     return [argv[i + 1] for i, token in enumerate(argv) if token == "--env-file"]
 
 
-def test_stack_deploy_runs_from_the_ref_checkout_pinned_to_the_commit(tmp_path: Path) -> None:
+def test_stack_deploy_runs_from_the_ref_checkout_pinned_to_the_commit(
+    tmp_path: Path,
+) -> None:
     argv = _argv(_up_args(), tmp_path)
     assert argv[1] == str(tmp_path / "src" / "scripts" / "dfe-ops")
     assert argv[2] == "stack-deploy"
@@ -376,10 +398,15 @@ def test_track_hands_argo_the_ref_name(tmp_path: Path) -> None:
     assert argv[argv.index("--target-revision") + 1] == "fix/some-cut"
 
 
-def test_operator_env_files_sit_between_the_defaults_and_the_facts(tmp_path: Path) -> None:
+def test_operator_env_files_sit_between_the_defaults_and_the_facts(
+    tmp_path: Path,
+) -> None:
     creds = tmp_path / "creds.env"
     argv = _argv(
-        _up_args(env_file=[str(creds)], stack="2.2.0-rc.99", registry="r.example.com/dfe"), tmp_path
+        _up_args(
+            env_file=[str(creds)], stack="2.2.0-rc.99", registry="r.example.com/dfe"
+        ),
+        tmp_path,
     )
     assert _env_files(argv) == [
         str(tmp_path / "defaults.env"),
@@ -400,7 +427,11 @@ def test_node_volumes_are_found_by_the_containers_that_mount_them() -> None:
         {
             "Mounts": [
                 {"Type": "volume", "Name": "b" * 64, "Destination": "/var"},
-                {"Type": "bind", "Source": "/lib/modules", "Destination": "/lib/modules"},
+                {
+                    "Type": "bind",
+                    "Source": "/lib/modules",
+                    "Destination": "/lib/modules",
+                },
             ]
         },
         {"Mounts": [{"Type": "volume", "Name": "a" * 64, "Destination": "/var"}]},
@@ -432,12 +463,18 @@ def test_app_rows_default_a_missing_status_to_unknown() -> None:
         "items": [
             {
                 "metadata": {"name": "b"},
-                "status": {"sync": {"status": "Synced"}, "health": {"status": "Healthy"}},
+                "status": {
+                    "sync": {"status": "Synced"},
+                    "health": {"status": "Healthy"},
+                },
             },
             {"metadata": {"name": "a"}},
         ]
     }
-    assert kind.app_rows(apps) == [("a", "Unknown", "Unknown"), ("b", "Synced", "Healthy")]
+    assert kind.app_rows(apps) == [
+        ("a", "Unknown", "Unknown"),
+        ("b", "Synced", "Healthy"),
+    ]
 
 
 def test_load_balancers_list_only_services_holding_an_address() -> None:
@@ -445,7 +482,10 @@ def test_load_balancers_list_only_services_holding_an_address() -> None:
         "items": [
             {
                 "metadata": {"namespace": "gw", "name": "front"},
-                "spec": {"type": "LoadBalancer", "ports": [{"port": 443}, {"port": 80}]},
+                "spec": {
+                    "type": "LoadBalancer",
+                    "ports": [{"port": 443}, {"port": 80}],
+                },
                 "status": {"loadBalancer": {"ingress": [{"ip": "198.51.100.254"}]}},
             },
             {
@@ -492,14 +532,19 @@ def test_status_and_down_are_registered() -> None:
 
 
 def test_state_lives_under_the_gitignored_tmp_tree() -> None:
-    assert kind.state_dir("dfe-kind").relative_to(REPO_ROOT).parts[:2] == (".tmp", "kind")
+    assert kind.state_dir("dfe-kind").relative_to(REPO_ROOT).parts[:2] == (
+        ".tmp",
+        "kind",
+    )
 
 
 # ---------------------------------------------------------------------------
 # The tools `up` refuses to start without
 # ---------------------------------------------------------------------------
 
-_check_tools_spec = importlib.util.spec_from_file_location("check_tools", kind.CHECK_TOOLS)
+_check_tools_spec = importlib.util.spec_from_file_location(
+    "check_tools", kind.CHECK_TOOLS
+)
 check_tools = importlib.util.module_from_spec(_check_tools_spec)
 _check_tools_spec.loader.exec_module(check_tools)
 
@@ -528,7 +573,9 @@ def _path_with(tmp_path: Path, tools: list[str]) -> str:
 def test_a_missing_tool_is_named_with_what_needs_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    present = [tool for tool, _ in kind.required_tools("local-dfe") if tool != "openssl"]
+    present = [
+        tool for tool, _ in kind.required_tools("local-dfe") if tool != "openssl"
+    ]
     monkeypatch.setenv("PATH", _path_with(tmp_path, present))
     assert kind.missing_tools("local-dfe") == [
         ("openssl", dict(check_tools.TOOLS)["openssl"]),

@@ -96,14 +96,52 @@ CLOUDWATCH_LOGS = AwsCase(
     stem="cloudwatch_logs",
     summary="CloudWatch Logs events, authored by hand for the source test",
     columns=(
-        Column("timestamp", "datetime", "range", "@source: timestamp", "Event timestamp"),
-        Column("log_group", "string", "dimension", "@source: logGroupName", "CloudWatch log group"),
-        Column("log_stream", "string", "dimension", "@source: logStreamName", "CloudWatch log stream"),
+        Column(
+            "timestamp", "datetime", "range", "@source: timestamp", "Event timestamp"
+        ),
+        Column(
+            "log_group",
+            "string",
+            "dimension",
+            "@source: logGroupName",
+            "CloudWatch log group",
+        ),
+        Column(
+            "log_stream",
+            "string",
+            "dimension",
+            "@source: logStreamName",
+            "CloudWatch log stream",
+        ),
         Column("message", "text", "fulltext", "@source: message", "Log event message"),
-        Column("event_id", "string", "bloom", "@source: eventId", "Unique log event identifier"),
-        Column("ingestion_time", "datetime", "range", "@source: ingestionTime", "When CloudWatch ingested it"),
-        Column("aws_account", "string", "dimension", "@source: awsAccountId", "AWS account the group belongs to"),
-        Column("aws_region", "string", "dimension", "@source: awsRegion", "AWS region the group lives in"),
+        Column(
+            "event_id",
+            "string",
+            "bloom",
+            "@source: eventId",
+            "Unique log event identifier",
+        ),
+        Column(
+            "ingestion_time",
+            "datetime",
+            "range",
+            "@source: ingestionTime",
+            "When CloudWatch ingested it",
+        ),
+        Column(
+            "aws_account",
+            "string",
+            "dimension",
+            "@source: awsAccountId",
+            "AWS account the group belongs to",
+        ),
+        Column(
+            "aws_region",
+            "string",
+            "dimension",
+            "@source: awsRegion",
+            "AWS region the group lives in",
+        ),
     ),
     proof_columns=("log_stream", "log_group", "aws_account", "aws_region"),
     service_config=("log_group_name",),
@@ -116,11 +154,37 @@ CLOUDTRAIL = AwsCase(
     stem="cloudtrail",
     summary="CloudTrail management events, authored by hand for the source test",
     columns=(
-        Column("event_id", "string", "bloom", "@source: EventId", "Unique CloudTrail event identifier"),
-        Column("event_name", "string", "dimension", "@source: EventName", "API action name"),
-        Column("event_time", "datetime", "range", "@source: EventTime", "When the API call occurred"),
-        Column("event_source", "string", "dimension", "@source: EventSource", "AWS service called"),
-        Column("username", "string", "dimension", "@source: Username", "Identity that made the call"),
+        Column(
+            "event_id",
+            "string",
+            "bloom",
+            "@source: EventId",
+            "Unique CloudTrail event identifier",
+        ),
+        Column(
+            "event_name", "string", "dimension", "@source: EventName", "API action name"
+        ),
+        Column(
+            "event_time",
+            "datetime",
+            "range",
+            "@source: EventTime",
+            "When the API call occurred",
+        ),
+        Column(
+            "event_source",
+            "string",
+            "dimension",
+            "@source: EventSource",
+            "AWS service called",
+        ),
+        Column(
+            "username",
+            "string",
+            "dimension",
+            "@source: Username",
+            "Identity that made the call",
+        ),
     ),
     proof_columns=("event_name",),
 )
@@ -139,10 +203,14 @@ def schema_path(case: AwsCase, name: str) -> str:
 
 def schema_csv(case: AwsCase) -> str:
     """The column set as the console's CSV import takes it."""
-    return "\n".join([CSV_HEADER, *(column.csv_row() for column in case.columns)]) + "\n"
+    return (
+        "\n".join([CSV_HEADER, *(column.csv_row() for column in case.columns)]) + "\n"
+    )
 
 
-def author_schema_in_console(driver, case: AwsCase, path: str, csv_file: Path, timeout_ms: int) -> str:
+def author_schema_in_console(
+    driver, case: AwsCase, path: str, csv_file: Path, timeout_ms: int
+) -> str:
     """Meta Schemas > Add Schema: name it, upload the columns, review, create.
 
     The columns go in as the console's own DFE CSV import rather than row by row
@@ -152,7 +220,11 @@ def author_schema_in_console(driver, case: AwsCase, path: str, csv_file: Path, t
     page = driver.page
     # The nav entry and the page's own tab share the label, so the address is
     # unambiguous where the link is not.
-    page.goto(f"{driver.ui}/schemas/meta-schemas", wait_until="domcontentloaded", timeout=timeout_ms)
+    page.goto(
+        f"{driver.ui}/schemas/meta-schemas",
+        wait_until="domcontentloaded",
+        timeout=timeout_ms,
+    )
     page.get_by_role("button", name="Add Schema").first.click(timeout=timeout_ms)
     # The page carries a second, closed copy of this drawer for its empty state,
     # so every control is taken from the open one rather than from the document.
@@ -161,15 +233,23 @@ def author_schema_in_console(driver, case: AwsCase, path: str, csv_file: Path, t
     parent, _, leaf = path.partition("/")[2].rpartition("/")
     form.get_by_placeholder("Enter path").first.fill(parent, timeout=timeout_ms)
     form.get_by_placeholder("Enter name").first.fill(leaf, timeout=timeout_ms)
-    form.get_by_placeholder("Enter description").first.fill(case.summary, timeout=timeout_ms)
-    form.locator("input[type=file]").first.set_input_files(str(csv_file), timeout=timeout_ms)
+    form.get_by_placeholder("Enter description").first.fill(
+        case.summary, timeout=timeout_ms
+    )
+    form.locator("input[type=file]").first.set_input_files(
+        str(csv_file), timeout=timeout_ms
+    )
     # The uploaded tab appears only once the CSV parsed, so it is the proof the
     # columns were read before anything is submitted.
-    form.get_by_role("tab", name="Uploaded Columns").wait_for(state="visible", timeout=timeout_ms)
+    form.get_by_role("tab", name="Uploaded Columns").wait_for(
+        state="visible", timeout=timeout_ms
+    )
     form.get_by_role("button", name="Review Schema").first.click(timeout=timeout_ms)
     form.get_by_role("button", name="Create Schema").first.click(timeout=timeout_ms)
     page.get_by_text("Schema created successfully").wait_for(timeout=timeout_ms)
-    return f"the console authored {path} {SCHEMA_VERSION} with {len(case.columns)} columns"
+    return (
+        f"the console authored {path} {SCHEMA_VERSION} with {len(case.columns)} columns"
+    )
 
 
 def author_schema_by_api(engine: Engine, case: AwsCase, path: str) -> str:
@@ -210,7 +290,9 @@ def survey_origin(driver, timeout_ms: int) -> str:
     # drawer open over it, and this survey's finding must not be that.
     page.goto(f"{driver.ui}/sources", wait_until="domcontentloaded", timeout=timeout_ms)
     driver.button("Add Source").first.click(timeout=timeout_ms)
-    page.get_by_placeholder("Enter source").wait_for(state="visible", timeout=timeout_ms)
+    page.get_by_placeholder("Enter source").wait_for(
+        state="visible", timeout=timeout_ms
+    )
     offers_fetcher = page.get_by_text("Source Type", exact=True).count()
     match_fields = page.get_by_placeholder("Enter field").count()
     if offers_fetcher:

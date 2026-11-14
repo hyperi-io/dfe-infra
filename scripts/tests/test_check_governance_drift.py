@@ -35,7 +35,9 @@ def check(tmp_path: Path, changes: list[dict], *args: str) -> int:
     actions = tmp_path / "governance" / "actions"
     actions.mkdir(parents=True, exist_ok=True)
     doc = {"name": "probe", "changes": changes}
-    (actions / "probe.yaml").write_text(yaml.safe_dump(doc), encoding="utf-8", newline="\n")
+    (actions / "probe.yaml").write_text(
+        yaml.safe_dump(doc), encoding="utf-8", newline="\n"
+    )
     return drift.main(["--deploy-root", str(tmp_path), "--require", *args])
 
 
@@ -78,7 +80,9 @@ def test_a_thin_service_does_not_resolve_against_a_chart_of_its_name(
     """The thin chart is what deploys, so a same-named chart directory vouches for nothing."""
     chart = tmp_path / "charts" / "dfe-engine"
     chart.mkdir(parents=True)
-    (chart / "Chart.yaml").write_text("name: dfe-engine\nversion: 0.0.0\n", encoding="utf-8")
+    (chart / "Chart.yaml").write_text(
+        "name: dfe-engine\nversion: 0.0.0\n", encoding="utf-8"
+    )
     (chart / "values.yaml").write_text("chartOnly: true\n", encoding="utf-8")
     code = check(
         tmp_path,
@@ -94,7 +98,9 @@ def test_a_service_with_no_thin_chart_still_resolves_against_its_chart(
 ) -> None:
     chart = tmp_path / "charts" / "edge-only"
     chart.mkdir(parents=True)
-    (chart / "Chart.yaml").write_text("name: edge-only\nversion: 0.0.0\n", encoding="utf-8")
+    (chart / "Chart.yaml").write_text(
+        "name: edge-only\nversion: 0.0.0\n", encoding="utf-8"
+    )
     (chart / "values.yaml").write_text("replicas: 2\n", encoding="utf-8")
     code = check(
         tmp_path,

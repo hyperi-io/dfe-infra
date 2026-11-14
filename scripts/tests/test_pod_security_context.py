@@ -81,10 +81,20 @@ def pod_spec(*args: str) -> dict:
 
 def test_the_defaults_are_the_hardened_ones() -> None:
     sc = pod_spec().get("securityContext", {})
-    expect("runAsNonRoot by default", sc.get("runAsNonRoot") is True, repr(sc.get("runAsNonRoot")))
-    expect("uid 1000 by default", sc.get("runAsUser") == 1000, repr(sc.get("runAsUser")))
-    expect("gid 1000 by default", sc.get("runAsGroup") == 1000, repr(sc.get("runAsGroup")))
-    expect("fsGroup 1000 by default", sc.get("fsGroup") == 1000, repr(sc.get("fsGroup")))
+    expect(
+        "runAsNonRoot by default",
+        sc.get("runAsNonRoot") is True,
+        repr(sc.get("runAsNonRoot")),
+    )
+    expect(
+        "uid 1000 by default", sc.get("runAsUser") == 1000, repr(sc.get("runAsUser"))
+    )
+    expect(
+        "gid 1000 by default", sc.get("runAsGroup") == 1000, repr(sc.get("runAsGroup"))
+    )
+    expect(
+        "fsGroup 1000 by default", sc.get("fsGroup") == 1000, repr(sc.get("fsGroup"))
+    )
     expect(
         "seccomp RuntimeDefault by default",
         sc.get("seccompProfile", {}).get("type") == "RuntimeDefault",
@@ -95,40 +105,64 @@ def test_the_defaults_are_the_hardened_ones() -> None:
 def test_an_explicit_zero_renders() -> None:
     """0 is falsey in a Helm `default`, so it needs hasKey to survive."""
     sc = pod_spec(
-        "--set", "podSecurityContext.runAsNonRoot=false",
-        "--set", "podSecurityContext.runAsUser=0",
-        "--set", "podSecurityContext.runAsGroup=0",
-        "--set", "podSecurityContext.fsGroup=0",
+        "--set",
+        "podSecurityContext.runAsNonRoot=false",
+        "--set",
+        "podSecurityContext.runAsUser=0",
+        "--set",
+        "podSecurityContext.runAsGroup=0",
+        "--set",
+        "podSecurityContext.fsGroup=0",
     ).get("securityContext", {})
     expect("runAsUser 0 survives", sc.get("runAsUser") == 0, repr(sc.get("runAsUser")))
-    expect("runAsGroup 0 survives", sc.get("runAsGroup") == 0, repr(sc.get("runAsGroup")))
+    expect(
+        "runAsGroup 0 survives", sc.get("runAsGroup") == 0, repr(sc.get("runAsGroup"))
+    )
     expect("fsGroup 0 survives", sc.get("fsGroup") == 0, repr(sc.get("fsGroup")))
-    expect("runAsNonRoot false survives", sc.get("runAsNonRoot") is False, repr(sc.get("runAsNonRoot")))
+    expect(
+        "runAsNonRoot false survives",
+        sc.get("runAsNonRoot") is False,
+        repr(sc.get("runAsNonRoot")),
+    )
 
 
 def test_a_non_default_uid_still_renders() -> None:
     """The kafbat/otel-collector case: a truthy override was never the problem."""
-    sc = pod_spec("--set", "podSecurityContext.runAsUser=100").get("securityContext", {})
+    sc = pod_spec("--set", "podSecurityContext.runAsUser=100").get(
+        "securityContext", {}
+    )
     expect("uid 100 renders", sc.get("runAsUser") == 100, repr(sc.get("runAsUser")))
 
 
 def test_disabled_renders_no_pod_security_context() -> None:
     """A chart that manages its own pod context needs the helper to emit nothing at all."""
     spec = pod_spec("--set", "podSecurityContext.enabled=false")
-    expect("no pod securityContext", "securityContext" not in spec, repr(spec.get("securityContext")))
+    expect(
+        "no pod securityContext",
+        "securityContext" not in spec,
+        repr(spec.get("securityContext")),
+    )
 
 
 def test_the_container_context_drops_every_capability() -> None:
     container = pod_spec()["containers"][0]
     sc = container.get("securityContext", {})
-    expect("ALL dropped", sc.get("capabilities", {}).get("drop") == ["ALL"], repr(sc.get("capabilities")))
-    expect("no privilege escalation", sc.get("allowPrivilegeEscalation") is False, repr(sc))
+    expect(
+        "ALL dropped",
+        sc.get("capabilities", {}).get("drop") == ["ALL"],
+        repr(sc.get("capabilities")),
+    )
+    expect(
+        "no privilege escalation", sc.get("allowPrivilegeEscalation") is False, repr(sc)
+    )
     expect("read-only rootfs", sc.get("readOnlyRootFilesystem") is True, repr(sc))
 
 
 def test_the_root_workloads_go_through_the_helper() -> None:
     """The log daemonset is the chart pod here that must run as uid 0."""
-    for chart, template, name in (("otel-collector", "templates/daemonset.yaml", "otel"),):
+    for chart, template, name in (
+        ("otel-collector", "templates/daemonset.yaml", "otel"),
+    ):
         text = render(chart_dir(chart), name, "--show-only", template)
         sc = docs(text)[0]["spec"]["template"]["spec"]["securityContext"]
         expect(f"{chart} runs as root", sc.get("runAsUser") == 0, repr(sc))
@@ -151,7 +185,9 @@ def test_no_chart_writes_its_own_pod_security_context() -> None:
         for tree in CHART_TREES
         for t in sorted(tree.glob("*/templates/**/*.yaml"))
         if str(t.relative_to(REPO_ROOT)) not in FSGROUP_ONLY
-        for n, line in enumerate(t.read_text(encoding="utf-8", errors="replace").splitlines(), 1)
+        for n, line in enumerate(
+            t.read_text(encoding="utf-8", errors="replace").splitlines(), 1
+        )
         if line == "      securityContext:"
     ]
     expect("the hardening lives in one helper", offenders == [], f"got {offenders}")

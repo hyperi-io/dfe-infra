@@ -97,13 +97,18 @@ ARGOCD = HelmRelease(
         # Backed-off controller timers, so one degraded app cannot hold the control plane.
         ("--set-string", r"configs.cm.timeout\.reconciliation=300s"),
         ("--set-string", r"configs.params.controller\.self\.heal\.timeout\.seconds=30"),
-        ("--set-string", r"configs.params.controller\.repo\.server\.timeout\.seconds=60"),
+        (
+            "--set-string",
+            r"configs.params.controller\.repo\.server\.timeout\.seconds=60",
+        ),
         ("--set-string", r"configs.params.controller\.diff\.server\.side=true"),
     ),
     login_values=True,
 )
 
-RELEASES: dict[str, HelmRelease] = {r.release: r for r in (EXTERNAL_SECRETS, CERT_MANAGER, ARGOCD)}
+RELEASES: dict[str, HelmRelease] = {
+    r.release: r for r in (EXTERNAL_SECRETS, CERT_MANAGER, ARGOCD)
+}
 
 
 def needs_domain(release: HelmRelease) -> bool:
@@ -112,7 +117,10 @@ def needs_domain(release: HelmRelease) -> bool:
 
 
 def install_args(
-    release: HelmRelease, *, domain: str = "", cache_service: str = argocd_release.DEFAULT_CACHE_SERVICE
+    release: HelmRelease,
+    *,
+    domain: str = "",
+    cache_service: str = argocd_release.DEFAULT_CACHE_SERVICE,
 ) -> list[str]:
     """The value arguments one install passes helm, in the order bootstrap.sh passes them.
 
@@ -129,7 +137,9 @@ def install_args(
         ValueError: A value names the domain and `domain` is empty.
     """
     if needs_domain(release) and not domain:
-        raise ValueError(f"{release.release} sets a value from the deployment's domain, and no --domain was given")
+        raise ValueError(
+            f"{release.release} sets a value from the deployment's domain, and no --domain was given"
+        )
     fields = {"domain": domain, "cache_host": argocd_release.cache_host(cache_service)}
     args: list[str] = []
     for flag, pair in release.values:
@@ -142,9 +152,17 @@ def install_args(
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="action", required=True, metavar="<action>")
-    listed = sub.add_parser("args", help="print one install's value arguments, one per line")
-    listed.add_argument("release", choices=sorted(RELEASES), help="the helm release bootstrap.sh installs")
-    listed.add_argument("--domain", default="", help="the deployment's domain (DFE_DOMAIN)")
+    listed = sub.add_parser(
+        "args", help="print one install's value arguments, one per line"
+    )
+    listed.add_argument(
+        "release",
+        choices=sorted(RELEASES),
+        help="the helm release bootstrap.sh installs",
+    )
+    listed.add_argument(
+        "--domain", default="", help="the deployment's domain (DFE_DOMAIN)"
+    )
     listed.add_argument(
         "--cache-service",
         default=argocd_release.DEFAULT_CACHE_SERVICE,
@@ -152,7 +170,9 @@ def main() -> int:
     )
     args = parser.parse_args()
     try:
-        values = install_args(RELEASES[args.release], domain=args.domain, cache_service=args.cache_service)
+        values = install_args(
+            RELEASES[args.release], domain=args.domain, cache_service=args.cache_service
+        )
     except ValueError as exc:
         print(f"helm_releases.py: {exc}", file=sys.stderr)
         return 2

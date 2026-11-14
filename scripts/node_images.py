@@ -101,14 +101,10 @@ type Reader = Callable[[str, str, list[str]], str]
 AWS_ARCH = {"arm64": "arm64", "amd64": "x86_64", "x86_64": "x86_64"}
 
 # https://docs.aws.amazon.com/eks/latest/userguide/retrieve-ami-id.html
-EKS_RECOMMENDED = (
-    "/aws/service/eks/optimized-ami/{minor}/amazon-linux-2023/{arch}/standard/recommended"
-)
+EKS_RECOMMENDED = "/aws/service/eks/optimized-ami/{minor}/amazon-linux-2023/{arch}/standard/recommended"
 
 # One release's image in a region, the parameter Karpenter's alias resolves through.
-EKS_IMAGE_ID = (
-    "/aws/service/eks/optimized-ami/{minor}/amazon-linux-2023/{arch}/standard/{name}/image_id"
-)
+EKS_IMAGE_ID = "/aws/service/eks/optimized-ami/{minor}/amazon-linux-2023/{arch}/standard/{name}/image_id"
 EKS_IMAGE_NAME = "amazon-eks-node-al2023-{arch}-standard-{minor}-{tag}"
 
 # The CreateNodegroup amiType for each AL2023 standard image the parameter above publishes.
@@ -147,15 +143,23 @@ EKS_ISSUES_FIXTURE = "eks-ami-issues.json"
 
 # What the gates read from a release body: its AL2023 standard image names, its
 # per-minor release versions and its warning admonitions.
-BODY_AMI_NAME = re.compile(r"amazon-eks-node-al2023-[a-z0-9_]+-standard-[0-9.]+-v[0-9]{8}")
+BODY_AMI_NAME = re.compile(
+    r"amazon-eks-node-al2023-[a-z0-9_]+-standard-[0-9.]+-v[0-9]{8}"
+)
 BODY_RELEASE_VERSION = re.compile(r"\b[0-9]+\.[0-9]+\.[0-9]+-[0-9]{8}\b")
-BODY_ADMONITION = re.compile(r"(?m)^> \[!(?:IMPORTANT|WARNING|CAUTION)\][^\n]*(?:\n>[^\n]*)*")
+BODY_ADMONITION = re.compile(
+    r"(?m)^> \[!(?:IMPORTANT|WARNING|CAUTION)\][^\n]*(?:\n>[^\n]*)*"
+)
 LINK_NEXT = re.compile(r'<([^>]+)>;\s*rel="next"')
 
 # A hedge that warns of a fault in the release itself.
-WARNING_PHRASE = re.compile(r"\b(?:might cause|may cause|may experience|known issue)", re.I)
+WARNING_PHRASE = re.compile(
+    r"\b(?:might cause|may cause|may experience|known issue)", re.I
+)
 # A sentence that says it fixes something describes a fault elsewhere, never in this release.
-FIX_WORD = re.compile(r"\b(?:fix|fixes|fixed|resolves|resolved|addresses|addressed)\b", re.I)
+FIX_WORD = re.compile(
+    r"\b(?:fix|fixes|fixed|resolves|resolved|addresses|addressed)\b", re.I
+)
 RELEASE_TAG = re.compile(r"\bv\d{8}\b")
 SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
 
@@ -317,7 +321,9 @@ def _floor(raw: object, pattern: re.Pattern[str], what: str) -> str:
     """A floor spelt ``>=<release>``."""
     value = raw.strip().removeprefix(">=").strip() if isinstance(raw, str) else ""
     if not pattern.match(value):
-        raise GatePolicyError(f"{what} must be >=<release> such as {pattern.pattern}, got {raw!r}")
+        raise GatePolicyError(
+            f"{what} must be >=<release> such as {pattern.pattern}, got {raw!r}"
+        )
     return value
 
 
@@ -328,7 +334,9 @@ def read_policy(versions: Path) -> GatePolicy:
         GatePolicyError: The file or its ``node-images`` block is missing or malformed.
     """
     try:
-        tree = parse_yaml_subset(versions.read_text(encoding="utf-8"), source=str(versions))
+        tree = parse_yaml_subset(
+            versions.read_text(encoding="utf-8"), source=str(versions)
+        )
     except (OSError, YamlSubsetError) as err:
         raise GatePolicyError(f"cannot read {versions}: {err}") from err
     block = at(tree, POLICY_PATH)
@@ -341,12 +349,16 @@ def read_policy(versions: Path) -> GatePolicy:
         )
     return GatePolicy(
         cooldown_days=int(cooldown),
-        eks_floor=_floor(block.get("eks-ami-floor"), EKS_TAG, "node-images.eks-ami-floor"),
+        eks_floor=_floor(
+            block.get("eks-ami-floor"), EKS_TAG, "node-images.eks-ami-floor"
+        ),
         eks_skip=_skip_map(block.get("eks-ami-skip"), "node-images.eks-ami-skip"),
         al2023_floor=_floor(
             block.get("al2023-ami-floor"), AL2023_DATE, "node-images.al2023-ami-floor"
         ),
-        al2023_skip=_skip_map(block.get("al2023-ami-skip"), "node-images.al2023-ami-skip"),
+        al2023_skip=_skip_map(
+            block.get("al2023-ami-skip"), "node-images.al2023-ami-skip"
+        ),
     )
 
 
@@ -382,13 +394,17 @@ def _ssm_value(target: Target, read: Reader, fixture: str, name: str) -> str:
     return read(fixture, "aws", args).strip()
 
 
-def _age_refusal(published: datetime | None, now: datetime, cooldown_days: int) -> str | None:
+def _age_refusal(
+    published: datetime | None, now: datetime, cooldown_days: int
+) -> str | None:
     """Gate a: why a release is too young, or None once the cooldown has passed."""
     if published is None:
         return "carries no release date to measure the cooldown from"
     age = now - published
     if age < timedelta(0):
-        return f"released {published.date().isoformat()}, after {now.date().isoformat()}"
+        return (
+            f"released {published.date().isoformat()}, after {now.date().isoformat()}"
+        )
     if age < timedelta(days=cooldown_days):
         return (
             f"released {published.date().isoformat()}, {age.days} day(s) ago, inside the "
@@ -409,7 +425,9 @@ def releases_from(entries: list[object]) -> list[Release]:
     releases: list[Release] = []
     for entry in entries:
         if not isinstance(entry, dict) or not isinstance(entry.get("tag_name"), str):
-            raise ImageLookupError(f"{EKS_AMI_REPO} releases carry an entry with no tag_name")
+            raise ImageLookupError(
+                f"{EKS_AMI_REPO} releases carry an entry with no tag_name"
+            )
         body = str(entry.get("body") or "").replace("\r", "")
         releases.append(
             Release(
@@ -422,7 +440,9 @@ def releases_from(entries: list[object]) -> list[Release]:
             )
         )
     # An undated release sorts last, below every dated one.
-    releases.sort(key=lambda r: (r.published is not None, r.published or _EPOCH), reverse=True)
+    releases.sort(
+        key=lambda r: (r.published is not None, r.published or _EPOCH), reverse=True
+    )
     return releases
 
 
@@ -459,7 +479,9 @@ def issue_titles(raw: str) -> list[str]:
     titles: list[str] = []
     for issue in _json_list(raw, f"{EKS_AMI_REPO} issues"):
         if not isinstance(issue, dict) or not isinstance(issue.get("title"), str):
-            raise ImageLookupError(f"{EKS_AMI_REPO} issues carry an entry with no title")
+            raise ImageLookupError(
+                f"{EKS_AMI_REPO} issues carry an entry with no title"
+            )
         titles.append(f"#{issue.get('number')} {issue['title']}")
     return titles
 
@@ -485,22 +507,32 @@ def eks_refusals(
 ) -> list[str]:
     """Every gate, a to g, the release fails, and nothing when it is eligible."""
     refusals: list[str] = []
-    if (young := _age_refusal(release.published, now, policy.cooldown_days)) is not None:
+    if (
+        young := _age_refusal(release.published, now, policy.cooldown_days)
+    ) is not None:
         refusals.append(young)
     if release.prerelease:
         refusals.append("a draft or prerelease")
     if release.tag in policy.eks_skip:
         refusals.append(f"skip-listed in versions.yaml: {policy.eks_skip[release.tag]}")
     for admonition in release.admonitions:
-        refusals.extend(f"its own release notes warn: {s}" for s in warning_sentences(admonition))
+        refusals.extend(
+            f"its own release notes warn: {s}" for s in warning_sentences(admonition)
+        )
     for newer in releases:
-        if newer.tag == release.tag or newer.published is None or release.published is None:
+        if (
+            newer.tag == release.tag
+            or newer.published is None
+            or release.published is None
+        ):
             continue
         if newer.published <= release.published:
             continue
         if any(release.tag in RELEASE_TAG.findall(a) for a in newer.admonitions):
             refusals.append(f"{newer.tag}'s release notes name it as affected")
-    refusals.extend(f"issue {title}" for title in titles if release.tag.lower() in title.lower())
+    refusals.extend(
+        f"issue {title}" for title in titles if release.tag.lower() in title.lower()
+    )
     if release.tag < policy.eks_floor:
         refusals.append(f"below the floor {policy.eks_floor}")
     return refusals
@@ -536,14 +568,20 @@ def eks_release(
     """
     minor = _minor(target)
     arch = _aws_arch(target)
-    releases = parse_releases(read(EKS_RELEASES_FIXTURE, HTTPS, list(EKS_RELEASES_ARGS)))
-    titles = issue_titles(read(EKS_ISSUES_FIXTURE, HTTPS, eks_issues_args(policy.eks_floor)))
+    releases = parse_releases(
+        read(EKS_RELEASES_FIXTURE, HTTPS, list(EKS_RELEASES_ARGS))
+    )
+    titles = issue_titles(
+        read(EKS_ISSUES_FIXTURE, HTTPS, eks_issues_args(policy.eks_floor))
+    )
     refused: list[str] = []
     for release in releases:
         name = EKS_IMAGE_NAME.format(arch=arch, minor=minor, tag=release.tag)
         if name not in release.ami_names:
             continue
-        reasons = eks_refusals(release, releases=releases, policy=policy, titles=titles, now=now)
+        reasons = eks_refusals(
+            release, releases=releases, policy=policy, titles=titles, now=now
+        )
         version = release_version_for(release, minor)
         if version is None:
             reasons.append(f"its release notes carry no {minor} release version")
@@ -564,7 +602,8 @@ def eks_release(
             raise ImageLookupError(f"{parameter} answered {image_id!r}, not an AMI id")
         return release, str(version), tuple(refused)
     raise NoEligibleImageError(
-        f"no {EKS_AMI_REPO} release for {minor} {arch} clears the release gates", refused
+        f"no {EKS_AMI_REPO} release for {minor} {arch} clears the release gates",
+        refused,
     )
 
 
@@ -597,7 +636,9 @@ def recommended_ami_alias(target: Target, read: Reader) -> str:
             f"{name} carries release_version {release!r}, not <patch>-<YYYYMMDD>"
         )
     if not match["patch"].startswith(f"{minor}."):
-        raise ImageLookupError(f"{name} carries {release}, which is not a {minor} release")
+        raise ImageLookupError(
+            f"{name} carries {release}, which is not a {minor} release"
+        )
     named = EKS_IMAGE_NAME_DATE.search(image_name)
     if not named or named["date"] != match["date"]:
         raise ImageLookupError(
@@ -649,13 +690,17 @@ def al2023_refusals(image: Al2023Image, policy: GatePolicy, now: datetime) -> li
     if (young := _age_refusal(image.created, now, policy.cooldown_days)) is not None:
         refusals.append(young)
     if image.release in policy.al2023_skip:
-        refusals.append(f"skip-listed in versions.yaml: {policy.al2023_skip[image.release]}")
+        refusals.append(
+            f"skip-listed in versions.yaml: {policy.al2023_skip[image.release]}"
+        )
     if image.date < policy.al2023_floor:
         refusals.append(f"below the floor {policy.al2023_floor}")
     return refusals
 
 
-def al2023_image(target: Target, read: Reader, policy: GatePolicy, now: datetime) -> Pick:
+def al2023_image(
+    target: Target, read: Reader, policy: GatePolicy, now: datetime
+) -> Pick:
     """The newest AL2023 AMI in the default SSM image's family that clears gates a, c and g.
 
     Raises:
@@ -664,7 +709,9 @@ def al2023_image(target: Target, read: Reader, policy: GatePolicy, now: datetime
     """
     arch = _aws_arch(target)
     parameter = AL2023_AMI.format(arch=arch)
-    default_id = _ssm_value(target, read, f"aws-{target.region}-al2023-ami-{arch}.txt", parameter)
+    default_id = _ssm_value(
+        target, read, f"aws-{target.region}-al2023-ami-{arch}.txt", parameter
+    )
     if not AMI_ID.match(default_id):
         raise ImageLookupError(f"{parameter} answered {default_id!r}, not an AMI id")
     args = [
@@ -682,14 +729,19 @@ def al2023_image(target: Target, read: Reader, policy: GatePolicy, now: datetime
         "--output",
         "json",
     ]
-    images = _al2023_images(read(f"aws-{target.region}-al2023-images-{arch}.json", "aws", args))
+    images = _al2023_images(
+        read(f"aws-{target.region}-al2023-images-{arch}.json", "aws", args)
+    )
     default = next((image for image in images if image.image_id == default_id), None)
     if default is None:
         raise ImageLookupError(
             f"{parameter}'s {default_id} is not among the AL2023 images EC2 lists"
         )
     family = [image for image in images if image.family == default.family]
-    family.sort(key=lambda image: (image.created is not None, image.created or now), reverse=True)
+    family.sort(
+        key=lambda image: (image.created is not None, image.created or now),
+        reverse=True,
+    )
     refused: list[str] = []
     for image in family:
         reasons = al2023_refusals(image, policy, now)
@@ -697,7 +749,9 @@ def al2023_image(target: Target, read: Reader, policy: GatePolicy, now: datetime
             return Pick(image.image_id, image.name, tuple(refused))
         if image.date >= policy.al2023_floor:
             refused.append(f"{image.name}: {' | '.join(reasons)}")
-    raise NoEligibleImageError(f"no AL2023 {default.family} AMI clears the release gates", refused)
+    raise NoEligibleImageError(
+        f"no AL2023 {default.family} AMI clears the release gates", refused
+    )
 
 
 # --- gcp and azure --------------------------------------------------------------
@@ -779,7 +833,9 @@ def aks_node_image(target: Target, read: Reader) -> dict[str, str]:
         "--output",
         "json",
     ]
-    doc = _json(read(f"azure-{target.region}-aks-versions.json", "az", args), "AKS versions")
+    doc = _json(
+        read(f"azure-{target.region}-aks-versions.json", "az", args), "AKS versions"
+    )
     values = doc.get("values")
     if not isinstance(values, list):
         raise ImageLookupError("AKS versions carry no values list")
@@ -792,7 +848,9 @@ def aks_node_image(target: Target, read: Reader) -> dict[str, str]:
         None,
     )
     if entry is None:
-        raise ImageLookupError(f"AKS lists no {target.kubernetes_version} in {target.region}")
+        raise ImageLookupError(
+            f"AKS lists no {target.kubernetes_version} in {target.region}"
+        )
     if entry.get("isPreview") is True:
         raise ImageLookupError(
             f"AKS lists {target.kubernetes_version} in {target.region} as preview only"
@@ -843,7 +901,9 @@ def _aws_karpenter_alias(ctx: Context) -> Pick:
 
 
 def _aws_al2023(ctx: Context) -> Pick:
-    return ctx.once("al2023", lambda: al2023_image(ctx.target, ctx.read, ctx.policy, ctx.now))
+    return ctx.once(
+        "al2023", lambda: al2023_image(ctx.target, ctx.read, ctx.policy, ctx.now)
+    )
 
 
 def _gke(ctx: Context) -> Pick:
@@ -876,10 +936,14 @@ _AL2023_KEYS = frozenset({"instance_ami_id", "forwarder_ami_id"})
 
 def tfvars_keys(cloud: str) -> frozenset[str]:
     """The keys a cloud's lookups write to tfvars, which its root declares."""
-    return frozenset(key for key, _lookup in LOOKUPS.get(cloud, ()) if key not in CHART_KEYS)
+    return frozenset(
+        key for key, _lookup in LOOKUPS.get(cloud, ()) if key not in CHART_KEYS
+    )
 
 
-def held_refusal(key: str, entry: Mapping[str, object], policy: GatePolicy) -> str | None:
+def held_refusal(
+    key: str, entry: Mapping[str, object], policy: GatePolicy
+) -> str | None:
     """Why a recorded value may no longer be held: skip-listed or below the floor."""
     release = str(entry.get("release", ""))
     if key in _EKS_KEYS:
@@ -957,7 +1021,9 @@ def resolve(
             refusal = held_refusal(key, entry, policy)
             if refusal is not None:
                 refused.add(key)
-                warn(f"{key} not resolved ({why}), and its recorded value is refused: {refusal}")
+                warn(
+                    f"{key} not resolved ({why}), and its recorded value is refused: {refusal}"
+                )
                 continue
             values[key] = entry["value"]
             record[key] = {"value": entry["value"], "release": entry.get("release", "")}
@@ -1029,7 +1095,9 @@ def github_pages(url: str, max_pages: int, timeout: float) -> str:
             break
         # A next page elsewhere would carry the token there, and skipping it would cut the list short.
         if _origin(next_url) != _origin(url):
-            raise ImageLookupError(f"GitHub's next page {next_url} is off {url}'s scheme and host")
+            raise ImageLookupError(
+                f"GitHub's next page {next_url} is off {url}'s scheme and host"
+            )
         request = urllib.request.Request(next_url, headers=_github_headers())
         try:
             with opener.open(request, timeout=timeout) as response:
@@ -1037,8 +1105,12 @@ def github_pages(url: str, max_pages: int, timeout: float) -> str:
                 link = response.headers.get("Link") or ""
         except urllib.error.HTTPError as err:
             if err.code in (403, 429):
-                raise ImageLookupError(f"GitHub rate-limited {next_url} (HTTP {err.code})") from err
-            raise ImageLookupError(f"GitHub answered HTTP {err.code} for {next_url}") from err
+                raise ImageLookupError(
+                    f"GitHub rate-limited {next_url} (HTTP {err.code})"
+                ) from err
+            raise ImageLookupError(
+                f"GitHub answered HTTP {err.code} for {next_url}"
+            ) from err
         except (urllib.error.URLError, TimeoutError, OSError) as err:
             raise ImageLookupError(f"GitHub unreachable for {next_url}: {err}") from err
         page = _json_page(body, next_url)
@@ -1058,7 +1130,9 @@ def _json_page(body: str, url: str) -> list[object]:
         return page
     if isinstance(page, dict) and isinstance(page.get("items"), list):
         if page.get("incomplete_results") is True:
-            raise ImageLookupError(f"GitHub's search timed out before it was complete for {url}")
+            raise ImageLookupError(
+                f"GitHub's search timed out before it was complete for {url}"
+            )
         return page["items"]
     raise ImageLookupError(f"GitHub answered neither a list nor a search for {url}")
 
@@ -1074,7 +1148,9 @@ def live_reader(timeout: float = 60.0) -> Reader:
         except FileNotFoundError as err:
             raise ImageLookupError(f"the {tool} CLI is not on PATH") from err
         except subprocess.TimeoutExpired as err:
-            raise ImageLookupError(f"{tool} {' '.join(args[:2])} took over {timeout:g}s") from err
+            raise ImageLookupError(
+                f"{tool} {' '.join(args[:2])} took over {timeout:g}s"
+            ) from err
         if done.returncode != 0:
             tail = done.stderr.strip().splitlines()[-1:] or ["no stderr"]
             raise ImageLookupError(f"{tool} {' '.join(args[:2])} failed: {tail[0]}")
@@ -1154,7 +1230,11 @@ def write_record(
     """
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / RECORD_NAME
-    merged = {key: dict(entry) for key, entry in previous.items() if key not in resolution.refused}
+    merged = {
+        key: dict(entry)
+        for key, entry in previous.items()
+        if key not in resolution.refused
+    }
     merged.update(resolution.record)
     body = json.dumps(merged, indent=2, sort_keys=True) + "\n"
     path.write_text(body, encoding="utf-8", newline="\n")

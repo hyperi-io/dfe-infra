@@ -66,7 +66,9 @@ def run(base: str, email: str, password: str) -> int:
             if _fill_auth_form(page, email, password, confirm):
                 break
         try:
-            page.wait_for_url(lambda u: "/register" not in u and "/login" not in u, timeout=30000)
+            page.wait_for_url(
+                lambda u: "/register" not in u and "/login" not in u, timeout=30000
+            )
         except Exception:
             pass
         page.wait_for_timeout(6000)
@@ -85,7 +87,9 @@ def run(base: str, email: str, password: str) -> int:
         print(f"  [{mark}] x{info['count']:<3} {ff}")
         for s in info["samples"]:
             print(f"           - {s!r}")
-    print(f"\n{len(items)} distinct font-families; {bad} off-standard (neither Inter nor mono).")
+    print(
+        f"\n{len(items)} distinct font-families; {bad} off-standard (neither Inter nor mono)."
+    )
     return 1 if bad else 0
 
 

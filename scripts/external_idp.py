@@ -68,8 +68,16 @@ import private_file
 import tester_idp
 
 IDP_TYPES = ("okta", "entra_id", "google")
-DEFAULT_PROVIDER_NAMES = {"okta": "okta", "entra_id": "entra", "google": "google-workspace"}
-DISPLAY_NAMES = {"okta": "Okta", "entra_id": "Microsoft Entra ID", "google": "Google Workspace"}
+DEFAULT_PROVIDER_NAMES = {
+    "okta": "okta",
+    "entra_id": "entra",
+    "google": "google-workspace",
+}
+DISPLAY_NAMES = {
+    "okta": "Okta",
+    "entra_id": "Microsoft Entra ID",
+    "google": "Google Workspace",
+}
 
 DEFAULT_PROVIDERS_CONFIGMAP = "dfe-oidc-providers"
 DEFAULT_GROUPS_CONFIGMAP = tester_idp.DEFAULT_GROUPS_CONFIGMAP
@@ -86,7 +94,15 @@ LEDGER_PREFIX = "dfe.hyperi.io/wire-external-"
 
 # The engine group fields a file may carry; members are local accounts, never an IdP's.
 GROUP_FIELDS = frozenset(
-    {"attributes", "description", "org_ids", "roles", "scope", "source_id", "source_provider"}
+    {
+        "attributes",
+        "description",
+        "org_ids",
+        "roles",
+        "scope",
+        "source_id",
+        "source_provider",
+    }
 )
 # A DNS label short enough that the ledger annotation name stays within 63 characters.
 _PROVIDER_NAME = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,47}[a-z0-9])?\Z")
@@ -149,7 +165,11 @@ def _flow_list(value: str, where: str) -> list[str]:
     if not text.endswith("]"):
         raise ValueError(f"{where}: a list opened with '[' must close on the same line")
     inner = text[1:-1].strip()
-    return [_scalar(item, where) for item in inner.split(",") if item.strip()] if inner else []
+    return (
+        [_scalar(item, where) for item in inner.split(",") if item.strip()]
+        if inner
+        else []
+    )
 
 
 def parse_group_file(text: str, *, source: str) -> dict[str, object]:
@@ -177,7 +197,9 @@ def parse_group_file(text: str, *, source: str) -> dict[str, object]:
         except json.JSONDecodeError as exc:
             raise ValueError(f"{source}: not valid JSON: {exc}") from exc
         if not isinstance(loaded, dict):
-            raise ValueError(f"{source}: holds a {type(loaded).__name__}, not a mapping")
+            raise ValueError(
+                f"{source}: holds a {type(loaded).__name__}, not a mapping"
+            )
         return loaded
     data: dict[str, object] = {}
     open_list: list[str] | None = None
@@ -192,7 +214,9 @@ def parse_group_file(text: str, *, source: str) -> dict[str, object]:
             open_list.append(_scalar(line[1:], where))
             continue
         if raw[:1].isspace():
-            raise ValueError(f"{where}: nested mappings are not read; write the file as JSON")
+            raise ValueError(
+                f"{where}: nested mappings are not read; write the file as JSON"
+            )
         key, sep, value = line.partition(":")
         key = key.strip()
         if not sep or not key:
@@ -208,7 +232,9 @@ def parse_group_file(text: str, *, source: str) -> dict[str, object]:
             data[key] = _flow_list(value, where)
         elif value.startswith("{"):
             if value.split(" #", 1)[0].strip() != "{}":
-                raise ValueError(f"{where}: a non-empty mapping has to be written as JSON")
+                raise ValueError(
+                    f"{where}: a non-empty mapping has to be written as JSON"
+                )
             data[key] = {}
         else:
             data[key] = _scalar(value, where)
@@ -240,10 +266,14 @@ def render_group_files(groups_dir: Path, provider: str) -> dict[str, str]:
         )
         unknown = sorted(set(entry) - GROUP_FIELDS)
         if unknown:
-            raise ValueError(f"{path.name}: not engine group fields: {', '.join(unknown)}")
+            raise ValueError(
+                f"{path.name}: not engine group fields: {', '.join(unknown)}"
+            )
         linked = entry.get("source_provider", provider)
         if linked != provider:
-            raise ValueError(f"{path.name}: source_provider is {linked!r}, not {provider!r}")
+            raise ValueError(
+                f"{path.name}: source_provider is {linked!r}, not {provider!r}"
+            )
         body = tester_idp.engine_group_body(
             path.stem, entry, provider, default_source_id=path.stem[len(prefix) :]
         )
@@ -340,7 +370,9 @@ def resolve_wiring(args: argparse.Namespace, environ: dict[str, str]) -> Wiring:
     if args.target == "k8s" and not args.namespace:
         raise ValueError("--target k8s needs --namespace, the engine's namespace")
     if args.target == "docker" and not args.compose_dir:
-        raise ValueError("--target docker needs --compose-dir, where the engine is recreated")
+        raise ValueError(
+            "--target docker needs --compose-dir, where the engine is recreated"
+        )
     names = {
         "provider": provider,
         "engine_env_var": engine_env_var,
@@ -386,7 +418,9 @@ def resolve_wiring(args: argparse.Namespace, environ: dict[str, str]) -> Wiring:
         engine_env_var=engine_env_var,
         display_name=args.display_name or DISPLAY_NAMES[args.idp_type],
         scopes=args.scopes or "",
-        tenant_id=entra_tenant(issuer, args.tenant_id) if args.idp_type == "entra_id" else "",
+        tenant_id=entra_tenant(issuer, args.tenant_id)
+        if args.idp_type == "entra_id"
+        else "",
     )
     return Wiring(
         **names,
@@ -405,7 +439,10 @@ def _configmap(name: str, namespace: str) -> dict:
         "metadata": {
             "name": name,
             "namespace": namespace,
-            "labels": {"app.kubernetes.io/part-of": PART_OF, CREATED_BY_LABEL: CREATED_BY},
+            "labels": {
+                "app.kubernetes.io/part-of": PART_OF,
+                CREATED_BY_LABEL: CREATED_BY,
+            },
         },
     }
 
@@ -433,7 +470,9 @@ def _ledger(configmap: dict | None, key: str) -> dict:
 
 def _ledger_value(wiring: Wiring) -> str:
     """The ledger annotation's value: the Secret and the group keys this run adds."""
-    return json.dumps({"holder": wiring.holder_name, "groups": sorted(wiring.group_files)})
+    return json.dumps(
+        {"holder": wiring.holder_name, "groups": sorted(wiring.group_files)}
+    )
 
 
 def k8s_plan(args: argparse.Namespace, wiring: Wiring) -> dict:
@@ -448,7 +487,11 @@ def k8s_plan(args: argparse.Namespace, wiring: Wiring) -> dict:
             },
             args.groups_configmap: {"data": wiring.group_files},
         },
-        "holder": {"kind": "Secret", "name": wiring.holder_name, "keys": ["client-secret"]},
+        "holder": {
+            "kind": "Secret",
+            "name": wiring.holder_name,
+            "keys": ["client-secret"],
+        },
     }
 
 
@@ -485,10 +528,15 @@ def k8s_wire(args: argparse.Namespace, wiring: Wiring) -> int:
     )
     group_data: dict[str, str | None] = dict(wiring.group_files)
     group_data.update(dict.fromkeys(sorted(stale)))
-    tester_idp.merge_patch(args, "configmap", args.groups_configmap, {"data": group_data})
+    tester_idp.merge_patch(
+        args, "configmap", args.groups_configmap, {"data": group_data}
+    )
     tester_idp._apply(args, [_holder_object(wiring, args.namespace)])
 
-    print(f"\n=== wired {wiring.provider} into namespace {args.namespace} ===", file=sys.stderr)
+    print(
+        f"\n=== wired {wiring.provider} into namespace {args.namespace} ===",
+        file=sys.stderr,
+    )
     print(
         f"  provider file {wiring.provider_key} and {len(wiring.group_files)} group file(s)",
         file=sys.stderr,
@@ -500,7 +548,10 @@ def k8s_wire(args: argparse.Namespace, wiring: Wiring) -> int:
         f"envMappings: {{{wiring.engine_env_var}: client-secret}}}}",
         file=sys.stderr,
     )
-    print(f"    authConfig.providersConfigMap: {args.providers_configmap}", file=sys.stderr)
+    print(
+        f"    authConfig.providersConfigMap: {args.providers_configmap}",
+        file=sys.stderr,
+    )
     print(f"    authConfig.groupsConfigMap: {args.groups_configmap}", file=sys.stderr)
     _print_callback(wiring)
     return 0
@@ -533,24 +584,48 @@ def k8s_teardown(args: argparse.Namespace, wiring: Wiring) -> int:
             "data": {wiring.provider_key: None},
         },
     )
-    if group_keys and tester_idp.get_json(args, "configmap", args.groups_configmap) is not None:
+    if (
+        group_keys
+        and tester_idp.get_json(args, "configmap", args.groups_configmap) is not None
+    ):
         tester_idp.merge_patch(
-            args, "configmap", args.groups_configmap, {"data": dict.fromkeys(group_keys)}
+            args,
+            "configmap",
+            args.groups_configmap,
+            {"data": dict.fromkeys(group_keys)},
         )
     holder = str(ledger.get("holder", wiring.holder_name))
-    tester_idp._run([*kube, "-n", args.namespace, "delete", "secret", holder, "--ignore-not-found"])
+    tester_idp._run(
+        [*kube, "-n", args.namespace, "delete", "secret", holder, "--ignore-not-found"]
+    )
 
-    rc = tester_idp.remove_seeded_copies(args, wiring.config_dir, wiring.paths(group_keys))
+    rc = tester_idp.remove_seeded_copies(
+        args, wiring.config_dir, wiring.paths(group_keys)
+    )
 
     for name in (args.providers_configmap, args.groups_configmap):
         configmap = tester_idp.get_json(args, "configmap", name)
         if configmap is None or configmap.get("data"):
             continue
-        if configmap.get("metadata", {}).get("labels", {}).get(CREATED_BY_LABEL) == CREATED_BY:
+        if (
+            configmap.get("metadata", {}).get("labels", {}).get(CREATED_BY_LABEL)
+            == CREATED_BY
+        ):
             tester_idp._run(
-                [*kube, "-n", args.namespace, "delete", "configmap", name, "--ignore-not-found"]
+                [
+                    *kube,
+                    "-n",
+                    args.namespace,
+                    "delete",
+                    "configmap",
+                    name,
+                    "--ignore-not-found",
+                ]
             )
-    print(f"=== {wiring.provider} unwired from namespace {args.namespace} ===", file=sys.stderr)
+    print(
+        f"=== {wiring.provider} unwired from namespace {args.namespace} ===",
+        file=sys.stderr,
+    )
     return 0 if rc == 0 else 1
 
 
@@ -608,20 +683,40 @@ def docker_env_text(outside: list[str], wiring: Wiring) -> str:
 
 
 def _env_file(args: argparse.Namespace) -> Path:
-    return Path(args.env_file) if args.env_file else Path(args.compose_dir) / "env" / "engine.env"
+    return (
+        Path(args.env_file)
+        if args.env_file
+        else Path(args.compose_dir) / "env" / "engine.env"
+    )
 
 
 def _recreate(args: argparse.Namespace) -> None:
     """Recreate the engine: a restart keeps the old environment, a recreate rereads env_file."""
     tester_idp._run(
-        ["docker", "compose", "up", "-d", "--no-deps", "--force-recreate", args.service],
+        [
+            "docker",
+            "compose",
+            "up",
+            "-d",
+            "--no-deps",
+            "--force-recreate",
+            args.service,
+        ],
         cwd=Path(args.compose_dir),
     )
 
 
 def _container_edit(args: argparse.Namespace, plan: dict) -> None:
     tester_idp._run(
-        ["docker", "exec", "-i", args.container, "python3", "-c", tester_idp.CONTAINER_EDIT],
+        [
+            "docker",
+            "exec",
+            "-i",
+            args.container,
+            "python3",
+            "-c",
+            tester_idp.CONTAINER_EDIT,
+        ],
         stdin=json.dumps(plan),
     )
 
@@ -629,7 +724,9 @@ def _container_edit(args: argparse.Namespace, plan: dict) -> None:
 def docker_plan(args: argparse.Namespace, wiring: Wiring) -> dict:
     """What a docker wire writes, with the secret redacted, for --dry-run."""
     files = {f"{PROVIDERS_SUBDIR}/{wiring.provider_key}": wiring.provider_file}
-    files.update({f"{GROUPS_SUBDIR}/{key}": body for key, body in wiring.group_files.items()})
+    files.update(
+        {f"{GROUPS_SUBDIR}/{key}": body for key, body in wiring.group_files.items()}
+    )
     return {
         "target": "docker",
         "container": args.container,
@@ -644,7 +741,11 @@ def docker_plan(args: argparse.Namespace, wiring: Wiring) -> dict:
 def docker_wire(args: argparse.Namespace, wiring: Wiring) -> int:
     """Write the files into the engine's config dir and the secret into its env file."""
     env_file = _env_file(args)
-    text = env_file.read_text(encoding="utf-8", errors="replace") if env_file.is_file() else ""
+    text = (
+        env_file.read_text(encoding="utf-8", errors="replace")
+        if env_file.is_file()
+        else ""
+    )
     outside, block = split_env_block(text, wiring.provider)
     if any(_assigns(line, wiring.engine_env_var) for line in outside):
         print(
@@ -656,11 +757,16 @@ def docker_wire(args: argparse.Namespace, wiring: Wiring) -> int:
     keep = wiring.paths(sorted(wiring.group_files))
     stale = [path for path in block_files(block) if path not in keep]
     write = {f"{PROVIDERS_SUBDIR}/{wiring.provider_key}": wiring.provider_file}
-    write.update({f"{GROUPS_SUBDIR}/{key}": body for key, body in wiring.group_files.items()})
+    write.update(
+        {f"{GROUPS_SUBDIR}/{key}": body for key, body in wiring.group_files.items()}
+    )
     _container_edit(args, {"root": wiring.config_dir, "write": write, "remove": stale})
     private_file.write_private(env_file, docker_env_text(outside, wiring))
     _recreate(args)
-    print(f"\n=== wired {wiring.provider} into container {args.container} ===", file=sys.stderr)
+    print(
+        f"\n=== wired {wiring.provider} into container {args.container} ===",
+        file=sys.stderr,
+    )
     print(
         f"  {len(write)} file(s) under {wiring.config_dir}; "
         f"{wiring.engine_env_var} in {env_file} (mode 0600)",
@@ -673,7 +779,11 @@ def docker_wire(args: argparse.Namespace, wiring: Wiring) -> int:
 def docker_teardown(args: argparse.Namespace, wiring: Wiring) -> int:
     """Remove the files and the env block the wire recorded, then recreate the engine."""
     env_file = _env_file(args)
-    text = env_file.read_text(encoding="utf-8", errors="replace") if env_file.is_file() else ""
+    text = (
+        env_file.read_text(encoding="utf-8", errors="replace")
+        if env_file.is_file()
+        else ""
+    )
     outside, block = split_env_block(text, wiring.provider)
     if not block:
         print(
@@ -681,10 +791,15 @@ def docker_teardown(args: argparse.Namespace, wiring: Wiring) -> int:
             file=sys.stderr,
         )
         return 0
-    _container_edit(args, {"root": wiring.config_dir, "write": {}, "remove": block_files(block)})
+    _container_edit(
+        args, {"root": wiring.config_dir, "write": {}, "remove": block_files(block)}
+    )
     private_file.write_private(env_file, "\n".join(outside) + "\n" if outside else "")
     _recreate(args)
-    print(f"=== {wiring.provider} unwired from container {args.container} ===", file=sys.stderr)
+    print(
+        f"=== {wiring.provider} unwired from container {args.container} ===",
+        file=sys.stderr,
+    )
     return 0
 
 
@@ -731,7 +846,11 @@ def cmd_idp_wire_external(args: argparse.Namespace) -> int:
                 )
             )
             return 0
-        plan = k8s_plan(args, wiring) if args.target == "k8s" else docker_plan(args, wiring)
+        plan = (
+            k8s_plan(args, wiring)
+            if args.target == "k8s"
+            else docker_plan(args, wiring)
+        )
         print(json.dumps(plan, indent=2))
         return 0
     if args.target == "k8s":
@@ -773,7 +892,10 @@ def add_wire_external_parser(actions) -> None:
     )
     # Exists only to refuse a secret value on argv without echoing it back.
     we.add_argument(
-        "--client-secret", dest="client_secret_on_argv", default=None, help=argparse.SUPPRESS
+        "--client-secret",
+        dest="client_secret_on_argv",
+        default=None,
+        help=argparse.SUPPRESS,
     )
     we.add_argument(
         "--groups-dir",
@@ -804,7 +926,10 @@ def add_wire_external_parser(actions) -> None:
         "(default DFE_OIDC_<PROVIDER>_CLIENT_SECRET)",
     )
     we.add_argument(
-        "--target", required=True, choices=("k8s", "docker"), help="where the engine runs"
+        "--target",
+        required=True,
+        choices=("k8s", "docker"),
+        help="where the engine runs",
     )
     we.add_argument(
         "--config-dir",
@@ -845,13 +970,17 @@ def add_wire_external_parser(actions) -> None:
         default=None,
         help="k8s: container in that Deployment (default: its default container)",
     )
-    we.add_argument("--container", default=DEFAULT_ENGINE, help="docker: the engine container")
+    we.add_argument(
+        "--container", default=DEFAULT_ENGINE, help="docker: the engine container"
+    )
     we.add_argument(
         "--compose-dir",
         default=None,
         help="docker: compose project directory the engine is recreated from",
     )
-    we.add_argument("--service", default=DEFAULT_ENGINE, help="docker: the engine's service name")
+    we.add_argument(
+        "--service", default=DEFAULT_ENGINE, help="docker: the engine's service name"
+    )
     we.add_argument(
         "--env-file",
         default=None,
@@ -863,6 +992,8 @@ def add_wire_external_parser(actions) -> None:
         help="remove exactly what an earlier wire of this provider added",
     )
     we.add_argument(
-        "--dry-run", action="store_true", help="print the plan, secret redacted, and touch nothing"
+        "--dry-run",
+        action="store_true",
+        help="print the plan, secret redacted, and touch nothing",
     )
     we.set_defaults(func=cmd_idp_wire_external)

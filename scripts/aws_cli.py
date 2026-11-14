@@ -64,7 +64,9 @@ def run_cli(
     )
 
 
-def run_aws(args: list[str], *, timeout: float, new_session: bool = False) -> subprocess.CompletedProcess[str]:
+def run_aws(
+    args: list[str], *, timeout: float, new_session: bool = False
+) -> subprocess.CompletedProcess[str]:
     """Run ``aws <args>``, capturing stdout/stderr as text.
 
     Args:

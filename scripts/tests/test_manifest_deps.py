@@ -11,7 +11,7 @@
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
 """Tests for scripts/manifest_deps.py.
 
-    python3 -m pytest scripts/tests/test_manifest_deps.py -q
+python3 -m pytest scripts/tests/test_manifest_deps.py -q
 """
 
 import sys
@@ -20,7 +20,14 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from manifest_deps import LOCK_FILES, PACKAGE_KINDS, Declaration, declarations, locked, requirement
+from manifest_deps import (
+    LOCK_FILES,
+    PACKAGE_KINDS,
+    Declaration,
+    declarations,
+    locked,
+    requirement,
+)
 
 
 def _cargo(body: str) -> list[Declaration]:
@@ -35,7 +42,9 @@ def _python(body: str, package: str = "scalo") -> list[Declaration]:
 
 
 def test_an_inline_table_declaration_carries_its_version() -> None:
-    found = _cargo('[dependencies]\nscalo = { version = ">=2.10.14, <3", features = ["a"] }\n')
+    found = _cargo(
+        '[dependencies]\nscalo = { version = ">=2.10.14, <3", features = ["a"] }\n'
+    )
     assert found == [Declaration("dependencies", ">=2.10.14, <3")]
 
 
@@ -79,15 +88,24 @@ def test_a_renamed_dependency_is_read_by_the_package_it_names() -> None:
 
 
 def test_a_key_renamed_to_another_package_is_not_ours() -> None:
-    assert _cargo('[dependencies]\nscalo = { package = "scalo-fork", version = "1" }\n') == []
+    assert (
+        _cargo('[dependencies]\nscalo = { package = "scalo-fork", version = "1" }\n')
+        == []
+    )
 
 
 @pytest.mark.parametrize(
     "value",
-    ["{ workspace = true }", '{ git = "https://example.com/scalo", tag = "v2" }', '{ path = "../scalo" }'],
+    [
+        "{ workspace = true }",
+        '{ git = "https://example.com/scalo", tag = "v2" }',
+        '{ path = "../scalo" }',
+    ],
 )
 def test_a_declaration_with_no_version_carries_no_range(value: str) -> None:
-    assert _cargo(f"[dependencies]\nscalo = {value}\n") == [Declaration("dependencies", None)]
+    assert _cargo(f"[dependencies]\nscalo = {value}\n") == [
+        Declaration("dependencies", None)
+    ]
 
 
 def test_a_dotted_workspace_key_is_a_declaration_with_no_range() -> None:
@@ -97,9 +115,9 @@ def test_a_dotted_workspace_key_is_a_declaration_with_no_range() -> None:
 
 
 def test_a_path_dependency_with_a_version_carries_it() -> None:
-    assert _cargo('[dependencies]\nscalo = { path = "../scalo", version = ">=2" }\n') == [
-        Declaration("dependencies", ">=2")
-    ]
+    assert _cargo(
+        '[dependencies]\nscalo = { path = "../scalo", version = ">=2" }\n'
+    ) == [Declaration("dependencies", ">=2")]
 
 
 def test_a_patch_and_a_feature_naming_the_crate_are_not_declarations() -> None:
@@ -122,7 +140,9 @@ def test_a_neighbouring_crate_is_not_read_as_ours() -> None:
 
 
 def test_a_requirement_with_extras_carries_its_specifier() -> None:
-    found = _python('dependencies = [\n    "httpx>=0.27",\n    "scalo[expression,http]>=2.30.0,<3",\n]\n')
+    found = _python(
+        'dependencies = [\n    "httpx>=0.27",\n    "scalo[expression,http]>=2.30.0,<3",\n]\n'
+    )
     assert found == [Declaration("project.dependencies", ">=2.30.0,<3")]
 
 
@@ -145,7 +165,9 @@ def test_every_requirement_list_is_read() -> None:
 def test_another_distribution_is_not_ours() -> None:
     body = 'dependencies = ["dfe-schemas>=0.2.0", "scalo-extra>=1.0"]\n'
     assert _python(body) == []
-    assert _python(body, "dfe-schemas") == [Declaration("project.dependencies", ">=0.2.0")]
+    assert _python(body, "dfe-schemas") == [
+        Declaration("project.dependencies", ">=0.2.0")
+    ]
 
 
 def test_names_compare_the_way_pep_503_normalises_them() -> None:
@@ -154,7 +176,9 @@ def test_names_compare_the_way_pep_503_normalises_them() -> None:
     ]
 
 
-def test_a_commented_out_requirement_and_an_unrelated_string_are_not_declarations() -> None:
+def test_a_commented_out_requirement_and_an_unrelated_string_are_not_declarations() -> (
+    None
+):
     body = 'requires-python = ">=3.14"\ndependencies = [\n    # "scalo>=2.30.0" is deliberate\n]\n'
     assert _python(body) == []
 

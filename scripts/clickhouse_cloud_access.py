@@ -84,7 +84,9 @@ def api_from_env(env: Mapping[str, str]) -> Api:
     parsed = urllib.parse.urlsplit(base_url)
     plain_but_local = parsed.scheme == "http" and parsed.hostname in LOOPBACK_HOSTS
     if parsed.scheme != "https" and not plain_but_local:
-        raise AccessError(f"{API_URL_ENV} must be an https URL, since the key travels in every request")
+        raise AccessError(
+            f"{API_URL_ENV} must be an https URL, since the key travels in every request"
+        )
     return Api(
         base_url=base_url,
         service_id=env[SERVICE_ENV].strip(),
@@ -105,20 +107,28 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         headers: object,
         newurl: str,
     ) -> NoReturn:
-        raise AccessError(f"{req.get_method()} answered a {code} redirect, which is never followed with the key")
+        raise AccessError(
+            f"{req.get_method()} answered a {code} redirect, which is never followed with the key"
+        )
 
 
 _OPENER = urllib.request.build_opener(_NoRedirect)
 
 
-def _call(api: Api, method: str, path: str, label: str, body: object | None = None) -> dict:
+def _call(
+    api: Api, method: str, path: str, label: str, body: object | None = None
+) -> dict:
     """One API call; `label` names it in an error, since `path` carries the ids."""
     token = base64.b64encode(f"{api.key_id}:{api.key_secret}".encode()).decode()
     request = urllib.request.Request(
         api.base_url + path,
         data=None if body is None else json.dumps(body).encode(),
         method=method,
-        headers={"Authorization": f"Basic {token}", "Content-Type": "application/json", "Accept": "application/json"},
+        headers={
+            "Authorization": f"Basic {token}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
     )
     try:
         with _OPENER.open(request, timeout=TIMEOUT_SECONDS) as response:
@@ -127,7 +137,9 @@ def _call(api: Api, method: str, path: str, label: str, body: object | None = No
         raise AccessError(f"{label} answered HTTP {exc.code}") from None
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         reason = getattr(exc, "reason", exc)
-        raise AccessError(f"{label} could not reach the API: {type(reason).__name__}") from None
+        raise AccessError(
+            f"{label} could not reach the API: {type(reason).__name__}"
+        ) from None
     except json.JSONDecodeError:
         raise AccessError(f"{label} answered something that is not JSON") from None
     if not isinstance(answer, dict):
@@ -141,10 +153,16 @@ def organisation(api: Api) -> str:
     Raises:
         AccessError: The key reaches no organisation, or more than one.
     """
-    result = _call(api, "GET", "/v1/organizations", "listing the key's organisation").get("result")
-    ids = [org.get("id") for org in result or [] if isinstance(org, dict) and org.get("id")]
+    result = _call(
+        api, "GET", "/v1/organizations", "listing the key's organisation"
+    ).get("result")
+    ids = [
+        org.get("id") for org in result or [] if isinstance(org, dict) and org.get("id")
+    ]
     if len(ids) != 1:
-        raise AccessError(f"the key reaches {len(ids)} organisations, and one organisation is what names the service")
+        raise AccessError(
+            f"the key reaches {len(ids)} organisations, and one organisation is what names the service"
+        )
     return str(ids[0])
 
 
@@ -154,12 +172,21 @@ def _service_path(api: Api, org: str) -> str:
 
 def access_list(api: Api, org: str) -> list[dict[str, str]]:
     """The service's IP access list as the API holds it."""
-    result = _call(api, "GET", _service_path(api, org), "reading the service").get("result") or {}
+    result = (
+        _call(api, "GET", _service_path(api, org), "reading the service").get("result")
+        or {}
+    )
     entries = result.get("ipAccessList") if isinstance(result, dict) else None
-    return [e for e in entries or [] if isinstance(e, dict) and isinstance(e.get("source"), str)]
+    return [
+        e
+        for e in entries or []
+        if isinstance(e, dict) and isinstance(e.get("source"), str)
+    ]
 
 
-def _patch(api: Api, org: str, add: list[dict[str, str]], remove: list[dict[str, str]]) -> None:
+def _patch(
+    api: Api, org: str, add: list[dict[str, str]], remove: list[dict[str, str]]
+) -> None:
     body = {"ipAccessList": {"add": add, "remove": remove}}
     _call(api, "PATCH", _service_path(api, org), "updating the access list", body)
 
@@ -188,8 +215,15 @@ def _host_address(cidr: str) -> str:
         network = ipaddress.ip_network(cidr.strip(), strict=True)
     except ValueError:
         network = None
-    if network is None or network.version != 4 or network.prefixlen != 32 or "/" not in cidr:
-        raise AccessError("every address a run opens is one IPv4 address written as a /32")
+    if (
+        network is None
+        or network.version != 4
+        or network.prefixlen != 32
+        or "/" not in cidr
+    ):
+        raise AccessError(
+            "every address a run opens is one IPv4 address written as a /32"
+        )
     return str(network)
 
 
@@ -205,7 +239,11 @@ def open_access(api: Api, run_id: str, expires_at: int, cidrs: Sequence[str]) ->
     org = organisation(api)
     present = {entry["source"] for entry in access_list(api, org)}
     note = description(run_id, expires_at)
-    add = [{"source": source, "description": note} for source in wanted if source not in present]
+    add = [
+        {"source": source, "description": note}
+        for source in wanted
+        if source not in present
+    ]
     if add:
         _patch(api, org, add, [])
     return len(add)
@@ -218,7 +256,9 @@ def _remove(api: Api, keep: Callable[[str, int], bool]) -> int:
     for entry in access_list(api, org):
         parsed = parse_description(entry.get("description", ""))
         if parsed is not None and not keep(*parsed):
-            remove.append({"source": entry["source"], "description": entry.get("description", "")})
+            remove.append(
+                {"source": entry["source"], "description": entry.get("description", "")}
+            )
     if remove:
         _patch(api, org, [], remove)
     return len(remove)
@@ -244,9 +284,16 @@ def main(argv: list[str] | None = None, env: Mapping[str, str] | None = None) ->
         description="Open, close or sweep a cloud run's entries on a ClickHouse Cloud service's IP access list.",
     )
     sub = parser.add_subparsers(dest="command", required=True)
-    opened = sub.add_parser("open", help=f"add the addresses in {CIDRS_ENV} for one run")
+    opened = sub.add_parser(
+        "open", help=f"add the addresses in {CIDRS_ENV} for one run"
+    )
     opened.add_argument("--run-id", required=True, help="the run the entries belong to")
-    opened.add_argument("--expires-at", required=True, type=int, help="epoch seconds after which sweep removes them")
+    opened.add_argument(
+        "--expires-at",
+        required=True,
+        type=int,
+        help="epoch seconds after which sweep removes them",
+    )
     closed = sub.add_parser("close", help="remove one run's entries")
     closed.add_argument("--run-id", required=True, help="the run whose entries go")
     sub.add_parser("sweep", help="remove every run entry whose expiry has passed")
@@ -261,13 +308,22 @@ def main(argv: list[str] | None = None, env: Mapping[str, str] | None = None) ->
     try:
         if args.command == "open":
             added = open_access(api, args.run_id, args.expires_at, _cidrs(env))
-            print(f"clickhouse_cloud_access: opened {added} address(es) for run {args.run_id}", file=sys.stderr)
+            print(
+                f"clickhouse_cloud_access: opened {added} address(es) for run {args.run_id}",
+                file=sys.stderr,
+            )
         elif args.command == "close":
             removed = close_access(api, args.run_id)
-            print(f"clickhouse_cloud_access: closed {removed} address(es) for run {args.run_id}", file=sys.stderr)
+            print(
+                f"clickhouse_cloud_access: closed {removed} address(es) for run {args.run_id}",
+                file=sys.stderr,
+            )
         else:
             removed = sweep(api, time.time())
-            print(f"clickhouse_cloud_access: swept {removed} expired run address(es)", file=sys.stderr)
+            print(
+                f"clickhouse_cloud_access: swept {removed} expired run address(es)",
+                file=sys.stderr,
+            )
     except AccessError as exc:
         print(f"clickhouse_cloud_access: {exc}", file=sys.stderr)
         return 1

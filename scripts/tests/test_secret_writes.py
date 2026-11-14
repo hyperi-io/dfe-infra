@@ -36,7 +36,9 @@ TEMPLATES = REPO_ROOT / "bootstrap" / "templates"
 PYTHON_ROOTS = (REPO_ROOT / "scripts", REPO_ROOT / "bootstrap")
 
 HELPER = "dfe_apply_secret"
-HELPER_COMMAND = "kubectl apply --server-side --field-manager=dfe-bootstrap --force-conflicts -f -"
+HELPER_COMMAND = (
+    "kubectl apply --server-side --field-manager=dfe-bootstrap --force-conflicts -f -"
+)
 # What bootstrap.sh renders a template through, so a command naming it writes what the template holds.
 RENDERER = "render_env.py"
 
@@ -135,7 +137,11 @@ def client_side_applies(source: str) -> list[int]:
             items = node.args
         else:
             continue
-        words = {i.value for i in items if isinstance(i, ast.Constant) and isinstance(i.value, str)}
+        words = {
+            i.value
+            for i in items
+            if isinstance(i, ast.Constant) and isinstance(i.value, str)
+        }
         if "apply" not in words or "-f" not in words:
             continue
         managers = {w for w in words if w.startswith("--field-manager=")}
@@ -173,7 +179,9 @@ def test_the_bootstrap_helper_applies_server_side_under_a_named_manager() -> Non
 
 
 def test_every_bootstrap_secret_write_goes_through_the_helper() -> None:
-    writes = secret_writes(BOOTSTRAP.read_text(encoding="utf-8"), secret_templates(TEMPLATES))
+    writes = secret_writes(
+        BOOTSTRAP.read_text(encoding="utf-8"), secret_templates(TEMPLATES)
+    )
     found = {name for _, name, _ in writes}
     expect(
         "the check sees every Secret bootstrap.sh writes",
@@ -230,8 +238,14 @@ def test_the_python_check_catches_a_client_side_apply() -> None:
     cases = (
         ('run(["kubectl", "apply", "-f", "-"])', [1]),
         ('run([*kube, "apply", "--server-side", "-f", "-"])', [1]),
-        ('run([*kube, "apply", "--server-side", "--field-manager=kubectl", "-f", "-"])', [1]),
-        ('run([*kube, "apply", "--server-side", "--field-manager=dfe-ops", "-f", "-"])', []),
+        (
+            'run([*kube, "apply", "--server-side", "--field-manager=kubectl", "-f", "-"])',
+            [1],
+        ),
+        (
+            'run([*kube, "apply", "--server-side", "--field-manager=dfe-ops", "-f", "-"])',
+            [],
+        ),
         ('run(["tofu", "apply", "-auto-approve"])', []),
     )
     for source, want in cases:

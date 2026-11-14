@@ -59,9 +59,7 @@ LUMBERJACK_SWITCHES = {
 }
 # The same switches as the receiver reads them from its environment, for a
 # deployment whose engine refuses the write.
-LUMBERJACK_ENV = (
-    "DFE_RECEIVER_LUMBERJACK__ENABLED=true DFE_RECEIVER_LUMBERJACK__ACCEPT_UNAUTHENTICATED=true"
-)
+LUMBERJACK_ENV = "DFE_RECEIVER_LUMBERJACK__ENABLED=true DFE_RECEIVER_LUMBERJACK__ACCEPT_UNAUTHENTICATED=true"
 # Where the corpus is mounted and what the agent tails, which is the file path
 # every event it ships carries.
 CORPUS_MOUNT = "/corpus"
@@ -119,8 +117,13 @@ def docker(*argv: str, timeout: float = 180.0) -> tuple[int, str]:
     return done.returncode, (done.stdout or done.stderr).strip()
 
 
-def write_inputs(pair: Pair, lines: list[str], dataset: str, marker_field: str,
-                 marker: dict[str, str]) -> Path:
+def write_inputs(
+    pair: Pair,
+    lines: list[str],
+    dataset: str,
+    marker_field: str,
+    marker: dict[str, str],
+) -> Path:
     """The corpus on disk plus the two configs, under this run's own directory.
 
     Filebeat tails a file, so the corpus is written as a file rather than
@@ -139,7 +142,9 @@ def write_inputs(pair: Pair, lines: list[str], dataset: str, marker_field: str,
     corpus_dir = pair.workdir / "corpus"
     corpus_dir.mkdir(parents=True, exist_ok=True)
     (corpus_dir / CORPUS_FILE).write_text("\n".join(lines) + "\n", encoding="utf-8")
-    marker_lines = "".join(f'            {key}: "{value}"\n' for key, value in marker.items())
+    marker_lines = "".join(
+        f'            {key}: "{value}"\n' for key, value in marker.items()
+    )
 
     # filestream needs an id of its own, and it identifies a file by a fingerprint
     # of the first 1024 bytes by default -- a corpus slice shorter than that is
@@ -195,10 +200,18 @@ def write_inputs(pair: Pair, lines: list[str], dataset: str, marker_field: str,
 def start_logstash(pair: Pair) -> tuple[bool, str]:
     """Logstash on the stack's network, waited for until its pipeline accepts."""
     code, out = docker(
-        "run", "-d", "--name", pair.logstash, "--network", pair.network,
-        "-v", f"{pair.workdir / 'logstash.conf'}:/usr/share/logstash/pipeline/logstash.conf:ro",
-        "-e", "XPACK_MONITORING_ENABLED=false",
-        "-e", "LS_JAVA_OPTS=-Xms256m -Xmx512m",
+        "run",
+        "-d",
+        "--name",
+        pair.logstash,
+        "--network",
+        pair.network,
+        "-v",
+        f"{pair.workdir / 'logstash.conf'}:/usr/share/logstash/pipeline/logstash.conf:ro",
+        "-e",
+        "XPACK_MONITORING_ENABLED=false",
+        "-e",
+        "LS_JAVA_OPTS=-Xms256m -Xmx512m",
         LOGSTASH_IMAGE,
     )
     if code != 0:
@@ -210,7 +223,10 @@ def start_logstash(pair: Pair) -> tuple[bool, str]:
             return True, f"logstash {SHIPPER_VERSION} listening on {BEATS_PORT}"
         time.sleep(5)
     _, logs = docker("logs", "--tail", "5", pair.logstash)
-    return False, f"logstash never ran its pipeline within {LOGSTASH_READY_DEADLINE:.0f}s: {logs[-200:]}"
+    return (
+        False,
+        f"logstash never ran its pipeline within {LOGSTASH_READY_DEADLINE:.0f}s: {logs[-200:]}",
+    )
 
 
 def start_filebeat(pair: Pair) -> tuple[bool, str]:
@@ -220,17 +236,32 @@ def start_filebeat(pair: Pair) -> tuple[bool, str]:
     filebeat otherwise refuses a file its own uid does not own.
     """
     code, out = docker(
-        "run", "-d", "--name", pair.filebeat, "--network", pair.network,
-        "-v", f"{pair.workdir / 'filebeat.yml'}:/usr/share/filebeat/filebeat.yml:ro",
-        "-v", f"{pair.workdir / 'corpus'}:{CORPUS_MOUNT}:ro",
-        FILEBEAT_IMAGE, "filebeat", "-e", "--strict.perms=false",
+        "run",
+        "-d",
+        "--name",
+        pair.filebeat,
+        "--network",
+        pair.network,
+        "-v",
+        f"{pair.workdir / 'filebeat.yml'}:/usr/share/filebeat/filebeat.yml:ro",
+        "-v",
+        f"{pair.workdir / 'corpus'}:{CORPUS_MOUNT}:ro",
+        FILEBEAT_IMAGE,
+        "filebeat",
+        "-e",
+        "--strict.perms=false",
     )
     if code != 0:
         return False, f"filebeat did not start: {out[:200]}"
-    return True, f"filebeat {SHIPPER_VERSION} tailing {AGENT_PATH}, shipping to {pair.target}"
+    return (
+        True,
+        f"filebeat {SHIPPER_VERSION} tailing {AGENT_PATH}, shipping to {pair.target}",
+    )
 
 
-def published(pair: Pair, wanted: int, deadline: float = SHIP_DEADLINE) -> tuple[int, str]:
+def published(
+    pair: Pair, wanted: int, deadline: float = SHIP_DEADLINE
+) -> tuple[int, str]:
     """How many events filebeat says it published, polled until it has sent them all.
 
     Filebeat's own count, not the receiver's: it separates "the agent never
@@ -246,7 +277,11 @@ def published(pair: Pair, wanted: int, deadline: float = SHIP_DEADLINE) -> tuple
         if time.monotonic() >= until:
             return seen, (
                 f"filebeat published {seen} of {wanted} lines in {deadline:.0f}s"
-                + (f", and it warned: {_last_warning(logs)}" if _last_warning(logs) else "")
+                + (
+                    f", and it warned: {_last_warning(logs)}"
+                    if _last_warning(logs)
+                    else ""
+                )
             )
         time.sleep(5)
 
@@ -256,7 +291,7 @@ def _last_warning(logs: str) -> str:
     for line in reversed(logs.splitlines()):
         try:
             entry = json.loads(line)
-        except (ValueError, json.JSONDecodeError):
+        except ValueError, json.JSONDecodeError:
             continue
         if entry.get("log.level") == "warn":
             return str(entry.get("message") or "")[:200]
@@ -274,9 +309,11 @@ def _published_events(logs: str) -> int:
             continue
         try:
             body = json.loads(line[line.index("{") :])
-        except (ValueError, json.JSONDecodeError):
+        except ValueError, json.JSONDecodeError:
             continue
-        events = (((body.get("monitoring") or {}).get("metrics") or {}).get("libbeat") or {})
+        events = ((body.get("monitoring") or {}).get("metrics") or {}).get(
+            "libbeat"
+        ) or {}
         published = ((events.get("output") or {}).get("events") or {}).get("acked")
         if isinstance(published, int):
             total += published
@@ -321,7 +358,11 @@ def envelope_evidence(store, table: str) -> tuple[int, list[str], str]:
     where = _AGENT_ROWS
     carrying = store.scalar(f"SELECT count() FROM {table} {where}")
     if not carrying:
-        return 0, [], f"no row in {table} carries {AGENT_PATH}, so none of them came off the agent"
+        return (
+            0,
+            [],
+            f"no row in {table} carries {AGENT_PATH}, so none of them came off the agent",
+        )
     rows = store.query(f"SELECT {RECORD_TEXT} FROM {table} {where} LIMIT 1")
     if not rows or not rows[0] or not rows[0][0]:
         return carrying, [], f"{table} would not hand back a row carrying {AGENT_PATH}"
@@ -348,7 +389,10 @@ def kept_outcome(store, table: str) -> tuple[str, str]:
     """
     carrying = store.scalar(f"SELECT count() FROM {table} {_AGENT_ROWS}")
     if not carrying:
-        return "failed", f"no row in {table} carries {AGENT_PATH}, so none of them came off the agent"
+        return (
+            "failed",
+            f"no row in {table} carries {AGENT_PATH}, so none of them came off the agent",
+        )
     kept = store.scalar(f"SELECT count() FROM {table} {_AGENT_ROWS} AND {_KEPT}")
     detail = (
         f"{kept} of {carrying} agent row(s) kept agent.type {AGENT_TYPE} (filebeat's own) and "
@@ -383,7 +427,11 @@ def held(config: object, paths) -> dict[str, object]:
     if not isinstance(config, dict):
         return found
     for field in config.get("fields") or []:
-        if isinstance(field, dict) and field.get("path") in wanted and field.get("is_set"):
+        if (
+            isinstance(field, dict)
+            and field.get("path") in wanted
+            and field.get("is_set")
+        ):
             found[field["path"]] = field.get("value")
     # A path the app's contract does not declare is reported here once it is set.
     for field in config.get("unknown") or []:
@@ -392,7 +440,9 @@ def held(config: object, paths) -> dict[str, object]:
     return found
 
 
-def restore_plan(before: dict[str, object], paths) -> tuple[dict[str, object], list[str]]:
+def restore_plan(
+    before: dict[str, object], paths
+) -> tuple[dict[str, object], list[str]]:
     """The writes that put *paths* back as *before* found them.
 
     Returns:

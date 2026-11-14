@@ -85,7 +85,10 @@ class _DropAuthOnRedirect(urllib.request.HTTPRedirectHandler):
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         new = super().redirect_request(req, fp, code, msg, headers, newurl)
-        leaving = urllib.parse.urlsplit(newurl).netloc != urllib.parse.urlsplit(req.full_url).netloc
+        leaving = (
+            urllib.parse.urlsplit(newurl).netloc
+            != urllib.parse.urlsplit(req.full_url).netloc
+        )
         if new is not None and leaving:
             new.remove_header("Authorization")
         return new
@@ -95,7 +98,7 @@ def _detail(exc: urllib.error.HTTPError) -> str:
     """The first error message a registry put in its refusal, else the HTTP reason."""
     try:
         body = json.loads(exc.read() or b"{}")
-    except (OSError, ValueError):
+    except OSError, ValueError:
         body = {}
     finally:
         exc.close()
@@ -177,7 +180,9 @@ class Repository:
             RegistryReadError: The registry did not answer, or served no JSON object.
         """
         try:
-            got = self._get(f"/v2/{self.name}/manifests/{reference}", ", ".join(MANIFEST_TYPES))
+            got = self._get(
+                f"/v2/{self.name}/manifests/{reference}", ", ".join(MANIFEST_TYPES)
+            )
         except _AbsentError:
             return None
         if got is None:
@@ -200,8 +205,13 @@ class Repository:
         if got is None:
             raise RegistryReadError(f"{self.host}/{self.name} has no blob {digest}")
         body = got[0]
-        if digest.startswith("sha256:") and f"sha256:{hashlib.sha256(body).hexdigest()}" != digest:
-            raise RegistryReadError(f"{self.host}/{self.name} served blob {digest} with other bytes")
+        if (
+            digest.startswith("sha256:")
+            and f"sha256:{hashlib.sha256(body).hexdigest()}" != digest
+        ):
+            raise RegistryReadError(
+                f"{self.host}/{self.name} served blob {digest} with other bytes"
+            )
         return body
 
     def created(self, document: dict) -> datetime.datetime | None:
@@ -253,7 +263,9 @@ class Repository:
                     f"{self.host}/{self.name}: HTTP {exc.code} reading {path}: {_detail(exc)}"
                 ) from exc
             except urllib.error.URLError as exc:
-                raise RegistryReadError(f"cannot reach {self.host}: {exc.reason}") from exc
+                raise RegistryReadError(
+                    f"cannot reach {self.host}: {exc.reason}"
+                ) from exc
 
     def _open(self, url: str, headers: dict[str, str]) -> tuple[bytes, Message]:
         """Body and headers of one GET, retrying a busy registry; HTTPError for any refusal."""
@@ -283,7 +295,9 @@ class Repository:
         fields = dict(_CHALLENGE_PARAM.findall(params))
         realm = fields.get("realm")
         if not realm:
-            raise RegistryReadError(f"{self.host} challenged without a token realm: {challenge!r}")
+            raise RegistryReadError(
+                f"{self.host} challenged without a token realm: {challenge!r}"
+            )
         query = {"scope": fields.get("scope") or f"repository:{self.name}:pull"}
         if fields.get("service"):
             query["service"] = fields["service"]

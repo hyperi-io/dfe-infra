@@ -135,7 +135,9 @@ def _install(monkeypatch, tmp_path):
 
 def _without_tokens():
     """Drop every GitHub token from this process, returning the values to restore."""
-    return {name: os.environ.pop(name) for name in TOKEN_VARIABLES if name in os.environ}
+    return {
+        name: os.environ.pop(name) for name in TOKEN_VARIABLES if name in os.environ
+    }
 
 
 def _restore_tokens(saved: dict[str, str]) -> None:
@@ -157,11 +159,18 @@ def test_resolve_reads_the_build_time_from_the_image_config(monkeypatch):
     """An index with no created annotation is dated by its platform image's config,
     a blob served from another host that refuses a request carrying the token."""
     registry = FakeRegistry()
-    registry.add(f"{ORG}/dfe-loader", "v1.18.19", "sha256:" + "e" * 64, built="2026-08-18T04:19:10.6Z")
+    registry.add(
+        f"{ORG}/dfe-loader",
+        "v1.18.19",
+        "sha256:" + "e" * 64,
+        built="2026-08-18T04:19:10.6Z",
+    )
     with registry.serving(monkeypatch):
         found = registry_pins.resolve(ORG, "dfe-loader", "v1.18.19")
     assert found is not None
-    assert found.published == datetime.datetime(2026, 8, 18, 4, 19, 10, 600000, tzinfo=datetime.UTC)
+    assert found.published == datetime.datetime(
+        2026, 8, 18, 4, 19, 10, 600000, tzinfo=datetime.UTC
+    )
     stored = [r for r in registry.requests if r.path.startswith("/sha256:")]
     assert stored, "the config blob was never read from the store"
     assert all(r.authorization == "" for r in stored), "the token followed the redirect"
@@ -198,14 +207,19 @@ def test_every_read_is_anonymous(monkeypatch):
     saved = _without_tokens()
     try:
         with registry.serving(monkeypatch):
-            assert registry_pins.resolve_digest(ORG, "dfe-loader", "v1.18.21") == "sha256:" + "b" * 64
+            assert (
+                registry_pins.resolve_digest(ORG, "dfe-loader", "v1.18.21")
+                == "sha256:" + "b" * 64
+            )
             assert "v1.15.0" in registry_pins.package_tags(ORG, "dfe-engine")
     finally:
         _restore_tokens(saved)
     assert registry.token_requests(), "the registry was never asked for a token"
     assert all(r.authorization == "" for r in registry.token_requests())
     sent = {r.authorization for r in registry.requests} - {""}
-    assert sent == {f"Bearer anon-{ORG}/dfe-loader", f"Bearer anon-{ORG}/dfe-engine"}, sent
+    assert sent == {f"Bearer anon-{ORG}/dfe-loader", f"Bearer anon-{ORG}/dfe-engine"}, (
+        sent
+    )
 
 
 def test_a_nested_chart_is_read_at_its_repository_path(monkeypatch):
@@ -214,7 +228,10 @@ def test_a_nested_chart_is_read_at_its_repository_path(monkeypatch):
     registry = FakeRegistry()
     registry.add(f"{ORG}/charts/dfe-engine", "1.22.16", chart_digest, kind=MANIFEST)
     with registry.serving(monkeypatch):
-        assert registry_pins.resolve_digest(ORG, "charts/dfe-engine", "1.22.16") == chart_digest
+        assert (
+            registry_pins.resolve_digest(ORG, "charts/dfe-engine", "1.22.16")
+            == chart_digest
+        )
     read = [r.path for r in registry.requests if r.authorization]
     assert read == [f"/v2/{ORG}/charts/dfe-engine/manifests/1.22.16"]
 
@@ -236,7 +253,10 @@ def test_a_busy_registry_is_retried(monkeypatch):
     registry = _published()
     registry.fail = [503, 429]
     with registry.serving(monkeypatch):
-        assert registry_pins.resolve_digest(ORG, "dfe-loader", "v1.18.21") == "sha256:" + "b" * 64
+        assert (
+            registry_pins.resolve_digest(ORG, "dfe-loader", "v1.18.21")
+            == "sha256:" + "b" * 64
+        )
 
 
 def test_a_registry_that_stays_busy_raises(monkeypatch):
@@ -296,21 +316,30 @@ def _no_registry(host):
 
 def test_ref_digest_reads_the_digest_imagetools_reports(monkeypatch):
     monkeypatch.setattr(
-        registry_pins.subprocess, "run", _fake_run(docker=_FakeProc(stdout=_INDEX + "\n"))
+        registry_pins.subprocess,
+        "run",
+        _fake_run(docker=_FakeProc(stdout=_INDEX + "\n")),
     )
-    assert registry_pins.ref_digest("ghcr.io/hyperi-io/dfe-engine:v1.15.1") == (_INDEX, "")
+    assert registry_pins.ref_digest("ghcr.io/hyperi-io/dfe-engine:v1.15.1") == (
+        _INDEX,
+        "",
+    )
 
 
 def test_ref_raw_returns_what_imagetools_prints(monkeypatch):
     raw = '{"schemaVersion": 2, "manifests": []}'
-    monkeypatch.setattr(registry_pins.subprocess, "run", _fake_run(docker=_FakeProc(stdout=raw)))
+    monkeypatch.setattr(
+        registry_pins.subprocess, "run", _fake_run(docker=_FakeProc(stdout=raw))
+    )
     assert registry_pins.ref_raw("ghcr.io/hyperi-io/dfe-engine:v1.15.1") == (raw, "")
 
 
 def test_is_absent_tells_a_missing_tag_from_a_failed_read():
     assert registry_pins.is_absent("ERROR: ghcr.io/hyperi-io/x:v9: not found")
     assert registry_pins.is_absent("manifest unknown")
-    assert not registry_pins.is_absent("cannot run docker buildx: [Errno 2] No such file")
+    assert not registry_pins.is_absent(
+        "cannot run docker buildx: [Errno 2] No such file"
+    )
     assert not registry_pins.is_absent("unexpected status: 403 Forbidden")
 
 
@@ -327,14 +356,21 @@ def test_tag_digest_falls_back_to_the_oci_api_without_docker(monkeypatch):
         registry_pins.subprocess, "run", _fake_run(docker=FileNotFoundError("docker"))
     )
     with _published().serving(monkeypatch):
-        assert registry_pins.tag_digest(ORG, "dfe-engine", "v1.15.1") == "sha256:" + "a" * 64
+        assert (
+            registry_pins.tag_digest(ORG, "dfe-engine", "v1.15.1")
+            == "sha256:" + "a" * 64
+        )
 
 
 def test_tag_digest_is_none_only_when_the_registry_says_not_found(monkeypatch):
     monkeypatch.setattr(
         registry_pins.subprocess,
         "run",
-        _fake_run(docker=_FakeProc(returncode=1, stderr="ERROR: ghcr.io/o/a:v9.9.9: not found")),
+        _fake_run(
+            docker=_FakeProc(
+                returncode=1, stderr="ERROR: ghcr.io/o/a:v9.9.9: not found"
+            )
+        ),
     )
     registry = _published()
     registry.fail = [500, 500, 500]
@@ -348,7 +384,9 @@ def test_tag_digest_raises_when_neither_read_could_answer(monkeypatch):
         registry_pins.subprocess,
         "run",
         _fake_run(
-            docker=_FakeProc(returncode=1, stderr="failed to do request: dial tcp: no such host")
+            docker=_FakeProc(
+                returncode=1, stderr="failed to do request: dial tcp: no such host"
+            )
         ),
     )
     registry = _published()
@@ -377,12 +415,17 @@ def test_imagetools_retries_a_502_then_succeeds(monkeypatch):
         "run",
         _fake_run(
             docker=[
-                _FakeProc(returncode=1, stderr="Error response from daemon: 502 Bad Gateway"),
+                _FakeProc(
+                    returncode=1, stderr="Error response from daemon: 502 Bad Gateway"
+                ),
                 _FakeProc(stdout=_INDEX),
             ]
         ),
     )
-    assert registry_pins.ref_digest("ghcr.io/hyperi-io/dfe-engine:v1.15.1") == (_INDEX, "")
+    assert registry_pins.ref_digest("ghcr.io/hyperi-io/dfe-engine:v1.15.1") == (
+        _INDEX,
+        "",
+    )
 
 
 def test_imagetools_gives_up_after_three_502s(monkeypatch):
@@ -603,7 +646,11 @@ def main() -> int:
     import tempfile
 
     failures = 0
-    tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_") and callable(f)]
+    tests = [
+        (n, f)
+        for n, f in sorted(globals().items())
+        if n.startswith("test_") and callable(f)
+    ]
     for name, fn in tests:
         mp = _MP()
         _buf = io.StringIO()
@@ -617,7 +664,10 @@ def main() -> int:
             if "capsys" in params:
                 kw["capsys"] = _Caps()
             try:
-                with contextlib.redirect_stdout(_buf), contextlib.redirect_stderr(io.StringIO()):
+                with (
+                    contextlib.redirect_stdout(_buf),
+                    contextlib.redirect_stderr(io.StringIO()),
+                ):
                     fn(**kw)
                 print(f"PASS  {name}")
             except Exception as exc:

@@ -47,7 +47,11 @@ URL = "http://localhost:9090/healthz"
 LIST_SHAPE = {
     "status": "Degraded",
     "components": [
-        {"name": "work_config", "status": "Degraded", "message": "no destination configured"},
+        {
+            "name": "work_config",
+            "status": "Degraded",
+            "message": "no destination configured",
+        },
         {"name": "broker", "status": "Healthy"},
     ],
 }
@@ -98,12 +102,16 @@ def test_a_missing_endpoint_reads_as_no_body() -> None:
     exc = urllib.error.HTTPError(URL, 404, "Not Found", {}, None)
     body = _with_urlopen(_raising(exc), lambda: dfeops._health_body(URL))
     expect("a 404 is None", body is None, repr(body))
-    got = _with_urlopen(_raising(exc), lambda: dfeops._health_component(URL, "work_config"))
+    got = _with_urlopen(
+        _raising(exc), lambda: dfeops._health_component(URL, "work_config")
+    )
     expect("and so is the component", got is None, repr(got))
 
 
 def test_a_refused_connection_reads_as_no_body() -> None:
-    got = _with_urlopen(_raising(OSError("connection refused")), lambda: dfeops._health_body(URL))
+    got = _with_urlopen(
+        _raising(OSError("connection refused")), lambda: dfeops._health_body(URL)
+    )
     expect("an unreachable port is None", got is None, repr(got))
 
 
@@ -127,7 +135,9 @@ def test_a_components_list_is_matched_by_name() -> None:
     got = _with_urlopen(
         _serving(LIST_SHAPE), lambda: dfeops._health_component(URL, "work_config")
     )
-    expect("the named entry comes back", (got or {}).get("status") == "Degraded", repr(got))
+    expect(
+        "the named entry comes back", (got or {}).get("status") == "Degraded", repr(got)
+    )
     expect(
         "with its reason",
         (got or {}).get("message") == "no destination configured",
@@ -136,19 +146,31 @@ def test_a_components_list_is_matched_by_name() -> None:
 
 
 def test_a_components_map_is_keyed_by_name() -> None:
-    got = _with_urlopen(_serving(MAP_SHAPE), lambda: dfeops._health_component(URL, "work_config"))
-    expect("the keyed entry comes back", (got or {}).get("status") == "Degraded", repr(got))
-    expect("with its reason", (got or {}).get("detail") == "no destination configured", repr(got))
+    got = _with_urlopen(
+        _serving(MAP_SHAPE), lambda: dfeops._health_component(URL, "work_config")
+    )
+    expect(
+        "the keyed entry comes back", (got or {}).get("status") == "Degraded", repr(got)
+    )
+    expect(
+        "with its reason",
+        (got or {}).get("detail") == "no destination configured",
+        repr(got),
+    )
 
 
 def test_an_absent_component_is_none() -> None:
     for shape in (LIST_SHAPE, MAP_SHAPE):
-        got = _with_urlopen(_serving(shape), lambda: dfeops._health_component(URL, "nothing"))
+        got = _with_urlopen(
+            _serving(shape), lambda: dfeops._health_component(URL, "nothing")
+        )
         expect("an unnamed component is None", got is None, repr(got))
 
 
 def test_a_body_without_components_is_none() -> None:
-    got = _with_urlopen(_serving({"status": "Healthy"}), lambda: dfeops._health_component(URL, "x"))
+    got = _with_urlopen(
+        _serving({"status": "Healthy"}), lambda: dfeops._health_component(URL, "x")
+    )
     expect("no components block is None", got is None, repr(got))
 
 

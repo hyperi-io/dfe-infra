@@ -190,14 +190,27 @@ SHIM = "http://dfe-keda-shim.dfe.svc.cluster.local:8080/keda/pressure?service="
 def pressure_app(name: str, **fields: object) -> dict:
     """A ScaledObject as the charts render it: floor 2, ceiling 12, cpu then the shim's pressure."""
     triggers = [["cpu", "", ""], ["metrics-api", f"{SHIM}{name}", "70"]]
-    return {"name": f"{name}-scaler", "target": name, "min": 2, "max": 12, "poll": 15,
-            "triggers": triggers, **fields}
+    return {
+        "name": f"{name}-scaler",
+        "target": name,
+        "min": 2,
+        "max": 12,
+        "poll": 15,
+        "triggers": triggers,
+        **fields,
+    }
 
 
 def phase_two(apps: list[dict], ready: dict, **fixture: object) -> dict:
     """A cluster whose throwaway scales cleanly, carrying *apps* for phase 2."""
-    return {"rolling": [SETTLED], "ready": {"*": SCALED, **ready}, "hpa": DRIVEN,
-            "scaledobjects": apps, "deployments": [app["target"] for app in apps], **fixture}
+    return {
+        "rolling": [SETTLED],
+        "ready": {"*": SCALED, **ready},
+        "hpa": DRIVEN,
+        "scaledobjects": apps,
+        "deployments": [app["target"] for app in apps],
+        **fixture,
+    }
 
 
 def run_proof_logged(
@@ -234,7 +247,11 @@ def run_proof_logged(
             env=env,
             check=False,
         )
-        lines = execs_file.read_text(encoding="utf-8").splitlines() if execs_file.exists() else []
+        lines = (
+            execs_file.read_text(encoding="utf-8").splitlines()
+            if execs_file.exists()
+            else []
+        )
         return out, [json.loads(line) for line in lines]
 
 
@@ -264,8 +281,16 @@ def test_the_scale_out_bound_is_the_hpa_sync_twice_plus_a_pod_start() -> None:
 
     # HPA sync 15, twice over, plus 120s for a pod that may wait on a node.
     expect("the bound is the formula", "bounded 150s" in out.stdout, out.stdout)
-    expect("and it shows its working", "HPA sync 15s x2 + 120s pod start" in out.stdout, out.stdout)
-    expect("a scaling target passes", out.returncode == 0, f"rc={out.returncode} {out.stdout}")
+    expect(
+        "and it shows its working",
+        "HPA sync 15s x2 + 120s pod start" in out.stdout,
+        out.stdout,
+    )
+    expect(
+        "a scaling target passes",
+        out.returncode == 0,
+        f"rc={out.returncode} {out.stdout}",
+    )
 
 
 def test_every_term_of_the_bound_is_a_dial() -> None:
@@ -282,7 +307,7 @@ def test_every_term_of_the_bound_is_a_dial() -> None:
 def test_the_throwaway_scaledobject_sets_no_field_keda_ignores_above_zero() -> None:
     """KEDA warns that pollingInterval and cooldownPeriod do nothing at a floor of 1."""
     text = PROOF.read_text(encoding="utf-8")
-    manifest = text[text.index("kind: ScaledObject"):text.index("EOF\n\nreset_set")]
+    manifest = text[text.index("kind: ScaledObject") : text.index("EOF\n\nreset_set")]
 
     expect("no pollingInterval", "pollingInterval" not in manifest, manifest)
     expect("no cooldownPeriod", "cooldownPeriod" not in manifest, manifest)
@@ -291,10 +316,16 @@ def test_the_throwaway_scaledobject_sets_no_field_keda_ignores_above_zero() -> N
 def test_the_proof_waits_for_the_stack_to_stop_rolling() -> None:
     """A run started inside a roll is what missed the bound on a live deploy (#275)."""
     rolling = ["dfe-loader 2 1 1 4 3"]
-    out = run_proof({"rolling": [rolling, rolling, SETTLED], "ready": SCALED, "hpa": DRIVEN})
+    out = run_proof(
+        {"rolling": [rolling, rolling, SETTLED], "ready": SCALED, "hpa": DRIVEN}
+    )
 
     expect("it waited for the roll", "settled after 2s" in out.stdout, out.stdout)
-    expect("and then proved the scaler", out.returncode == 0, f"rc={out.returncode} {out.stdout}")
+    expect(
+        "and then proved the scaler",
+        out.returncode == 0,
+        f"rc={out.returncode} {out.stdout}",
+    )
 
 
 def test_a_stack_that_never_settles_is_reported_and_not_blocked_on() -> None:
@@ -304,17 +335,33 @@ def test_a_stack_that_never_settles_is_reported_and_not_blocked_on() -> None:
         DFE_SETTLE_TIMEOUT="2",
     )
 
-    expect("the roll is named", "still rolling after 2s: dfe-loader" in out.stdout, out.stdout)
-    expect("and the proof still ran", out.returncode == 0, f"rc={out.returncode} {out.stdout}")
+    expect(
+        "the roll is named",
+        "still rolling after 2s: dfe-loader" in out.stdout,
+        out.stdout,
+    )
+    expect(
+        "and the proof still ran",
+        out.returncode == 0,
+        f"rc={out.returncode} {out.stdout}",
+    )
 
 
 def test_a_deployment_with_no_status_yet_does_not_read_as_rolling() -> None:
     """custom-columns prints <none> for an absent field, which is zero, not a mismatch."""
     out = run_proof(
-        {"rolling": [["dfe-hunt-runner 0 <none> <none> 1 1"]], "ready": SCALED, "hpa": DRIVEN}
+        {
+            "rolling": [["dfe-hunt-runner 0 <none> <none> 1 1"]],
+            "ready": SCALED,
+            "hpa": DRIVEN,
+        }
     )
 
-    expect("a scaled-to-zero deployment is settled", "settled after 0s" in out.stdout, out.stdout)
+    expect(
+        "a scaled-to-zero deployment is settled",
+        "settled after 0s" in out.stdout,
+        out.stdout,
+    )
 
 
 def test_a_pressure_the_hpa_never_saw_is_a_failure() -> None:
@@ -349,7 +396,11 @@ def test_an_hpa_that_read_the_pressure_and_did_nothing_is_unproven() -> None:
     """The HPA read the pressure over target and left the replicas: neither verdict is honest."""
     out = run_stalled(active="True", value="100", desired="1")
 
-    expect("its own exit code", out.returncode == UNPROVEN, f"rc={out.returncode} {out.stdout}")
+    expect(
+        "its own exit code",
+        out.returncode == UNPROVEN,
+        f"rc={out.returncode} {out.stdout}",
+    )
     expect("said plainly", "UNPROVEN" in out.stdout, out.stdout)
     expect("citing no closed issue", "#134" not in out.stdout, out.stdout)
     expect(
@@ -363,22 +414,30 @@ def test_a_milli_unit_reading_is_read_as_its_own_value() -> None:
     """An HPA renders a Quantity, so 100 can arrive as 100000m."""
     out = run_stalled(active="True", value="100000m", desired="1")
 
-    expect("100000m is 100, which is over target", out.returncode == UNPROVEN,
-           f"rc={out.returncode} {out.stdout}")
+    expect(
+        "100000m is 100, which is over target",
+        out.returncode == UNPROVEN,
+        f"rc={out.returncode} {out.stdout}",
+    )
 
 
 def test_an_average_value_trigger_is_read_too() -> None:
     """metricType AverageValue puts the reading in a different field of the same status."""
     out = run_stalled(active="True", average_value="90", desired="1")
 
-    expect("the averageValue field answers", out.returncode == UNPROVEN,
-           f"rc={out.returncode} {out.stdout}")
+    expect(
+        "the averageValue field answers",
+        out.returncode == UNPROVEN,
+        f"rc={out.returncode} {out.stdout}",
+    )
 
 
 def test_scale_out_logs_each_hpa_reading_and_what_the_hpa_scaled_on() -> None:
     """The log must show the pressure moved it, not cpu."""
-    why = ("the HPA was able to successfully calculate a replica count from external metric "
-           "s0-metric-api-value(&LabelSelector{})")
+    why = (
+        "the HPA was able to successfully calculate a replica count from external metric "
+        "s0-metric-api-value(&LabelSelector{})"
+    )
     hpa = {**DRIVEN, "target": "50", "why": why}
     out = run_proof({"rolling": [SETTLED], "ready": SCALED, "hpa": hpa})
 
@@ -414,7 +473,11 @@ def test_a_scale_out_with_no_pressure_reading_is_a_failure() -> None:
     out = run_proof({"rolling": [SETTLED], "ready": SCALED, "hpa": hpa})
 
     expect("it fails", out.returncode == 1, f"rc={out.returncode} {out.stdout}")
-    expect("saying the reading is absent", "pressure reading absent" in out.stdout, out.stdout)
+    expect(
+        "saying the reading is absent",
+        "pressure reading absent" in out.stdout,
+        out.stdout,
+    )
 
 
 def test_cpu_over_its_own_target_at_scale_out_is_said() -> None:
@@ -423,7 +486,11 @@ def test_cpu_over_its_own_target_at_scale_out_is_said() -> None:
     out = run_proof({"rolling": [SETTLED], "ready": SCALED, "hpa": hpa})
 
     expect("it passes", out.returncode == 0, f"rc={out.returncode} {out.stdout}")
-    expect("the cpu is named", "cpu was at or over its target too" in out.stdout, out.stdout)
+    expect(
+        "the cpu is named",
+        "cpu was at or over its target too" in out.stdout,
+        out.stdout,
+    )
 
 
 def ran_in_engine(args: list[str]) -> bool:
@@ -444,7 +511,11 @@ def test_an_external_clickhouse_takes_the_pressure_through_the_engine() -> None:
         }
     )
 
-    expect("the proof passes", out.returncode == 0, f"rc={out.returncode} {out.stdout}{out.stderr}")
+    expect(
+        "the proof passes",
+        out.returncode == 0,
+        f"rc={out.returncode} {out.stdout}{out.stderr}",
+    )
     in_engine = [e for e in execs if ran_in_engine(e["args"])]
     expect(
         "every query ran in the engine's own container",
@@ -470,14 +541,21 @@ def test_an_external_clickhouse_takes_the_pressure_through_the_engine() -> None:
 
 def test_an_in_cluster_clickhouse_takes_the_pressure_through_its_pod() -> None:
     """No clickhouse_mode fact keeps the injection on clickhouse-client in a ClickHouse pod."""
-    out, execs = run_proof_logged({"rolling": [SETTLED], "ready": SCALED, "hpa": DRIVEN})
+    out, execs = run_proof_logged(
+        {"rolling": [SETTLED], "ready": SCALED, "hpa": DRIVEN}
+    )
 
-    expect("the proof passes", out.returncode == 0, f"rc={out.returncode} {out.stdout}{out.stderr}")
+    expect(
+        "the proof passes",
+        out.returncode == 0,
+        f"rc={out.returncode} {out.stdout}{out.stderr}",
+    )
     expect(
         "every query ran clickhouse-client in the ClickHouse pod",
         bool(execs)
         and all(
-            "dfe-clickhouse-0" in e["args"] and "clickhouse-client" in e["args"] for e in execs
+            "dfe-clickhouse-0" in e["args"] and "clickhouse-client" in e["args"]
+            for e in execs
         ),
         f"{execs}",
     )
@@ -495,8 +573,14 @@ def test_phase_two_finds_every_pressure_app_and_proves_them_together() -> None:
         "KEDA scaled the real dfe-receiver 2->3->2, dfe-loader 2->3->2" in out.stdout,
         out.stdout,
     )
-    together = [s for s in inserts(execs) if "'dfe-receiver'" in s and "'dfe-loader'" in s]
-    expect("one INSERT carries both services' pressure", bool(together), f"{inserts(execs)}")
+    together = [
+        s for s in inserts(execs) if "'dfe-receiver'" in s and "'dfe-loader'" in s
+    ]
+    expect(
+        "one INSERT carries both services' pressure",
+        bool(together),
+        f"{inserts(execs)}",
+    )
     expect(
         "each app's pressure is read off its own trigger's HPA metric",
         "HPA metric s1-*" in out.stdout,
@@ -511,21 +595,33 @@ def test_the_hpa_asking_ends_the_hold_before_a_slow_pod_is_ready() -> None:
     out = run_proof(phase_two(apps, ready))
 
     expect("it passes", out.returncode == 0, f"rc={out.returncode} {out.stdout}")
-    phase = out.stdout[out.stdout.index("Phase 2"):]
+    phase = out.stdout[out.stdout.index("Phase 2") :]
     expect(
         "the zeros start before the new pod is Ready",
-        "holding zeros" in phase and "PASS: dfe-archiver scaled out" in phase
+        "holding zeros" in phase
+        and "PASS: dfe-archiver scaled out" in phase
         and phase.index("holding zeros") < phase.index("PASS: dfe-archiver scaled out"),
         out.stdout,
     )
-    expect("the pressure is read while still held", "at scale-out: pressure 100" in phase, out.stdout)
-    expect("the line names when the HPA asked", "(HPA asked at 0s)" in phase, out.stdout)
+    expect(
+        "the pressure is read while still held",
+        "at scale-out: pressure 100" in phase,
+        out.stdout,
+    )
+    expect(
+        "the line names when the HPA asked", "(HPA asked at 0s)" in phase, out.stdout
+    )
 
 
 def test_an_app_scaled_on_cpu_alone_is_a_reported_skip() -> None:
     """dfe-ui and a vector transform carry no pressure trigger, so pressure is not theirs to prove."""
-    cpu_only = {"name": "dfe-ui-scaler", "target": "dfe-ui", "min": 2, "max": 12,
-                "triggers": [["cpu", "", ""]]}
+    cpu_only = {
+        "name": "dfe-ui-scaler",
+        "target": "dfe-ui",
+        "min": 2,
+        "max": 12,
+        "triggers": [["cpu", "", ""]],
+    }
     apps = [pressure_app("dfe-receiver"), cpu_only]
     out = run_proof(phase_two(apps, {"dfe-receiver": ["2", "3", "2"], "dfe-ui": ["2"]}))
 
@@ -559,8 +655,13 @@ def test_an_app_this_profile_does_not_run_is_a_reported_skip() -> None:
 
 def test_no_pressure_app_at_all_skips_phase_two_cleanly() -> None:
     """slim clears the pressure trigger, so phase 2 has nothing to drive and says so."""
-    cpu_only = {"name": "dfe-receiver-scaler", "target": "dfe-receiver", "min": 1, "max": 2,
-                "triggers": [["cpu", "", ""]]}
+    cpu_only = {
+        "name": "dfe-receiver-scaler",
+        "target": "dfe-receiver",
+        "min": 1,
+        "max": 2,
+        "triggers": [["cpu", "", ""]],
+    }
     out = run_proof(phase_two([cpu_only], {"dfe-receiver": ["1"]}))
 
     expect("it passes", out.returncode == 0, f"rc={out.returncode} {out.stdout}")
@@ -588,7 +689,9 @@ def test_a_pinned_replica_count_is_a_reported_skip() -> None:
 def test_an_app_off_its_floor_is_unproven_and_the_rest_still_proven() -> None:
     """A loader already at its ceiling on real load cannot show a step from its floor."""
     apps = [pressure_app("dfe-receiver"), pressure_app("dfe-loader")]
-    out = run_proof(phase_two(apps, {"dfe-receiver": ["2", "3", "2"], "dfe-loader": ["12"]}))
+    out = run_proof(
+        phase_two(apps, {"dfe-receiver": ["2", "3", "2"], "dfe-loader": ["12"]})
+    )
 
     expect("UNPROVEN", out.returncode == UNPROVEN, f"rc={out.returncode} {out.stdout}")
     expect(
@@ -596,7 +699,11 @@ def test_an_app_off_its_floor_is_unproven_and_the_rest_still_proven() -> None:
         "dfe-loader has 12 Ready replica(s), not its floor of 2" in out.stdout,
         out.stdout,
     )
-    expect("the receiver was still proven", "PASS: dfe-receiver back to 2" in out.stdout, out.stdout)
+    expect(
+        "the receiver was still proven",
+        "PASS: dfe-receiver back to 2" in out.stdout,
+        out.stdout,
+    )
 
 
 def test_a_service_name_that_is_not_plain_never_reaches_sql() -> None:
@@ -606,13 +713,19 @@ def test_a_service_name_that_is_not_plain_never_reaches_sql() -> None:
     out, execs = run_proof_logged(phase_two([hostile], {"dfe-receiver": ["2"]}))
 
     expect("UNPROVEN", out.returncode == UNPROVEN, f"rc={out.returncode} {out.stdout}")
-    expect("no INSERT carries it", not [s for s in inserts(execs) if "DROP" in s], f"{inserts(execs)}")
+    expect(
+        "no INSERT carries it",
+        not [s for s in inserts(execs) if "DROP" in s],
+        f"{inserts(execs)}",
+    )
 
 
 def test_a_real_app_that_does_not_scale_back_in_fails_by_name() -> None:
     """Scale-in is half the proof."""
     apps = [pressure_app("dfe-receiver"), pressure_app("dfe-loader")]
-    out = run_proof(phase_two(apps, {"dfe-receiver": ["2", "3", "2"], "dfe-loader": ["2", "3"]}))
+    out = run_proof(
+        phase_two(apps, {"dfe-receiver": ["2", "3", "2"], "dfe-loader": ["2", "3"]})
+    )
 
     expect("it fails", out.returncode == 1, f"rc={out.returncode} {out.stdout}")
     expect(
@@ -624,7 +737,9 @@ def test_a_real_app_that_does_not_scale_back_in_fails_by_name() -> None:
 
 def test_an_app_that_writes_no_pressure_of_its_own_fails() -> None:
     """Injected pressure scales an app whose own gauge is missing, and the shim reads no rows as 0."""
-    fixture = phase_two([pressure_app("dfe-loader")], {"dfe-loader": ["2", "3", "2"]}, own_rows=0)
+    fixture = phase_two(
+        [pressure_app("dfe-loader")], {"dfe-loader": ["2", "3", "2"]}, own_rows=0
+    )
     out = run_proof(fixture)
 
     expect("it fails", out.returncode == 1, f"rc={out.returncode} {out.stdout}")
@@ -638,13 +753,16 @@ def test_an_app_that_writes_no_pressure_of_its_own_fails() -> None:
 
 def test_an_app_writing_its_own_pressure_says_how_much() -> None:
     """The control: a real gauge is counted and the proof goes on to scale in."""
-    fixture = phase_two([pressure_app("dfe-loader")], {"dfe-loader": ["2", "3", "2"]}, own_rows=8)
+    fixture = phase_two(
+        [pressure_app("dfe-loader")], {"dfe-loader": ["2", "3", "2"]}, own_rows=8
+    )
     out = run_proof(fixture)
 
     expect("it passes", out.returncode == 0, f"rc={out.returncode} {out.stdout}")
     expect(
         "the count is logged",
-        "dfe-loader wrote 8 scaling_pressure row(s) of its own in the last 120s" in out.stdout,
+        "dfe-loader wrote 8 scaling_pressure row(s) of its own in the last 120s"
+        in out.stdout,
         out.stdout,
     )
 
@@ -652,7 +770,9 @@ def test_an_app_writing_its_own_pressure_says_how_much() -> None:
 def test_an_own_pressure_count_that_cannot_run_fails() -> None:
     """A count the datastore refused is not a count of zero, and not a pass either."""
     fixture = phase_two(
-        [pressure_app("dfe-loader")], {"dfe-loader": ["2", "3", "2"]}, own_rows_refused=True
+        [pressure_app("dfe-loader")],
+        {"dfe-loader": ["2", "3", "2"]},
+        own_rows_refused=True,
     )
     out = run_proof(fixture)
 
@@ -666,7 +786,9 @@ def test_an_own_pressure_count_that_cannot_run_fails() -> None:
 
 def test_the_own_pressure_window_is_a_dial() -> None:
     """A cluster whose apps export less often can widen the window."""
-    fixture = phase_two([pressure_app("dfe-loader")], {"dfe-loader": ["2", "3", "2"]}, own_rows=0)
+    fixture = phase_two(
+        [pressure_app("dfe-loader")], {"dfe-loader": ["2", "3", "2"]}, own_rows=0
+    )
     out = run_proof(fixture, DFE_KEDA_OWN_PRESSURE_WINDOW="300")
 
     expect("the window is named", "in the last 300s" in out.stdout, out.stdout)
@@ -686,7 +808,9 @@ def test_real_deployment_narrows_phase_two_to_one_app() -> None:
     """An operator chasing one app proves it alone."""
     apps = [pressure_app("dfe-receiver"), pressure_app("dfe-loader")]
     out, execs = run_proof_logged(
-        phase_two(apps, {"dfe-receiver": ["2", "3", "2"], "dfe-loader": ["2", "3", "2"]}),
+        phase_two(
+            apps, {"dfe-receiver": ["2", "3", "2"], "dfe-loader": ["2", "3", "2"]}
+        ),
         DFE_KEDA_REAL_DEPLOYMENT="dfe-loader",
     )
 
@@ -708,7 +832,9 @@ def run_runner(codes: dict[str, int], **env: str) -> subprocess.CompletedProcess
     scripts = re.findall(r'run_test\s+"[^"]+"\s+"([^"]+)"', text)
     with tempfile.TemporaryDirectory() as tmp:
         home = Path(tmp)
-        (home / "run-all-smoke-tests.sh").write_text(text, encoding="utf-8", newline="\n")
+        (home / "run-all-smoke-tests.sh").write_text(
+            text, encoding="utf-8", newline="\n"
+        )
         for script in scripts:
             stub = home / script
             stub.write_text(
@@ -719,7 +845,11 @@ def run_runner(codes: dict[str, int], **env: str) -> subprocess.CompletedProcess
             stub.chmod(0o755)
         return subprocess.run(
             ["bash", str(home / "run-all-smoke-tests.sh")],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
             env={**os.environ, **env},
         )
 

@@ -80,13 +80,19 @@ class FakeCluster:
             path = self.dir / tool
             path.write_text(FAKE_TOOL, encoding="utf-8", newline="\n")
             path.chmod(0o755)
-        self.env = {"PATH": f"{self.dir}{os.pathsep}{os.environ['PATH']}",
-                    "FAKE_CALLS": str(self.calls)}
+        self.env = {
+            "PATH": f"{self.dir}{os.pathsep}{os.environ['PATH']}",
+            "FAKE_CALLS": str(self.calls),
+        }
 
     def called(self) -> list[dict]:
         if not self.calls.exists():
             return []
-        return [json.loads(ln) for ln in self.calls.read_text(encoding="utf-8").splitlines() if ln]
+        return [
+            json.loads(ln)
+            for ln in self.calls.read_text(encoding="utf-8").splitlines()
+            if ln
+        ]
 
     def __enter__(self) -> FakeCluster:
         return self
@@ -124,14 +130,23 @@ BIND_PW = "bindpw123"
 
 def deploy_args(tmp: Path, **overrides) -> argparse.Namespace:
     """Built from dfe-ops' own parser, so a flag rename breaks this too."""
-    ns = _ops().build_parser().parse_args(
-        [
-            "idp", "deploy",
-            "--domain", "dfe.example.com",
-            "--redirect-uri", "https://dfe.dfe.example.com/api/v1/auth/oidc/dex/callback",
-            "--secrets-out", str(tmp / "idp.env"),
-            "--users-file", str(tmp / "users.toml"),
-        ]
+    ns = (
+        _ops()
+        .build_parser()
+        .parse_args(
+            [
+                "idp",
+                "deploy",
+                "--domain",
+                "dfe.example.com",
+                "--redirect-uri",
+                "https://dfe.dfe.example.com/api/v1/auth/oidc/dex/callback",
+                "--secrets-out",
+                str(tmp / "idp.env"),
+                "--users-file",
+                str(tmp / "users.toml"),
+            ]
+        )
     )
     for key, value in overrides.items():
         setattr(ns, key, value)
@@ -160,7 +175,9 @@ def run_failing_deploy(failing: str, **overrides) -> tuple[SystemExit | None, Pa
     args = deploy_args(tmp, **overrides)
     with FakeCluster() as cluster:
         (cluster.dir / failing).write_text(
-            FAKE_TOOL.replace("sys.exit(0)", "sys.exit(1)"), encoding="utf-8", newline="\n"
+            FAKE_TOOL.replace("sys.exit(0)", "sys.exit(1)"),
+            encoding="utf-8",
+            newline="\n",
         )
         (cluster.dir / failing).chmod(0o755)
         saved_env, saved_out, saved_err = dict(os.environ), sys.stdout, sys.stderr
@@ -212,8 +229,12 @@ def test_the_dex_client_allows_every_redirect_uri_it_was_given() -> None:
         issuer="https://dex.example.com", namespace="dex", redirect_uris=uris
     )
     client = values["config"]["staticClients"][0]
-    expect("every redirect URI is registered", client["redirectURIs"] == uris, f"{client}")
-    expect("under the requested client id", client["id"] == "dfe-engine", f"{client['id']}")
+    expect(
+        "every redirect URI is registered", client["redirectURIs"] == uris, f"{client}"
+    )
+    expect(
+        "under the requested client id", client["id"] == "dfe-engine", f"{client['id']}"
+    )
 
 
 def test_a_client_with_no_redirect_uri_is_refused() -> None:
@@ -230,7 +251,9 @@ def test_a_client_with_no_redirect_uri_is_refused() -> None:
 def test_the_directory_is_ldap_and_the_static_password_db_is_off() -> None:
     """The static password DB cannot emit groups, which is the claim under test."""
     values = tester_idp.render_dex_values(
-        issuer="https://dex.example.com", namespace="idp", redirect_uris=["https://x/cb"]
+        issuer="https://dex.example.com",
+        namespace="idp",
+        redirect_uris=["https://x/cb"],
     )
     config = values["config"]
     expect("the static password DB is off", config["enablePasswordDB"] is False)
@@ -257,24 +280,38 @@ def test_the_group_search_matches_glauth_s_own_schema() -> None:
         base_dn="dc=acme,dc=test",
     )
     gs = values["config"]["connectors"][0]["config"]["groupSearch"]
-    expect("group search is under the groups OU", gs["baseDN"] == "ou=groups,dc=acme,dc=test", gs["baseDN"])
-    expect("matching the user DN against uniqueMember",
-           gs["userMatchers"] == [{"userAttr": "DN", "groupAttr": "uniqueMember"}], f"{gs}")
+    expect(
+        "group search is under the groups OU",
+        gs["baseDN"] == "ou=groups,dc=acme,dc=test",
+        gs["baseDN"],
+    )
+    expect(
+        "matching the user DN against uniqueMember",
+        gs["userMatchers"] == [{"userAttr": "DN", "groupAttr": "uniqueMember"}],
+        f"{gs}",
+    )
     expect("and reading the name from ou", gs["nameAttr"] == "ou", gs["nameAttr"])
 
 
 def test_the_approval_screen_is_skipped() -> None:
     """Every consumer is headless; a consent page nobody clicks is a hang."""
     values = tester_idp.render_dex_values(
-        issuer="https://dex.example.com", namespace="dex", redirect_uris=["https://x/cb"]
+        issuer="https://dex.example.com",
+        namespace="dex",
+        redirect_uris=["https://x/cb"],
     )
-    expect("skipApprovalScreen is on", values["config"]["oauth2"]["skipApprovalScreen"] is True)
+    expect(
+        "skipApprovalScreen is on",
+        values["config"]["oauth2"]["skipApprovalScreen"] is True,
+    )
 
 
 def test_the_dex_image_is_pulled_by_digest() -> None:
     """A floating tag would silently move the IdP under a passing test suite."""
     values = tester_idp.render_dex_values(
-        issuer="https://dex.example.com", namespace="dex", redirect_uris=["https://x/cb"]
+        issuer="https://dex.example.com",
+        namespace="dex",
+        redirect_uris=["https://x/cb"],
     )
     digest = values["image"]["digest"]
     expect("the dex image carries a digest", digest.startswith("sha256:"), digest)
@@ -292,15 +329,20 @@ def test_the_glauth_image_is_digest_pinned_too() -> None:
 def test_secrets_reach_dex_as_env_vars_not_values() -> None:
     """helm keeps every values file in the release history, in the cluster."""
     values = tester_idp.render_dex_values(
-        issuer="https://dex.example.com", namespace="dex", redirect_uris=["https://x/cb"]
+        issuer="https://dex.example.com",
+        namespace="dex",
+        redirect_uris=["https://x/cb"],
     )
     client = values["config"]["staticClients"][0]
-    expect("the client secret is named, not inlined", "secret" not in client, f"{client}")
+    expect(
+        "the client secret is named, not inlined", "secret" not in client, f"{client}"
+    )
     expect("it is read from an env var", client["secretEnv"] == "DEX_CLIENT_SECRET")
     sources = {e["name"]: e["valueFrom"]["secretKeyRef"] for e in values["envVars"]}
     expect(
         "both env vars come from the dex-secrets Secret",
-        all(ref["name"] == "dex-secrets" for ref in sources.values()) and len(sources) == 2,
+        all(ref["name"] == "dex-secrets" for ref in sources.values())
+        and len(sources) == 2,
         f"{sources}",
     )
     expect(
@@ -312,14 +354,27 @@ def test_secrets_reach_dex_as_env_vars_not_values() -> None:
 # --- HTTPRoute ---------------------------------------------------------------
 def test_the_route_attaches_to_the_named_gateway() -> None:
     route = tester_idp.render_httproute(
-        namespace="dex", hostname="dex.dfe.example.com", gateway="envoy-gateway-system/dfe-gateway"
+        namespace="dex",
+        hostname="dex.dfe.example.com",
+        gateway="envoy-gateway-system/dfe-gateway",
     )
     parent = route["spec"]["parentRefs"][0]
-    expect("the gateway namespace is split off", parent["namespace"] == "envoy-gateway-system", f"{parent}")
+    expect(
+        "the gateway namespace is split off",
+        parent["namespace"] == "envoy-gateway-system",
+        f"{parent}",
+    )
     expect("and its name", parent["name"] == "dfe-gateway", f"{parent}")
-    expect("the hostname is the issuer host", route["spec"]["hostnames"] == ["dex.dfe.example.com"])
+    expect(
+        "the hostname is the issuer host",
+        route["spec"]["hostnames"] == ["dex.dfe.example.com"],
+    )
     backend = route["spec"]["rules"][0]["backendRefs"][0]
-    expect("routed to dex on its http port", backend == {"name": "dex", "port": 5556}, f"{backend}")
+    expect(
+        "routed to dex on its http port",
+        backend == {"name": "dex", "port": 5556},
+        f"{backend}",
+    )
 
 
 def test_the_route_pins_no_listener_section() -> None:
@@ -335,7 +390,9 @@ def test_the_route_pins_no_listener_section() -> None:
 def test_a_gateway_without_a_namespace_is_refused() -> None:
     """A bare name would attach to the IdP's own namespace and route nothing."""
     try:
-        tester_idp.render_httproute(namespace="dex", hostname="d.example.com", gateway="dfe-gateway")
+        tester_idp.render_httproute(
+            namespace="dex", hostname="d.example.com", gateway="dfe-gateway"
+        )
         expect("a namespaceless --gateway is refused", False, "no error raised")
     except ValueError:
         expect("a namespaceless --gateway is refused", True)
@@ -369,9 +426,16 @@ def test_the_bind_account_can_search() -> None:
 
 def test_the_base_dn_flows_into_the_config() -> None:
     config = tester_idp.render_glauth_config(
-        USERS, fixture_password=USER_PW, search_password=BIND_PW, base_dn="dc=acme,dc=test"
+        USERS,
+        fixture_password=USER_PW,
+        search_password=BIND_PW,
+        base_dn="dc=acme,dc=test",
     )
-    expect("the backend uses the requested base DN", 'baseDN = "dc=acme,dc=test"' in config, config)
+    expect(
+        "the backend uses the requested base DN",
+        'baseDN = "dc=acme,dc=test"' in config,
+        config,
+    )
 
 
 def test_a_user_in_an_undeclared_group_is_caught_before_deploy() -> None:
@@ -385,8 +449,10 @@ def test_a_user_in_an_undeclared_group_is_caught_before_deploy() -> None:
 
 
 def test_an_empty_directory_is_refused() -> None:
-    for name, text in (("no users", '[[groups]]\n  name = "g"\n  gidnumber = 1\n'),
-                       ("no groups", '[[users]]\n  name = "u"\n  uidnumber = 1\n')):
+    for name, text in (
+        ("no users", '[[groups]]\n  name = "g"\n  gidnumber = 1\n'),
+        ("no groups", '[[users]]\n  name = "u"\n  uidnumber = 1\n'),
+    ):
         try:
             tester_idp.validate_users_toml(text)
             expect(f"a directory with {name} is refused", False, "no error raised")
@@ -399,8 +465,11 @@ def test_the_shipped_fixture_is_a_valid_directory() -> None:
     text = tester_idp.DEFAULT_USERS_FILE.read_text(encoding="utf-8")
     users, groups = tester_idp.validate_users_toml(text)
     expect("the shipped fixture parses", len(users) >= 4, f"{users}")
-    expect("and declares the group names the engine maps",
-           {"dfe-admins", "dfe-viewers", "dfe-analysts"} <= set(groups), f"{groups}")
+    expect(
+        "and declares the group names the engine maps",
+        {"dfe-admins", "dfe-viewers", "dfe-analysts"} <= set(groups),
+        f"{groups}",
+    )
 
 
 # --- the fixture against the OIDC role spec ----------------------------------
@@ -414,10 +483,17 @@ def spec_truth_table() -> dict[str, tuple[set[str], set[str]]]:
     """user -> (roles, org ids) as oidc-rba.spec.ts asserts them."""
     text = RBA_SPEC.read_text(encoding="utf-8")
     rows = {
-        user: (set(re.findall(r"'([^']+)'", roles)), set(re.findall(r"'([^']+)'", orgs)))
+        user: (
+            set(re.findall(r"'([^']+)'", roles)),
+            set(re.findall(r"'([^']+)'", orgs)),
+        )
         for user, roles, orgs in _SPEC_ROW.findall(text)
     }
-    expect("every spec row is parsed", len(rows) == text.count("user: '"), f"{sorted(rows)}")
+    expect(
+        "every spec row is parsed",
+        len(rows) == text.count("user: '"),
+        f"{sorted(rows)}",
+    )
     return rows
 
 
@@ -464,7 +540,11 @@ def shipped_resolution() -> dict[str, tuple[set[str], set[str]]]:
 def test_every_spec_identity_is_in_the_shipped_directory() -> None:
     """A row the directory lacks fails at the IdP login form, not at the assertion."""
     missing = set(spec_truth_table()) - set(shipped_resolution())
-    expect("the directory carries every user the spec logs in as", not missing, f"{sorted(missing)}")
+    expect(
+        "the directory carries every user the spec logs in as",
+        not missing,
+        f"{sorted(missing)}",
+    )
 
 
 def test_the_shipped_fixture_grants_exactly_what_the_spec_asserts() -> None:
@@ -472,8 +552,16 @@ def test_the_shipped_fixture_grants_exactly_what_the_spec_asserts() -> None:
     granted = shipped_resolution()
     for user, (roles, orgs) in sorted(spec_truth_table().items()):
         got_roles, got_orgs = granted.get(user, (set(), set()))
-        expect(f"{user} resolves the spec's roles", got_roles == roles, f"{got_roles} != {roles}")
-        expect(f"{user} resolves the spec's org ids", got_orgs == orgs, f"{got_orgs} != {orgs}")
+        expect(
+            f"{user} resolves the spec's roles",
+            got_roles == roles,
+            f"{got_roles} != {roles}",
+        )
+        expect(
+            f"{user} resolves the spec's org ids",
+            got_orgs == orgs,
+            f"{got_orgs} != {orgs}",
+        )
 
 
 def test_the_group_map_names_only_directory_groups() -> None:
@@ -487,19 +575,34 @@ def test_the_group_map_names_only_directory_groups() -> None:
             tester_idp.DEFAULT_GROUPS_FILE.read_text(encoding="utf-8")
         )
     }
-    expect("every mapped group is in the directory", mapped <= set(groups), f"{mapped - set(groups)}")
-    expect("and only the no-role group is unmapped",
-           set(groups) - mapped == {"dfe-nogroup"}, f"{set(groups) - mapped}")
+    expect(
+        "every mapped group is in the directory",
+        mapped <= set(groups),
+        f"{mapped - set(groups)}",
+    )
+    expect(
+        "and only the no-role group is unmapped",
+        set(groups) - mapped == {"dfe-nogroup"},
+        f"{set(groups) - mapped}",
+    )
 
 
 def test_the_group_map_repeats_the_engine_defaults() -> None:
     """A seeded group store never gets the engine's own four, so the map carries them."""
-    files = tester_idp.render_engine_groups(tester_idp.DEFAULT_GROUPS_FILE.read_text(encoding="utf-8"))
-    defaults = {"dfe-admins": ["admin"], "dfe-analysts": ["data_analyst"],
-                "dfe-viewers": ["data_viewer"], "dfe-infra": ["infra_admin"]}
+    files = tester_idp.render_engine_groups(
+        tester_idp.DEFAULT_GROUPS_FILE.read_text(encoding="utf-8")
+    )
+    defaults = {
+        "dfe-admins": ["admin"],
+        "dfe-analysts": ["data_analyst"],
+        "dfe-viewers": ["data_viewer"],
+        "dfe-infra": ["infra_admin"],
+    }
     for name, roles in defaults.items():
         body = json.loads(files.get(f"{name}.yaml", "{}"))
-        expect(f"{name} keeps the engine's roles", body.get("roles") == roles, f"{body}")
+        expect(
+            f"{name} keeps the engine's roles", body.get("roles") == roles, f"{body}"
+        )
 
 
 def test_an_unusable_group_map_is_refused() -> None:
@@ -527,20 +630,41 @@ def test_an_org_scoped_group_renders_the_engine_shape() -> None:
         '  scope = "org:acme"\n  org_ids = ["acme"]\n'
     )
     body = json.loads(files["g.yaml"])
-    expect("keyed by the file name the engine reads", list(files) == ["g.yaml"], f"{list(files)}")
-    expect("carrying roles, scope, org_ids and the link",
-           body == {"description": "", "scope": "org:acme", "roles": ["org_viewer"],
-                    "org_ids": ["acme"], "source_provider": "dex", "source_id": "g"}, f"{body}")
+    expect(
+        "keyed by the file name the engine reads",
+        list(files) == ["g.yaml"],
+        f"{list(files)}",
+    )
+    expect(
+        "carrying roles, scope, org_ids and the link",
+        body
+        == {
+            "description": "",
+            "scope": "org:acme",
+            "roles": ["org_viewer"],
+            "org_ids": ["acme"],
+            "source_provider": "dex",
+            "source_id": "g",
+        },
+        f"{body}",
+    )
 
 
 def test_every_shipped_group_is_linked_for_the_provider() -> None:
     """The engine links on source_provider and source_id, so a file missing either grants nothing."""
-    files = tester_idp.render_engine_groups(tester_idp.DEFAULT_GROUPS_FILE.read_text(encoding="utf-8"))
+    files = tester_idp.render_engine_groups(
+        tester_idp.DEFAULT_GROUPS_FILE.read_text(encoding="utf-8")
+    )
     for key, text in sorted(files.items()):
         body = json.loads(text)
-        expect(f"{key} names the provider", body.get("source_provider") == "dex", f"{body}")
-        expect(f"{key} links the name the IdP emits",
-               body.get("source_id") == key.removesuffix(".yaml"), f"{body}")
+        expect(
+            f"{key} names the provider", body.get("source_provider") == "dex", f"{body}"
+        )
+        expect(
+            f"{key} links the name the IdP emits",
+            body.get("source_id") == key.removesuffix(".yaml"),
+            f"{body}",
+        )
 
 
 def test_a_provider_and_a_source_id_override_reach_the_file() -> None:
@@ -549,7 +673,9 @@ def test_a_provider_and_a_source_id_override_reach_the_file() -> None:
         '[[groups]]\n  name = "g"\n  source_id = "00000000-aaaa"\n', "entra"
     )
     body = json.loads(files["g.yaml"])
-    expect("the provider is the one given", body["source_provider"] == "entra", f"{body}")
+    expect(
+        "the provider is the one given", body["source_provider"] == "entra", f"{body}"
+    )
     expect("the id is the entry's own", body["source_id"] == "00000000-aaaa", f"{body}")
     try:
         tester_idp.render_engine_groups('[[groups]]\n  name = "g"\n', "")
@@ -565,11 +691,23 @@ def test_wire_engine_hands_the_group_map_over() -> None:
         "TESTER_IDP_ISSUER=https://dex.example.com\n"
         "TESTER_IDP_CLIENT_ID=dfe-engine\n"
         "TESTER_IDP_CLIENT_SECRET=clientsecretvalue\n",
-        encoding="utf-8", newline="\n",
+        encoding="utf-8",
+        newline="\n",
     )
-    args = _ops().build_parser().parse_args(
-        ["idp", "wire-engine", "--secrets-file", str(tmp / "idp.env"), "--dry-run",
-         "--provider", "tester"]
+    args = (
+        _ops()
+        .build_parser()
+        .parse_args(
+            [
+                "idp",
+                "wire-engine",
+                "--secrets-file",
+                str(tmp / "idp.env"),
+                "--dry-run",
+                "--provider",
+                "tester",
+            ]
+        )
     )
     saved_out = sys.stdout
     sys.stdout = captured = io.StringIO()
@@ -579,29 +717,53 @@ def test_wire_engine_hands_the_group_map_over() -> None:
         sys.stdout = saved_out
     expect("the dry run succeeds", rc == 0, f"rc={rc}")
     objects = json.loads(captured.getvalue()) if rc == 0 else []
-    maps = [o for o in objects if o["metadata"]["name"] == tester_idp.DEFAULT_GROUPS_CONFIGMAP]
-    expect("a groups ConfigMap is rendered", len(maps) == 1, f"{[o['metadata']['name'] for o in objects]}")
+    maps = [
+        o
+        for o in objects
+        if o["metadata"]["name"] == tester_idp.DEFAULT_GROUPS_CONFIGMAP
+    ]
+    expect(
+        "a groups ConfigMap is rendered",
+        len(maps) == 1,
+        f"{[o['metadata']['name'] for o in objects]}",
+    )
     data = maps[0]["data"] if maps else {}
-    expect("carrying the org-scoped fixture group",
-           json.loads(data.get("dfe-test-org-viewers.yaml", "{}")).get("scope") == "org:test_org",
-           f"{sorted(data)}")
+    expect(
+        "carrying the org-scoped fixture group",
+        json.loads(data.get("dfe-test-org-viewers.yaml", "{}")).get("scope")
+        == "org:test_org",
+        f"{sorted(data)}",
+    )
     admins = json.loads(data.get("dfe-admins.yaml", "{}"))
-    expect("linked to the provider the engine registers",
-           (admins.get("source_provider"), admins.get("source_id")) == ("tester", "dfe-admins"),
-           f"{admins}")
+    expect(
+        "linked to the provider the engine registers",
+        (admins.get("source_provider"), admins.get("source_id"))
+        == ("tester", "dfe-admins"),
+        f"{admins}",
+    )
     providers = [o for o in objects if o["metadata"]["name"] == "dfe-oidc-providers"]
-    expect("under the same name as the provider file",
-           bool(providers) and list(providers[0]["data"]) == ["tester.yaml"],
-           f"{[list(o['data']) for o in providers]}")
-    expect("and the client secret stays redacted", "clientsecretvalue" not in captured.getvalue())
+    expect(
+        "under the same name as the provider file",
+        bool(providers) and list(providers[0]["data"]) == ["tester.yaml"],
+        f"{[list(o['data']) for o in providers]}",
+    )
+    expect(
+        "and the client secret stays redacted",
+        "clientsecretvalue" not in captured.getvalue(),
+    )
 
 
 # --- hostname ----------------------------------------------------------------
 def test_the_hostname_is_composed_from_the_domain() -> None:
     ns = argparse.Namespace(hostname=None, domain="dfe.example.com", host_label="dex")
     expect("label + domain", tester_idp.resolve_hostname(ns) == "dex.dfe.example.com")
-    ns = argparse.Namespace(hostname="idp.example.com", domain="dfe.example.com", host_label="dex")
-    expect("an explicit --hostname wins", tester_idp.resolve_hostname(ns) == "idp.example.com")
+    ns = argparse.Namespace(
+        hostname="idp.example.com", domain="dfe.example.com", host_label="dex"
+    )
+    expect(
+        "an explicit --hostname wins",
+        tester_idp.resolve_hostname(ns) == "idp.example.com",
+    )
 
 
 def test_neither_domain_nor_hostname_is_refused() -> None:
@@ -620,12 +782,18 @@ def test_the_deploy_installs_the_pinned_chart_and_routes_it() -> None:
     helm = [c for c in calls if c["tool"] == "helm" and "upgrade" in c["args"]]
     expect("helm installs dex once", len(helm) == 1, f"{helm}")
     args = helm[0]["args"]
-    expect("at the pinned chart version",
-           "--version" in args and args[args.index("--version") + 1] == tester_idp.DEX_CHART_VERSION,
-           f"{args}")
+    expect(
+        "at the pinned chart version",
+        "--version" in args
+        and args[args.index("--version") + 1] == tester_idp.DEX_CHART_VERSION,
+        f"{args}",
+    )
     kinds = [o["kind"] for o in applied(calls)]
-    expect("the two Secrets, glauth and the route are applied",
-           kinds == ["Secret", "Secret", "Deployment", "Service", "HTTPRoute"], f"{kinds}")
+    expect(
+        "the two Secrets, glauth and the route are applied",
+        kinds == ["Secret", "Secret", "Deployment", "Service", "HTTPRoute"],
+        f"{kinds}",
+    )
 
 
 def test_the_deploy_waits_for_glauth_before_installing_dex() -> None:
@@ -633,11 +801,16 @@ def test_the_deploy_waits_for_glauth_before_installing_dex() -> None:
     leaves dex up and unable to authenticate anyone."""
     _, calls, _ = run_deploy()
     order = [
-        i for i, c in enumerate(calls)
+        i
+        for i, c in enumerate(calls)
         if (c["tool"] == "kubectl" and "rollout" in c["args"])
         or (c["tool"] == "helm" and "upgrade" in c["args"])
     ]
-    expect("the rollout wait comes first", len(order) == 2 and order[0] < order[1], f"{order}")
+    expect(
+        "the rollout wait comes first",
+        len(order) == 2 and order[0] < order[1],
+        f"{order}",
+    )
 
 
 def test_no_generated_password_is_ever_an_argument() -> None:
@@ -646,13 +819,22 @@ def test_no_generated_password_is_ever_an_argument() -> None:
     secrets = {
         ln.split("=", 1)[1]
         for ln in env_file.read_text(encoding="utf-8").splitlines()
-        if ln.startswith(("TESTER_IDP_CLIENT_SECRET=", "TESTER_IDP_USER_PASSWORD=",
-                          "TESTER_IDP_SEARCH_PASSWORD="))
+        if ln.startswith(
+            (
+                "TESTER_IDP_CLIENT_SECRET=",
+                "TESTER_IDP_USER_PASSWORD=",
+                "TESTER_IDP_SEARCH_PASSWORD=",
+            )
+        )
     }
     expect("three secrets were generated", len(secrets) == 3, f"{len(secrets)}")
     argv = " ".join(a for c in calls for a in c["args"])
     leaked = [s for s in secrets if s in argv]
-    expect("none of them appears in any argv", leaked == [], "a generated secret was on argv")
+    expect(
+        "none of them appears in any argv",
+        leaked == [],
+        "a generated secret was on argv",
+    )
 
 
 def test_the_secrets_file_is_private() -> None:
@@ -714,17 +896,23 @@ def test_the_generated_password_matches_the_hash_in_the_cluster_secret() -> None
     """The file the caller logs in with has to be the one glauth will accept."""
     _, calls, env_file = run_deploy()
     env = dict(
-        ln.split("=", 1) for ln in env_file.read_text(encoding="utf-8").splitlines() if "=" in ln
+        ln.split("=", 1)
+        for ln in env_file.read_text(encoding="utf-8").splitlines()
+        if "=" in ln
     )
     cfg = next(
-        o for o in applied(calls)
+        o
+        for o in applied(calls)
         if o["kind"] == "Secret" and o["metadata"]["name"] == "glauth-config"
     )["stringData"]["glauth.cfg"]
     expect(
         "the user password hashes to what glauth stores",
         hashlib.sha256(env["TESTER_IDP_USER_PASSWORD"].encode()).hexdigest() in cfg,
     )
-    expect("and the plaintext is not in the Secret", env["TESTER_IDP_USER_PASSWORD"] not in cfg)
+    expect(
+        "and the plaintext is not in the Secret",
+        env["TESTER_IDP_USER_PASSWORD"] not in cfg,
+    )
 
 
 def test_the_dry_run_touches_nothing() -> None:
@@ -738,7 +926,8 @@ def test_a_dry_run_redacts_a_hash_outside_the_passsha256_lines() -> None:
     tmp = Path(tempfile.mkdtemp())
     (tmp / "users.toml").write_text(
         "# the deploy fills {{DFE_FIXTURE_PASS_SHA256}} in\n" + USERS,
-        encoding="utf-8", newline="\n",
+        encoding="utf-8",
+        newline="\n",
     )
     args = deploy_args(tmp, dry_run=True)
     saved_out, saved_err = sys.stdout, sys.stderr
@@ -749,7 +938,11 @@ def test_a_dry_run_redacts_a_hash_outside_the_passsha256_lines() -> None:
         sys.stdout, sys.stderr = saved_out, saved_err
     expect("the dry run succeeds", rc == 0, f"rc={rc}")
     leaked = re.findall(r"\b[0-9a-f]{64}\b", captured.getvalue())
-    expect("no password hash reaches the printed glauth.cfg", leaked == [], f"{len(leaked)} hash(es)")
+    expect(
+        "no password hash reaches the printed glauth.cfg",
+        leaked == [],
+        f"{len(leaked)} hash(es)",
+    )
 
 
 def test_a_dry_run_never_prints_a_secret_value() -> None:
@@ -770,17 +963,28 @@ def test_a_dry_run_never_prints_a_secret_value() -> None:
 def test_the_cli_still_parses() -> None:
     out = subprocess.run(
         [sys.executable, str(DFE_OPS), "idp", "deploy", "--help"],
-        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
     )
     expect("--help works", out.returncode == 0, out.stderr)
     expect(
         "and names the flags the tool is parameterised on",
-        all(f in out.stdout for f in ("--gateway", "--redirect-uri", "--users-file", "--domain")),
+        all(
+            f in out.stdout
+            for f in ("--gateway", "--redirect-uri", "--users-file", "--domain")
+        ),
         out.stdout,
     )
     wire = subprocess.run(
         [sys.executable, str(DFE_OPS), "idp", "wire-engine", "--help"],
-        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
     )
     expect("wire-engine --help works", wire.returncode == 0, wire.stderr)
     expect(
@@ -790,7 +994,10 @@ def test_the_cli_still_parses() -> None:
     )
     expect(
         "and the teardown flags",
-        all(f in wire.stdout for f in ("--teardown", "--engine-deployment", "--config-dir")),
+        all(
+            f in wire.stdout
+            for f in ("--teardown", "--engine-deployment", "--config-dir")
+        ),
         wire.stdout,
     )
 

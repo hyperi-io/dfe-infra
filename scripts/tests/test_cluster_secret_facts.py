@@ -38,12 +38,22 @@ APPSETS = REPO_ROOT / "argocd" / "appsets"
 # as that appset spells it -- a dotted `- name:` parameter for some, a nested
 # key inside a `values:` block for others)
 CONDITIONAL_FACTS = (
-    ("DFE_KUBE_CLUSTER_NAME", "dfe.hyperi.io/cluster_name", "layer1-addons.yaml", "clusterName"),
+    (
+        "DFE_KUBE_CLUSTER_NAME",
+        "dfe.hyperi.io/cluster_name",
+        "layer1-addons.yaml",
+        "clusterName",
+    ),
     ("DFE_VPC_ID", "dfe.hyperi.io/vpc_id", "layer1-addons.yaml", "vpcId"),
     # test_network_model_facts.py renders the appset to prove each lands on
     # network-policies' networkModel and beats a deploy-repo overlay.
     ("DFE_POD_CIDR", "dfe.hyperi.io/pod_cidr", "layer2-platform.yaml", "podCIDR"),
-    ("DFE_SERVICE_CIDR", "dfe.hyperi.io/service_cidr", "layer2-platform.yaml", "serviceCIDR"),
+    (
+        "DFE_SERVICE_CIDR",
+        "dfe.hyperi.io/service_cidr",
+        "layer2-platform.yaml",
+        "serviceCIDR",
+    ),
     # test_clickhouse_object_store_chain.py renders the appset to prove both land
     # on clickhouse-cluster, and that a deploy-repo endpoint stands without them.
     (
@@ -76,7 +86,12 @@ CONDITIONAL_FACTS = (
         "layer2-platform.yaml",
         "kmsKeyId",
     ),
-    ("DFE_NODE_USER_DATA", "dfe.hyperi.io/node_user_data", "layer2-platform.yaml", "userData"),
+    (
+        "DFE_NODE_USER_DATA",
+        "dfe.hyperi.io/node_user_data",
+        "layer2-platform.yaml",
+        "userData",
+    ),
     (
         "DFE_NODE_POOLS",
         "dfe.hyperi.io/node_pools",
@@ -92,7 +107,12 @@ CONDITIONAL_FACTS = (
     ("DFE_RESOURCE_TAGS", "dfe.hyperi.io/resource_tags", "layer2-edge.yaml", "tls"),
     # test_edge_gateway_fence.py renders the appset to prove the pairing this
     # file's line check cannot.
-    ("DFE_EDGE_SELF_RANGES", "dfe.hyperi.io/edge_self_ranges", "layer2-edge.yaml", "selfRanges"),
+    (
+        "DFE_EDGE_SELF_RANGES",
+        "dfe.hyperi.io/edge_self_ranges",
+        "layer2-edge.yaml",
+        "selfRanges",
+    ),
     (
         "DFE_EDGE_TRUSTED_PROXY_CIDRS",
         "dfe.hyperi.io/edge_trusted_proxy_cidrs",
@@ -107,7 +127,12 @@ CONDITIONAL_FACTS = (
         "layer2-apps.yaml",
         "eipAllocations",
     ),
-    ("DFE_RECEIVER_SUBNETS", "dfe.hyperi.io/receiver_subnets", "layer2-apps.yaml", "subnets"),
+    (
+        "DFE_RECEIVER_SUBNETS",
+        "dfe.hyperi.io/receiver_subnets",
+        "layer2-apps.yaml",
+        "subnets",
+    ),
     # test_engine_secrets_store.py renders both appsets to prove the engine's
     # store and its egress follow the prefix, and nothing else does.
     (
@@ -116,7 +141,12 @@ CONDITIONAL_FACTS = (
         "layer2-apps.yaml",
         "namePrefix",
     ),
-    ("DFE_ENGINE_SECRETS_PREFIX", "dfe.hyperi.io/engine_secrets_prefix", "layer2-platform.yaml", "secrets"),
+    (
+        "DFE_ENGINE_SECRETS_PREFIX",
+        "dfe.hyperi.io/engine_secrets_prefix",
+        "layer2-platform.yaml",
+        "secrets",
+    ),
     ("DFE_KMS_KEY_ARN", "dfe.hyperi.io/kms_key_arn", "layer2-apps.yaml", "kmsKeyId"),
 )
 
@@ -139,8 +169,11 @@ def test_bootstrap_composes_each_annotation_under_its_own_key() -> None:
         quote = "'" if env_key in SINGLE_QUOTED else '\\"'
         value_key = SINGLE_QUOTED.get(env_key, env_key)
         composed = f"{env_key}:+{annotation}: {quote}${{{value_key}}}{quote}"
-        expect(f"bootstrap.sh composes {annotation} from {env_key}",
-               composed in script, f"looked for: {composed}")
+        expect(
+            f"bootstrap.sh composes {annotation} from {env_key}",
+            composed in script,
+            f"looked for: {composed}",
+        )
 
 
 def test_a_single_quoted_annotation_escapes_a_quote_in_its_value() -> None:
@@ -148,17 +181,22 @@ def test_a_single_quoted_annotation_escapes_a_quote_in_its_value() -> None:
     escaped copy doubles it before the annotation is composed."""
     script = BOOTSTRAP.read_text()
     for env_key, value_key in SINGLE_QUOTED.items():
-        expect(f"{env_key} is escaped into {value_key} first",
-               f"{value_key}=\"${{{env_key}//\\'/\\'\\'}}\"" in script,
-               f"no doubling of ' for {env_key}")
+        expect(
+            f"{env_key} is escaped into {value_key} first",
+            f"{value_key}=\"${{{env_key}//\\'/\\'\\'}}\"" in script,
+            f"no doubling of ' for {env_key}",
+        )
 
 
 def test_the_template_substitutes_every_composed_annotation() -> None:
     """A composed variable the template never substitutes reaches no cluster."""
     template = CLUSTER_SECRET.read_text()
     for env_key, annotation, _appset, _param in CONDITIONAL_FACTS:
-        expect(f"cluster-secret.yaml.tpl substitutes {env_key}_ANNOTATION",
-               f"${{{env_key}_ANNOTATION}}" in template, f"missing for {annotation}")
+        expect(
+            f"cluster-secret.yaml.tpl substitutes {env_key}_ANNOTATION",
+            f"${{{env_key}_ANNOTATION}}" in template,
+            f"missing for {annotation}",
+        )
 
 
 def test_each_appset_reads_the_annotation_bootstrap_writes() -> None:
@@ -176,15 +214,23 @@ def test_each_appset_reads_the_annotation_bootstrap_writes() -> None:
         # about the pairing.
         lines = body.splitlines()
         paired = [
-            i for i, ln in enumerate(lines)
-            if read in ln and (
+            i
+            for i, ln in enumerate(lines)
+            if read in ln
+            and (
                 chart_key in ln
                 or (i and chart_key in lines[i - 1])
-                or (i + 1 < len(lines) and lines[i + 1].strip().startswith(f"{chart_key}:"))
+                or (
+                    i + 1 < len(lines)
+                    and lines[i + 1].strip().startswith(f"{chart_key}:")
+                )
             )
         ]
-        expect(f"{appset} lands {annotation} on {chart_key}",
-               paired != [], f"no line in {appset} pairs them")
+        expect(
+            f"{appset} lands {annotation} on {chart_key}",
+            paired != [],
+            f"no line in {appset} pairs them",
+        )
 
 
 def main() -> int:

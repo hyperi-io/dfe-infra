@@ -66,7 +66,9 @@ def test_the_sweep_deletes_only_what_the_cni_own_leak_filter_matches() -> None:
     assert "ec2 delete-network-interface" in block, block
     # Every delete goes through the filtered list, never an id from anywhere else.
     describes = block.count("aws ec2 describe-network-interfaces")
-    assert describes == 1, f"one filtered describe, reused for every query; found {describes}"
+    assert describes == 1, (
+        f"one filtered describe, reused for every query; found {describes}"
+    )
 
 
 def test_the_sweep_fails_loudly_instead_of_continuing() -> None:
@@ -89,7 +91,9 @@ def test_destroy_order_is_nodes_then_vpc_cni_then_the_sweep_then_the_cluster() -
 def test_the_other_addons_still_wait_for_the_nodes_and_exclude_vpc_cni() -> None:
     block = _block(ADDONS)
     assert "aws_eks_node_group.this" in _depends_on(block)
-    assert re.search(r'for_each\s*=\s*setsubtract\(local\.addons,\s*\["vpc-cni"\]\)', block), block
+    assert re.search(
+        r'for_each\s*=\s*setsubtract\(local\.addons,\s*\["vpc-cni"\]\)', block
+    ), block
 
 
 def test_an_existing_vpc_cni_addon_is_moved_not_recreated() -> None:

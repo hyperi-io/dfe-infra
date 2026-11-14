@@ -44,7 +44,9 @@ from _weave import CONTRACTS, REPO_ROOT, appset, helm, library, render_app, weav
 APPS = REPO_ROOT / "argocd" / "values" / "apps"
 COMMON = REPO_ROOT / "argocd" / "values" / "common.yaml"
 EXTRAS_VALUES = REPO_ROOT / "helm" / "charts" / "dfe-extras" / "values.yaml"
-FORWARDER_VARIABLES = REPO_ROOT / "terraform" / "modules" / "edge" / "aws" / "variables.tf"
+FORWARDER_VARIABLES = (
+    REPO_ROOT / "terraform" / "modules" / "edge" / "aws" / "variables.tf"
+)
 
 
 def _render(
@@ -93,7 +95,9 @@ def _claims(docs: list[dict]) -> set[str]:
 def _ports(doc: dict) -> dict[str, dict]:
     if doc["kind"] == "Service":
         return {p["name"]: p for p in doc["spec"]["ports"]}
-    return {p["name"]: p for p in doc["spec"]["template"]["spec"]["containers"][0]["ports"]}
+    return {
+        p["name"]: p for p in doc["spec"]["template"]["spec"]["containers"][0]["ports"]
+    }
 
 
 # --------------------------------------------------------------------- the claims
@@ -107,7 +111,9 @@ def test_a_fetcher_instance_keeps_its_cursor_claim(profile: str) -> None:
         "aws",
         {
             "fullnameOverride": "dfe-fetcher-acme",
-            "writablePaths": {"cursor": {"persistence": {"enabled": True, "size": "2Gi"}}},
+            "writablePaths": {
+                "cursor": {"persistence": {"enabled": True, "size": "2Gi"}}
+            },
         },
         instance="acme",
     )
@@ -136,9 +142,14 @@ def test_culverts_pki_claim_keeps_its_name_and_its_keep_policy() -> None:
 
 def test_a_culvert_turning_its_pki_claim_on_on_prem_keeps_the_name() -> None:
     new = _render(
-        "culvert", "single", "local", {"writablePaths": {"pki": {"persistence": {"enabled": True}}}}
+        "culvert",
+        "single",
+        "local",
+        {"writablePaths": {"pki": {"persistence": {"enabled": True}}}},
     )
-    assert set(_named(new, "PersistentVolumeClaim")) == _claims(new) == {"dfe-culvert-pki"}
+    assert (
+        set(_named(new, "PersistentVolumeClaim")) == _claims(new) == {"dfe-culvert-pki"}
+    )
 
 
 @pytest.mark.parametrize("profile", PROFILES)
@@ -175,7 +186,9 @@ def test_the_extractor_ports_stay_shut_until_the_config_opens_them() -> None:
 
 
 def test_the_ingest_listener_opens_its_port() -> None:
-    new = _render("dfe-fetcher", "single", "aws", {"config": {"ingest": {"enabled": True}}})
+    new = _render(
+        "dfe-fetcher", "single", "aws", {"config": {"ingest": {"enabled": True}}}
+    )
     assert _ports(_deployment(new))["ingest"]["containerPort"] == 8080
     assert _ports(_named(new, "Service")["dfe-fetcher"])["ingest"]["port"] == 8080
 
@@ -190,7 +203,11 @@ def test_an_instance_compiled_to_grpc_on_the_bus_turns_its_dlq_off() -> None:
     overlay = {"config": {"output": {"type": "grpc"}}}
     env = _env(_render("dfe-fetcher", "scale", "aws", overlay))
     assert env["DFE_FETCHER_DLQ_ENABLED"]["value"] == "false"
-    assert env["DFE_FETCHER_DLQ_TOPIC"]["value"] == env["DFE_FETCHER_DLQ_MODE"]["value"] == ""
+    assert (
+        env["DFE_FETCHER_DLQ_TOPIC"]["value"]
+        == env["DFE_FETCHER_DLQ_MODE"]["value"]
+        == ""
+    )
 
 
 def test_an_overlays_own_brokers_win() -> None:
@@ -198,7 +215,9 @@ def test_an_overlays_own_brokers_win() -> None:
     overlay = {"config": {"kafka": {"brokers": ["broker.example.com:9092"]}}}
     new = _render("dfe-fetcher", "single", "aws", overlay)
     assert _env(new)["DFE_FETCHER_KAFKA_BROKERS"]["value"] == ""
-    configmap = configmap_files(_named(new, "ConfigMap")["dfe-fetcher-config"])["fetcher.yaml"]
+    configmap = configmap_files(_named(new, "ConfigMap")["dfe-fetcher-config"])[
+        "fetcher.yaml"
+    ]
     assert yaml.safe_load(configmap)["kafka"]["brokers"] == ["broker.example.com:9092"]
 
 
@@ -211,7 +230,9 @@ def test_the_bus_hands_the_fetcher_the_deployments_broker() -> None:
 
 def test_the_fetcher_takes_the_upstream_credentials_whole_and_optional() -> None:
     want = [{"secretRef": {"name": "dfe-fetcher-credentials", "optional": True}}]
-    assert _pod(golden("dfe-fetcher", "single", "aws"))["containers"][0]["envFrom"] == want
+    assert (
+        _pod(golden("dfe-fetcher", "single", "aws"))["containers"][0]["envFrom"] == want
+    )
 
 
 # ------------------------------------------------------------------- culvert
@@ -246,7 +267,9 @@ def test_culverts_image_follows_global_registry(overlay: dict) -> None:
     assert all(image.startswith(f"{registry}/culvert:") for image in images), images
 
 
-def test_culvert_falls_back_to_its_contract_registry_with_none_set(bare_culvert: Path) -> None:
+def test_culvert_falls_back_to_its_contract_registry_with_none_set(
+    bare_culvert: Path,
+) -> None:
     """The thin chart and its integration values, with common.yaml's empty global.registry."""
     w = weave()
     cmd = [helm(), "template", "culvert", str(bare_culvert)]
@@ -255,13 +278,21 @@ def test_culvert_falls_back_to_its_contract_registry_with_none_set(bare_culvert:
     pod = _pod(w.documents(w.run(cmd, "helm template culvert")))
     images = [c["image"] for c in [*pod["initContainers"], *pod["containers"]]]
     assert len(images) == 2
-    assert all(image.startswith("ghcr.io/hyperi-io/culvert:") for image in images), images
+    assert all(image.startswith("ghcr.io/hyperi-io/culvert:") for image in images), (
+        images
+    )
 
 
 def test_an_image_repository_still_replaces_culverts_whole_image() -> None:
-    overlay = {"global": {"registry": "mirror.example.net/dfe"}, "image": {"repository": "r/c"}}
+    overlay = {
+        "global": {"registry": "mirror.example.net/dfe"},
+        "image": {"repository": "r/c"},
+    }
     pod = _pod(_render("culvert", "slim", "local", overlay))
-    assert all(c["image"].startswith("r/c:") for c in [*pod["initContainers"], *pod["containers"]])
+    assert all(
+        c["image"].startswith("r/c:")
+        for c in [*pod["initContainers"], *pod["containers"]]
+    )
 
 
 def _two_appsets(root: Path, *patterns: str) -> Path:
@@ -290,8 +321,12 @@ def _culverts_appset(tmp_path: Path, *patterns: str) -> dict:
     return w.load_appset(tmp_path, appset, w.Target("culvert", "slim", "local"))
 
 
-def test_the_appset_generating_the_instance_file_is_the_one_read(tmp_path: Path) -> None:
-    found = _culverts_appset(tmp_path, "values/dfe-*-values.yaml", "values/culvert-*-values.yaml")
+def test_the_appset_generating_the_instance_file_is_the_one_read(
+    tmp_path: Path,
+) -> None:
+    found = _culverts_appset(
+        tmp_path, "values/dfe-*-values.yaml", "values/culvert-*-values.yaml"
+    )
     assert found["metadata"]["name"] == "set-1"
 
 
@@ -319,7 +354,10 @@ def _tf_node_port(name: str) -> int:
 
 def node_port_problems(service: dict) -> list[str]:
     """Each tunnel port of a public Service not pinned where the forwarder DNATs; empty is a pass."""
-    want = {"wireguard": _tf_node_port("wireguard"), "openvpn-udp": _tf_node_port("openvpn")}
+    want = {
+        "wireguard": _tf_node_port("wireguard"),
+        "openvpn-udp": _tf_node_port("openvpn"),
+    }
     pins = {p["name"]: p.get("nodePort") for p in service["spec"]["ports"]}
     return [
         f"{name}: {pins.get(name)} -> {port}"
@@ -330,8 +368,12 @@ def node_port_problems(service: dict) -> list[str]:
 
 def listener_lists() -> dict[str, list]:
     """culvert's default listeners as the thin chart's values and dfe-extras hold them."""
-    apps = yaml.safe_load((APPS / "culvert" / "values.yaml").read_text(encoding="utf-8"))
-    extras = yaml.safe_load(EXTRAS_VALUES.read_text(encoding="utf-8"))["extras"]["defaults"]
+    apps = yaml.safe_load(
+        (APPS / "culvert" / "values.yaml").read_text(encoding="utf-8")
+    )
+    extras = yaml.safe_load(EXTRAS_VALUES.read_text(encoding="utf-8"))["extras"][
+        "defaults"
+    ]
     return {
         "apps/culvert defaultListeners": apps["defaultListeners"],
         "dfe-extras defaults": extras["culvert"]["listeners"],
@@ -345,7 +387,9 @@ def drifted(lists: dict[str, list]) -> list[str]:
 
 
 def test_culverts_nodeports_are_the_ones_the_forwarder_dials() -> None:
-    service = _named(golden("culvert", "scale", "aws"), "Service")["dfe-culvert-public-udp"]
+    service = _named(golden("culvert", "scale", "aws"), "Service")[
+        "dfe-culvert-public-udp"
+    ]
     assert service["spec"]["type"] == "NodePort"
     assert node_port_problems(service) == []
 
@@ -385,7 +429,14 @@ def test_the_contract_opens_wireguard_only_where_the_profile_starts_it(
     config.protocol (test_dfe_extras.py).
     """
     w = weave()
-    cmd = [helm(), "template", "culvert", str(bare_culvert), "--set", "publicService.enabled=true"]
+    cmd = [
+        helm(),
+        "template",
+        "culvert",
+        str(bare_culvert),
+        "--set",
+        "publicService.enabled=true",
+    ]
     if protocol is not None:
         cmd += ["--set", f"config.protocol={protocol}"]
     docs = w.documents(w.run(cmd, "helm template culvert"))
@@ -407,7 +458,9 @@ def test_culvert_runs_as_the_contract_says() -> None:
     contract = json.loads((CONTRACTS / "culvert.json").read_text(encoding="utf-8"))
     pod = _pod(golden("culvert", "single", "aws"))
     assert contract["singleton"] is True
-    assert pod["securityContext"]["runAsUser"] == contract["security"]["run_as_user"] == 0
+    assert (
+        pod["securityContext"]["runAsUser"] == contract["security"]["run_as_user"] == 0
+    )
     added = pod["containers"][0]["securityContext"]["capabilities"]["add"]
     assert added == contract["security"]["capabilities_add"]
     assert [i["name"] for i in pod["initContainers"]] == ["enable-ip-forward"]
@@ -431,15 +484,25 @@ def test_a_renamed_cursor_claim_is_seen() -> None:
 def test_a_drifted_default_listener_list_is_seen() -> None:
     lists = listener_lists()
     first = lists["apps/culvert defaultListeners"]
-    lists["apps/culvert defaultListeners"] = [{**first[0], "nodePort": 31821}, *first[1:]]
+    lists["apps/culvert defaultListeners"] = [
+        {**first[0], "nodePort": 31821},
+        *first[1:],
+    ]
     assert drifted(lists) == ["dfe-extras defaults"]
 
 
 def test_a_nodeport_the_forwarder_does_not_dial_is_seen() -> None:
-    service = _named(golden("culvert", "scale", "aws"), "Service")["dfe-culvert-public-udp"]
+    service = _named(golden("culvert", "scale", "aws"), "Service")[
+        "dfe-culvert-public-udp"
+    ]
     moved = {
         **service,
-        "spec": {**service["spec"], "ports": [dict(p) for p in service["spec"]["ports"]]},
+        "spec": {
+            **service["spec"],
+            "ports": [dict(p) for p in service["spec"]["ports"]],
+        },
     }
-    next(p for p in moved["spec"]["ports"] if p["name"] == "wireguard")["nodePort"] = 31821
+    next(p for p in moved["spec"]["ports"] if p["name"] == "wireguard")["nodePort"] = (
+        31821
+    )
     assert node_port_problems(moved) == ["wireguard: 31821 -> 31820"]

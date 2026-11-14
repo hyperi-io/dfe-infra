@@ -125,7 +125,12 @@ def run(cmd: list[str], what: str) -> str:
     """Run a command and return its stdout, raising with its stderr on failure."""
     try:
         out = subprocess.run(
-            cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
         )
     except OSError as exc:
         raise WeaveError(f"{what}: cannot run {cmd[0]}: {exc}") from exc
@@ -218,7 +223,9 @@ def values_schema(config_schema: dict, dials: dict[str, dict], base: dict) -> di
         *parents, name = dotted.split(".")
         node = config
         for part in parents:
-            node = node.setdefault("properties", {}).setdefault(part, {"type": "object"})
+            node = node.setdefault("properties", {}).setdefault(
+                part, {"type": "object"}
+            )
         node.setdefault("properties", {})[name] = leaf
     schema = copy.deepcopy(base)
     properties = schema.setdefault("properties", {})
@@ -267,9 +274,15 @@ def lint_skips(library: Path) -> dict[str, str]:
 
 def chart_config(skips: dict[str, str]) -> str:
     """The thin chart's ``.hyperi-ci.yaml``: the Checkov skips, reasons as comments."""
-    lines = [f"# From {LIBRARY} {LINT_SKIP}: Checkov findings this chart accepts by design."]
-    lines += [f"#   {check}: {' '.join(reason.split())}" for check, reason in skips.items()]
-    body = yaml.safe_dump({"quality": {"checkov": {"skip": list(skips)}}}, sort_keys=True)
+    lines = [
+        f"# From {LIBRARY} {LINT_SKIP}: Checkov findings this chart accepts by design."
+    ]
+    lines += [
+        f"#   {check}: {' '.join(reason.split())}" for check, reason in skips.items()
+    ]
+    body = yaml.safe_dump(
+        {"quality": {"checkov": {"skip": list(skips)}}}, sort_keys=True
+    )
     return "\n".join(lines) + "\n" + body
 
 
@@ -283,7 +296,9 @@ def validate_contract(contract: dict, schema_file: Path) -> bool:
         return False
     schema = json.loads(schema_file.read_text(encoding="utf-8"))
     validator = jsonschema.validators.validator_for(schema)
-    findings = sorted(validator(schema).iter_errors(contract), key=lambda e: e.json_path)
+    findings = sorted(
+        validator(schema).iter_errors(contract), key=lambda e: e.json_path
+    )
     if findings:
         lines = [f"  {e.json_path}: {e.message}" for e in findings]
         raise WeaveError("the contract fails its schema:\n" + "\n".join(lines))
@@ -317,14 +332,24 @@ def read_contract(path: Path) -> tuple[bytes, dict]:
 def library_version(library: Path) -> str:
     """The version the library's own Chart.yaml declares."""
     chart_file = library / "Chart.yaml"
-    meta = yaml.safe_load(chart_file.read_text(encoding="utf-8")) if chart_file.is_file() else None
+    meta = (
+        yaml.safe_load(chart_file.read_text(encoding="utf-8"))
+        if chart_file.is_file()
+        else None
+    )
     if not isinstance(meta, dict) or meta.get("name") != LIBRARY:
         raise WeaveError(f"{library} is not the {LIBRARY} chart")
     return str(meta.get("version", ""))
 
 
 def assemble(
-    raw_contract: bytes, library: Path, out_dir: Path, *, version: str, tag: str, digest: str
+    raw_contract: bytes,
+    library: Path,
+    out_dir: Path,
+    *,
+    version: str,
+    tag: str,
+    digest: str,
 ) -> Path:
     """Write the thin chart for a contract to ``out_dir/<app_name>`` and return it.
 
@@ -354,7 +379,9 @@ def assemble(
         raise WeaveError(f"image tag {tag!r} is not a tag")
     if not DIGEST_RE.match(digest):
         raise WeaveError(f"image digest {digest!r} is not sha256:<64 hex>")
-    schema_file = library / CONTRACT_SCHEMA.format(version=contract.get("schema_version"))
+    schema_file = library / CONTRACT_SCHEMA.format(
+        version=contract.get("schema_version")
+    )
     if not schema_file.is_file():
         raise WeaveError(
             f"{library} ships no {schema_file.relative_to(library)}: this library cannot render "
@@ -412,7 +439,9 @@ def assemble(
         text = ignore.read_text(encoding="utf-8") if ignore.is_file() else ""
         if CHART_CONFIG not in text.splitlines():
             files[HELMIGNORE] = (
-                text + ("" if not text or text.endswith("\n") else "\n") + (CHART_CONFIG + "\n")
+                text
+                + ("" if not text or text.endswith("\n") else "\n")
+                + (CHART_CONFIG + "\n")
             )
     for rel, text in files.items():
         (chart / rel).write_text(text, encoding="utf-8", newline="\n")
@@ -423,16 +452,24 @@ def assemble(
 
 def build_dependency(helm: str, chart: Path) -> None:
     """Fetch the library into ``chart/charts``, which a render needs first."""
-    run([find_helm(helm), "dependency", "build", str(chart)], f"helm dependency build {chart.name}")
+    run(
+        [find_helm(helm), "dependency", "build", str(chart)],
+        f"helm dependency build {chart.name}",
+    )
 
 
 def has_library(chart: Path) -> bool:
     """Whether ``chart/charts`` holds the library, packed or unpacked as a published chart has it."""
     vendored = chart / "charts"
-    return any(vendored.glob(f"{LIBRARY}-*.tgz")) or (vendored / LIBRARY / "Chart.yaml").is_file()
+    return (
+        any(vendored.glob(f"{LIBRARY}-*.tgz"))
+        or (vendored / LIBRARY / "Chart.yaml").is_file()
+    )
 
 
-def pinned_image(tree: Path, app_name: str, stack: str | None = None) -> tuple[str, str]:
+def pinned_image(
+    tree: Path, app_name: str, stack: str | None = None
+) -> tuple[str, str]:
     """The app's image tag and digest in versions.yaml, for one stack (default ``current``).
 
     The tag is under ``apps`` or, for an image the content of another, ``content``.
@@ -445,7 +482,9 @@ def pinned_image(tree: Path, app_name: str, stack: str | None = None) -> tuple[s
     pins = (data.get("stacks") or {}).get(name)
     if not isinstance(pins, dict):
         raise WeaveError(f"versions.yaml has no stack {name!r}")
-    tag = (pins.get("apps") or {}).get(app_name) or (pins.get("content") or {}).get(app_name)
+    tag = (pins.get("apps") or {}).get(app_name) or (pins.get("content") or {}).get(
+        app_name
+    )
     digest = (pins.get("digests") or {}).get(app_name)
     if not tag or not digest:
         raise WeaveError(
@@ -538,7 +577,9 @@ def generator_params(target: Target, deploy_repo: Path | None) -> dict:
         if overlay.is_file():
             params = yaml.safe_load(overlay.read_text(encoding="utf-8")) or {}
             if params.get("deploy") != deploy:
-                raise WeaveError(f"{overlay} declares deploy {params.get('deploy')}, not {deploy}")
+                raise WeaveError(
+                    f"{overlay} declares deploy {params.get('deploy')}, not {deploy}"
+                )
     filename = target.instance_file
     params["path"] = {
         "path": "values",
@@ -552,7 +593,10 @@ def generator_params(target: Target, deploy_repo: Path | None) -> dict:
         name=target.cluster,
         nameNormalized=target.cluster,
         server=IN_CLUSTER,
-        metadata={"annotations": target.cluster_annotations(), "labels": target.cluster_labels()},
+        metadata={
+            "annotations": target.cluster_annotations(),
+            "labels": target.cluster_labels(),
+        },
     )
     return params
 
@@ -606,10 +650,19 @@ def expand_template(template: dict, params: dict, helm: str) -> dict:
             json.dumps({"ctx": params}), encoding="utf-8", newline="\n"
         )
         defines = "".join(
-            f'{{{{ define "weave.f{i}" }}}}{raw}{{{{ end }}}}\n' for i, raw in enumerate(fields)
+            f'{{{{ define "weave.f{i}" }}}}{raw}{{{{ end }}}}\n'
+            for i, raw in enumerate(fields)
         )
-        (chart / "templates" / "_fields.tpl").write_text(defines, encoding="utf-8", newline="\n")
-        body = ["apiVersion: v1", "kind: ConfigMap", "metadata:", "  name: weave-appset", "data:"]
+        (chart / "templates" / "_fields.tpl").write_text(
+            defines, encoding="utf-8", newline="\n"
+        )
+        body = [
+            "apiVersion: v1",
+            "kind: ConfigMap",
+            "metadata:",
+            "  name: weave-appset",
+            "data:",
+        ]
         body += [
             f'  f{i}: {{{{ include "weave.f{i}" .Values.ctx | toJson }}}}'
             for i in range(len(fields))
@@ -617,11 +670,15 @@ def expand_template(template: dict, params: dict, helm: str) -> dict:
         (chart / "templates" / "fields.yaml").write_text(
             "\n".join(body) + "\n", encoding="utf-8", newline="\n"
         )
-        out = run([find_helm(helm), "template", "weave-appset", str(chart)], "appset template")
+        out = run(
+            [find_helm(helm), "template", "weave-appset", str(chart)], "appset template"
+        )
     data = next(d for d in documents(out) if d.get("kind") == "ConfigMap")["data"]
     # Argo's annotation and label maps hold strings, so a missing key renders empty
     # where a helm values map renders <no value>.
-    rendered = iter(str(data[f"f{i}"]).replace("<no value>", "") for i in range(len(fields)))
+    rendered = iter(
+        str(data[f"f{i}"]).replace("<no value>", "") for i in range(len(fields))
+    )
     return _substitute(template, rendered)
 
 
@@ -635,7 +692,9 @@ def _git_file_patterns(generators: list[dict]) -> Iterator[tuple[list[str], list
                 [f["path"] for f in files if f.get("exclude")],
             )
         for nested in ("matrix", "merge"):
-            yield from _git_file_patterns((generator.get(nested) or {}).get("generators") or [])
+            yield from _git_file_patterns(
+                (generator.get(nested) or {}).get("generators") or []
+            )
 
 
 def generates(appset: dict, instance_path: str) -> bool:
@@ -643,7 +702,9 @@ def generates(appset: dict, instance_path: str) -> bool:
     return any(
         any(fnmatch.fnmatchcase(instance_path, p) for p in include)
         and not any(fnmatch.fnmatchcase(instance_path, p) for p in exclude)
-        for include, exclude in _git_file_patterns(appset["spec"].get("generators") or [])
+        for include, exclude in _git_file_patterns(
+            appset["spec"].get("generators") or []
+        )
     )
 
 
@@ -658,20 +719,30 @@ def load_appset(tree: Path, appset: Path, target: Target | None = None) -> dict:
             one of several generates the target.
     """
     path = tree / appset
-    docs = [d for d in yaml.safe_load_all(path.read_text(encoding="utf-8")) if isinstance(d, dict)]
+    docs = [
+        d
+        for d in yaml.safe_load_all(path.read_text(encoding="utf-8"))
+        if isinstance(d, dict)
+    ]
     sets = [d for d in docs if d.get("kind") == "ApplicationSet"]
     if not sets:
         raise WeaveError(f"{path} is not an ApplicationSet")
     if len(sets) > 1:
         if target is None:
-            raise WeaveError(f"{path} holds {len(sets)} ApplicationSets: name the target")
+            raise WeaveError(
+                f"{path} holds {len(sets)} ApplicationSets: name the target"
+            )
         instance_path = f"values/{target.instance_file}"
         sets = [d for d in sets if generates(d, instance_path)]
         if len(sets) != 1:
-            raise WeaveError(f"{path}: {len(sets)} ApplicationSets generate {instance_path}")
+            raise WeaveError(
+                f"{path}: {len(sets)} ApplicationSets generate {instance_path}"
+            )
     doc = sets[0]
     if not doc["spec"].get("goTemplate"):
-        raise WeaveError(f"{path} does not use goTemplate, which is the only engine read here")
+        raise WeaveError(
+            f"{path} does not use goTemplate, which is the only engine read here"
+        )
     return doc
 
 
@@ -757,7 +828,9 @@ def thin_chart(inputs: Inputs) -> Iterator[Path]:
         yield inputs.chart
         return
     if inputs.contract is None or inputs.library is None:
-        raise WeaveError("a render needs --chart, or --contract with --library / DFE_WEAVE_LIBRARY")
+        raise WeaveError(
+            "a render needs --chart, or --contract with --library / DFE_WEAVE_LIBRARY"
+        )
     raw, contract = read_contract(inputs.contract)
     tag, digest = inputs.image_tag, inputs.digest
     if not tag or not digest:
@@ -767,7 +840,12 @@ def thin_chart(inputs: Inputs) -> Iterator[Path]:
         tag, digest = tag or pinned_tag, digest or pinned_digest
     with tempfile.TemporaryDirectory(prefix="dfe-weave-thin-") as tmp:
         chart = assemble(
-            raw, inputs.library, Path(tmp), version=tag.removeprefix("v"), tag=tag, digest=digest
+            raw,
+            inputs.library,
+            Path(tmp),
+            version=tag.removeprefix("v"),
+            tag=tag,
+            digest=digest,
         )
         build_dependency(helm, chart)
         yield chart
@@ -783,7 +861,9 @@ def _argo_set_value(value: str) -> str:
 def _confined(path: Path, root: Path, raw: str, what: str = "value file") -> Path:
     resolved = path.resolve()
     if not resolved.is_relative_to(root.resolve()):
-        raise WeaveError(f"{what} {raw!r} resolves outside its repo, which Argo refuses")
+        raise WeaveError(
+            f"{what} {raw!r} resolves outside its repo, which Argo refuses"
+        )
     return resolved
 
 
@@ -814,7 +894,9 @@ class _Layout:
             name, _, rest = raw[1:].partition("/")
             ref = self.refs.get(name)
             if ref is None:
-                raise WeaveError(f"value file {raw!r} names ref {name!r}, which no source declares")
+                raise WeaveError(
+                    f"value file {raw!r} names ref {name!r}, which no source declares"
+                )
             url = ref.get("repoURL", "")
             if url not in self.repos:
                 raise WeaveError(
@@ -832,7 +914,9 @@ class _Layout:
             return raw
         roots = [("<apps-dir>/", self.apps_dir)]
         roots += [
-            ("<deploy-repo>/", r) for r in self.repos.values() if r is not None and r != self.tree
+            ("<deploy-repo>/", r)
+            for r in self.repos.values()
+            if r is not None and r != self.tree
         ]
         roots.append(("", self.tree))
         for label, root in roots:
@@ -841,7 +925,9 @@ class _Layout:
         return str(path)
 
 
-def value_chain(raw_files: list[str], layout: _Layout, base: Path, root: Path) -> list[dict]:
+def value_chain(
+    raw_files: list[str], layout: _Layout, base: Path, root: Path
+) -> list[dict]:
     """Each value file of one helm source in order: as written, where it resolved, present."""
     chain = []
     for raw in raw_files:
@@ -885,14 +971,19 @@ def render_source(
             )
     with tempfile.TemporaryDirectory(prefix="dfe-weave-values-") as tmp:
         inline = block.get("valuesObject")
-        text = yaml.safe_dump(inline) if isinstance(inline, dict) else block.get("values")
+        text = (
+            yaml.safe_dump(inline) if isinstance(inline, dict) else block.get("values")
+        )
         if text:
             inline_file = Path(tmp) / "inline-values.yaml"
             inline_file.write_text(text, encoding="utf-8", newline="\n")
             cmd += ["--values", str(inline_file)]
         for param in block.get("parameters") or []:
             flag = "--set-string" if param.get("forceString") else "--set"
-            cmd += [flag, f"{param['name']}={_argo_set_value(str(param.get('value', '')))}"]
+            cmd += [
+                flag,
+                f"{param['name']}={_argo_set_value(str(param.get('value', '')))}",
+            ]
         return documents(run(cmd, f"helm template {chart.name}"))
 
 
@@ -908,7 +999,9 @@ def render_app(target: Target, inputs: Inputs) -> Rendered:
         WeaveError: A source cannot be rendered offline, or a render failed.
     """
     if not (inputs.thin or inputs.extras):
-        raise WeaveError("a render with neither the thin chart nor dfe-extras renders nothing")
+        raise WeaveError(
+            "a render with neither the thin chart nor dfe-extras renders nothing"
+        )
     tree = inputs.repo
     with contextlib.ExitStack() as scope:
         app = application(tree, inputs.appset, target, inputs.deploy_repo, inputs.helm)
@@ -934,7 +1027,9 @@ def render_app(target: Target, inputs: Inputs) -> Rendered:
                 f"the appset carries no {EXTRAS_PATH} source beside the thin chart "
                 "-- pass --no-extras"
             )
-        planned = ([app_source] if inputs.thin else []) + (extras if inputs.extras else [])
+        planned = ([app_source] if inputs.thin else []) + (
+            extras if inputs.extras else []
+        )
         thin = scope.enter_context(thin_chart(inputs)) if inputs.thin else None
         docs: list[dict] = []
         chains: list[list[dict]] = []
@@ -945,8 +1040,13 @@ def render_app(target: Target, inputs: Inputs) -> Rendered:
             local = layout.repos.get(url)
             if source is app_source and thin is not None:
                 chart = thin
-                if url.startswith("oci://") and url.rstrip("/").rsplit("/", 1)[-1] != chart.name:
-                    raise WeaveError(f"the appset pulls {url}, and the thin chart is {chart.name}")
+                if (
+                    url.startswith("oci://")
+                    and url.rstrip("/").rsplit("/", 1)[-1] != chart.name
+                ):
+                    raise WeaveError(
+                        f"the appset pulls {url}, and the thin chart is {chart.name}"
+                    )
             elif local is not None:
                 chart = _confined(local / path, local, path, what="chart path")
             else:
@@ -955,7 +1055,9 @@ def render_app(target: Target, inputs: Inputs) -> Rendered:
             base = local / path if local is not None else chart
             raw_files = list(source["helm"].get("valueFiles") or [])
             chain = value_chain(raw_files, layout, base, root)
-            source_release = source["helm"].get("releaseName") or app["metadata"]["name"]
+            source_release = (
+                source["helm"].get("releaseName") or app["metadata"]["name"]
+            )
             release = release or source_release
             docs += render_source(
                 source,
@@ -1029,12 +1131,18 @@ def _add_helm(parser: argparse.ArgumentParser) -> None:
 
 
 def _add_target(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--service", required=True, help="deploy.service, e.g. dfe-ui or hyperdx")
+    parser.add_argument(
+        "--service", required=True, help="deploy.service, e.g. dfe-ui or hyperdx"
+    )
     parser.add_argument("--profile", required=True, help="slim, single, scale or mesh")
     parser.add_argument("--cloud", required=True, help="local, aws, gcp or azure")
-    parser.add_argument("--instance", default="default", help="deploy.instance (default: default)")
     parser.add_argument(
-        "--cluster-name", default="in-cluster", help="cluster secret name (default: in-cluster)"
+        "--instance", default="default", help="deploy.instance (default: default)"
+    )
+    parser.add_argument(
+        "--cluster-name",
+        default="in-cluster",
+        help="cluster secret name (default: in-cluster)",
     )
     parser.add_argument(
         "--namespace", default="dfe", help="dfe_namespace annotation (default: dfe)"
@@ -1057,13 +1165,18 @@ def _add_target(parser: argparse.ArgumentParser) -> None:
         help="any other cluster-secret annotation",
     )
     parser.add_argument(
-        "--label", action="append", metavar="KEY=VALUE", help="any other cluster-secret label"
+        "--label",
+        action="append",
+        metavar="KEY=VALUE",
+        help="any other cluster-secret label",
     )
     parser.add_argument(
         "--repo", default=str(REPO_ROOT), help="dfe-infra checkout (default: this one)"
     )
     parser.add_argument(
-        "--appset", default=str(APPSET), help=f"appset, relative to the repo (default: {APPSET})"
+        "--appset",
+        default=str(APPSET),
+        help=f"appset, relative to the repo (default: {APPSET})",
     )
     parser.add_argument(
         "--deploy-repo", help="a directory laid out like a deploy repo (default: none)"
@@ -1072,17 +1185,27 @@ def _add_target(parser: argparse.ArgumentParser) -> None:
 
 
 def _add_render_inputs(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--contract", help="the app's deployment contract, for the thin chart")
+    parser.add_argument(
+        "--contract", help="the app's deployment contract, for the thin chart"
+    )
     parser.add_argument(
         "--library",
         default=os.environ.get("DFE_WEAVE_LIBRARY"),
         help="scalo-service chart directory (env DFE_WEAVE_LIBRARY)",
     )
-    parser.add_argument("--chart", help="an assembled thin chart, in place of --contract/--library")
+    parser.add_argument(
+        "--chart", help="an assembled thin chart, in place of --contract/--library"
+    )
     parser.add_argument("--apps-dir", help="a directory replacing argocd/values/apps")
-    parser.add_argument("--stack", help="versions.yaml stack for the image pins (default: current)")
-    parser.add_argument("--image-tag", help="thin chart appVersion (default: the stack's pin)")
-    parser.add_argument("--digest", help="thin chart image digest (default: the stack's pin)")
+    parser.add_argument(
+        "--stack", help="versions.yaml stack for the image pins (default: current)"
+    )
+    parser.add_argument(
+        "--image-tag", help="thin chart appVersion (default: the stack's pin)"
+    )
+    parser.add_argument(
+        "--digest", help="thin chart image digest (default: the stack's pin)"
+    )
     alone = parser.add_mutually_exclusive_group()
     alone.add_argument(
         "--no-extras",
@@ -1119,7 +1242,9 @@ def _cmd_assemble(args: argparse.Namespace) -> int:
 
 def _cmd_application(args: argparse.Namespace) -> int:
     inputs = _inputs(args)
-    app = application(inputs.repo, inputs.appset, _target(args), inputs.deploy_repo, inputs.helm)
+    app = application(
+        inputs.repo, inputs.appset, _target(args), inputs.deploy_repo, inputs.helm
+    )
     sys.stdout.write(yaml.safe_dump(app, sort_keys=False))
     return 0
 
@@ -1147,19 +1272,35 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p = sub.add_parser("assemble", help="build a thin chart from a contract and the library")
-    p.add_argument("--contract", required=True, help="the app's deployment contract (JSON)")
+    p = sub.add_parser(
+        "assemble", help="build a thin chart from a contract and the library"
+    )
+    p.add_argument(
+        "--contract", required=True, help="the app's deployment contract (JSON)"
+    )
     p.add_argument(
         "--library",
         default=os.environ.get("DFE_WEAVE_LIBRARY"),
         help="scalo-service chart directory (env DFE_WEAVE_LIBRARY)",
     )
-    p.add_argument("--out", required=True, help="directory the chart directory is created in")
-    p.add_argument("--version", help="chart version (default: the image tag without its v)")
-    p.add_argument("--image-tag", help="appVersion (default: the versions.yaml pin for app_name)")
-    p.add_argument("--digest", help="image digest (default: the versions.yaml pin for app_name)")
-    p.add_argument("--stack", help="versions.yaml stack for the pins (default: current)")
-    p.add_argument("--repo", default=str(REPO_ROOT), help="dfe-infra checkout for versions.yaml")
+    p.add_argument(
+        "--out", required=True, help="directory the chart directory is created in"
+    )
+    p.add_argument(
+        "--version", help="chart version (default: the image tag without its v)"
+    )
+    p.add_argument(
+        "--image-tag", help="appVersion (default: the versions.yaml pin for app_name)"
+    )
+    p.add_argument(
+        "--digest", help="image digest (default: the versions.yaml pin for app_name)"
+    )
+    p.add_argument(
+        "--stack", help="versions.yaml stack for the pins (default: current)"
+    )
+    p.add_argument(
+        "--repo", default=str(REPO_ROOT), help="dfe-infra checkout for versions.yaml"
+    )
     p.add_argument("--no-build", action="store_true", help="skip helm dependency build")
     _add_helm(p)
     p.set_defaults(func=_cmd_assemble)

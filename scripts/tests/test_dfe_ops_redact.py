@@ -69,7 +69,7 @@ TOFU_OUTPUT = [
     'cluster_endpoint = "https://ABCDEF.gr7.ap-southeast-2.eks.amazonaws.com"',
     'kafka_api_key_id = "FAKEKEYID1234567"',
     "Error: creating EKS cluster: operation error EKS: CreateCluster, https response error",
-    "  on main.tf line 12, in resource \"aws_eks_cluster\" \"this\":",
+    '  on main.tf line 12, in resource "aws_eks_cluster" "this":',
     "",
 ]
 
@@ -89,12 +89,19 @@ def text(data: str) -> str:
 
 
 @pytest.mark.parametrize("indent", [None, 2], ids=["one line", "pretty printed"])
-def test_a_confluent_error_body_comes_out_without_its_secret(indent: int | None) -> None:
+def test_a_confluent_error_body_comes_out_without_its_secret(
+    indent: int | None,
+) -> None:
     body = json.dumps(CONFLUENT_BODY, indent=indent)
     out = text(f"Error: creating Confluent API key: 403 Forbidden: {body}\n")
     assert FAKE not in out
     assert f'"secret": "{MASK}"' in out
-    for kept in ("API key quota exceeded", "FAKEKEYID1234567", "sa-abc12", "creating Confluent"):
+    for kept in (
+        "API key quota exceeded",
+        "FAKEKEYID1234567",
+        "sa-abc12",
+        "creating Confluent",
+    ):
         assert kept in out
 
 
@@ -124,12 +131,17 @@ def test_a_block_that_never_ends_is_masked_to_the_end_of_input() -> None:
 
 
 def test_a_block_that_starts_and_ends_mid_line_keeps_the_text_around_it() -> None:
-    assert text(f"key {PEM_BEGIN}\n{FAKE}\n{PEM_END} tail\nmore\n") == f"key {MASK} tail\nmore\n"
+    assert (
+        text(f"key {PEM_BEGIN}\n{FAKE}\n{PEM_END} tail\nmore\n")
+        == f"key {MASK} tail\nmore\n"
+    )
     assert text(f"a {PEM_BEGIN} {FAKE} {PEM_END} b\n") == f"a {MASK} b\n"
 
 
 def test_two_blocks_are_masked_one_after_the_other() -> None:
-    out = text(f"{PEM_BEGIN}\nA{FAKE}\n{PEM_END}\nmid\n{PEM_BEGIN}\nB{FAKE}\n{PEM_END}\nend\n")
+    out = text(
+        f"{PEM_BEGIN}\nA{FAKE}\n{PEM_END}\nmid\n{PEM_BEGIN}\nB{FAKE}\n{PEM_END}\nend\n"
+    )
     assert out == f"{MASK}\nmid\n{MASK}\nend\n"
 
 
@@ -196,7 +208,9 @@ def test_the_stream_matches_the_redactor_run_over_the_whole_text(data: str) -> N
 class _Source:
     """A readable that makes each line anew on demand and logs each read in `events`."""
 
-    def __init__(self, line: bytes, count: int, events: list[str] | None = None) -> None:
+    def __init__(
+        self, line: bytes, count: int, events: list[str] | None = None
+    ) -> None:
         self.line, self.left, self.events = line, count, events
 
     def readline(self, limit: int = -1) -> bytes:
@@ -249,7 +263,9 @@ def test_a_large_input_streams_through_in_constant_memory() -> None:
     assert sink.lines == count
     assert not sink.leaked
     assert len(line) * count > 16 * 1024 * 1024
-    assert peak < 1024 * 1024, f"peaked at {peak} bytes over {len(line) * count} bytes of input"
+    assert peak < 1024 * 1024, (
+        f"peaked at {peak} bytes over {len(line) * count} bytes of input"
+    )
 
 
 @pytest.fixture
@@ -259,7 +275,9 @@ def small_lines(monkeypatch: pytest.MonkeyPatch) -> int:
     return 32
 
 
-def test_a_line_past_the_cap_is_cut_and_the_rest_of_it_dropped(small_lines: int) -> None:
+def test_a_line_past_the_cap_is_cut_and_the_rest_of_it_dropped(
+    small_lines: int,
+) -> None:
     out = stream(b"first\n" + b"a" * 100 + b"\nsecond\n")
     assert out == b"first\n" + b"a" * small_lines + b"***TRUNCATED***\nsecond\n"
 
@@ -314,7 +332,9 @@ def test_a_line_comes_out_before_the_input_ends() -> None:
 
 @pytest.mark.skipif(not hasattr(signal, "SIGINT"), reason="needs POSIX signals")
 @pytest.mark.parametrize("name", rd.IGNORED_SIGNALS)
-def test_a_signal_to_the_pipeline_does_not_end_the_filter_before_its_input_does(name: str) -> None:
+def test_a_signal_to_the_pipeline_does_not_end_the_filter_before_its_input_does(
+    name: str,
+) -> None:
     sent = getattr(signal, name)
     with _redact_proc() as proc:
         proc.stdin.write(b"one\n")
@@ -333,7 +353,9 @@ def test_a_closed_stdout_ends_the_filter_without_a_traceback() -> None:
         f"yes 'a=b' | head -c 4000000 | {shlex.quote(sys.executable)} {shlex.quote(str(SCRIPT))} "
         "redact | head -n 1"
     )
-    done = subprocess.run(["bash", "-c", pipeline], capture_output=True, timeout=120, check=False)
+    done = subprocess.run(
+        ["bash", "-c", pipeline], capture_output=True, timeout=120, check=False
+    )
     assert done.stdout == b"a=b\n"
     assert done.stderr == b""
 
@@ -364,7 +386,9 @@ def test_the_command_is_registered_and_prints_no_banner() -> None:
     args = parser.parse_args(["redact"])
     assert args.func is rd.cmd_redact
     assert args.banner is False
-    assert getattr(parser.parse_args(["probe", "GET", "http://localhost/"]), "banner", True)
+    assert getattr(
+        parser.parse_args(["probe", "GET", "http://localhost/"]), "banner", True
+    )
 
 
 @pytest.fixture
@@ -384,8 +408,13 @@ def test_main_runs_the_filter_without_the_ephemeral_banner(
 
     out = io.BytesIO()
     monkeypatch.setattr(dfeops, "_ephemeral_notice", banner)
-    monkeypatch.setattr(sys, "stdin", io.TextIOWrapper(io.BytesIO(f"token={FAKE}\n".encode())))
+    monkeypatch.setattr(
+        sys, "stdin", io.TextIOWrapper(io.BytesIO(f"token={FAKE}\n".encode()))
+    )
     monkeypatch.setattr(sys, "stdout", io.TextIOWrapper(out))
     assert dfeops.main(["redact"]) == 0
     assert out.getvalue() == f"token={MASK}\n".encode()
-    assert all(signal.getsignal(getattr(signal, name)) == signal.SIG_IGN for name in keep_signals)
+    assert all(
+        signal.getsignal(getattr(signal, name)) == signal.SIG_IGN
+        for name in keep_signals
+    )

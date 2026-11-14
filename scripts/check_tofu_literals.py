@@ -75,14 +75,18 @@ ANY_ADDRESS = frozenset({"0.0.0.0/0", "::/0"})
 COMPARISON = frozenset({"==", "!=", "<", ">", "<=", ">="})
 
 # A literal argument to one of these is a position or a key, never a size.
-POSITIONAL_CALLS = frozenset({"slice", "substr", "element", "index", "lookup", "split", "regex", "regexall"})
+POSITIONAL_CALLS = frozenset(
+    {"slice", "substr", "element", "index", "lookup", "split", "regex", "regexall"}
+)
 
 # A literal argument to one of these is the value the expression falls back to.
 FALLBACK_CALLS = frozenset({"try", "coalesce", "coalescelist"})
 
 # The blocks whose attributes are scanned, and the ones that are not.
 SCANNED_BLOCKS = frozenset({"resource", "data", "module", "variable", "locals"})
-UNSCANNED_BLOCKS = frozenset({"terraform", "provider", "output", "moved", "check", "import", "removed"})
+UNSCANNED_BLOCKS = frozenset(
+    {"terraform", "provider", "output", "moved", "check", "import", "removed"}
+)
 
 # A string that IS a node image, whatever name it sits under -- each matched whole.
 NODE_IMAGE_VALUES = (
@@ -286,7 +290,9 @@ def lex(text: str) -> list[Token]:
             found = closing.search(text, body_start)
             if found is None:
                 raise ScanError(f"line {line}: unterminated heredoc {marker}")
-            tokens.append(Token("heredoc", text[body_start : found.start()], line, True))
+            tokens.append(
+                Token("heredoc", text[body_start : found.start()], line, True)
+            )
             line += text.count("\n", index, found.end())
             index = found.end()
         elif number := _NUMBER.match(text, index) if char.isdigit() else None:
@@ -321,7 +327,9 @@ def _read_expression(tokens: list[Token], pos: int) -> tuple[list[Token], int]:
     return out, pos
 
 
-def _parse_body(tokens: list[Token], pos: int) -> tuple[list[Attribute], list[Block], int]:
+def _parse_body(
+    tokens: list[Token], pos: int
+) -> tuple[list[Attribute], list[Block], int]:
     """Parse attributes and blocks until the closing brace or the end of the file."""
     attributes: list[Attribute] = []
     blocks: list[Block] = []
@@ -333,7 +341,9 @@ def _parse_body(tokens: list[Token], pos: int) -> tuple[list[Attribute], list[Bl
         if token.kind == "punct" and token.text == "}":
             return attributes, blocks, pos
         if token.kind != "ident":
-            raise ScanError(f"line {token.line}: expected an attribute or a block, got {token.text!r}")
+            raise ScanError(
+                f"line {token.line}: expected an attribute or a block, got {token.text!r}"
+            )
         pos += 1
         if pos < len(tokens) and tokens[pos].text == "=":
             expression, pos = _read_expression(tokens, pos + 1)
@@ -348,7 +358,9 @@ def _parse_body(tokens: list[Token], pos: int) -> tuple[list[Attribute], list[Bl
         inner_attributes, inner_blocks, pos = _parse_body(tokens, pos + 1)
         if pos >= len(tokens):
             raise ScanError(f"line {token.line}: block {token.text} is never closed")
-        blocks.append(Block(token.text, labels, token.line, inner_attributes, inner_blocks))
+        blocks.append(
+            Block(token.text, labels, token.line, inner_attributes, inner_blocks)
+        )
         pos += 1
     return attributes, blocks, pos
 
@@ -370,7 +382,9 @@ def parse(text: str) -> list[Block]:
 
 def in_scope(name: str) -> bool:
     """Whether a value under this name is one a deployment chooses."""
-    return name not in META and bool(SCOPE.search(name.lower().replace("-", "_").replace(".", "_")))
+    return name not in META and bool(
+        SCOPE.search(name.lower().replace("-", "_").replace(".", "_"))
+    )
 
 
 def _punct(token: Token | None) -> str:
@@ -422,10 +436,16 @@ def _enclosing_call(tokens: list[Token], index: int) -> tuple[str, int] | None:
 def _is_index(tokens: list[Token], index: int) -> bool:
     """Whether tokens[index] sits alone between index brackets, as in `list[0]`."""
     opens = _neighbour_index(tokens, index, -1)
-    if opens is None or _punct(tokens[opens]) != "[" or _punct(_neighbour(tokens, index, 1)) != "]":
+    if (
+        opens is None
+        or _punct(tokens[opens]) != "["
+        or _punct(_neighbour(tokens, index, 1)) != "]"
+    ):
         return False
     before = _neighbour(tokens, opens, -1)
-    return before is not None and (before.kind in ("ident", "string") or _punct(before) in ("]", ")"))
+    return before is not None and (
+        before.kind in ("ident", "string") or _punct(before) in ("]", ")")
+    )
 
 
 def _significant(tokens: list[Token]) -> list[Token]:
@@ -455,10 +475,18 @@ def _switch_positions(tokens: list[Token]) -> set[int]:
         then = _neighbour_index(tokens, index, 1)
         colon = None if then is None else _neighbour_index(tokens, then, 1)
         other = None if colon is None else _neighbour_index(tokens, colon, 1)
-        if then is None or colon is None or other is None or _punct(tokens[colon]) != ":":
+        if (
+            then is None
+            or colon is None
+            or other is None
+            or _punct(tokens[colon]) != ":"
+        ):
             continue
         branches = {tokens[then].text, tokens[other].text}
-        if tokens[then].kind == tokens[other].kind == "number" and branches == {"0", "1"}:
+        if tokens[then].kind == tokens[other].kind == "number" and branches == {
+            "0",
+            "1",
+        }:
             positions.update((then, other))
     return positions
 
@@ -484,10 +512,14 @@ def literal_values(tokens: list[Token]) -> list[Token]:
         after = _punct(_neighbour(tokens, index, 1))
         if before in COMPARISON or after in COMPARISON:
             continue
-        item_start = previous is None or previous.kind == "newline" or before in ("{", ",")
+        item_start = (
+            previous is None or previous.kind == "newline" or before in ("{", ",")
+        )
         if after == "=" or (after == ":" and item_start):
             continue
-        if token.kind == "string" and (token.interpolated or token.text in ("", *ANY_ADDRESS)):
+        if token.kind == "string" and (
+            token.interpolated or token.text in ("", *ANY_ADDRESS)
+        ):
             continue
         if token.kind == "number" and _is_index(tokens, index):
             continue
@@ -497,7 +529,13 @@ def literal_values(tokens: list[Token]) -> list[Token]:
             continue
         list_element = call is None and before in ("[", ",")
         fallback = call is not None and (call[0] in FALLBACK_CALLS or lookup_default)
-        if token.kind == "number" or whole or before in ("?", ":", "=") or list_element or fallback:
+        if (
+            token.kind == "number"
+            or whole
+            or before in ("?", ":", "=")
+            or list_element
+            or fallback
+        ):
             found.append(token)
     return found
 
@@ -510,7 +548,11 @@ def _object_items(tokens: list[Token]) -> list[tuple[str, list[Token]]] | None:
     first, last = positions[0], positions[-1]
     if _punct(tokens[first]) != "{" or _punct(tokens[last]) != "}":
         return None
-    if len(positions) > 1 and tokens[positions[1]].kind == "ident" and tokens[positions[1]].text == "for":
+    if (
+        len(positions) > 1
+        and tokens[positions[1]].kind == "ident"
+        and tokens[positions[1]].text == "for"
+    ):
         return None
     inner = tokens[first + 1 : last]
     items: list[tuple[str, list[Token]]] = []
@@ -521,7 +563,11 @@ def _object_items(tokens: list[Token]) -> list[tuple[str, list[Token]]] | None:
             pos += 1
             continue
         is_key = token.kind in ("ident", "string") and not token.interpolated
-        if not is_key or pos + 1 >= len(inner) or _punct(inner[pos + 1]) not in ("=", ":"):
+        if (
+            not is_key
+            or pos + 1 >= len(inner)
+            or _punct(inner[pos + 1]) not in ("=", ":")
+        ):
             return None
         key = token.text
         value: list[Token] = []
@@ -541,13 +587,17 @@ def _object_items(tokens: list[Token]) -> list[tuple[str, list[Token]]] | None:
     return items
 
 
-def _value_hits(tokens: list[Token], active: bool, attribute: str) -> list[tuple[str, Token]]:
+def _value_hits(
+    tokens: list[Token], active: bool, attribute: str
+) -> list[tuple[str, Token]]:
     """Literal values under a name in scope, recursing through object constructors."""
     items = _object_items(tokens)
     if items is not None:
         hits: list[tuple[str, Token]] = []
         for key, value in items:
-            hits.extend(_value_hits(value, active or in_scope(key), f"{attribute}.{key}"))
+            hits.extend(
+                _value_hits(value, active or in_scope(key), f"{attribute}.{key}")
+            )
         return hits
     if not active:
         return []
@@ -559,7 +609,11 @@ def _optional_defaults(tokens: list[Token]) -> list[tuple[str, list[Token]]]:
     found: list[tuple[str, list[Token]]] = []
     body = _significant(tokens)
     for index, token in enumerate(body):
-        if token.text != "optional" or index + 1 >= len(body) or body[index + 1].text != "(":
+        if (
+            token.text != "optional"
+            or index + 1 >= len(body)
+            or body[index + 1].text != "("
+        ):
             continue
         depth = 0
         arguments: list[list[Token]] = [[]]
@@ -574,21 +628,29 @@ def _optional_defaults(tokens: list[Token]) -> list[tuple[str, list[Token]]]:
                 arguments.append([])
                 continue
             arguments[-1].append(current)
-        name = body[index - 2].text if index >= 2 and body[index - 1].text == "=" else ""
+        name = (
+            body[index - 2].text if index >= 2 and body[index - 1].text == "=" else ""
+        )
         if len(arguments) == 2 and name:
             found.append((name, arguments[1]))
     return found
 
 
-def _block_hits(block: Block, address: str, prefix: str) -> list[tuple[str, int, str, Token]]:
+def _block_hits(
+    block: Block, address: str, prefix: str
+) -> list[tuple[str, int, str, Token]]:
     """Every in-scope literal in a resource, data or module body, nested blocks included."""
     hits: list[tuple[str, int, str, Token]] = []
     for attribute in block.attributes:
         name = f"{prefix}{attribute.name}"
-        for path, token in _value_hits(attribute.tokens, in_scope(attribute.name), name):
+        for path, token in _value_hits(
+            attribute.tokens, in_scope(attribute.name), name
+        ):
             hits.append((address, token.line, path, token))
     for inner in block.blocks:
-        inner_name = inner.labels[0] if inner.kind == "dynamic" and inner.labels else inner.kind
+        inner_name = (
+            inner.labels[0] if inner.kind == "dynamic" and inner.labels else inner.kind
+        )
         hits.extend(_block_hits(inner, address, f"{prefix}{inner_name}."))
     return hits
 
@@ -617,23 +679,32 @@ def _image_values(tokens: list[Token], attribute: str) -> list[tuple[str, Token]
         for key, value in items:
             found.extend(_image_values(value, f"{attribute}.{key}"))
         return found
-    strings = [(attribute, t) for t in tokens if t.kind == "string" and is_node_image(t.text)]
+    strings = [
+        (attribute, t) for t in tokens if t.kind == "string" and is_node_image(t.text)
+    ]
     if attribute.rsplit(".", 1)[-1] in PROSE_ATTRIBUTES:
         return strings
     words = [
-        (attribute, word) for t in tokens if t.kind == "heredoc" for word in _heredoc_images(t)
+        (attribute, word)
+        for t in tokens
+        if t.kind == "heredoc"
+        for word in _heredoc_images(t)
     ]
     return [*strings, *words]
 
 
-def _block_images(block: Block, address: str, prefix: str) -> list[tuple[str, int, str, Token]]:
+def _block_images(
+    block: Block, address: str, prefix: str
+) -> list[tuple[str, int, str, Token]]:
     """Every node-image string anywhere in a block's body, nested blocks included."""
     hits: list[tuple[str, int, str, Token]] = []
     for attribute in block.attributes:
         for path, token in _image_values(attribute.tokens, f"{prefix}{attribute.name}"):
             hits.append((address, token.line, path, token))
     for inner in block.blocks:
-        inner_name = inner.labels[0] if inner.kind == "dynamic" and inner.labels else inner.kind
+        inner_name = (
+            inner.labels[0] if inner.kind == "dynamic" and inner.labels else inner.kind
+        )
         hits.extend(_block_images(inner, address, f"{prefix}{inner_name}."))
     return hits
 
@@ -666,8 +737,14 @@ def scan_images(text: str, path: str) -> list[Hit]:
     hits: list[Hit] = []
     for block in parse(text):
         address = _block_address(block)
-        if block.kind == "data" and block.labels and block.labels[0] in NODE_IMAGE_DATA_SOURCES:
-            hits.append(Hit(path, block.line, address, "data source", block.labels[0], "image"))
+        if (
+            block.kind == "data"
+            and block.labels
+            and block.labels[0] in NODE_IMAGE_DATA_SOURCES
+        ):
+            hits.append(
+                Hit(path, block.line, address, "data source", block.labels[0], "image")
+            )
         for found_address, line, attribute, token in _block_images(block, address, ""):
             hits.append(Hit(path, line, found_address, attribute, token.text, "image"))
     return hits
@@ -689,7 +766,11 @@ def scan_text(text: str, path: str) -> list[Hit]:
     """
     images = scan_images(text, path)
     seen = {(hit.key, hit.line, hit.literal) for hit in images}
-    sized = [hit for hit in _scan_sizing(text, path) if (hit.key, hit.line, hit.literal) not in seen]
+    sized = [
+        hit
+        for hit in _scan_sizing(text, path)
+        if (hit.key, hit.line, hit.literal) not in seen
+    ]
     return sorted([*sized, *images], key=lambda hit: (hit.line, hit.key))
 
 
@@ -700,7 +781,9 @@ def _scan_sizing(text: str, path: str) -> list[Hit]:
         if block.kind in UNSCANNED_BLOCKS:
             continue
         if block.kind not in SCANNED_BLOCKS:
-            raise ScanError(f"{path}:{block.line}: a top-level {block.kind} block this scanner does not know")
+            raise ScanError(
+                f"{path}:{block.line}: a top-level {block.kind} block this scanner does not know"
+            )
         if block.kind in ("resource", "data"):
             address = ".".join([block.kind, *block.labels])
             found = _block_hits(block, address, "")
@@ -716,7 +799,10 @@ def _scan_sizing(text: str, path: str) -> list[Hit]:
             ]
         else:
             found = _variable_hits(block)
-        hits.extend(Hit(path, line, address, attribute, token.text) for address, line, attribute, token in found)
+        hits.extend(
+            Hit(path, line, address, attribute, token.text)
+            for address, line, attribute, token in found
+        )
     return hits
 
 
@@ -768,7 +854,9 @@ def main(repo_root: Path = REPO_ROOT) -> int:
             if hit.kind == "image"
             else "move it to tfvars"
         )
-        print(f"{hit.path}:{hit.line}: {hit.address} {hit.attribute} = {hit.literal!r} -- {remedy}")
+        print(
+            f"{hit.path}:{hit.line}: {hit.address} {hit.attribute} = {hit.literal!r} -- {remedy}"
+        )
     for key in stale:
         print(f"ALLOWED entry matches no literal any more, so drop it: {key}")
     if findings or stale:
@@ -777,7 +865,9 @@ def main(repo_root: Path = REPO_ROOT) -> int:
             file=sys.stderr,
         )
         return 1
-    print(f"check_tofu_literals: OK -- {len(hits)} allowed contract constant(s), no other literal in scope")
+    print(
+        f"check_tofu_literals: OK -- {len(hits)} allowed contract constant(s), no other literal in scope"
+    )
     return 0
 
 

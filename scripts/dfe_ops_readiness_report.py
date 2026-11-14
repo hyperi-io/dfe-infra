@@ -91,7 +91,9 @@ def _status(item: dict) -> dict:
 
 def judged(namespace: str, globs: Iterable[str]) -> bool:
     """Whether a namespace is one the report reads: a glob matches it, or it is always read."""
-    return namespace in ALWAYS_READ or any(fnmatch.fnmatchcase(namespace, g) for g in globs)
+    return namespace in ALWAYS_READ or any(
+        fnmatch.fnmatchcase(namespace, g) for g in globs
+    )
 
 
 def _failing_conditions(item: dict, wanted: Iterable[str] | None = None) -> list[str]:
@@ -132,8 +134,13 @@ def _container_lines(status: dict, kind: str) -> list[str]:
                     f"{label} {name} waiting {_why(waiting.get('reason'), waiting.get('message'))}"
                 )
             )
-        elif "terminated" in state and (state["terminated"] or {}).get("exitCode") not in (0, None):
-            code, reason = state["terminated"].get("exitCode"), state["terminated"].get("reason")
+        elif "terminated" in state and (state["terminated"] or {}).get(
+            "exitCode"
+        ) not in (0, None):
+            code, reason = (
+                state["terminated"].get("exitCode"),
+                state["terminated"].get("reason"),
+            )
             lines.append(_clip(f"{label} {name} exited {code} ({reason})"))
         elif "running" in state and not container.get("ready"):
             lines.append(
@@ -165,7 +172,11 @@ def pod_lines(pods: list[dict], globs: Iterable[str]) -> list[str]:
     for pod in pods:
         meta, status, spec = _meta(pod), _status(pod), pod.get("spec") or {}
         namespace = meta.get("namespace") or ""
-        if not judged(namespace, globs) or status.get("phase") == "Succeeded" or pod_ready(pod):
+        if (
+            not judged(namespace, globs)
+            or status.get("phase") == "Succeeded"
+            or pod_ready(pod)
+        ):
             continue
         lines.append(
             f"pod {namespace}/{meta.get('name')} phase={status.get('phase')} "
@@ -208,7 +219,9 @@ def event_lines(events: list[dict], globs: Iterable[str]) -> list[str]:
             continue
         involved = event.get("involvedObject") or event.get("regarding") or {}
         namespace = _meta(event).get("namespace") or ""
-        if not (judged(namespace, globs) or involved.get("kind") in CLUSTER_EVENT_KINDS):
+        if not (
+            judged(namespace, globs) or involved.get("kind") in CLUSTER_EVENT_KINDS
+        ):
             continue
         key = (
             namespace,
@@ -218,13 +231,17 @@ def event_lines(events: list[dict], globs: Iterable[str]) -> list[str]:
         )
         if key not in newest or _event_time(event) >= _event_time(newest[key]):
             newest[key] = event
-    ordered = sorted(newest.items(), key=lambda pair: _event_time(pair[1]), reverse=True)
+    ordered = sorted(
+        newest.items(), key=lambda pair: _event_time(pair[1]), reverse=True
+    )
     lines = []
     for (namespace, kind, name, reason), event in ordered:
         count = (event.get("series") or {}).get("count") or event.get("count") or 1
         message = event.get("message") or event.get("note") or ""
         where = f"{namespace or '-'} {kind}/{name}"
-        lines.append(_clip(f"{_event_time(event)} {where} {reason} x{count}: {message}"))
+        lines.append(
+            _clip(f"{_event_time(event)} {where} {reason} x{count}: {message}")
+        )
     return lines
 
 
@@ -274,7 +291,11 @@ def node_lines(nodes: list[dict], pods: list[dict]) -> list[str]:
         labels = meta.get("labels") or {}
         name = meta.get("name") or ""
         ready = next(
-            (c.get("status") for c in status.get("conditions") or [] if c.get("type") == "Ready"),
+            (
+                c.get("status")
+                for c in status.get("conditions") or []
+                if c.get("type") == "Ready"
+            ),
             "Unknown",
         )
         allocatable = status.get("allocatable") or {}
@@ -293,7 +314,9 @@ def node_lines(nodes: list[dict], pods: list[dict]) -> list[str]:
             for t in (node.get("spec") or {}).get("taints") or []
         )
         pool = (
-            labels.get("karpenter.sh/nodepool") or labels.get("eks.amazonaws.com/nodegroup") or "-"
+            labels.get("karpenter.sh/nodepool")
+            or labels.get("eks.amazonaws.com/nodegroup")
+            or "-"
         )
         capacity_type = (
             labels.get("karpenter.sh/capacity-type")
@@ -369,7 +392,10 @@ def log_error_lines(text: str) -> list[str]:
                 seen.pop(raw.strip(), None)
                 seen[raw.strip()] = None
             continue
-        if not isinstance(entry, dict) or str(entry.get("level", "")).upper() != "ERROR":
+        if (
+            not isinstance(entry, dict)
+            or str(entry.get("level", "")).upper() != "ERROR"
+        ):
             continue
         line = _clip(f"{entry.get('message', '')}: {entry.get('error', '')}")
         seen.pop(line, None)
@@ -382,7 +408,10 @@ def pvc_lines(claims: list[dict], globs: Iterable[str]) -> list[str]:
     lines = []
     for claim in claims:
         meta = _meta(claim)
-        if not judged(meta.get("namespace") or "", globs) or _status(claim).get("phase") == "Bound":
+        if (
+            not judged(meta.get("namespace") or "", globs)
+            or _status(claim).get("phase") == "Bound"
+        ):
             continue
         lines.append(
             f"pvc {meta.get('namespace')}/{meta.get('name')} {_status(claim).get('phase')} "
@@ -412,7 +441,12 @@ def application_lines(apps: list[dict]) -> list[str]:
         if operation.get("phase") not in (None, "Succeeded"):
             lines.append(
                 "  "
-                + _clip(_why(f"last operation {operation.get('phase')}", operation.get("message")))
+                + _clip(
+                    _why(
+                        f"last operation {operation.get('phase')}",
+                        operation.get("message"),
+                    )
+                )
             )
     return lines
 
@@ -438,9 +472,13 @@ def _last_line(text: str) -> str:
 def read(prefix: list[str], what: list[str]) -> Reading:
     """`kubectl get <what> -o json`, as its items or the reason there are none."""
     try:
-        done = run_kubectl([*prefix, "get", *what, "-o", "json"], timeout=KUBECTL_TIMEOUT)
+        done = run_kubectl(
+            [*prefix, "get", *what, "-o", "json"], timeout=KUBECTL_TIMEOUT
+        )
     except subprocess.TimeoutExpired:
-        return Reading(error=f"kubectl get {' '.join(what)} did not answer in {KUBECTL_TIMEOUT}s")
+        return Reading(
+            error=f"kubectl get {' '.join(what)} did not answer in {KUBECTL_TIMEOUT}s"
+        )
     if done.returncode != 0:
         return Reading(error=_clip(_last_line(done.stderr)))
     try:
@@ -484,11 +522,19 @@ def _section(title: str, reading: Reading, lines: list[str], empty: str) -> list
 def _karpenter(prefix: list[str]) -> list[str]:
     pools = read(prefix, ["nodepools.karpenter.sh"])
     if pools.error and "doesn't have a resource type" in pools.error:
-        return ["--- karpenter ---", "  not installed on this cluster (no nodepools.karpenter.sh)"]
+        return [
+            "--- karpenter ---",
+            "  not installed on this cluster (no nodepools.karpenter.sh)",
+        ]
     claims = read(prefix, ["nodeclaims.karpenter.sh"])
     classes = read(prefix, ["ec2nodeclasses.karpenter.k8s.aws"])
     return [
-        *_section("karpenter nodepools", pools, nodepool_lines(pools.items), "no NodePool exists"),
+        *_section(
+            "karpenter nodepools",
+            pools,
+            nodepool_lines(pools.items),
+            "no NodePool exists",
+        ),
         *_section(
             "karpenter nodeclaims",
             claims,
@@ -518,10 +564,16 @@ def report(args: argparse.Namespace) -> list[str]:
     return [
         "=== readiness report: why the workloads above are not ready ===",
         *_section(
-            "pods not Ready", pods, pod_lines(pods.items, globs), "every judged pod is Ready"
+            "pods not Ready",
+            pods,
+            pod_lines(pods.items, globs),
+            "every judged pod is Ready",
         ),
         *_section(
-            "newest warning events", events, event_lines(events.items, globs), "no Warning event"
+            "newest warning events",
+            events,
+            event_lines(events.items, globs),
+            "no Warning event",
         ),
         *_section("nodes", nodes, node_lines(nodes.items, pods.items), "no node"),
         *_karpenter(prefix),
@@ -569,8 +621,12 @@ def add_readiness_report_subparser(sub: argparse._SubParsersAction) -> None:
         default="*",
         help="space-separated namespace globs to judge; kube-system is always read",
     )
-    rep.add_argument("--kubeconfig", default="", help="kubeconfig to read; empty is kubectl's own")
     rep.add_argument(
-        "--context", default="", help="kubeconfig context to read; empty is its current one"
+        "--kubeconfig", default="", help="kubeconfig to read; empty is kubectl's own"
+    )
+    rep.add_argument(
+        "--context",
+        default="",
+        help="kubeconfig context to read; empty is its current one",
     )
     rep.set_defaults(func=cmd_readiness_report)

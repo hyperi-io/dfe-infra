@@ -159,7 +159,9 @@ def test_the_real_versions_file_releases_2_2_0_and_no_candidate() -> None:
 
 def test_members_follow_the_lanes_and_the_first_lane_wins() -> None:
     graph = {
-        "nodes": {name: {"repo": f"o/{name}", "classification": "product"} for name in "abcd"},
+        "nodes": {
+            name: {"repo": f"o/{name}", "classification": "product"} for name in "abcd"
+        },
         "lanes": [
             {"name": "one", "members": ["a", "b"]},
             {"name": "two", "members": ["c", "a"]},
@@ -190,7 +192,10 @@ def test_a_stack_pins_apps_and_content_and_its_own_tag_for_dfe_infra() -> None:
         Member("dfe-ui", "o/dfe-ui", "consumers", 13),
         Member("scalo-rs", "o/scalo-rs", "libraries", 14),
     ]
-    block = {"apps": {"dfe-engine": "v1.0.0", "dfe-ui": ""}, "content": {"dfe-docker": "abc123"}}
+    block = {
+        "apps": {"dfe-engine": "v1.0.0", "dfe-ui": ""},
+        "content": {"dfe-docker": "abc123"},
+    }
     assert aggregate.stack_refs("2.2.0", block, members) == {
         "dfe-infra": "2.2.0",
         "dfe-engine": "v1.0.0",
@@ -213,7 +218,11 @@ def test_the_real_2_2_0_stack_pins_no_library() -> None:
 def test_plan_builds_lists_released_stacks_then_the_preview() -> None:
     tree = {
         "stacks": {
-            "2.2.0": {"maturity": "release", "support": "standard", "apps": {"x": "v1"}},
+            "2.2.0": {
+                "maturity": "release",
+                "support": "standard",
+                "apps": {"x": "v1"},
+            },
             "2.3.0-rc.1": {"maturity": "rc", "support": "standard"},
         }
     }
@@ -243,7 +252,9 @@ def test_plan_builds_refuses_an_unreleased_stack_and_an_empty_plan() -> None:
         (["2.2.0", "2.2.1"], r"publish\.yaml drops 2\.2\.0"),
     ],
 )
-def test_a_dropped_stack_is_never_built(stacks: list[str], expected: list[str] | str) -> None:
+def test_a_dropped_stack_is_never_built(
+    stacks: list[str], expected: list[str] | str
+) -> None:
     release = {"maturity": "release", "support": "standard", "apps": {"x": "v1"}}
     tree = {"stacks": {"2.2.0": release, "2.2.1": release}}
     members = [Member("x", "o/x", "consumers", 10)]
@@ -277,7 +288,9 @@ def test_a_docs_pin_rides_its_stack_and_names_only_a_built_one(
             aggregate.plan_builds(tree, members, [], True, dropped, docs_refs)
         return
     builds = aggregate.plan_builds(tree, members, [], True, dropped, docs_refs)
-    assert [(build.name, dict(build.refs), dict(build.docs_refs)) for build in builds] == [
+    assert [
+        (build.name, dict(build.refs), dict(build.docs_refs)) for build in builds
+    ] == [
         ("2.2.1", {"x": "v1"}, expected),
         ("next", {"x": "HEAD"}, {}),
     ]
@@ -286,7 +299,9 @@ def test_a_docs_pin_rides_its_stack_and_names_only_a_built_one(
 # --- publish.yaml ------------------------------------------------------------------
 
 
-def test_the_real_publish_file_names_real_members_and_keeps_the_newest_release() -> None:
+def test_the_real_publish_file_names_real_members_and_keeps_the_newest_release() -> (
+    None
+):
     members = aggregate.ordered_members(aggregate.load_suite())
     text = aggregate.PUBLISH_FILE.read_text(encoding="utf-8")
     policy = aggregate.load_policy(
@@ -296,7 +311,11 @@ def test_the_real_publish_file_names_real_members_and_keeps_the_newest_release()
     builds = aggregate.plan_builds(versions, members, [], False, policy.dropped)
     assert "2.2.0" in policy.dropped
     # `latest` moves in its own PR after the release tags, so it can trail the newest release.
-    released = [name for name in aggregate.released_stacks(versions) if name not in policy.dropped]
+    released = [
+        name
+        for name in aggregate.released_stacks(versions)
+        if name not in policy.dropped
+    ]
     assert builds[0].name == released[0]
     assert versions["latest"] in [build.name for build in builds]
     assert policy.mounts == {"dfe-hyperdx": "dfe-ui"}
@@ -314,7 +333,9 @@ def test_the_real_publish_file_names_real_members_and_keeps_the_newest_release()
                 "internal": {"a": {"x.md": "why", "old/": "why"}},
             },
             aggregate.Policy(
-                frozenset({"1.0.0"}), {"b": "a"}, {"a": frozenset({"docs/x.md", "docs/old/"})}
+                frozenset({"1.0.0"}),
+                {"b": "a"},
+                {"a": frozenset({"docs/x.md", "docs/old/"})},
             ),
         ),
         (
@@ -327,7 +348,10 @@ def test_the_real_publish_file_names_real_members_and_keeps_the_newest_release()
         ({"mount_under": {"b": "a", "c": "b"}}, "a parent must mount at the top level"),
         ({"internal": {"z": {"x.md": "why"}}}, "internal z: not a member"),
         ({"internal": {"a": "x.md"}}, "internal a: not a member with a map"),
-        ({"internal": {"a": {"../README.md": "why"}}}, r"\.\./README\.md is not a path"),
+        (
+            {"internal": {"a": {"../README.md": "why"}}},
+            r"\.\./README\.md is not a path",
+        ),
         ({"internal": {"a": {"/etc/x": "why"}}}, "/etc/x is not a path"),
         (
             {"docs_refs": {"2.2.1": {"a": "abc123"}}},
@@ -335,7 +359,10 @@ def test_the_real_publish_file_names_real_members_and_keeps_the_newest_release()
         ),
         ({"docs_refs": {"2.2.1": "abc123"}}, "docs_refs 2.2.1: not a map"),
         ({"docs_refs": {"2.2.1": {"z": "abc123"}}}, "docs_refs 2.2.1 z: not a member"),
-        ({"docs_refs": {"2.2.1": {"a": ""}}}, "docs_refs 2.2.1 a: not a member with a ref"),
+        (
+            {"docs_refs": {"2.2.1": {"a": ""}}},
+            "docs_refs 2.2.1 a: not a member with a ref",
+        ),
     ],
 )
 def test_load_policy_reads_a_valid_file_and_names_every_problem(
@@ -349,15 +376,28 @@ def test_load_policy_reads_a_valid_file_and_names_every_problem(
 
 
 def test_the_real_journeys_file_places_every_member_that_publishes() -> None:
-    members = [member.name for member in aggregate.ordered_members(aggregate.load_suite())]
+    members = [
+        member.name for member in aggregate.ordered_members(aggregate.load_suite())
+    ]
     policy = aggregate.load_policy(
-        aggregate.yaml_subset.parse(aggregate.PUBLISH_FILE.read_text(encoding="utf-8")), members
+        aggregate.yaml_subset.parse(aggregate.PUBLISH_FILE.read_text(encoding="utf-8")),
+        members,
     )
     journeys = aggregate.load_journeys(
-        aggregate.yaml_subset.parse(aggregate.JOURNEYS_FILE.read_text(encoding="utf-8")), members
+        aggregate.yaml_subset.parse(
+            aggregate.JOURNEYS_FILE.read_text(encoding="utf-8")
+        ),
+        members,
     )
-    assert [label for label, _ in journeys.order] == ["Evaluate", "Deploy", "Operate", "Reference"]
-    whole = {name for name in members if policy.internal_to(name) == frozenset({"docs/"})}
+    assert [label for label, _ in journeys.order] == [
+        "Evaluate",
+        "Deploy",
+        "Operate",
+        "Reference",
+    ]
+    whole = {
+        name for name in members if policy.internal_to(name) == frozenset({"docs/"})
+    }
     assert whole == {
         "scalo-rs",
         "scalo-py",
@@ -463,13 +503,23 @@ def test_placements_are_keyed_by_doc_id_under_the_member_mount(
             "../../assets/flow.PNG",
             f"https://raw.githubusercontent.com/{REPO}/2.2.0/assets/flow.PNG",
         ),
-        ("../plans/next.md", f"https://github.com/{REPO}/blob/2.2.0/docs/plans/next.md"),
+        (
+            "../plans/next.md",
+            f"https://github.com/{REPO}/blob/2.2.0/docs/plans/next.md",
+        ),
         ("<../../README.md>", f"<https://github.com/{REPO}/blob/2.2.0/README.md>"),
-        ("../../a.md?plain=1#x", f"https://github.com/{REPO}/blob/2.2.0/a.md?plain=1#x"),
+        (
+            "../../a.md?plain=1#x",
+            f"https://github.com/{REPO}/blob/2.2.0/a.md?plain=1#x",
+        ),
     ],
 )
-def test_a_link_that_leaves_docs_points_at_github_at_the_ref(target: str, expected: str) -> None:
-    assert aggregate.relink(target, doc_dir="docs/deployment", repo=REPO, ref="2.2.0") == (
+def test_a_link_that_leaves_docs_points_at_github_at_the_ref(
+    target: str, expected: str
+) -> None:
+    assert aggregate.relink(
+        target, doc_dir="docs/deployment", repo=REPO, ref="2.2.0"
+    ) == (
         expected,
         False,
     )
@@ -482,22 +532,35 @@ def test_a_link_that_leaves_docs_points_at_github_at_the_ref(target: str, expect
             "../testing-cycle.md#msk",
             f"https://github.com/{REPO}/blob/2.2.1/docs/testing-cycle.md#msk",
         ),
-        ("../archive/old.md", f"https://github.com/{REPO}/blob/2.2.1/docs/archive/old.md"),
+        (
+            "../archive/old.md",
+            f"https://github.com/{REPO}/blob/2.2.1/docs/archive/old.md",
+        ),
         ("../archive/", f"https://github.com/{REPO}/tree/2.2.1/docs/archive"),
         (
             "../archive/flow.png",
             f"https://raw.githubusercontent.com/{REPO}/2.2.1/docs/archive/flow.png",
         ),
-        ("/docs/testing-cycle.md", f"https://github.com/{REPO}/blob/2.2.1/docs/testing-cycle.md"),
+        (
+            "/docs/testing-cycle.md",
+            f"https://github.com/{REPO}/blob/2.2.1/docs/testing-cycle.md",
+        ),
         ("../archived.md", "../archived.md"),
         ("aws.md", "aws.md"),
         ("../pipeline/", f"https://github.com/{REPO}/tree/2.2.1/docs/pipeline"),
         ("../pipeline/routing.md", "../pipeline/routing.md"),
-        ("../pipeline/README.md", f"https://github.com/{REPO}/blob/2.2.1/docs/pipeline/README.md"),
+        (
+            "../pipeline/README.md",
+            f"https://github.com/{REPO}/blob/2.2.1/docs/pipeline/README.md",
+        ),
     ],
 )
-def test_a_link_to_an_internal_page_points_at_github(target: str, expected: str) -> None:
-    internal = frozenset({"docs/testing-cycle.md", "docs/archive/", "docs/pipeline/README.md"})
+def test_a_link_to_an_internal_page_points_at_github(
+    target: str, expected: str
+) -> None:
+    internal = frozenset(
+        {"docs/testing-cycle.md", "docs/archive/", "docs/pipeline/README.md"}
+    )
     relinked = aggregate.relink(
         target, doc_dir="docs/deployment", repo=REPO, ref="2.2.1", internal=internal
     )
@@ -516,7 +579,9 @@ def test_a_link_to_an_internal_page_points_at_github(target: str, expected: str)
         ("docs/AUTOSCALING.md", False),
     ],
 )
-def test_an_internal_key_matches_either_case_of_the_file(repo_path: str, expected: bool) -> None:
+def test_an_internal_key_matches_either_case_of_the_file(
+    repo_path: str, expected: bool
+) -> None:
     internal = frozenset({"docs/testing-cycle.md", "docs/archive/"})
     assert aggregate.is_internal(repo_path, internal) is expected
 
@@ -531,7 +596,9 @@ def test_an_internal_key_matches_either_case_of_the_file(repo_path: str, expecte
         ("dfe-infra/other", "Deploy / Default"),
     ],
 )
-def test_a_placement_key_places_both_spellings_of_a_page(doc_id: str, expected: str) -> None:
+def test_a_placement_key_places_both_spellings_of_a_page(
+    doc_id: str, expected: str
+) -> None:
     placements = {
         "dfe-infra/": "Deploy / Default",
         "dfe-infra/autoscaling": "Operate / Scaling",
@@ -597,7 +664,9 @@ def test_a_placement_key_places_both_spellings_of_a_page(doc_id: str, expected: 
 def test_a_link_to_the_sites_own_pages_stays_on_the_site(
     doc_dir: str, target: str, mount: str, expected: str
 ) -> None:
-    assert aggregate.relink(target, doc_dir=doc_dir, repo=REPO, ref="2.2.0", mount=mount) == (
+    assert aggregate.relink(
+        target, doc_dir=doc_dir, repo=REPO, ref="2.2.0", mount=mount
+    ) == (
         expected,
         False,
     )
@@ -630,13 +699,18 @@ def test_links_inside_code_stay_as_written() -> None:
     )
     lines = new.splitlines()
     blob = f"https://github.com/{REPO}/blob/v1"
-    assert lines[0] == f"See [the chart]({blob}/helm/charts/x/values.yaml) and [aws](aws.md)."
+    assert (
+        lines[0]
+        == f"See [the chart]({blob}/helm/charts/x/values.yaml) and [aws](aws.md)."
+    )
     assert lines[1] == "Code `[not](../../README.md)` stays."
     assert lines[3] == "echo [x](../../README.md)"
     assert lines[6] == "[x](../../README.md)"
     assert lines[8] == "[still code](../../README.md)"
     raw = f"https://raw.githubusercontent.com/{REPO}/v1"
-    assert lines[10] == f'<img src="{raw}/logo.svg"> <a href="{blob}/LICENSE">licence</a>'
+    assert (
+        lines[10] == f'<img src="{raw}/logo.svg"> <a href="{blob}/LICENSE">licence</a>'
+    )
     assert lines[11] == f"[ref]: {blob}/CONTRIBUTING.md"
     assert lines[12] == "[out](../../../elsewhere.md)"
     assert escaped == ["../../../elsewhere.md"]
@@ -670,7 +744,9 @@ def test_only_spec_descriptions_are_escaped() -> None:
                 }
             }
         },
-        "components": {"schemas": {"Item": {"properties": {"description": {"type": "string"}}}}},
+        "components": {
+            "schemas": {"Item": {"properties": {"description": {"type": "string"}}}}
+        },
     }
     safe = aggregate.mdx_safe_spec(spec)
     operation = safe["paths"]["/items/{id}"]["get"]
@@ -682,14 +758,15 @@ def test_only_spec_descriptions_are_escaped() -> None:
 
 
 def test_leading_header_comments_go_so_the_h1_titles_the_page() -> None:
-    header = (
-        "<!--\nProject: x\nFile: docs/a.md\n-->\n\n<!-- second -->\n# Title\n\nBody <!-- kept -->\n"
-    )
+    header = "<!--\nProject: x\nFile: docs/a.md\n-->\n\n<!-- second -->\n# Title\n\nBody <!-- kept -->\n"
     dropped = aggregate.drop_leading_comments(header)
     assert dropped == "\n" * 6 + "# Title\n\nBody <!-- kept -->\n"
     assert dropped.splitlines().index("# Title") == header.splitlines().index("# Title")
     front = "---\nsidebar_position: 2\n---\n<!-- header -->\n# Title\n"
-    assert aggregate.drop_leading_comments(front) == "---\nsidebar_position: 2\n---\n\n# Title\n"
+    assert (
+        aggregate.drop_leading_comments(front)
+        == "---\nsidebar_position: 2\n---\n\n# Title\n"
+    )
 
 
 def test_a_page_without_a_leading_comment_is_unchanged() -> None:
@@ -773,7 +850,10 @@ def test_copying_skips_links_working_dirs_and_dotfiles(tmp_path: Path) -> None:
     member = Member("m", "o/m", "consumers", 10)
     findings = aggregate.copy_docs(docs, dest, member=member, ref="v2")
     assert checkout_files(dest) == ["README.md", "img/flow.png"]
-    assert "(https://github.com/o/m/blob/v2/src/main.py)" in (dest / "README.md").read_text()
+    assert (
+        "(https://github.com/o/m/blob/v2/src/main.py)"
+        in (dest / "README.md").read_text()
+    )
     assert findings == []
 
 
@@ -801,15 +881,26 @@ def test_copying_leaves_internal_pages_and_directories_out(tmp_path: Path) -> No
 
 @pytest.mark.parametrize(
     ("members", "expected"),
-    [({"member"}, ["README.md", "quick/a.md"]), ({"quick"}, "collide with members: quick")],
+    [
+        ({"member"}, ["README.md", "quick/a.md"]),
+        ({"quick"}, "collide with members: quick"),
+    ],
 )
 def test_the_root_pages_leave_editor_files_behind(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, members: set[str], expected: list[str] | str
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    members: set[str],
+    expected: list[str] | str,
 ) -> None:
     source = tmp_path / "content-root"
     write_tree(
         source,
-        {"README.md": "# O\n", "VOICE.md": "# V\n", "quick/a.md": "# A\n", "quick/VOICE.md": "#"},
+        {
+            "README.md": "# O\n",
+            "VOICE.md": "# V\n",
+            "quick/a.md": "# A\n",
+            "quick/VOICE.md": "#",
+        },
     )
     monkeypatch.setattr(aggregate, "CONTENT_ROOT", source)
     root = tmp_path / "build"
@@ -826,17 +917,25 @@ def test_the_root_pages_leave_editor_files_behind(
     ("link", "expected"),
     [
         pytest.param("../m/OPERATIONS.md", "../m/operations.md", id="renamed-lower"),
-        pytest.param("../m/ops/Guide.md#run", "../m/ops/guide.md#run", id="dir-and-fragment"),
-        pytest.param("<../M/operations.md>", "<../m/operations.md>", id="bracketed-member"),
+        pytest.param(
+            "../m/ops/Guide.md#run", "../m/ops/guide.md#run", id="dir-and-fragment"
+        ),
+        pytest.param(
+            "<../M/operations.md>", "<../m/operations.md>", id="bracketed-member"
+        ),
         pytest.param("../m/ops/README.md", "../m/ops/index.md", id="landing-renamed"),
-        pytest.param("../m/README.md/x.md", "../m/README.md/x.md", id="landing-mid-path-left"),
+        pytest.param(
+            "../m/README.md/x.md", "../m/README.md/x.md", id="landing-mid-path-left"
+        ),
         pytest.param("../m/operations.md", "../m/operations.md", id="already-right"),
         pytest.param("../m/missing.md", "../m/missing.md", id="no-match-left"),
         pytest.param("../../outside.md", "../../outside.md", id="escapes-build"),
         pytest.param("https://x.io/A.md", "https://x.io/A.md", id="external"),
     ],
 )
-def test_root_page_links_take_the_builds_spelling(tmp_path: Path, link: str, expected: str) -> None:
+def test_root_page_links_take_the_builds_spelling(
+    tmp_path: Path, link: str, expected: str
+) -> None:
     root = tmp_path / "build"
     write_tree(
         root,
@@ -856,13 +955,17 @@ def test_the_preview_copies_saved_pages_and_removes_deleted_ones(
     preview = importlib.util.module_from_spec(preview_spec)
     preview_spec.loader.exec_module(preview)
     source = tmp_path / "content-root"
-    write_tree(source, {"README.md": "# O\n", "VOICE.md": "# V\n", "quick/a.md": "# A\n"})
+    write_tree(
+        source, {"README.md": "# O\n", "VOICE.md": "# V\n", "quick/a.md": "# A\n"}
+    )
     monkeypatch.setattr(preview.aggregate, "CONTENT_ROOT", source)
     build = tmp_path / "build"
     seen = preview.sync(build, {})
     assert checkout_files(build) == ["README.md", "quick/a.md"]
     (source / "quick" / "a.md").write_text("# A2\n", encoding="utf-8")
-    os.utime(source / "quick" / "a.md", (seen["quick/a.md"] + 5, seen["quick/a.md"] + 5))
+    os.utime(
+        source / "quick" / "a.md", (seen["quick/a.md"] + 5, seen["quick/a.md"] + 5)
+    )
     (source / "README.md").unlink()
     seen = preview.sync(build, seen)
     assert checkout_files(build) == ["quick/a.md"]
@@ -891,7 +994,9 @@ def test_a_tag_fetch_checks_out_docs_and_the_spec_at_the_tagged_commit(
     remotes: tuple[Path, str], tmp_path: Path
 ) -> None:
     root, commit = remotes
-    checkout = aggregate.Fetcher(tmp_path / "work", f"file://{root}").fetch("o/app", "v1.0.0")
+    checkout = aggregate.Fetcher(tmp_path / "work", f"file://{root}").fetch(
+        "o/app", "v1.0.0"
+    )
     assert checkout.commit == commit
     assert checkout_files(checkout.path) == [
         "docs/README.md",
@@ -940,7 +1045,9 @@ def test_a_global_git_config_cannot_redirect_the_fetch(
     home.mkdir()
     rewrite = f'[url "file:///nowhere/"]\n\tinsteadOf = file://{root}/\n'
     (home / ".gitconfig").write_text(rewrite, encoding="utf-8")
-    plain = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+    plain = {
+        key: value for key, value in os.environ.items() if not key.startswith("GIT_")
+    }
     plain |= {"HOME": str(home), "GIT_CONFIG_NOSYSTEM": "1"}
     plain.pop("XDG_CONFIG_HOME", None)
     control = subprocess.run(
@@ -975,7 +1082,9 @@ def test_assemble_lays_out_a_build(
         },
         "v2.0.0",
     )
-    make_repo(root, "o/fork", {"docs/README.md": "#", "docs/UPSTREAM_NAME.md": "#"}, "v3.0.0")
+    make_repo(
+        root, "o/fork", {"docs/README.md": "#", "docs/UPSTREAM_NAME.md": "#"}, "v3.0.0"
+    )
     make_repo(root, "o/own", {"docs/index.md": "# Own landing\n"}, "v4.0.0")
     members = [
         Member("app", "o/app", "toolchain", 10, "product"),
@@ -1020,8 +1129,18 @@ def test_assemble_lays_out_a_build(
     assert link in (tree / "dfe-engine" / "architecture.md").read_text()
     assert (tree / "README.md").is_file()
     assert (tree / "quickstart" / "docker.md").is_file()
-    assert [entry["name"] for entry in result.members] == ["app", "dfe-engine", "fork", "own"]
-    assert [entry["path"] for entry in result.members] == ["app", "dfe-engine", "fork", "own"]
+    assert [entry["name"] for entry in result.members] == [
+        "app",
+        "dfe-engine",
+        "fork",
+        "own",
+    ]
+    assert [entry["path"] for entry in result.members] == [
+        "app",
+        "dfe-engine",
+        "fork",
+        "own",
+    ]
     assert (tree / "own" / "index.md").read_text() == "# Own landing\n"
     assert (tree / "dfe-engine" / "index.md").read_text() == (
         f"{aggregate.SECTION_INDEX_MARK}\n# dfe-engine\n\nEvery page in the dfe-engine section.\n\n- [Arch](architecture.md)\n"
@@ -1037,24 +1156,44 @@ def test_assemble_lays_out_a_build(
 @pytest.mark.parametrize(
     ("refs", "parent_docs", "expected"),
     [
-        ({"ui": "v1.0.0", "hd": "v2.0.0"}, {}, ["ui/hd/README.md", "ui/hd/fork/README.md"]),
+        (
+            {"ui": "v1.0.0", "hd": "v2.0.0"},
+            {},
+            ["ui/hd/README.md", "ui/hd/fork/README.md"],
+        ),
         ({"hd": "v2.0.0"}, {}, ["hd/README.md", "hd/fork/README.md"]),
-        ({"ui": "v1.0.0", "hd": "v2.0.0"}, {"docs/hd/x.md": "# x\n"}, "ui/hd is already"),
+        (
+            {"ui": "v1.0.0", "hd": "v2.0.0"},
+            {"docs/hd/x.md": "# x\n"},
+            "ui/hd is already",
+        ),
     ],
 )
 def test_a_mounted_member_lands_inside_its_parent_when_the_parent_is_built(
-    tmp_path: Path, refs: dict[str, str], parent_docs: dict[str, str], expected: list[str] | str
+    tmp_path: Path,
+    refs: dict[str, str],
+    parent_docs: dict[str, str],
+    expected: list[str] | str,
 ) -> None:
     root = tmp_path / "remotes"
     make_repo(root, "o/ui", {"docs/README.md": "# UI\n", **parent_docs}, "v1.0.0")
     make_repo(
         root,
         "o/hd",
-        {"docs/README.md": "# HD\n", "docs/fork/README.md": "# Fork\n", "docs/guide.md": "#\n"},
+        {
+            "docs/README.md": "# HD\n",
+            "docs/fork/README.md": "# Fork\n",
+            "docs/guide.md": "#\n",
+        },
         "v2.0.0",
     )
-    members = [Member("hd", "o/hd", "ui", 10, "fork"), Member("ui", "o/ui", "ui", 11, "product")]
-    policy = aggregate.Policy(mounts={"hd": "ui"}, internal={"hd": frozenset({"docs/guide.md"})})
+    members = [
+        Member("hd", "o/hd", "ui", 10, "fork"),
+        Member("ui", "o/ui", "ui", 11, "product"),
+    ]
+    policy = aggregate.Policy(
+        mounts={"hd": "ui"}, internal={"hd": frozenset({"docs/guide.md"})}
+    )
     out = tmp_path / "content"
     out.mkdir()
     fetcher = aggregate.Fetcher(tmp_path / "work", f"file://{root}")
@@ -1066,7 +1205,9 @@ def test_a_mounted_member_lands_inside_its_parent_when_the_parent_is_built(
     result = aggregate.assemble(build, members, fetcher, out, policy)
     pages = [path for path in checkout_files(out / "9.9.9") if path.endswith(".md")]
     assert [page for page in pages if "hd/" in page] == expected
-    assert [entry["name"] for entry in result.members] == sorted(refs, key=["ui", "hd"].index)
+    assert [entry["name"] for entry in result.members] == sorted(
+        refs, key=["ui", "hd"].index
+    )
 
 
 @pytest.mark.parametrize(
@@ -1081,13 +1222,18 @@ def test_a_docs_pin_moves_the_docs_and_leaves_the_spec_at_the_release(
 ) -> None:
     root = tmp_path / "remotes"
     spec = {"openapi": "3.1.0", "info": {"title": "release"}}
-    files = {"docs/architecture.md": "# Arch at release\n", "openapi-spec/openapi.json": ""}
+    files = {
+        "docs/architecture.md": "# Arch at release\n",
+        "openapi-spec/openapi.json": "",
+    }
     files["openapi-spec/openapi.json"] = json.dumps(spec)
     make_repo(root, "o/dfe-engine", files, "v2.0.0")
     repo = root / "o/dfe-engine.git"
     (repo / "docs" / "architecture.md").write_text("# Arch fixed\n", encoding="utf-8")
     spec["info"]["title"] = "later"
-    (repo / "openapi-spec" / "openapi.json").write_text(json.dumps(spec), encoding="utf-8")
+    (repo / "openapi-spec" / "openapi.json").write_text(
+        json.dumps(spec), encoding="utf-8"
+    )
     git("-C", str(repo), "add", "-A")
     git("-C", str(repo), *GIT_IDENTITY, "commit", "-q", "-m", "docs fix")
     git("-C", str(repo), *GIT_IDENTITY, "tag", "-a", "docs-fix", "-m", "docs-fix")
@@ -1107,7 +1253,13 @@ def test_a_docs_pin_moves_the_docs_and_leaves_the_spec_at_the_release(
     [
         (
             {"ui": {"default": "J / S"}, "hd": {"default": "J / T", "fork/": "K / U"}},
-            {"ui/": "J / S", "ui/hd/": "J / T", "ui/hd/fork/": "K / U", "": "J / S", "README": ""},
+            {
+                "ui/": "J / S",
+                "ui/hd/": "J / T",
+                "ui/hd/fork/": "K / U",
+                "": "J / S",
+                "README": "",
+            },
         ),
         ({"ui": {"default": "J / S"}}, "hd publishes and has no placement"),
     ],
@@ -1117,14 +1269,21 @@ def test_assemble_places_every_published_member_and_skips_a_wholly_internal_one(
 ) -> None:
     root = tmp_path / "remotes"
     make_repo(root, "o/ui", {"docs/README.md": "# UI\n"}, "v1.0.0")
-    make_repo(root, "o/hd", {"docs/README.md": "# HD\n", "docs/fork/README.md": "#\n"}, "v2.0.0")
+    make_repo(
+        root,
+        "o/hd",
+        {"docs/README.md": "# HD\n", "docs/fork/README.md": "#\n"},
+        "v2.0.0",
+    )
     make_repo(root, "o/lib", {"docs/README.md": "# Lib\n"}, "v3.0.0")
     members = [
         Member("ui", "o/ui", "ui", 10, "product"),
         Member("hd", "o/hd", "ui", 11, "fork"),
         Member("lib", "o/lib", "libraries", 12, "oss"),
     ]
-    policy = aggregate.Policy(mounts={"hd": "ui"}, internal={"lib": frozenset({"docs/"})})
+    policy = aggregate.Policy(
+        mounts={"hd": "ui"}, internal={"lib": frozenset({"docs/"})}
+    )
     journeys = aggregate.Journeys(
         (("J", ("S", "T")), ("K", ("U",))),
         {**placement, "content-root": {"default": "J / S", "README.md": ""}},
@@ -1132,7 +1291,9 @@ def test_assemble_places_every_published_member_and_skips_a_wholly_internal_one(
     out = tmp_path / "content"
     out.mkdir()
     fetcher = aggregate.Fetcher(tmp_path / "work", f"file://{root}")
-    build = Build("9.9.9", "/v/9.9.9/", True, {"ui": "v1.0.0", "hd": "v2.0.0", "lib": "v3.0.0"})
+    build = Build(
+        "9.9.9", "/v/9.9.9/", True, {"ui": "v1.0.0", "hd": "v2.0.0", "lib": "v3.0.0"}
+    )
     if isinstance(expected, str):
         with pytest.raises(SystemExit, match=expected):
             aggregate.assemble(build, members, fetcher, out, policy, journeys)
@@ -1157,11 +1318,15 @@ def test_assemble_places_every_published_member_and_skips_a_wholly_internal_one(
         ("## only a subheading\n", "fallback"),
     ],
 )
-def test_a_page_title_comes_from_front_matter_then_the_first_h1(text: str, expected: str) -> None:
+def test_a_page_title_comes_from_front_matter_then_the_first_h1(
+    text: str, expected: str
+) -> None:
     assert aggregate.page_title(text, "fallback") == expected
 
 
-def test_a_section_index_lists_every_page_by_title_nested_by_directory(tmp_path: Path) -> None:
+def test_a_section_index_lists_every_page_by_title_nested_by_directory(
+    tmp_path: Path,
+) -> None:
     write_tree(
         tmp_path,
         {
@@ -1217,10 +1382,15 @@ def test_the_manifest_names_the_newest_listed_build() -> None:
     manifest = aggregate.site_manifest(results)
     assert manifest["newest"] == "2.3.0"
     assert [build["name"] for build in manifest["builds"]] == ["2.3.0", "2.2.0", "next"]
-    preview_only = aggregate.site_manifest([BuildResult(Build("next", "/next/", False, {}))])
+    preview_only = aggregate.site_manifest(
+        [BuildResult(Build("next", "/next/", False, {}))]
+    )
     assert preview_only["newest"] is None
     assert manifest["dropped"] == []
-    assert aggregate.site_manifest(results, {"2.1.0", "1.9.0"})["dropped"] == ["1.9.0", "2.1.0"]
+    assert aggregate.site_manifest(results, {"2.1.0", "1.9.0"})["dropped"] == [
+        "1.9.0",
+        "2.1.0",
+    ]
 
 
 @pytest.mark.parametrize(
@@ -1256,7 +1426,9 @@ def test_a_dropped_stack_redirects_to_the_same_path_in_the_newest(
 
 # --- the docs gate -------------------------------------------------------------------
 
-gate_spec = importlib.util.spec_from_file_location("docs_gate", SCRIPT.with_name("gate.py"))
+gate_spec = importlib.util.spec_from_file_location(
+    "docs_gate", SCRIPT.with_name("gate.py")
+)
 gate = importlib.util.module_from_spec(gate_spec)
 gate_spec.loader.exec_module(gate)
 GATE_PHRASES = gate.load_phrases(
@@ -1272,7 +1444,10 @@ EM_DASH = "\u2014"
         ('`a; b` and [x](http://a;b) &amp; <a href="x;y">ok</a>\n', []),
         ("Text\n```bash\nset -e; run\n```\n", []),
         ("---\ntitle: a; b\n---\n# T\n", []),
-        ("Leverage the seam.\n", [(1, "register", "seam"), (1, "register", "leverage")]),
+        (
+            "Leverage the seam.\n",
+            [(1, "register", "seam"), (1, "register", "leverage")],
+        ),
         ("Ships in 2.2.1-rc.7.\n", [(1, "process", "rc.N")]),
         ("It is expected to run.\n", [(1, "hedge", "is expected to")]),
         ("ElasticSearch output\n", [(1, "elasticsearch", "ElasticSearch")]),
@@ -1285,7 +1460,10 @@ EM_DASH = "\u2014"
         ("<!-- docs-gate: allow semicolon -- quoted -->\n\nA; b\n", []),
         ("A; b <!-- docs-gate: allow semicolon -- quoted -->\n", []),
         ("{/* docs-gate: allow semicolon -- quoted */} A; b\n", []),
-        ("<!-- docs-gate: allow semicolon -- x -->\nA; b\nC; d\n", [(3, "semicolon", ";")]),
+        (
+            "<!-- docs-gate: allow semicolon -- x -->\nA; b\nC; d\n",
+            [(3, "semicolon", ";")],
+        ),
         (
             f"<!-- docs-gate: off all -- maths -->\nA; b {EM_DASH} c\n<!-- docs-gate: on all -->\nE; f\n",
             [(4, "semicolon", ";")],
@@ -1294,7 +1472,10 @@ EM_DASH = "\u2014"
             "<!-- docs-gate: allow semicolon -->\nA; b\n",
             [(1, "marker", "no reason after --"), (2, "semicolon", ";")],
         ),
-        ("<!-- docs-gate: allow speling -- x -->\n", [(1, "marker", "unknown rule speling")]),
+        (
+            "<!-- docs-gate: allow speling -- x -->\n",
+            [(1, "marker", "unknown rule speling")],
+        ),
         (
             "<!-- docs-gate: skip semicolon -- x -->\n",
             [(1, "marker", "unknown verb 'skip' (allow, off or on)")],
@@ -1319,7 +1500,10 @@ def write_content(root: Path, pages: dict[str, str]) -> Path:
         {"name": "dfe-hyperdx", "repo": "o/dfe-hyperdx"},
     ]
     site = {"builds": [{"name": "1.0.0", "members": members, "openapi": None}]}
-    write_tree(root, {"site.json": json.dumps(site), **{f"1.0.0/{k}": v for k, v in pages.items()}})
+    write_tree(
+        root,
+        {"site.json": json.dumps(site), **{f"1.0.0/{k}": v for k, v in pages.items()}},
+    )
     return root
 
 
@@ -1334,7 +1518,10 @@ def write_content(root: Path, pages: dict[str, str]) -> Path:
             ["o/dfe-ui docs/a.md:3: semicolon"],
         ),
         (
-            {"dfe-ui/a.md": "# A\n\nOld; line.\n", "dfe-ui/dfe-hyperdx/b.md": "# B\nNew; one.\n"},
+            {
+                "dfe-ui/a.md": "# A\n\nOld; line.\n",
+                "dfe-ui/dfe-hyperdx/b.md": "# B\nNew; one.\n",
+            },
             1,
             ["o/dfe-hyperdx docs/b.md:2: semicolon"],
         ),
@@ -1356,7 +1543,14 @@ def test_the_gate_fails_only_on_findings_the_baseline_lacks(
     content = write_content(tmp_path / "pr", pages)
     summary = tmp_path / "summary.md"
     status = gate.main(
-        ["--content", str(content), "--baseline", str(baseline), "--summary", str(summary)]
+        [
+            "--content",
+            str(content),
+            "--baseline",
+            str(baseline),
+            "--summary",
+            str(summary),
+        ]
     )
     out = capsys.readouterr().out
     assert status == exit_code
@@ -1379,7 +1573,11 @@ def test_the_gate_fails_only_on_findings_the_baseline_lacks(
             ["--report-only", "--fail-on", "register"],
             1,
         ),
-        ({"dfe-ui/a.md": "# A\n\nOld; line.\n"}, ["--report-only", "--fail-on", "register"], 0),
+        (
+            {"dfe-ui/a.md": "# A\n\nOld; line.\n"},
+            ["--report-only", "--fail-on", "register"],
+            0,
+        ),
         (
             {
                 "dfe-ui/a.md": "# A\n\nSign in with Seam. <!-- docs-gate: allow register -- the vendor's name -->\n"
@@ -1485,7 +1683,10 @@ QUICKSTART = {
         "latest": ["docker compose -f oci://img-demo:latest up -d"],
         "pinned": ["docker compose -f oci://img-demo:1.0.5 up -d"],
     },
-    "notes": {"up": "Then point your browser to http://localhost:3000.", "demo": "Demo note."},
+    "notes": {
+        "up": "Then point your browser to http://localhost:3000.",
+        "demo": "Demo note.",
+    },
 }
 QUICKSTART_PACKS = [
     {
@@ -1543,7 +1744,9 @@ THEATRE = "- [Theatre and battlespace](https://hyperi.io/solutions/theatre-and-b
 def test_a_compose_release_replaces_the_pages_make_region(
     kind: str, form: str, packs: list, region: str
 ) -> None:
-    page = QUICKSTART_PAGE.replace("docker-quickstart: up", f"docker-quickstart: {kind}")
+    page = QUICKSTART_PAGE.replace(
+        "docker-quickstart: up", f"docker-quickstart: {kind}"
+    )
     text = aggregate.fill_quickstart(page, {**QUICKSTART, "packs": packs, "form": form})
     assert text == (
         f"Intro.\n\n<!-- docker-quickstart: {kind} -->\n<!-- landing -->\n{region}"
@@ -1560,8 +1763,12 @@ OLD_QUICKSTART = {
     "min_compose": "2.26.0",
     "console_url": "http://localhost:3000",
     "login": "docker run --rm img login",
-    "up": {"latest": ['docker run --rm -v "${PWD}:/dfe" img init', "docker compose up -d"]},
-    "demo": {"latest": ["docker run -v /var/run/docker.sock:/var/run/docker.sock img demo"]},
+    "up": {
+        "latest": ['docker run --rm -v "${PWD}:/dfe" img init', "docker compose up -d"]
+    },
+    "demo": {
+        "latest": ["docker run -v /var/run/docker.sock:/var/run/docker.sock img demo"]
+    },
 }
 
 
@@ -1571,7 +1778,10 @@ OLD_QUICKSTART = {
         (QUICKSTART, "compose"),
         (OLD_QUICKSTART, None),
         ({**QUICKSTART, "notes": {"up": "x"}}, "without min_engine"),
-        ({k: v for k, v in QUICKSTART.items() if k != "min_engine"}, "without min_engine"),
+        (
+            {k: v for k, v in QUICKSTART.items() if k != "min_engine"},
+            "without min_engine",
+        ),
         ({**QUICKSTART, "schema": 2, "packs": QUICKSTART_PACKS}, "compose"),
         ({**QUICKSTART, "schema": 2, "packs": [{"name": "x"}]}, "a pack without"),
         ({**QUICKSTART, "schema": 2, "packs": "cyber"}, "a pack without"),
@@ -1612,10 +1822,15 @@ def test_only_a_compose_release_fills_the_install_pages(
             aggregate.docker_quickstart(build, "2.2.3")
 
 
-@pytest.mark.parametrize("ref", ["bbf19bf1251aab1062276d2683baefdd894e4d7e", "main", ""])
+@pytest.mark.parametrize(
+    "ref", ["bbf19bf1251aab1062276d2683baefdd894e4d7e", "main", ""]
+)
 def test_only_a_release_tag_pin_fetches_a_quickstart(ref: str) -> None:
     build = aggregate.Build(
-        name="2.2.1", base_url="/v/2.2.1/", listed=True, refs={"dfe-docker": ref} if ref else {}
+        name="2.2.1",
+        base_url="/v/2.2.1/",
+        listed=True,
+        refs={"dfe-docker": ref} if ref else {},
     )
     assert aggregate.docker_quickstart(build, "2.2.1") is None
 
@@ -1630,7 +1845,10 @@ CLI_RENDERED = (
 
 
 def fake_run(
-    stdout: str = CLI_RENDERED, returncode: int = 0, stderr: str = "", tag: str = "v1.22.89"
+    stdout: str = CLI_RENDERED,
+    returncode: int = 0,
+    stderr: str = "",
+    tag: str = "v1.22.89",
 ) -> object:
     def run(cmd: list[str]) -> subprocess.CompletedProcess:
         assert cmd[:4] == ["docker", "run", "--rm", "--entrypoint"]
@@ -1644,16 +1862,36 @@ DOCKER_STDERR = (
     "Unable to find image 'x' locally\n"
     "docker: Error response from daemon: manifest unknown\nRun 'docker run --help'"
 )
-OLD_ENGINE_STDERR = "Traceback\nImportError: cannot import name 'build_cli' from 'dfe_engine.cli'"
+OLD_ENGINE_STDERR = (
+    "Traceback\nImportError: cannot import name 'build_cli' from 'dfe_engine.cli'"
+)
 
 
 @pytest.mark.parametrize(
     ("stdout", "returncode", "stderr", "error", "match"),
     [
         (CLI_RENDERED, 0, "", None, ""),
-        ("", 125, DOCKER_STDERR, cli_reference.ImageError, "Error response from daemon"),
-        ("", 1, OLD_ENGINE_STDERR, cli_reference.RenderError, "ImportError: cannot import"),
-        ("usage: typer\n", 0, "", cli_reference.RenderError, "no command group rendered"),
+        (
+            "",
+            125,
+            DOCKER_STDERR,
+            cli_reference.ImageError,
+            "Error response from daemon",
+        ),
+        (
+            "",
+            1,
+            OLD_ENGINE_STDERR,
+            cli_reference.RenderError,
+            "ImportError: cannot import",
+        ),
+        (
+            "usage: typer\n",
+            0,
+            "",
+            cli_reference.RenderError,
+            "no command group rendered",
+        ),
     ],
     ids=["rendered", "docker-failed", "older-engine", "no-groups"],
 )
@@ -1666,7 +1904,9 @@ def test_cli_render_tells_docker_failures_from_engine_ones(
         return
     with pytest.raises(error, match=match) as raised:
         cli_reference.render("v1.22.89", run)
-    assert isinstance(raised.value, cli_reference.ImageError) == (error is cli_reference.ImageError)
+    assert isinstance(raised.value, cli_reference.ImageError) == (
+        error is cli_reference.ImageError
+    )
 
 
 @pytest.mark.parametrize(
@@ -1719,7 +1959,9 @@ def test_cli_page_is_a_finding_without_docker_or_a_rendering_engine(
     assert findings == [Finding("dfe-engine", "reference/cli.md", Rule.NO_CLI, reason)]
     assert not (dest / "reference" / "cli.md").exists()
     monkeypatch.setattr(aggregate, "_run", fake_run("", 125, DOCKER_STDERR))
-    with pytest.raises(aggregate.FetchError, match="Error response from daemon: manifest unknown"):
+    with pytest.raises(
+        aggregate.FetchError, match="Error response from daemon: manifest unknown"
+    ):
         place_cli("v1.22.89", root, dest, [])
     monkeypatch.setattr(aggregate.shutil, "which", lambda name: None)
     findings = []
@@ -1730,7 +1972,9 @@ def test_cli_page_is_a_finding_without_docker_or_a_rendering_engine(
         place_cli("v1.22.89", root, dest, [])
 
 
-KEDA_PAGE = "Intro.\n\n<!-- dfe-keda-table -->\n| old |\n<!-- /dfe-keda-table -->\n\nAfter.\n"
+KEDA_PAGE = (
+    "Intro.\n\n<!-- dfe-keda-table -->\n| old |\n<!-- /dfe-keda-table -->\n\nAfter.\n"
+)
 KEDA_TABLE = "| App | Profile |\n|---|---|\n| `dfe-loader` | `scale` |\n"
 KEDA_FILLED = f"Intro.\n\n<!-- dfe-keda-table -->\n{KEDA_TABLE}<!-- /dfe-keda-table -->\n\nAfter.\n"
 KEDA_UNCLOSED = "Intro.\n\n<!-- dfe-keda-table -->\n| old |\n\nAfter.\n"
@@ -1758,7 +2002,9 @@ def test_a_generated_table_fills_only_a_closed_region(
     assert aggregate.fill_generated(page, tables) == expected
 
 
-@pytest.mark.parametrize(("with_table", "expected"), [(True, KEDA_FILLED), (False, KEDA_PAGE)])
+@pytest.mark.parametrize(
+    ("with_table", "expected"), [(True, KEDA_FILLED), (False, KEDA_PAGE)]
+)
 def test_a_member_page_takes_the_table_from_dfe_infra_at_the_builds_ref(
     remotes: tuple[Path, str], tmp_path: Path, with_table: bool, expected: str
 ) -> None:
@@ -1772,12 +2018,16 @@ def test_a_member_page_takes_the_table_from_dfe_infra_at_the_builds_ref(
         Member("dfe-engine", "o/dfe-engine", "consumers", 10, "product"),
         Member("dfe-infra", "o/dfe-infra", "deploy", 11, "product"),
     ]
-    build = Build("9.9.9", "/v/9.9.9/", True, {"dfe-engine": "v2.0.0", "dfe-infra": "9.9.9"})
+    build = Build(
+        "9.9.9", "/v/9.9.9/", True, {"dfe-engine": "v2.0.0", "dfe-infra": "9.9.9"}
+    )
     out = tmp_path / "content"
     out.mkdir()
     fetcher = aggregate.Fetcher(tmp_path / "work", f"file://{root}")
     aggregate.assemble(build, members, fetcher, out)
-    assert (out / "9.9.9" / "dfe-engine" / "keda.md").read_text(encoding="utf-8") == expected
+    assert (out / "9.9.9" / "dfe-engine" / "keda.md").read_text(
+        encoding="utf-8"
+    ) == expected
 
 
 def test_a_dfe_infra_ref_older_than_a_table_fills_nothing(tmp_path: Path) -> None:
@@ -1797,7 +2047,9 @@ def test_a_checkout_made_with_other_sparse_paths_is_fetched_again(
     root, _ = remotes
     work = tmp_path / "work"
     first = aggregate.Fetcher(work, f"file://{root}").fetch("o/app", "v1.0.0")
-    (first.path / ".git" / "info" / "sparse-checkout").write_text("/docs/\n", encoding="utf-8")
+    (first.path / ".git" / "info" / "sparse-checkout").write_text(
+        "/docs/\n", encoding="utf-8"
+    )
     (root / "o" / "app.git").rename(root / "o" / "gone.git")
     with pytest.raises(aggregate.FetchError):
         aggregate.Fetcher(work, f"file://{root}").fetch("o/app", "v1.0.0")
@@ -1808,9 +2060,14 @@ def _pin(tmp_path: Path, fetched: dict[str, str]) -> list:
     site_file = tmp_path / "site.json"
     site_file.write_text(json.dumps(site), encoding="utf-8")
     builds = [
-        aggregate.Build(name="2.2.1", base_url="/v/2.2.1/", listed=True, refs={"x": "v1"}),
         aggregate.Build(
-            name="next", base_url="/next/", listed=False, refs={"x": "HEAD", "y": "HEAD"}
+            name="2.2.1", base_url="/v/2.2.1/", listed=True, refs={"x": "v1"}
+        ),
+        aggregate.Build(
+            name="next",
+            base_url="/next/",
+            listed=False,
+            refs={"x": "HEAD", "y": "HEAD"},
         ),
     ]
     return aggregate.pin_next(builds, site_file)

@@ -1,7 +1,6 @@
-# Ruff config for scripts/. Standalone, because dfe-infra ships no Python package.
+# Ruff config for the repo's Python. Standalone, because dfe-infra ships no Python package.
 
-# The scripts are wrapped by hand at 100, and CI runs ruff check only.
-line-length = 100
+line-length = 88
 target-version = "py314"
 
 # These CLIs carry no .py suffix, so without this ruff never reads them and an

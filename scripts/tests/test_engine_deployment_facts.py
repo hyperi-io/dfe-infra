@@ -93,7 +93,9 @@ def nested(dotted: dict[str, object]) -> dict:
 
 def deployment(docs: list[dict], name: str = ENGINE) -> dict:
     return next(
-        d for d in docs if d.get("kind") == "Deployment" and d["metadata"]["name"] == name
+        d
+        for d in docs
+        if d.get("kind") == "Deployment" and d["metadata"]["name"] == name
     )
 
 
@@ -110,7 +112,9 @@ def literal_env(profile: str = "slim", **options: object) -> dict[str, str]:
     """The literal env dfe-extras hands the engine, from its dfe-engine-env ConfigMap."""
     docs = render_extras(ENGINE, profile, "local", **options)
     return next(
-        d for d in docs if d.get("kind") == "ConfigMap" and d["metadata"]["name"] == f"{ENGINE}-env"
+        d
+        for d in docs
+        if d.get("kind") == "ConfigMap" and d["metadata"]["name"] == f"{ENGINE}-env"
     )["data"]
 
 
@@ -163,7 +167,8 @@ def test_the_profile_comes_from_the_annotation_that_picks_the_values_file() -> N
         )
     expect(
         "which is the annotation profile-<x>.yaml is selected by",
-        f'profile-{{{{ index .metadata.annotations "{PROFILE_ANNOTATION}" }}}}.yaml' in text,
+        f'profile-{{{{ index .metadata.annotations "{PROFILE_ANNOTATION}" }}}}.yaml'
+        in text,
         "the values-file selector no longer reads that annotation",
     )
 
@@ -198,7 +203,8 @@ def test_the_manifest_reaches_the_engine() -> None:
             (
                 d
                 for d in docs
-                if d.get("kind") == "ConfigMap" and d["metadata"]["name"] == CATALOGUE_CONFIGMAP
+                if d.get("kind") == "ConfigMap"
+                and d["metadata"]["name"] == CATALOGUE_CONFIGMAP
             ),
             None,
         )
@@ -226,11 +232,17 @@ def test_the_engine_reads_the_manifest_off_that_configmap() -> None:
     volume = next((v for v in spec["volumes"] if v["name"] == "app-catalogue"), None)
     expect(
         "the catalogue volume is the rendered ConfigMap",
-        volume is not None and volume.get("configMap", {}).get("name") == CATALOGUE_CONFIGMAP,
+        volume is not None
+        and volume.get("configMap", {}).get("name") == CATALOGUE_CONFIGMAP,
         f"got {volume!r}",
     )
     mount = next(
-        (m for m in spec["containers"][0]["volumeMounts"] if m["name"] == "app-catalogue"), None
+        (
+            m
+            for m in spec["containers"][0]["volumeMounts"]
+            if m["name"] == "app-catalogue"
+        ),
+        None,
     )
     expect(
         "and it is mounted where the env var looks",
@@ -278,7 +290,9 @@ def test_an_auth_configmap_edit_can_reach_the_engine() -> None:
 def test_an_unset_auth_configmap_is_not_mounted() -> None:
     """A deployment that supplies no auth ConfigMap gives the pod nothing to wait on."""
     for profile, cloud in CELLS:
-        volumes = {v["name"]: v for v in pod_spec(golden(ENGINE, profile, cloud))["volumes"]}
+        volumes = {
+            v["name"]: v for v in pod_spec(golden(ENGINE, profile, cloud))["volumes"]
+        }
         for key, volume in AUTH_VOLUMES.items():
             source = volumes.get(volume, {})
             expect(
@@ -293,7 +307,9 @@ def test_the_engine_gets_a_boot_budget() -> None:
     suspends liveness while a startupProbe runs."""
     container = pod_spec(golden(ENGINE, "slim", "local"))["containers"][0]
     probe = container.get("startupProbe")
-    expect("the engine container has a startupProbe", probe is not None, "none rendered")
+    expect(
+        "the engine container has a startupProbe", probe is not None, "none rendered"
+    )
     if probe:
         expect(
             "and it targets the health port and path the liveness probe uses",
@@ -322,7 +338,9 @@ def test_the_keda_shim_gets_a_boot_budget() -> None:
     liveness gave up at about 28s, so every start was killed before it listened."""
     container = shim_container()
     probe = container.get("startupProbe")
-    expect("the keda-shim container has a startupProbe", probe is not None, "none rendered")
+    expect(
+        "the keda-shim container has a startupProbe", probe is not None, "none rendered"
+    )
     if probe:
         expect(
             "and it targets the liveness path on the shim's own port",
@@ -343,7 +361,9 @@ def test_the_keda_shim_has_room_for_the_engine_image() -> None:
     limit = mebibytes(resources["limits"]["memory"])
     request = mebibytes(resources["requests"]["memory"])
     expect("the shim's memory limit is at least 256Mi", limit >= 256, f"got {limit}Mi")
-    expect("and its request covers the resident size", request >= 128, f"got {request}Mi")
+    expect(
+        "and its request covers the resident size", request >= 128, f"got {request}Mi"
+    )
 
 
 def test_an_external_tls_clickhouse_is_expressible() -> None:
@@ -394,7 +414,8 @@ def test_an_external_tls_clickhouse_is_expressible() -> None:
 def test_the_token_lifetime_is_a_dial() -> None:
     expect(
         "unset leaves the engine's own default",
-        "DFE_ENGINE_API_JWT_EXPIRE_MINUTES" not in engine_env(golden(ENGINE, "slim", "local")),
+        "DFE_ENGINE_API_JWT_EXPIRE_MINUTES"
+        not in engine_env(golden(ENGINE, "slim", "local")),
         "the variable was rendered with nothing behind it",
     )
     shortened = literal_env(overlay=nested({"api.jwtExpireMinutes": 15}))
@@ -422,8 +443,11 @@ def test_an_unset_auth_dial_renders_no_variable() -> None:
         env = engine_env(golden(ENGINE, profile, cloud))
         for key, name in AUTH_DIALS.items():
             got = env.get(name)
-            expect(f"{profile}/{cloud}: unset {key} renders no {name}", name not in env,
-                   f"got {got!r}")
+            expect(
+                f"{profile}/{cloud}: unset {key} renders no {name}",
+                name not in env,
+                f"got {got!r}",
+            )
 
 
 def test_each_auth_dial_reaches_the_engine() -> None:
@@ -440,7 +464,11 @@ def test_each_auth_dial_reaches_the_engine() -> None:
     env = engine_env(render_app(ENGINE, "slim", "local", overlay=nested(sets)))
     for key, value in sets.items():
         name = AUTH_DIALS[key]
-        expect(f"{key}={value} renders {name}", env.get(name) == value, f"got {env.get(name)!r}")
+        expect(
+            f"{key}={value} renders {name}",
+            env.get(name) == value,
+            f"got {env.get(name)!r}",
+        )
 
 
 def test_a_zero_key_lifetime_is_rendered_not_dropped() -> None:
@@ -458,14 +486,21 @@ def test_a_count_from_a_values_file_renders_whole() -> None:
         "auth.loginThrottle.enabled": True,
     }
     env = literal_env(overlay=nested(dials))
-    expect("maxSessionMinutes renders as whole minutes",
-           env.get("DFE_ENGINE_API_MAX_SESSION_MINUTES") == "1000000",
-           f"got {env.get('DFE_ENGINE_API_MAX_SESSION_MINUTES')!r}")
-    expect("maxDelaySeconds renders as whole seconds",
-           env.get("DFE_ENGINE_AUTH_LOGIN_THROTTLE_MAX_DELAY_SECONDS") == "900",
-           f"got {env.get('DFE_ENGINE_AUTH_LOGIN_THROTTLE_MAX_DELAY_SECONDS')!r}")
-    expect("a bare true renders true", env.get("DFE_ENGINE_AUTH_LOGIN_THROTTLE_ENABLED") == "true",
-           f"got {env.get('DFE_ENGINE_AUTH_LOGIN_THROTTLE_ENABLED')!r}")
+    expect(
+        "maxSessionMinutes renders as whole minutes",
+        env.get("DFE_ENGINE_API_MAX_SESSION_MINUTES") == "1000000",
+        f"got {env.get('DFE_ENGINE_API_MAX_SESSION_MINUTES')!r}",
+    )
+    expect(
+        "maxDelaySeconds renders as whole seconds",
+        env.get("DFE_ENGINE_AUTH_LOGIN_THROTTLE_MAX_DELAY_SECONDS") == "900",
+        f"got {env.get('DFE_ENGINE_AUTH_LOGIN_THROTTLE_MAX_DELAY_SECONDS')!r}",
+    )
+    expect(
+        "a bare true renders true",
+        env.get("DFE_ENGINE_AUTH_LOGIN_THROTTLE_ENABLED") == "true",
+        f"got {env.get('DFE_ENGINE_AUTH_LOGIN_THROTTLE_ENABLED')!r}",
+    )
 
 
 def test_a_value_the_engine_cannot_take_fails_the_render() -> None:
@@ -484,7 +519,11 @@ def test_a_value_the_engine_cannot_take_fails_the_render() -> None:
     )
     for key, value in cases:
         err = refusal(overlay=nested({key: value}))
-        expect(f"{key}={value!r} is refused naming {key}", key in err, f"refusal={err[-300:]!r}")
+        expect(
+            f"{key}={value!r} is refused naming {key}",
+            key in err,
+            f"refusal={err[-300:]!r}",
+        )
 
 
 FORWARDED_ENV = "DFE_ENGINE_API_FORWARDED_ALLOW_IPS"
@@ -498,11 +537,17 @@ def test_the_proxy_hops_default_to_the_deployments_pod_range() -> None:
     expect("common.yaml declares a pod range", bool(pod_cidr), f"got {pod_cidr!r}")
     for profile, cloud in CELLS:
         got = engine_env(golden(ENGINE, profile, cloud)).get(FORWARDED_ENV)
-        expect(f"{profile}/{cloud}: the deployment trusts that range", got == pod_cidr,
-               f"got {got!r}")
+        expect(
+            f"{profile}/{cloud}: the deployment trusts that range",
+            got == pod_cidr,
+            f"got {got!r}",
+        )
     moved = literal_env(infra={"networkModel": {"podCIDR": "10.42.0.0/16"}})
-    expect("and follows it when a deployment moves it",
-           moved.get(FORWARDED_ENV) == "10.42.0.0/16", f"got {moved.get(FORWARDED_ENV)!r}")
+    expect(
+        "and follows it when a deployment moves it",
+        moved.get(FORWARDED_ENV) == "10.42.0.0/16",
+        f"got {moved.get(FORWARDED_ENV)!r}",
+    )
 
 
 def test_a_named_hop_list_beats_the_pod_range() -> None:
@@ -534,21 +579,35 @@ def test_the_topic_size_reaches_the_engine_only_when_set() -> None:
     # layer2-apps.yaml hands the annotation over as a quoted string.
     managed = {**MANAGED_BROKER, TOPIC_SIZE_ANNOTATION: "8388608"}
     got = literal_env("single", annotations=managed).get(TOPIC_SIZE_ENV)
-    expect("the cluster secret's size reaches the container", got == "8388608", f"got {got!r}")
-    got = literal_env("single", annotations={TOPIC_SIZE_ANNOTATION: "8388608"}).get(TOPIC_SIZE_ENV)
+    expect(
+        "the cluster secret's size reaches the container",
+        got == "8388608",
+        f"got {got!r}",
+    )
+    got = literal_env("single", annotations={TOPIC_SIZE_ANNOTATION: "8388608"}).get(
+        TOPIC_SIZE_ENV
+    )
     expect("and does with no kafka_mode beside it", got == "8388608", f"got {got!r}")
     # A values file reads a number as a float64, which renders as 1.6777216e+07 bare.
     got = literal_env("single", overlay={"kafka": {"messageMaxBytes": 16777216}}).get(
         TOPIC_SIZE_ENV
     )
-    expect("a number from a values file renders as whole bytes", got == "16777216", f"got {got!r}")
+    expect(
+        "a number from a values file renders as whole bytes",
+        got == "16777216",
+        f"got {got!r}",
+    )
 
 
 def test_a_topic_size_that_is_not_bytes_fails_the_render() -> None:
     """A unit suffix would reach the engine as a setting it cannot parse."""
-    err = refusal("single", annotations={**MANAGED_BROKER, TOPIC_SIZE_ANNOTATION: "16MiB"})
+    err = refusal(
+        "single", annotations={**MANAGED_BROKER, TOPIC_SIZE_ANNOTATION: "16MiB"}
+    )
     expect(
-        "the render refuses it by name", "kafka.messageMaxBytes" in err, f"refusal={err[-300:]!r}"
+        "the render refuses it by name",
+        "kafka.messageMaxBytes" in err,
+        f"refusal={err[-300:]!r}",
     )
 
 
@@ -567,20 +626,30 @@ def test_the_topic_retention_reaches_the_engine_only_when_set() -> None:
         )
     managed = {**MANAGED_BROKER, TOPIC_RETENTION_ANNOTATION: "259200000"}
     got = literal_env("single", annotations=managed).get(TOPIC_RETENTION_ENV)
-    expect("the cluster secret's retention reaches the container",
-           got == "259200000", f"got {got!r}")
+    expect(
+        "the cluster secret's retention reaches the container",
+        got == "259200000",
+        f"got {got!r}",
+    )
     got = literal_env("single", overlay={"kafka": {"topicRetentionMs": 259200000}}).get(
         TOPIC_RETENTION_ENV
     )
-    expect("a number from a values file renders as whole milliseconds",
-           got == "259200000", f"got {got!r}")
+    expect(
+        "a number from a values file renders as whole milliseconds",
+        got == "259200000",
+        f"got {got!r}",
+    )
 
 
 def test_a_topic_retention_that_is_not_milliseconds_fails_the_render() -> None:
     """A unit suffix would reach the engine as a setting it cannot parse."""
-    err = refusal("single", annotations={**MANAGED_BROKER, TOPIC_RETENTION_ANNOTATION: "3d"})
+    err = refusal(
+        "single", annotations={**MANAGED_BROKER, TOPIC_RETENTION_ANNOTATION: "3d"}
+    )
     expect(
-        "the render refuses it by name", "kafka.topicRetentionMs" in err, f"refusal={err[-300:]!r}"
+        "the render refuses it by name",
+        "kafka.topicRetentionMs" in err,
+        f"refusal={err[-300:]!r}",
     )
 
 
@@ -604,8 +673,11 @@ def test_the_scale_tier_creates_source_topics_at_its_brokers_factor() -> None:
     )
     for cloud in CLOUDS:
         got = engine_env(golden(ENGINE, "scale", cloud)).get(TOPIC_RF_ENV)
-        expect(f"scale/{cloud}: the engine creates source topics at {broker_factor}",
-               got == str(broker_factor), f"got {got!r}")
+        expect(
+            f"scale/{cloud}: the engine creates source topics at {broker_factor}",
+            got == str(broker_factor),
+            f"got {got!r}",
+        )
 
 
 def test_a_single_broker_leaves_the_factor_to_the_engine() -> None:
@@ -614,20 +686,33 @@ def test_a_single_broker_leaves_the_factor_to_the_engine() -> None:
         if profile == "scale":
             continue
         got = engine_env(golden(ENGINE, profile, cloud)).get(TOPIC_RF_ENV)
-        expect(f"{profile}/{cloud} renders no replication factor", got is None, f"got {got!r}")
+        expect(
+            f"{profile}/{cloud} renders no replication factor",
+            got is None,
+            f"got {got!r}",
+        )
 
 
 def test_a_replication_factor_from_a_values_file_renders_whole() -> None:
     # A values file reads a number as a float64, not the string an appset hands over.
-    got = literal_env("single", overlay={"kafka": {"topicReplicationFactor": 3}}).get(TOPIC_RF_ENV)
-    expect("a number from a values file renders as a whole factor", got == "3", f"got {got!r}")
+    got = literal_env("single", overlay={"kafka": {"topicReplicationFactor": 3}}).get(
+        TOPIC_RF_ENV
+    )
+    expect(
+        "a number from a values file renders as a whole factor",
+        got == "3",
+        f"got {got!r}",
+    )
 
 
 def test_a_replication_factor_the_engine_cannot_take_fails_the_render() -> None:
     for value in (0, 2.5, "three"):
         err = refusal("single", overlay={"kafka": {"topicReplicationFactor": value}})
-        expect(f"kafka.topicReplicationFactor={value!r} is refused by name",
-               "kafka.topicReplicationFactor" in err, f"refusal={err[-300:]!r}")
+        expect(
+            f"kafka.topicReplicationFactor={value!r} is refused by name",
+            "kafka.topicReplicationFactor" in err,
+            f"refusal={err[-300:]!r}",
+        )
 
 
 ENSURE_TOPICS_ENV = "DFE_ENGINE_KAFKA_ENSURE_TOPICS"
@@ -638,11 +723,19 @@ def test_the_boot_topic_pass_is_turned_on_only_on_the_bus() -> None:
     deployment left to the derived default loses every source's topics on a broker
     rebuild, and a brokerless one has no broker to ask."""
     for mode in ("single", "cluster", "external"):
-        got = literal_env("single", infra={"kafka": {"mode": mode}}).get(ENSURE_TOPICS_ENV)
-        expect(f"kafka.mode={mode} turns the boot pass on", got == "true", f"got {got!r}")
+        got = literal_env("single", infra={"kafka": {"mode": mode}}).get(
+            ENSURE_TOPICS_ENV
+        )
+        expect(
+            f"kafka.mode={mode} turns the boot pass on", got == "true", f"got {got!r}"
+        )
     got = engine_env(render_app(ENGINE, "", "local")).get(ENSURE_TOPICS_ENV)
-    expect("an unset kafka.mode is the bus and turns it on", got == "true", f"got {got!r}")
-    got = literal_env("slim", infra={"kafka": {"mode": "disabled"}}).get(ENSURE_TOPICS_ENV)
+    expect(
+        "an unset kafka.mode is the bus and turns it on", got == "true", f"got {got!r}"
+    )
+    got = literal_env("slim", infra={"kafka": {"mode": "disabled"}}).get(
+        ENSURE_TOPICS_ENV
+    )
     expect("a brokerless deployment renders no dial", got is None, f"got {got!r}")
 
 

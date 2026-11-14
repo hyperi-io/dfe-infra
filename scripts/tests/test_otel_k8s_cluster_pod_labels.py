@@ -48,7 +48,12 @@ def render(*sets: str) -> tuple[dict, ...]:
     for item in sets:
         cmd += ["--set", item]
     out = subprocess.run(
-        cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False
+        cmd,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
     )
     assert out.returncode == 0, f"helm template failed for {sets}:\n{out.stderr}"
     return tuple(doc for doc in yaml.safe_load_all(out.stdout) if doc)
@@ -82,7 +87,9 @@ def only(docs: tuple[dict, ...], kind: str) -> dict:
 
 
 def test_the_k8s_cluster_pipeline_enriches_before_it_batches() -> None:
-    processors = gateway(default_render())["service"]["pipelines"][PIPELINE]["processors"]
+    processors = gateway(default_render())["service"]["pipelines"][PIPELINE][
+        "processors"
+    ]
     assert processors[0] == "memory_limiter", processors
     assert PROCESSOR in processors, processors
     assert processors.index(PROCESSOR) < processors.index("batch"), processors
@@ -139,7 +146,9 @@ def test_the_gateway_service_account_may_list_and_watch_pods() -> None:
         for rule in role["rules"]
         if "" in rule.get("apiGroups", []) and "pods" in rule.get("resources", [])
     ]
-    assert any({"get", "list", "watch"} <= set(rule["verbs"]) for rule in pod_rules), role["rules"]
+    assert any({"get", "list", "watch"} <= set(rule["verbs"]) for rule in pod_rules), (
+        role["rules"]
+    )
     assert binding["roleRef"] == {
         "apiGroup": "rbac.authorization.k8s.io",
         "kind": "ClusterRole",
@@ -153,7 +162,9 @@ def test_the_gateway_service_account_may_list_and_watch_pods() -> None:
 
 def test_allocatable_types_are_ones_a_node_reports() -> None:
     """A type the node does not report, such as storage, is skipped and emits nothing."""
-    types = gateway(default_render())["receivers"]["k8s_cluster"]["allocatable_types_to_report"]
+    types = gateway(default_render())["receivers"]["k8s_cluster"][
+        "allocatable_types_to_report"
+    ]
     assert set(types) <= NODE_ALLOCATABLE, types
 
 
@@ -177,7 +188,9 @@ def test_no_config_uses_the_deprecated_receiver_name() -> None:
 
 
 @pytest.mark.parametrize("project", ["dfe", "acme"])
-def test_the_gateway_pod_carries_its_part_of_label_outside_the_selector(project: str) -> None:
+def test_the_gateway_pod_carries_its_part_of_label_outside_the_selector(
+    project: str,
+) -> None:
     """The processor reads part-of off the pod, and a live Deployment refuses a changed selector."""
     deployment = only(render(f"project={project}"), "Deployment")
     labels = deployment["spec"]["template"]["metadata"]["labels"]
@@ -189,7 +202,9 @@ def test_the_gateway_pod_carries_its_part_of_label_outside_the_selector(project:
 
 
 @pytest.mark.parametrize("project", ["dfe", "acme"])
-def test_the_daemonset_pod_carries_its_part_of_label_outside_the_selector(project: str) -> None:
+def test_the_daemonset_pod_carries_its_part_of_label_outside_the_selector(
+    project: str,
+) -> None:
     """The processor reads part-of off the pod, and a live DaemonSet refuses a changed selector."""
     daemonset_doc = only(render(f"project={project}"), "DaemonSet")
     labels = daemonset_doc["spec"]["template"]["metadata"]["labels"]

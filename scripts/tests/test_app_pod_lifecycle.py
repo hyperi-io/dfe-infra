@@ -73,7 +73,11 @@ def label(where: tuple[str, ...]) -> str:
 
 
 def deployment(docs: list[dict], name: str) -> dict:
-    found = [d for d in docs if d.get("kind") == "Deployment" and d["metadata"]["name"] == name]
+    found = [
+        d
+        for d in docs
+        if d.get("kind") == "Deployment" and d["metadata"]["name"] == name
+    ]
     if len(found) != 1:
         raise SystemExit(f"expected one Deployment {name}, rendered {len(found)}")
     return found[0]
@@ -96,7 +100,11 @@ def files_at(pod: dict, container: dict, directory: str) -> tuple[set[str], list
     path is ever mounted from. A token source shows up by its path, so a
     projection that adds one fails the absence check rather than slipping by.
     """
-    names = {m["name"] for m in container.get("volumeMounts") or [] if m["mountPath"] == directory}
+    names = {
+        m["name"]
+        for m in container.get("volumeMounts") or []
+        if m["mountPath"] == directory
+    }
     files: set[str] = set()
     sources: list[dict] = []
     for volume in pod.get("volumes") or []:
@@ -105,7 +113,9 @@ def files_at(pod: dict, container: dict, directory: str) -> tuple[set[str], list
         for source in (volume.get("projected") or {}).get("sources") or []:
             sources.append(source)
             for kind in ("configMap", "downwardAPI", "secret"):
-                files |= {item["path"] for item in (source.get(kind) or {}).get("items") or []}
+                files |= {
+                    item["path"] for item in (source.get(kind) or {}).get("items") or []
+                }
             if "serviceAccountToken" in source:
                 files.add(source["serviceAccountToken"].get("path", "token"))
     return files, sources
@@ -128,7 +138,9 @@ def test_a_chart_value_moves_the_grace_including_to_zero() -> None:
         docs = dial("dfe-loader", {"terminationGracePeriodSeconds": value})
         got = pod_spec(docs, "dfe-loader").get("terminationGracePeriodSeconds")
         expect(
-            f"terminationGracePeriodSeconds={value} reaches the pod", got == value, f"got {got!r}"
+            f"terminationGracePeriodSeconds={value} reaches the pod",
+            got == value,
+            f"got {got!r}",
         )
 
 
@@ -144,7 +156,9 @@ def test_a_rotated_secret_restarts_every_app() -> None:
 
 
 def test_reload_can_be_turned_off_without_a_null_annotations_map() -> None:
-    metadata = deployment(dial("dfe-loader", {"reload": {"enabled": False}}), "dfe-loader")
+    metadata = deployment(
+        dial("dfe-loader", {"reload": {"enabled": False}}), "dfe-loader"
+    )
     expect(
         "reload.enabled=false renders no annotations key at all",
         "annotations" not in metadata["metadata"],
@@ -158,7 +172,8 @@ def test_no_app_pod_mounts_an_api_token() -> None:
             accounts = [d for d in docs if d.get("kind") == "ServiceAccount"]
             expect(
                 f"{app} on {label(where)} renders one ServiceAccount that mounts no token",
-                len(accounts) == 1 and accounts[0].get("automountServiceAccountToken") is False,
+                len(accounts) == 1
+                and accounts[0].get("automountServiceAccountToken") is False,
                 f"got {accounts!r}",
             )
             pod = pod_spec(docs, app)
@@ -208,7 +223,9 @@ def test_the_token_dial_turns_the_token_back_on_for_that_app() -> None:
     for container in pod["containers"]:
         files, _ = files_at(pod, container, SERVICE_ACCOUNT_DIR)
         mounts = [
-            m for m in container.get("volumeMounts") or [] if m["mountPath"] == SERVICE_ACCOUNT_DIR
+            m
+            for m in container.get("volumeMounts") or []
+            if m["mountPath"] == SERVICE_ACCOUNT_DIR
         ]
         expect(
             f"{container['name']} leaves the service-account path to the automount",
@@ -229,11 +246,14 @@ def test_the_engine_keeps_its_token() -> None:
     So only the engine's pod holds the engine's grants. Nothing else sits at the token's path.
     """
     for where, docs in goldens(CONTROL_PLANE):
-        accounts = {d["metadata"]["name"]: d for d in docs if d.get("kind") == "ServiceAccount"}
+        accounts = {
+            d["metadata"]["name"]: d for d in docs if d.get("kind") == "ServiceAccount"
+        }
         engine_account = accounts.get(CONTROL_PLANE, {})
         expect(
             f"{CONTROL_PLANE} on {label(where)} renders its own ServiceAccount, which mounts its token",
-            bool(engine_account) and engine_account.get("automountServiceAccountToken", True) is True,
+            bool(engine_account)
+            and engine_account.get("automountServiceAccountToken", True) is True,
             f"got {sorted(accounts)}",
         )
         workloads = [d for d in docs if d.get("kind") == "Deployment"]
@@ -251,7 +271,9 @@ def test_the_engine_keeps_its_token() -> None:
             # The pod's own setting wins; unset, the account's decides, and Kubernetes defaults it on.
             mounted = pod.get("automountServiceAccountToken")
             if mounted is None:
-                mounted = accounts.get(account, {}).get("automountServiceAccountToken", True)
+                mounted = accounts.get(account, {}).get(
+                    "automountServiceAccountToken", True
+                )
             on_engine_account = account == CONTROL_PLANE
             expect(
                 f"{at} runs as its own account",
@@ -286,7 +308,8 @@ def test_the_instance_id_files_are_there_and_the_token_is_not() -> None:
                 )
                 expect(
                     f"{at} sees no token there",
-                    "token" not in files and not any("serviceAccountToken" in s for s in sources),
+                    "token" not in files
+                    and not any("serviceAccountToken" in s for s in sources),
                     f"got {sorted(files)}",
                 )
                 config_maps = [s["configMap"] for s in sources if "configMap" in s]
@@ -316,7 +339,12 @@ def test_the_file_reader_catches_a_token() -> None:
                 "name": "sa",
                 "projected": {
                     "sources": [
-                        {"serviceAccountToken": {"path": "token", "expirationSeconds": 3607}}
+                        {
+                            "serviceAccountToken": {
+                                "path": "token",
+                                "expirationSeconds": 3607,
+                            }
+                        }
                     ]
                 },
             }
@@ -324,16 +352,25 @@ def test_the_file_reader_catches_a_token() -> None:
     }
     container = {"volumeMounts": [{"name": "sa", "mountPath": SERVICE_ACCOUNT_DIR}]}
     files, _ = files_at(pod, container, SERVICE_ACCOUNT_DIR)
-    expect("a projected token is read as a token file", "token" in files, f"got {sorted(files)}")
+    expect(
+        "a projected token is read as a token file",
+        "token" in files,
+        f"got {sorted(files)}",
+    )
 
 
 def test_every_app_container_knows_its_namespace() -> None:
     for app in APPS:
         for where, docs in goldens(app):
             for container in pod_spec(docs, app)["containers"]:
-                entries = [e for e in container.get("env") or [] if e["name"] == "POD_NAMESPACE"]
+                entries = [
+                    e
+                    for e in container.get("env") or []
+                    if e["name"] == "POD_NAMESPACE"
+                ]
                 paths = [
-                    e.get("valueFrom", {}).get("fieldRef", {}).get("fieldPath") for e in entries
+                    e.get("valueFrom", {}).get("fieldRef", {}).get("fieldPath")
+                    for e in entries
                 ]
                 expect(
                     f"{app}/{container['name']} on {label(where)} reads POD_NAMESPACE "

@@ -345,7 +345,9 @@ class AdminClient:
 """
 
 
-def run_smoke(fixture: dict, **env_overrides: str) -> tuple[subprocess.CompletedProcess, dict]:
+def run_smoke(
+    fixture: dict, **env_overrides: str
+) -> tuple[subprocess.CompletedProcess, dict]:
     """The smoke suite against a fixed ClickHouse reading, and the call counts."""
     with tempfile.TemporaryDirectory() as tmp:
         bindir = Path(tmp)
@@ -357,7 +359,9 @@ def run_smoke(fixture: dict, **env_overrides: str) -> tuple[subprocess.Completed
         counts_file = bindir / "counts.json"
         package = bindir / "py" / "confluent_kafka"
         (package / "admin").mkdir(parents=True)
-        (package / "__init__.py").write_text(FAKE_CONFLUENT_KAFKA, encoding="utf-8", newline="\n")
+        (package / "__init__.py").write_text(
+            FAKE_CONFLUENT_KAFKA, encoding="utf-8", newline="\n"
+        )
         admin = package / "admin" / "__init__.py"
         admin.write_text(FAKE_CONFLUENT_ADMIN, encoding="utf-8", newline="\n")
 
@@ -378,5 +382,9 @@ def run_smoke(fixture: dict, **env_overrides: str) -> tuple[subprocess.Completed
             env=env,
             check=False,
         )
-        counts = json.loads(counts_file.read_text(encoding="utf-8")) if counts_file.exists() else {}
+        counts = (
+            json.loads(counts_file.read_text(encoding="utf-8"))
+            if counts_file.exists()
+            else {}
+        )
         return out, counts

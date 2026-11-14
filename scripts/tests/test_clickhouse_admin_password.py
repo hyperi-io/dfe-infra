@@ -75,7 +75,12 @@ def server(profile: str, cloud: str) -> tuple[dict, ...]:
         f"appNamespace={APP_NS}",
     ]
     out = subprocess.run(
-        cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False
+        cmd,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
     )
     if out.returncode != 0:
         raise SystemExit(f"helm template failed for {profile}/{cloud}:\n{out.stderr}")
@@ -88,7 +93,9 @@ def of_kind(docs: tuple[dict, ...], kind: str) -> list[dict]:
 
 def secret_ref(entry: object) -> tuple[str | None, str | None]:
     """(secret, key) of one env entry; (None, None) for a literal or nothing."""
-    ref = ((entry if isinstance(entry, dict) else {}).get("valueFrom") or {}).get("secretKeyRef")
+    ref = ((entry if isinstance(entry, dict) else {}).get("valueFrom") or {}).get(
+        "secretKeyRef"
+    )
     return (ref.get("name"), ref.get("key")) if ref else (None, None)
 
 
@@ -107,7 +114,11 @@ def server_reads(docs: tuple[dict, ...]) -> tuple[str | None, str | None]:
 
 def writers(docs: tuple[dict, ...], secret: str | None) -> list[dict]:
     """Every ExternalSecret in the server's namespace that writes `secret`."""
-    return [d for d in of_kind(docs, "ExternalSecret") if d["spec"]["target"]["name"] == secret]
+    return [
+        d
+        for d in of_kind(docs, "ExternalSecret")
+        if d["spec"]["target"]["name"] == secret
+    ]
 
 
 def generator_of(es: dict) -> str | None:
@@ -151,7 +162,9 @@ def test_one_generated_password_that_cannot_be_reminted() -> None:
             )
             found = writers(docs, secret)
             expect(
-                f"{where}: one ExternalSecret writes {secret}", len(found) == 1, f"got {len(found)}"
+                f"{where}: one ExternalSecret writes {secret}",
+                len(found) == 1,
+                f"got {len(found)}",
             )
             if len(found) != 1:
                 continue
@@ -182,7 +195,11 @@ def test_the_apps_read_the_password_the_server_reads() -> None:
             docs = server(profile, cloud)
             secret, key = server_reads(docs)
             ces = app_copy(docs)
-            expect(f"{where}: the password is copied into {APP_NS}", ces is not None, "no copy")
+            expect(
+                f"{where}: the password is copied into {APP_NS}",
+                ces is not None,
+                "no copy",
+            )
             if ces is None:
                 continue
             spec = ces["spec"]["externalSecretSpec"]

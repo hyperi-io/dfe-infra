@@ -85,16 +85,18 @@ def test_the_engines_routing_is_left_as_published() -> None:
     shadowing = sorted(
         name
         for name in _env(docs)
-        if name.startswith(("DFE_TRANSFORM_ELASTIC_SOURCE_", "DFE_TRANSFORM_ELASTIC_SINK_"))
+        if name.startswith(
+            ("DFE_TRANSFORM_ELASTIC_SOURCE_", "DFE_TRANSFORM_ELASTIC_SINK_")
+        )
         and name != BROKERS_ENV
     )
     assert shadowing == []
 
 
 def test_the_deployment_owns_the_source_brokers() -> None:
-    owned = yaml.safe_load((REPO_ROOT / "apps.yaml").read_text(encoding="utf-8"))["apps"][
-        ELASTIC
-    ]["deployment_owned"]
+    owned = yaml.safe_load((REPO_ROOT / "apps.yaml").read_text(encoding="utf-8"))[
+        "apps"
+    ][ELASTIC]["deployment_owned"]
     assert owned["config.source.brokers"] == BROKERS_ENV
     overlay = {"config": {"source": {"brokers": ["chosen.example.test:9092"]}}}
     docs = _render(overlay, bootstrap="a.example.test:9092")

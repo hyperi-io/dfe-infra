@@ -56,7 +56,9 @@ def _declared_addresses() -> list[str]:
 
 
 def test_the_moved_file_exists_and_carries_blocks() -> None:
-    assert MOVED_FILE.is_file(), f"{MOVED_FILE} is the only place both addresses can be named"
+    assert MOVED_FILE.is_file(), (
+        f"{MOVED_FILE} is the only place both addresses can be named"
+    )
     assert _moved_pairs(), "moved.tf declares no moved block at all"
 
 
@@ -80,7 +82,8 @@ def test_every_block_moves_from_the_cluster_module_to_the_edge_module() -> None:
         if not old.startswith(OLD_MODULE) or not new.startswith(NEW_MODULE)
     ]
     assert not wrong, (
-        "a moved block must run from the cluster module to the edge module:\n" + "\n".join(wrong)
+        "a moved block must run from the cluster module to the edge module:\n"
+        + "\n".join(wrong)
     )
 
 
@@ -93,7 +96,9 @@ def test_every_block_keeps_the_resource_address_unchanged() -> None:
         for old, new in _moved_pairs()
         if old[len(OLD_MODULE) :] != new[len(NEW_MODULE) :]
     ]
-    assert not renamed, "a moved block renames a resource as well as moving it:\n" + "\n".join(renamed)
+    assert not renamed, (
+        "a moved block renames a resource as well as moving it:\n" + "\n".join(renamed)
+    )
 
 
 def test_no_address_is_claimed_twice() -> None:

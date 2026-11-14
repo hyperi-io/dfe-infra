@@ -72,19 +72,29 @@ def test_the_shipped_defaults_render_no_separate_controller_pool() -> None:
     """The cascade every rc.14 k8s deploy takes names no controllerPool, so it
     falls to the chart's own default and must come out combined."""
     pools = node_pools(render())
-    expect("exactly one KafkaNodePool at the shipped defaults", len(pools) == 1, sorted(pools))
+    expect(
+        "exactly one KafkaNodePool at the shipped defaults",
+        len(pools) == 1,
+        sorted(pools),
+    )
     name, pool = next(iter(pools.items()))
     expect("the one pool is the broker pool", name == "dfe-kafka-pool", name)
-    expect("it carries BOTH roles -- combined KRaft",
-           sorted(pool["spec"]["roles"]) == ["broker", "controller"], pool["spec"]["roles"])
+    expect(
+        "it carries BOTH roles -- combined KRaft",
+        sorted(pool["spec"]["roles"]) == ["broker", "controller"],
+        pool["spec"]["roles"],
+    )
 
 
 def test_no_controller_pool_manifest_of_any_kind_at_the_defaults() -> None:
     """Named separately from the roles check: a pool that rendered under a
     different kind or name would still re-form the quorum."""
     docs = render()
-    stray = [d["metadata"]["name"] for d in docs
-             if "controller" in str(d.get("metadata", {}).get("name", ""))]
+    stray = [
+        d["metadata"]["name"]
+        for d in docs
+        if "controller" in str(d.get("metadata", {}).get("name", ""))
+    ]
     expect("nothing named for a controller renders at the defaults", stray == [], stray)
 
 
@@ -96,14 +106,23 @@ def test_the_opt_in_really_does_split_the_pool() -> None:
     values.unlink()
     expect("two pools once the opt-in is on", len(pools) == 2, sorted(pools))
     controller = pools.get("dfe-kafka-controller")
-    expect("the controller pool renders under its own name", controller is not None, sorted(pools))
+    expect(
+        "the controller pool renders under its own name",
+        controller is not None,
+        sorted(pools),
+    )
     if controller is not None:
-        expect("it carries the controller role alone",
-               controller["spec"]["roles"] == ["controller"], controller["spec"]["roles"])
+        expect(
+            "it carries the controller role alone",
+            controller["spec"]["roles"] == ["controller"],
+            controller["spec"]["roles"],
+        )
     broker = pools.get("dfe-kafka-pool")
-    expect("the broker pool drops the controller role",
-           broker is not None and broker["spec"]["roles"] == ["broker"],
-           broker["spec"]["roles"] if broker else None)
+    expect(
+        "the broker pool drops the controller role",
+        broker is not None and broker["spec"]["roles"] == ["broker"],
+        broker["spec"]["roles"] if broker else None,
+    )
 
 
 def main() -> int:

@@ -27,7 +27,9 @@ SEED_APPS = ("dfe-receiver", "dfe-loader")
 MARKER = ".seeded-apps"
 
 
-def _run(tmp_path: Path, *, values: tuple[str, ...], marker: str | None) -> tuple[int, str, list[dict]]:
+def _run(
+    tmp_path: Path, *, values: tuple[str, ...], marker: str | None
+) -> tuple[int, str, list[dict]]:
     """Run the Job script against a deploy repo holding these overlays and this marker."""
     job = run_job(tmp_path, seed_apps=SEED_APPS, values=values, marker=marker)
     return job.returncode, job.output, job.writes
@@ -47,7 +49,9 @@ def test_a_repo_that_predates_the_marker_gains_one(tmp_path: Path) -> None:
 
 
 def test_a_marker_already_in_step_is_left_alone(tmp_path: Path) -> None:
-    rc, output, writes = _run(tmp_path, values=SEED_APPS, marker="dfe-loader\ndfe-receiver\n")
+    rc, output, writes = _run(
+        tmp_path, values=SEED_APPS, marker="dfe-loader\ndfe-receiver\n"
+    )
 
     assert rc == 0, output
     assert writes == []
@@ -65,7 +69,9 @@ def test_a_fresh_repo_is_seeded_then_marked(tmp_path: Path) -> None:
 
 
 def test_a_new_seed_app_reaches_a_marked_repo(tmp_path: Path) -> None:
-    rc, output, writes = _run(tmp_path, values=("dfe-receiver",), marker="dfe-receiver\n")
+    rc, output, writes = _run(
+        tmp_path, values=("dfe-receiver",), marker="dfe-receiver\n"
+    )
 
     assert rc == 0, output
     assert [w["path"] for w in writes if w["path"].startswith("values/")] == [
@@ -78,7 +84,9 @@ def test_a_new_seed_app_reaches_a_marked_repo(tmp_path: Path) -> None:
 
 def test_an_app_the_operator_removed_stays_removed(tmp_path: Path) -> None:
     # Deleting a values file is how an operator turns an app off.
-    rc, output, writes = _run(tmp_path, values=("dfe-receiver",), marker="dfe-loader\ndfe-receiver\n")
+    rc, output, writes = _run(
+        tmp_path, values=("dfe-receiver",), marker="dfe-loader\ndfe-receiver\n"
+    )
 
     assert rc == 0, output
     assert writes == []

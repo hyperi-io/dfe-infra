@@ -34,7 +34,9 @@ import profiles  # noqa: E402
 # The core data path: every profile stands these up with no further
 # configuration, so a fresh deploy ingests, loads, and serves the control plane
 # and the console.
-CORE_COMPOSITION = frozenset({"dfe-receiver", "dfe-loader", "dfe-engine", "dfe-ui", "dfe-hyperdx"})
+CORE_COMPOSITION = frozenset(
+    {"dfe-receiver", "dfe-loader", "dfe-engine", "dfe-ui", "dfe-hyperdx"}
+)
 
 # The leanest Compose tier runs the core data path alone.
 ARCHIVERLESS = "docker-slim"
@@ -100,7 +102,9 @@ def test_the_on_demand_apps_are_seeded_only_where_a_source_cannot_deploy_one() -
         for app in ON_DEMAND:
             if app in idle:
                 assert app in deployed, f"{app} not in {profile}"
-                assert composition.idle_when(app), f"{app} is seeded but declares no idle_when"
+                assert composition.idle_when(app), (
+                    f"{app} is seeded but declares no idle_when"
+                )
                 continue
             assert app not in deployed, f"{app} in {profile}"
 
@@ -114,7 +118,9 @@ def test_the_transforms_are_seeded_idle_rather_than_waiting_for_a_source() -> No
     for app in SEEDED_IDLE:
         assert composition.idle_when(app), f"{app} is seeded but declares no idle_when"
         for profile in SEEDED_IDLE_PROFILES:
-            assert app in composition.default_apps(profile), f"{app} not seeded in {profile}"
+            assert app in composition.default_apps(profile), (
+                f"{app} not seeded in {profile}"
+            )
 
 
 def test_culvert_is_offered_only_on_the_ha_tiers() -> None:
@@ -134,7 +140,9 @@ def test_the_seeded_set_is_exactly_the_manifests_default() -> None:
 
     for mode in profiles.MODES:
         path = REPO_ROOT / profiles.PROFILES[mode].argocd_values
-        values = YAML(typ="safe").load(path.read_text(encoding="utf-8", errors="replace"))
+        values = YAML(typ="safe").load(
+            path.read_text(encoding="utf-8", errors="replace")
+        )
         seeded = values["deployRepo"]["seedApps"]
         assert tuple(seeded) == composition.default_apps(mode), mode
 
@@ -288,7 +296,9 @@ def test_the_engine_snapshot_check_ignores_a_comment_only_difference(
         "# this repo's own re-render command, meaningless inside the engine image\n"
         "apps:\n  dfe-engine:\n    multiplicity: single\n",
     )
-    checkout = _snapshot_checkout(tmp_path, "apps:\n  dfe-engine:\n    multiplicity: single\n")
+    checkout = _snapshot_checkout(
+        tmp_path, "apps:\n  dfe-engine:\n    multiplicity: single\n"
+    )
     assert composition.check_engine_snapshot(str(checkout)) == 0
 
 
@@ -296,7 +306,9 @@ def test_an_unreadable_engine_snapshot_is_exit_2_not_1(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """A network or checkout failure is unverified, never reported as drift."""
-    _set_manifest(monkeypatch, tmp_path, "apps:\n  dfe-engine:\n    multiplicity: single\n")
+    _set_manifest(
+        monkeypatch, tmp_path, "apps:\n  dfe-engine:\n    multiplicity: single\n"
+    )
     empty_checkout = tmp_path / "no-such-snapshot-here"
     empty_checkout.mkdir()
     assert composition.check_engine_snapshot(str(empty_checkout)) == 2

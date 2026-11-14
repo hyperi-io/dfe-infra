@@ -70,15 +70,20 @@ def docs(text: str) -> list[dict]:
 
 
 def named(text: str, kind: str, name: str) -> list[dict]:
-    return [d for d in docs(text) if d.get("kind") == kind and d["metadata"]["name"] == name]
+    return [
+        d for d in docs(text) if d.get("kind") == kind and d["metadata"]["name"] == name
+    ]
 
 
 def test_engine_renders_identically_twice() -> None:
     """Every engine extra, not just the Secrets -- any drift here rolls a pod."""
     first = extras("dfe-engine")
     second = extras("dfe-engine")
-    expect("dfe-extras renders the engine's objects byte-identically twice", first == second,
-           "two renders of the same inputs differ")
+    expect(
+        "dfe-extras renders the engine's objects byte-identically twice",
+        first == second,
+        "two renders of the same inputs differ",
+    )
 
 
 def test_jwt_key_is_not_minted_by_the_template() -> None:
@@ -89,36 +94,59 @@ def test_jwt_key_is_not_minted_by_the_template() -> None:
     plain = named(out, "Secret", "dfe-engine-jwt")
     expect("the default renders the ESO generator", len(gens) == 1, f"got {len(gens)}")
     expect("the default renders the ExternalSecret", len(es) == 1, f"got {len(es)}")
-    expect("the default renders no template-minted Secret", plain == [], "a Secret rendered")
+    expect(
+        "the default renders no template-minted Secret",
+        plain == [],
+        "a Secret rendered",
+    )
     if es:
         spec = es[0]["spec"]
-        expect("the key is written once, not refreshed",
-               spec.get("refreshPolicy") == "CreatedOnce", f"got {spec.get('refreshPolicy')}")
-        expect("no refresh interval reopens the generator",
-               str(spec.get("refreshInterval")) == "0", f"got {spec.get('refreshInterval')}")
+        expect(
+            "the key is written once, not refreshed",
+            spec.get("refreshPolicy") == "CreatedOnce",
+            f"got {spec.get('refreshPolicy')}",
+        )
+        expect(
+            "no refresh interval reopens the generator",
+            str(spec.get("refreshInterval")) == "0",
+            f"got {spec.get('refreshInterval')}",
+        )
 
 
 def test_a_pinned_key_renders_that_key_and_nothing_else() -> None:
     out = extras("dfe-engine", "auth.jwtSecret=pinned-key-value")
     plain = named(out, "Secret", "dfe-engine-jwt")
     gens = named(out, "Password", "dfe-engine-jwt-gen")
-    expect("a pinned key renders one plain Secret", len(plain) == 1, f"got {len(plain)}")
+    expect(
+        "a pinned key renders one plain Secret", len(plain) == 1, f"got {len(plain)}"
+    )
     expect("a pinned key renders no generator", gens == [], "a generator rendered")
     if plain:
-        expect("the pinned key is the one rendered",
-               plain[0]["stringData"]["jwt-secret"] == "pinned-key-value",
-               f"got {plain[0]['stringData']}")
+        expect(
+            "the pinned key is the one rendered",
+            plain[0]["stringData"]["jwt-secret"] == "pinned-key-value",
+            f"got {plain[0]['stringData']}",
+        )
 
 
 def test_creation_can_be_handed_to_the_deployment() -> None:
     """A deployment supplying the Secret itself must get nothing from the chart."""
     out = extras("dfe-engine", "auth.jwtSecretCreate=false")
-    expect("jwtSecretCreate=false renders no generator",
-           named(out, "Password", "dfe-engine-jwt-gen") == [], "a generator rendered")
-    expect("jwtSecretCreate=false renders no ExternalSecret",
-           named(out, "ExternalSecret", "dfe-engine-jwt") == [], "an ExternalSecret rendered")
-    expect("jwtSecretCreate=false renders no Secret",
-           named(out, "Secret", "dfe-engine-jwt") == [], "a Secret rendered")
+    expect(
+        "jwtSecretCreate=false renders no generator",
+        named(out, "Password", "dfe-engine-jwt-gen") == [],
+        "a generator rendered",
+    )
+    expect(
+        "jwtSecretCreate=false renders no ExternalSecret",
+        named(out, "ExternalSecret", "dfe-engine-jwt") == [],
+        "an ExternalSecret rendered",
+    )
+    expect(
+        "jwtSecretCreate=false renders no Secret",
+        named(out, "Secret", "dfe-engine-jwt") == [],
+        "a Secret rendered",
+    )
 
 
 def render_fails(chart: Path, *sets: str) -> str:
@@ -143,32 +171,51 @@ def test_the_admin_password_is_minted_once_like_the_signing_key() -> None:
     ):
         gens = named(out, "Password", f"{secret}-gen")
         es = named(out, "ExternalSecret", secret)
-        expect(f"{secret} renders the ESO generator", len(gens) == 1, f"got {len(gens)}")
+        expect(
+            f"{secret} renders the ESO generator", len(gens) == 1, f"got {len(gens)}"
+        )
         expect(f"{secret} renders the ExternalSecret", len(es) == 1, f"got {len(es)}")
-        expect(f"{secret} renders no template-minted Secret",
-               named(out, "Secret", secret) == [], "a Secret rendered")
+        expect(
+            f"{secret} renders no template-minted Secret",
+            named(out, "Secret", secret) == [],
+            "a Secret rendered",
+        )
         if es:
             spec = es[0]["spec"]
-            expect(f"{secret} is written once, not refreshed",
-                   spec.get("refreshPolicy") == "CreatedOnce", f"got {spec.get('refreshPolicy')}")
-            expect(f"{secret} carries the key the engine reads",
-                   key in (spec["target"]["template"]["data"]), f"got {spec['target']}")
+            expect(
+                f"{secret} is written once, not refreshed",
+                spec.get("refreshPolicy") == "CreatedOnce",
+                f"got {spec.get('refreshPolicy')}",
+            )
+            expect(
+                f"{secret} carries the key the engine reads",
+                key in (spec["target"]["template"]["data"]),
+                f"got {spec['target']}",
+            )
 
 
 def test_the_seed_accounts_secret_no_longer_claims_the_admin_password() -> None:
     """Two Secrets each claiming to be the admin password is what #233 collapsed."""
-    out = extras("dfe-engine", "seedAuth.seedAccounts[0].username=alice",
-                 "seedAuth.seedAccounts[0].password=s3cret")
+    out = extras(
+        "dfe-engine",
+        "seedAuth.seedAccounts[0].username=alice",
+        "seedAuth.seedAccounts[0].password=s3cret",
+    )
     seed = named(out, "Secret", "dfe-engine-seed-accounts")
     expect("the seed-accounts Secret still renders", len(seed) == 1, f"got {len(seed)}")
     if seed:
-        expect("and carries only the named accounts",
-               list(seed[0]["stringData"]) == ["seed-accounts"], f"got {seed[0]['stringData']}")
+        expect(
+            "and carries only the named accounts",
+            list(seed[0]["stringData"]) == ["seed-accounts"],
+            f"got {seed[0]['stringData']}",
+        )
 
 
 def secret_ref(entry: object) -> tuple[str | None, str | None]:
     """(secret, key) of one effective env entry; (None, None) for a literal or nothing."""
-    ref = ((entry if isinstance(entry, dict) else {}).get("valueFrom") or {}).get("secretKeyRef")
+    ref = ((entry if isinstance(entry, dict) else {}).get("valueFrom") or {}).get(
+        "secretKeyRef"
+    )
     return (ref.get("name"), ref.get("key")) if ref else (None, None)
 
 
@@ -184,21 +231,32 @@ def test_the_engine_reads_the_minted_secret() -> None:
             if d.get("kind") == "ExternalSecret"
         }
         ref = secret_ref(env.get("DFE_ENGINE_AUTH_LOCAL_ADMIN_PASSWORD"))
-        expect(f"{where}: the admin password comes from the minted Secret",
-               ref == ("dfe-engine-admin", "admin-password") and ref[1] in minted.get(ref[0], {}),
-               f"got {ref}, minted {sorted(minted)}")
-        expect(f"{where}: the Secret is named for the login page's fetch command",
-               env.get("DFE_ENGINE_AUTH_LOCAL_ADMIN_SECRET_NAME") == "dfe-engine-admin",
-               f"got {env.get('DFE_ENGINE_AUTH_LOCAL_ADMIN_SECRET_NAME')}")
-        namespace = (env.get("DFE_ENGINE_DEPLOYMENT_NAMESPACE") or {}).get("valueFrom") or {}
-        expect(f"{where}: the namespace comes off the pod, so the command is complete",
-               namespace.get("fieldRef", {}).get("fieldPath") == "metadata.namespace",
-               f"got {env.get('DFE_ENGINE_DEPLOYMENT_NAMESPACE')}")
+        expect(
+            f"{where}: the admin password comes from the minted Secret",
+            ref == ("dfe-engine-admin", "admin-password")
+            and ref[1] in minted.get(ref[0], {}),
+            f"got {ref}, minted {sorted(minted)}",
+        )
+        expect(
+            f"{where}: the Secret is named for the login page's fetch command",
+            env.get("DFE_ENGINE_AUTH_LOCAL_ADMIN_SECRET_NAME") == "dfe-engine-admin",
+            f"got {env.get('DFE_ENGINE_AUTH_LOCAL_ADMIN_SECRET_NAME')}",
+        )
+        namespace = (env.get("DFE_ENGINE_DEPLOYMENT_NAMESPACE") or {}).get(
+            "valueFrom"
+        ) or {}
+        expect(
+            f"{where}: the namespace comes off the pod, so the command is complete",
+            namespace.get("fieldRef", {}).get("fieldPath") == "metadata.namespace",
+            f"got {env.get('DFE_ENGINE_DEPLOYMENT_NAMESPACE')}",
+        )
         bg = secret_ref(env.get("DFE_ENGINE_AUTH_BREAKGLASS_PASSWORD"))
-        expect(f"{where}: the break-glass password comes from its own minted Secret",
-               bg == ("dfe-engine-breakglass", "breakglass-password")
-               and bg[1] in minted.get(bg[0], {}),
-               f"got {bg}, minted {sorted(minted)}")
+        expect(
+            f"{where}: the break-glass password comes from its own minted Secret",
+            bg == ("dfe-engine-breakglass", "breakglass-password")
+            and bg[1] in minted.get(bg[0], {}),
+            f"got {bg}, minted {sorted(minted)}",
+        )
 
 
 def generator_of(doc: dict) -> tuple[str, str, str | None] | None:
@@ -215,52 +273,85 @@ def test_every_generator_an_external_secret_reads_is_rendered_beside_it() -> Non
     one renders green and never writes the Secret."""
     for component in COMPONENTS:
         for cell, docs in goldens(component):
-            rendered = {(d["kind"], d["metadata"]["name"], d["metadata"].get("namespace")) for d in docs}
+            rendered = {
+                (d["kind"], d["metadata"]["name"], d["metadata"].get("namespace"))
+                for d in docs
+            }
             for doc in docs:
                 ref = generator_of(doc) if doc.get("kind") == "ExternalSecret" else None
-                expect(f"{'/'.join(cell)}: {doc['metadata']['name']} has its generator",
-                       ref is None or ref in rendered, f"missing {ref}")
+                expect(
+                    f"{'/'.join(cell)}: {doc['metadata']['name']} has its generator",
+                    ref is None or ref in rendered,
+                    f"missing {ref}",
+                )
 
 
 def test_an_aws_engine_mints_its_admin_password_like_every_other_cloud() -> None:
     for profile in PROFILES:
         docs = golden("dfe-engine", profile, "aws")
-        es = [d for d in docs if (d.get("kind"), d["metadata"]["name"])
-              == ("ExternalSecret", "dfe-engine-admin")]
-        gens = [d for d in docs if (d.get("kind"), d["metadata"]["name"])
-                == ("Password", "dfe-engine-admin-gen")]
-        expect(f"{profile}/aws renders the admin ExternalSecret", len(es) == 1, f"got {len(es)}")
-        expect(f"{profile}/aws renders its generator", len(gens) == 1, f"got {len(gens)}")
+        es = [
+            d
+            for d in docs
+            if (d.get("kind"), d["metadata"]["name"])
+            == ("ExternalSecret", "dfe-engine-admin")
+        ]
+        gens = [
+            d
+            for d in docs
+            if (d.get("kind"), d["metadata"]["name"])
+            == ("Password", "dfe-engine-admin-gen")
+        ]
+        expect(
+            f"{profile}/aws renders the admin ExternalSecret",
+            len(es) == 1,
+            f"got {len(es)}",
+        )
+        expect(
+            f"{profile}/aws renders its generator", len(gens) == 1, f"got {len(gens)}"
+        )
         if es and gens:
-            expect(f"{profile}/aws: the ExternalSecret reads that generator, in its namespace",
-                   generator_of(es[0]) == ("Password", "dfe-engine-admin-gen",
-                                           gens[0]["metadata"].get("namespace")),
-                   f"got {generator_of(es[0])}")
+            expect(
+                f"{profile}/aws: the ExternalSecret reads that generator, in its namespace",
+                generator_of(es[0])
+                == (
+                    "Password",
+                    "dfe-engine-admin-gen",
+                    gens[0]["metadata"].get("namespace"),
+                ),
+                f"got {generator_of(es[0])}",
+            )
 
 
 def test_a_non_dev_posture_cannot_render_without_minting() -> None:
     """The production half of the model: refuse at render, not at first login."""
     expect(
         "a production posture minting nothing is refused",
-        "adminSecretName is empty" in render_fails(EXTRAS, ENGINE_EXTRAS, "env=production",
-                                                   "auth.adminSecretName="),
+        "adminSecretName is empty"
+        in render_fails(
+            EXTRAS, ENGINE_EXTRAS, "env=production", "auth.adminSecretName="
+        ),
         "the render succeeded",
     )
     expect(
         "and the shipped default pinned outside dev is refused",
-        "shipped default" in render_fails(EXTRAS, ENGINE_EXTRAS, "env=production",
-                                          "auth.adminPassword=changeme"),
+        "shipped default"
+        in render_fails(
+            EXTRAS, ENGINE_EXTRAS, "env=production", "auth.adminPassword=changeme"
+        ),
         "the render succeeded",
     )
     expect(
         "and a padded default too, since the engine trims before comparing",
-        "shipped default" in render_fails(EXTRAS, ENGINE_EXTRAS, "env=production",
-                                          "auth.adminPassword=  changeme  "),
+        "shipped default"
+        in render_fails(
+            EXTRAS, ENGINE_EXTRAS, "env=production", "auth.adminPassword=  changeme  "
+        ),
         "the render succeeded",
     )
     expect(
         "a dev posture may still tyre-kick on a known password",
-        render_fails(EXTRAS, ENGINE_EXTRAS, "env=local", "auth.adminPassword=changeme") == "",
+        render_fails(EXTRAS, ENGINE_EXTRAS, "env=local", "auth.adminPassword=changeme")
+        == "",
         "a dev render was refused",
     )
 
@@ -269,10 +360,20 @@ def test_a_non_dev_posture_cannot_render_without_minting() -> None:
 # SHA-256 hex of its password because the image takes 64 hex chars or base64 of
 # exactly 32 bytes, and refuses to start on anything else.
 HYPERDX_KEYS = (
-    ("EXPRESS_SESSION_SECRET", "dfe-hyperdx-session", "session-secret",
-     "{{ .password }}", "sessionSecret"),
-    ("TOKEN_ENCRYPTION_KEY", "dfe-hyperdx-token-encryption", "token-encryption-key",
-     "{{ .password | sha256sum }}", "tokenEncryption"),
+    (
+        "EXPRESS_SESSION_SECRET",
+        "dfe-hyperdx-session",
+        "session-secret",
+        "{{ .password }}",
+        "sessionSecret",
+    ),
+    (
+        "TOKEN_ENCRYPTION_KEY",
+        "dfe-hyperdx-token-encryption",
+        "token-encryption-key",
+        "{{ .password | sha256sum }}",
+        "tokenEncryption",
+    ),
 )
 
 
@@ -284,63 +385,98 @@ def hyperdx_env(rendered: list[dict], name: str) -> object:
 def test_hyperdx_keys_are_minted_once_and_read_by_the_pod() -> None:
     """Unset, sessions are signed with upstream's published key and tokens stored plain."""
     first = extras("dfe-hyperdx")
-    expect("dfe-extras renders the hyperdx objects byte-identically twice",
-           first == extras("dfe-hyperdx"), "two renders of the same inputs differ")
+    expect(
+        "dfe-extras renders the hyperdx objects byte-identically twice",
+        first == extras("dfe-hyperdx"),
+        "two renders of the same inputs differ",
+    )
     for env, secret, key, value, _ in HYPERDX_KEYS:
         gens = named(first, "Password", f"{secret}-gen")
         es = named(first, "ExternalSecret", secret)
         expect(f"{env} renders the ESO generator", len(gens) == 1, f"got {len(gens)}")
         expect(f"{env} renders the ExternalSecret", len(es) == 1, f"got {len(es)}")
-        expect(f"{env} renders no template-minted Secret",
-               named(first, "Secret", secret) == [], "a Secret rendered")
+        expect(
+            f"{env} renders no template-minted Secret",
+            named(first, "Secret", secret) == [],
+            "a Secret rendered",
+        )
         if gens:
-            expect(f"{env}'s generated password is at least 32 characters",
-                   gens[0]["spec"]["length"] >= 32, f"got {gens[0]['spec']['length']}")
+            expect(
+                f"{env}'s generated password is at least 32 characters",
+                gens[0]["spec"]["length"] >= 32,
+                f"got {gens[0]['spec']['length']}",
+            )
         if es:
             spec = es[0]["spec"]
-            expect(f"{env} is written once, not refreshed",
-                   spec.get("refreshPolicy") == "CreatedOnce",
-                   f"got {spec.get('refreshPolicy')}")
-            expect(f"{env}: no refresh interval reopens the generator",
-                   str(spec.get("refreshInterval")) == "0",
-                   f"got {spec.get('refreshInterval')}")
+            expect(
+                f"{env} is written once, not refreshed",
+                spec.get("refreshPolicy") == "CreatedOnce",
+                f"got {spec.get('refreshPolicy')}",
+            )
+            expect(
+                f"{env}: no refresh interval reopens the generator",
+                str(spec.get("refreshInterval")) == "0",
+                f"got {spec.get('refreshInterval')}",
+            )
             data = spec["target"]["template"]["data"]
-            expect(f"{env}'s Secret carries the key the pod reads, in the format it parses",
-                   data.get(key) == value, f"got {data}")
-            expect(f"an uninstall keeps {env}",
-                   es[0]["metadata"].get("annotations", {}).get("helm.sh/resource-policy")
-                   == "keep", f"got {es[0]['metadata'].get('annotations')}")
+            expect(
+                f"{env}'s Secret carries the key the pod reads, in the format it parses",
+                data.get(key) == value,
+                f"got {data}",
+            )
+            expect(
+                f"an uninstall keeps {env}",
+                es[0]["metadata"].get("annotations", {}).get("helm.sh/resource-policy")
+                == "keep",
+                f"got {es[0]['metadata'].get('annotations')}",
+            )
         for profile, cloud in CELLS:
             ref = secret_ref(hyperdx_env(golden("dfe-hyperdx", profile, cloud), env))
-            expect(f"{profile}/{cloud}: hyperdx reads {env} from the minted Secret",
-                   ref == (secret, key), f"got {ref}")
+            expect(
+                f"{profile}/{cloud}: hyperdx reads {env} from the minted Secret",
+                ref == (secret, key),
+                f"got {ref}",
+            )
 
 
 def test_hyperdx_keys_can_come_from_the_deployment() -> None:
     for env, secret, _, _, block in HYPERDX_KEYS:
-        rendered = render_app("dfe-hyperdx", "slim", "local", overlay={block: {"create": False}})
+        rendered = render_app(
+            "dfe-hyperdx", "slim", "local", overlay={block: {"create": False}}
+        )
         objects = [f"{d['kind']}/{d['metadata']['name']}" for d in rendered]
         for kind in ("Password", "ExternalSecret", "Secret"):
             name = f"{secret}-gen" if kind == "Password" else secret
-            expect(f"{block}.create=false renders no {kind}",
-                   f"{kind}/{name}" not in objects, f"got {objects}")
+            expect(
+                f"{block}.create=false renders no {kind}",
+                f"{kind}/{name}" not in objects,
+                f"got {objects}",
+            )
         ref = secret_ref(hyperdx_env(rendered, env))
-        expect(f"the pod still reads the deployment's {env} Secret",
-               ref[0] == secret, f"got {ref}")
+        expect(
+            f"the pod still reads the deployment's {env} Secret",
+            ref[0] == secret,
+            f"got {ref}",
+        )
 
 
 def test_no_chart_mints_a_secret_behind_a_lookup() -> None:
     """The #224 shape, repo-wide: a cluster read cannot guard a render-time mint."""
     offenders = []
-    for template in (t for tree in CHART_TREES for t in tree.glob("*/templates/**/*.yaml")):
+    for template in (
+        t for tree in CHART_TREES for t in tree.glob("*/templates/**/*.yaml")
+    ):
         body = template.read_text(encoding="utf-8", errors="replace")
         code = "\n".join(
             line for line in body.splitlines() if "{{" in line or "{{-" in line
         )
         if MINTERS.search(code):
             offenders.append(str(template.relative_to(REPO_ROOT)))
-    expect("no chart template mints a value at render time", offenders == [],
-           f"got {offenders}")
+    expect(
+        "no chart template mints a value at render time",
+        offenders == [],
+        f"got {offenders}",
+    )
 
 
 def main() -> int:

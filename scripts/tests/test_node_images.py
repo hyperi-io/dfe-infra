@@ -91,7 +91,9 @@ def _release(tag: str) -> node_images.Release:
     return next(r for r in RELEASES if r.tag == tag)
 
 
-def _refusals(tag: str, policy: node_images.GatePolicy = OPEN, now: datetime = NOW) -> list[str]:
+def _refusals(
+    tag: str, policy: node_images.GatePolicy = OPEN, now: datetime = NOW
+) -> list[str]:
     return node_images.eks_refusals(
         _release(tag), releases=RELEASES, policy=policy, titles=TITLES, now=now
     )
@@ -112,7 +114,15 @@ def test_the_chart_default_alias_clears_the_floor() -> None:
     """The alias a deployment falls back to with none recorded must itself pass gate g."""
     tree = parse_yaml(VERSIONS.read_text(encoding="utf-8"), source="versions.yaml")
     pin = str(
-        at(tree, ("stacks", str(at(tree, ("current",))), "operators", "karpenter-al2023-ami"))
+        at(
+            tree,
+            (
+                "stacks",
+                str(at(tree, ("current",))),
+                "operators",
+                "karpenter-al2023-ami",
+            ),
+        )
     )
     assert pin >= POLICY.eks_floor
     assert f"amiAlias: al2023@{pin}\n" in NODE_POOLS_VALUES.read_text(encoding="utf-8")
@@ -147,7 +157,9 @@ def test_expected_fail_a_malformed_policy_is_refused(
     tmp_path: Path, block: str, match: str
 ) -> None:
     versions = tmp_path / "versions.yaml"
-    versions.write_text(f'current: "9.9.9"\n{block}stacks:\n  9.9.9: {{}}\n', encoding="utf-8")
+    versions.write_text(
+        f'current: "9.9.9"\n{block}stacks:\n  9.9.9: {{}}\n', encoding="utf-8"
+    )
     with pytest.raises(node_images.GatePolicyError, match=match):
         node_images.read_policy(versions)
 
@@ -160,7 +172,12 @@ def test_gate_a_refuses_a_release_inside_the_cooldown() -> None:
     assert _refusals("v20261019", POLICY) == [
         "released 2026-10-21, 2 day(s) ago, inside the 7-day cooldown"
     ]
-    assert _refusals("v20261019", POLICY, datetime.fromisoformat("2026-10-29T00:00:00+00:00")) == []
+    assert (
+        _refusals(
+            "v20261019", POLICY, datetime.fromisoformat("2026-10-29T00:00:00+00:00")
+        )
+        == []
+    )
 
 
 def test_gate_a_measures_from_published_at_never_the_tag() -> None:
@@ -171,7 +188,11 @@ def test_gate_a_measures_from_published_at_never_the_tag() -> None:
     """
     tag_age_50_days = datetime.fromisoformat("2026-04-30T12:00:00+00:00")
     refusals = node_images.eks_refusals(
-        _release("v20260311"), releases=RELEASES, policy=OPEN, titles=[], now=tag_age_50_days
+        _release("v20260311"),
+        releases=RELEASES,
+        policy=OPEN,
+        titles=[],
+        now=tag_age_50_days,
     )
     assert refusals == ["released 2026-04-27, 2 day(s) ago, inside the 7-day cooldown"]
 
@@ -198,7 +219,9 @@ def test_gate_b_refuses_a_prerelease(tag: str) -> None:
 )
 def test_gate_c_refuses_a_skip_listed_release(tag: str, reason: str) -> None:
     refusals = _refusals(tag, POLICY)
-    assert any(r.startswith("skip-listed in versions.yaml:") and reason in r for r in refusals)
+    assert any(
+        r.startswith("skip-listed in versions.yaml:") and reason in r for r in refusals
+    )
 
 
 @pytest.mark.parametrize("tag", ["v20260930", "v20261003", "v20260625"])
@@ -218,12 +241,14 @@ def test_gate_d_reads_a_fix_note_as_no_warning() -> None:
 
 def test_gate_d_counts_only_a_hedge_about_the_release_itself() -> None:
     assert (
-        node_images.warning_sentences("> [!IMPORTANT]\n> This release fixes a known issue in runc.")
+        node_images.warning_sentences(
+            "> [!IMPORTANT]\n> This release fixes a known issue in runc."
+        )
         == []
     )
-    assert node_images.warning_sentences("> [!WARNING]\n> This release may cause failures.") == [
-        "This release may cause failures."
-    ]
+    assert node_images.warning_sentences(
+        "> [!WARNING]\n> This release may cause failures."
+    ) == ["This release may cause failures."]
 
 
 @pytest.mark.parametrize("tag", ["v20260930", "v20261003"])
@@ -247,7 +272,9 @@ def test_gate_f_refuses_a_release_an_open_issue_names() -> None:
     ("tag", "issues"),
     [("v20260505", ("#2712",)), ("v20260818", ("#2789", "#2790"))],
 )
-def test_gate_f_refuses_a_release_a_closed_issue_names(tag: str, issues: tuple[str, ...]) -> None:
+def test_gate_f_refuses_a_release_a_closed_issue_names(
+    tag: str, issues: tuple[str, ...]
+) -> None:
     """Closed means fixed in a later release: both cleared gates a to e and only the floor held them."""
     refusals = _refusals(tag)
     assert sorted(r.split(" ")[1] for r in refusals) == list(issues)
@@ -282,10 +309,14 @@ def test_the_release_version_is_read_per_minor() -> None:
 def test_the_newest_eligible_release_wins_and_names_what_it_passed_over() -> None:
     release, version, skipped = node_images.eks_release(AWS, RECORDED, POLICY, NOW)
     assert (release.tag, version) == ("v20261012", "1.36.4-20261012")
-    assert skipped == ("v20261019: released 2026-10-21, 2 day(s) ago, inside the 7-day cooldown",)
+    assert skipped == (
+        "v20261019: released 2026-10-21, 2 day(s) ago, inside the 7-day cooldown",
+    )
 
 
-def test_the_eks_lookup_reads_the_releases_the_issues_and_the_regions_parameter() -> None:
+def test_the_eks_lookup_reads_the_releases_the_issues_and_the_regions_parameter() -> (
+    None
+):
     calls: list[tuple[str, list[str]]] = []
 
     def record(fixture: str, tool: str, args: list[str]) -> str:
@@ -364,16 +395,26 @@ def test_a_release_body_parses_to_its_names_versions_and_warnings() -> None:
         '<td rowspan="5">1.36.4-20261012</td>\r\n'
         "<td>amazon-eks-node-al2023-arm64-nvidia-1.36-v20261012</td>\r\n"
     )
-    entry = {"tag_name": "v20261012", "published_at": "2026-10-14T17:28:15Z", "body": body}
+    entry = {
+        "tag_name": "v20261012",
+        "published_at": "2026-10-14T17:28:15Z",
+        "body": body,
+    }
     (release,) = node_images.releases_from([entry])
-    assert release.ami_names == ("amazon-eks-node-al2023-arm64-standard-1.36-v20261012",)
+    assert release.ami_names == (
+        "amazon-eks-node-al2023-arm64-standard-1.36-v20261012",
+    )
     assert release.release_versions == ("1.36.4-20261012",)
     assert release.admonitions == ("> [!WARNING]\n> This release may cause failures.",)
     assert node_images.releases_from([{**entry, "body": None}])[0].ami_names == ()
 
 
-def test_expected_fail_a_version_that_is_not_a_minor_is_refused_before_any_read() -> None:
-    target = node_images.Target("aws", "us-west-2", "000000000000", "1.34-1.36", "arm64")
+def test_expected_fail_a_version_that_is_not_a_minor_is_refused_before_any_read() -> (
+    None
+):
+    target = node_images.Target(
+        "aws", "us-west-2", "000000000000", "1.34-1.36", "arm64"
+    )
 
     def refuse(*_args: object) -> str:
         raise AssertionError("a target with no minor must read nothing")
@@ -394,8 +435,16 @@ def test_the_recommended_alias_is_the_dated_release_never_latest() -> None:
 @pytest.mark.parametrize(
     ("release", "image_name", "match"),
     [
-        ("1.35.9-20261012", "amazon-eks-node-al2023-arm64-standard-1.35-v20261012", "not a 1.36"),
-        ("1.36.4", "amazon-eks-node-al2023-arm64-standard-1.36-v20261012", "not <patch>"),
+        (
+            "1.35.9-20261012",
+            "amazon-eks-node-al2023-arm64-standard-1.35-v20261012",
+            "not a 1.36",
+        ),
+        (
+            "1.36.4",
+            "amazon-eks-node-al2023-arm64-standard-1.36-v20261012",
+            "not <patch>",
+        ),
         ("", "amazon-eks-node-al2023-arm64-standard-1.36-v20261012", "not <patch>"),
         (
             "1.36.4-20261012",
@@ -414,8 +463,12 @@ def test_expected_fail_a_recommended_answer_that_does_not_hold_together_is_refus
         node_images.recommended_ami_alias(AWS, read)
 
 
-def test_expected_fail_a_recommended_answer_that_is_not_json_is_refused(tmp_path: Path) -> None:
-    read = _recorded(tmp_path, "aws-us-west-2-eks-recommended-1.36-arm64.json", "ami-0123")
+def test_expected_fail_a_recommended_answer_that_is_not_json_is_refused(
+    tmp_path: Path,
+) -> None:
+    read = _recorded(
+        tmp_path, "aws-us-west-2-eks-recommended-1.36-arm64.json", "ami-0123"
+    )
     with pytest.raises(node_images.ImageLookupError, match="not JSON"):
         node_images.recommended_ami_alias(AWS, read)
 
@@ -431,7 +484,9 @@ def test_the_newest_al2023_ami_past_the_cooldown_wins() -> None:
     )
 
 
-def test_al2023_gate_a_measures_from_creation_date_and_keeps_to_the_default_family() -> None:
+def test_al2023_gate_a_measures_from_creation_date_and_keeps_to_the_default_family() -> (
+    None
+):
     """The kernel-6.1 AMI is as old as the 6.12 one but sits in another family."""
     pick = node_images.al2023_image(
         AWS, RECORDED, POLICY, datetime.fromisoformat("2026-10-20T00:00:00+00:00")
@@ -447,7 +502,10 @@ def test_al2023_gate_c_refuses_a_skip_listed_release() -> None:
     policy = node_images.GatePolicy(
         7, "v20261012", {}, "20261012", {"2023.12.20261016.0": "bad kernel"}
     )
-    assert node_images.al2023_image(AWS, RECORDED, policy, NOW).value == "ami-02026101200000000"
+    assert (
+        node_images.al2023_image(AWS, RECORDED, policy, NOW).value
+        == "ami-02026101200000000"
+    )
 
 
 def test_expected_fail_al2023_gate_g_leaves_nothing_eligible() -> None:
@@ -463,12 +521,16 @@ def test_expected_fail_al2023_gate_g_leaves_nothing_eligible() -> None:
     ]
 
 
-def test_expected_fail_a_default_ami_ec2_does_not_list_is_refused(tmp_path: Path) -> None:
+def test_expected_fail_a_default_ami_ec2_does_not_list_is_refused(
+    tmp_path: Path,
+) -> None:
     (tmp_path / "aws-us-west-2-al2023-ami-arm64.txt").write_text(
         "ami-0957e38de3db270cc\n", encoding="utf-8"
     )
     read = _recorded(tmp_path, "aws-us-west-2-al2023-images-arm64.json", "[]")
-    with pytest.raises(node_images.ImageLookupError, match="is not among the AL2023 images"):
+    with pytest.raises(
+        node_images.ImageLookupError, match="is not among the AL2023 images"
+    ):
         node_images.al2023_image(AWS, read, POLICY, NOW)
 
 
@@ -478,7 +540,9 @@ def test_expected_fail_an_arch_aws_publishes_no_image_for_is_refused() -> None:
         node_images.al2023_image(target, RECORDED, POLICY, NOW)
 
 
-def test_expected_fail_an_ssm_answer_that_is_not_an_ami_is_refused(tmp_path: Path) -> None:
+def test_expected_fail_an_ssm_answer_that_is_not_an_ami_is_refused(
+    tmp_path: Path,
+) -> None:
     read = _recorded(tmp_path, "aws-us-west-2-al2023-ami-arm64.txt", "None\n")
     with pytest.raises(node_images.ImageLookupError, match="not an AMI id"):
         node_images.al2023_image(AWS, read, POLICY, NOW)
@@ -504,18 +568,26 @@ def test_the_gke_lookup_asks_for_the_location_and_the_project() -> None:
     assert calls[0][calls[0].index("--project") + 1] == "example-project"
 
 
-def test_expected_fail_a_gke_default_outside_the_valid_list_is_refused(tmp_path: Path) -> None:
+def test_expected_fail_a_gke_default_outside_the_valid_list_is_refused(
+    tmp_path: Path,
+) -> None:
     doc = json.loads(
-        (FIXTURES / "gcp-us-central1-gke-server-config.json").read_text(encoding="utf-8")
+        (FIXTURES / "gcp-us-central1-gke-server-config.json").read_text(
+            encoding="utf-8"
+        )
     )
     doc["validImageTypes"] = ["UBUNTU_CONTAINERD"]
-    read = _recorded(tmp_path, "gcp-us-central1-gke-server-config.json", json.dumps(doc))
+    read = _recorded(
+        tmp_path, "gcp-us-central1-gke-server-config.json", json.dumps(doc)
+    )
     with pytest.raises(node_images.ImageLookupError, match="outside validImageTypes"):
         node_images.gke_node_image(GCP, read)
 
 
 def test_expected_fail_a_minor_gke_does_not_offer_is_refused() -> None:
-    target = node_images.Target("gcp", "us-central1", "example-project", "1.37", "arm64")
+    target = node_images.Target(
+        "gcp", "us-central1", "example-project", "1.37", "arm64"
+    )
     with pytest.raises(node_images.ImageLookupError, match=r"no 1\.37 node version"):
         node_images.gke_node_image(target, RECORDED)
 
@@ -541,7 +613,9 @@ def test_expected_fail_a_minor_aks_does_not_offer_generally_is_refused(
 
 
 def test_expected_fail_an_aks_answer_with_no_values_is_refused(tmp_path: Path) -> None:
-    read = _recorded(tmp_path, "azure-westus2-aks-versions.json", '{"orchestrators": []}')
+    read = _recorded(
+        tmp_path, "azure-westus2-aks-versions.json", '{"orchestrators": []}'
+    )
     with pytest.raises(node_images.ImageLookupError, match="no values list"):
         node_images.aks_node_image(AZURE, read)
 
@@ -558,7 +632,13 @@ def _resolve(
 ) -> node_images.Resolution:
     sink = warnings if warnings is not None else []
     return node_images.resolve(
-        AWS, pinned=False, read=read, warn=sink.append, policy=POLICY, now=now, recorded=recorded
+        AWS,
+        pinned=False,
+        read=read,
+        warn=sink.append,
+        policy=POLICY,
+        now=now,
+        recorded=recorded,
     )
 
 
@@ -566,7 +646,10 @@ def test_aws_resolves_every_key_and_records_where_each_came_from() -> None:
     warnings: list[str] = []
     resolution = _resolve(warnings=warnings)
     assert resolution.values == {
-        "node_image": {"family": "AL2023_ARM_64_STANDARD", "version": "1.36.4-20261012"},
+        "node_image": {
+            "family": "AL2023_ARM_64_STANDARD",
+            "version": "1.36.4-20261012",
+        },
         "karpenter_ami_alias": "al2023@v20261012",
         "instance_ami_id": "ami-0957e38de3db270cc",
         "forwarder_ami_id": "ami-0957e38de3db270cc",
@@ -655,31 +738,41 @@ def test_expected_fail_a_failed_github_read_with_nothing_recorded_leaves_the_eks
 
 def test_a_failed_github_read_holds_the_recorded_release(tmp_path: Path) -> None:
     warnings: list[str] = []
-    resolution = _resolve(_without_github(tmp_path), recorded=RECORDED_EKS, warnings=warnings)
+    resolution = _resolve(
+        _without_github(tmp_path), recorded=RECORDED_EKS, warnings=warnings
+    )
     assert resolution.values["node_image"] == RECORDED_EKS["node_image"]["value"]
     assert resolution.values["karpenter_ami_alias"] == "al2023@v20261012"
     assert resolution.record["node_image"] == RECORDED_EKS["node_image"]
     assert resolution.refused == frozenset()
-    assert all(w.split(" (")[0].endswith("holds its recorded v20261012") for w in warnings)
+    assert all(
+        w.split(" (")[0].endswith("holds its recorded v20261012") for w in warnings
+    )
     assert all("no recorded response" in w for w in warnings)
 
 
 def test_a_rate_limited_github_holds_the_recorded_release() -> None:
     def limited(fixture: str, tool: str, args: list[str]) -> str:
         if tool == node_images.HTTPS:
-            raise node_images.ImageLookupError(f"GitHub rate-limited {args[0]} (HTTP 403)")
+            raise node_images.ImageLookupError(
+                f"GitHub rate-limited {args[0]} (HTTP 403)"
+            )
         return RECORDED(fixture, tool, args)
 
     warnings: list[str] = []
     resolution = _resolve(limited, recorded=RECORDED_EKS, warnings=warnings)
     assert resolution.values["node_image"] == RECORDED_EKS["node_image"]["value"]
-    assert any("holds its recorded v20261012" in w and "HTTP 403" in w for w in warnings)
+    assert any(
+        "holds its recorded v20261012" in w and "HTTP 403" in w for w in warnings
+    )
 
 
 def test_a_failed_aws_read_holds_the_recorded_ami() -> None:
     def denied(fixture: str, tool: str, args: list[str]) -> str:
         if tool == "aws":
-            raise node_images.ImageLookupError("aws ssm get-parameter failed: ExpiredToken")
+            raise node_images.ImageLookupError(
+                "aws ssm get-parameter failed: ExpiredToken"
+            )
         return RECORDED(fixture, tool, args)
 
     ami = {
@@ -704,9 +797,12 @@ def test_a_key_no_candidate_clears_holds_its_recorded_value() -> None:
     resolution = _resolve(now=day_after, recorded=recorded, warnings=warnings)
     assert resolution.values["node_image"] == recorded["node_image"]["value"]
     assert "karpenter_ami_alias" not in resolution.values
-    assert any(w.startswith("node_image holds its recorded v20261012") for w in warnings)
     assert any(
-        "karpenter_ami_alias not resolved" in w and "nothing was recorded" in w for w in warnings
+        w.startswith("node_image holds its recorded v20261012") for w in warnings
+    )
+    assert any(
+        "karpenter_ami_alias not resolved" in w and "nothing was recorded" in w
+        for w in warnings
     )
 
 
@@ -716,7 +812,10 @@ def test_a_key_no_candidate_clears_holds_its_recorded_value() -> None:
         (
             "node_image",
             {
-                "value": {"family": "AL2023_ARM_64_STANDARD", "version": "1.36.4-20261003"},
+                "value": {
+                    "family": "AL2023_ARM_64_STANDARD",
+                    "version": "1.36.4-20261003",
+                },
                 "release": "v20261003",
             },
             "v20261003 is skip-listed",
@@ -748,7 +847,9 @@ def test_expected_fail_a_recorded_value_the_gates_now_refuse_is_never_held(
     assert any(f"{key} not resolved" in w and why in w for w in warnings)
 
 
-def test_an_empty_answer_still_replaces_an_earlier_resolves_file(tmp_path: Path) -> None:
+def test_an_empty_answer_still_replaces_an_earlier_resolves_file(
+    tmp_path: Path,
+) -> None:
     node_images.write_tfvars(tmp_path, {"instance_ami_id": "ami-0957e38de3db270cc"})
     path = node_images.write_tfvars(tmp_path, {})
     assert path.name == "node-images.auto.tfvars.json"
@@ -788,7 +889,9 @@ class _Served:
 
 
 @contextmanager
-def _github(pages: dict[str, tuple[int, dict[str, str], str]]) -> Iterator[tuple[str, _Served]]:
+def _github(
+    pages: dict[str, tuple[int, dict[str, str], str]],
+) -> Iterator[tuple[str, _Served]]:
     """A loopback HTTP server standing in for api.github.com, and its base URL."""
     served = _Served(pages)
 
@@ -822,13 +925,30 @@ def test_the_github_reader_follows_next_links_up_to_its_page_bound(
     monkeypatch.delenv("GH_TOKEN", raising=False)
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
     pages = {
-        "/search?page=1": (200, {"Link": '<BASE/search?page=2>; rel="next"'}, '{"items": [1, 2]}'),
-        "/search?page=2": (200, {"Link": '<BASE/search?page=3>; rel="next"'}, '{"items": [3]}'),
+        "/search?page=1": (
+            200,
+            {"Link": '<BASE/search?page=2>; rel="next"'},
+            '{"items": [1, 2]}',
+        ),
+        "/search?page=2": (
+            200,
+            {"Link": '<BASE/search?page=3>; rel="next"'},
+            '{"items": [3]}',
+        ),
         "/search?page=3": (200, {}, '{"items": [4]}'),
     }
     with _github(pages) as (base, served):
-        assert json.loads(node_images.github_pages(f"{base}/search?page=1", 2, 5)) == [1, 2, 3]
-        assert json.loads(node_images.github_pages(f"{base}/search?page=1", 10, 5)) == [1, 2, 3, 4]
+        assert json.loads(node_images.github_pages(f"{base}/search?page=1", 2, 5)) == [
+            1,
+            2,
+            3,
+        ]
+        assert json.loads(node_images.github_pages(f"{base}/search?page=1", 10, 5)) == [
+            1,
+            2,
+            3,
+            4,
+        ]
     headers = served.seen[0][1]
     assert headers["User-Agent"] == node_images.GITHUB_USER_AGENT
     assert "Authorization" not in headers
@@ -837,12 +957,20 @@ def test_the_github_reader_follows_next_links_up_to_its_page_bound(
 @pytest.mark.parametrize(
     ("status", "body", "match"),
     [
-        (403, '{"message": "API rate limit exceeded"}', r"rate-limited .* \(HTTP 403\)"),
+        (
+            403,
+            '{"message": "API rate limit exceeded"}',
+            r"rate-limited .* \(HTTP 403\)",
+        ),
         (429, "{}", r"rate-limited .* \(HTTP 429\)"),
         (500, "{}", "answered HTTP 500"),
         (200, "<html>", "answered no JSON"),
         (200, '{"message": "x"}', "neither a list nor a search"),
-        (200, '{"incomplete_results": true, "items": []}', "timed out before it was complete"),
+        (
+            200,
+            '{"incomplete_results": true, "items": []}',
+            "timed out before it was complete",
+        ),
     ],
     ids=["403", "429", "500", "not-json", "not-a-list", "incomplete-search"],
 )
@@ -901,9 +1029,17 @@ def test_expected_fail_a_next_page_off_the_starting_origin_is_never_followed(
     """Followed, it would carry the token elsewhere. Skipped, it would cut the issue list short."""
     monkeypatch.setenv("GH_TOKEN", "example-not-a-token")
     with _github({"/search": (200, {}, '{"items": [2]}')}) as (other, other_served):
-        first = {"/search": (200, {"Link": f'<{other}/search>; rel="next"'}, '{"items": [1]}')}
+        first = {
+            "/search": (
+                200,
+                {"Link": f'<{other}/search>; rel="next"'},
+                '{"items": [1]}',
+            )
+        }
         with _github(first) as (base, _served):
-            with pytest.raises(node_images.ImageLookupError, match=r"off .* scheme and host"):
+            with pytest.raises(
+                node_images.ImageLookupError, match=r"off .* scheme and host"
+            ):
                 node_images.github_pages(f"{base}/search", 10, 5)
     assert other_served.seen == []
 
@@ -932,7 +1068,9 @@ def _dial(
 
 
 def _images(dial: Path, out: Path, *extra: str) -> int:
-    return resolve_sizing.main(["images", "--dial", str(dial), "--out", str(out), *NOW_ARG, *extra])
+    return resolve_sizing.main(
+        ["images", "--dial", str(dial), "--out", str(out), *NOW_ARG, *extra]
+    )
 
 
 def _root(tmp_path: Path) -> Path:
@@ -946,16 +1084,26 @@ def test_the_images_subcommand_writes_tfvars_the_record_and_the_chart_overlay(
 ) -> None:
     out = _root(tmp_path)
     assert _images(_dial(tmp_path), out, "--fixtures", str(FIXTURES)) == 0
-    written = json.loads((out / "node-images.auto.tfvars.json").read_text(encoding="utf-8"))
+    written = json.loads(
+        (out / "node-images.auto.tfvars.json").read_text(encoding="utf-8")
+    )
     assert written == {
         "forwarder_ami_id": "ami-0957e38de3db270cc",
         "instance_ami_id": "ami-0957e38de3db270cc",
-        "node_image": {"family": "AL2023_ARM_64_STANDARD", "version": "1.36.4-20261012"},
+        "node_image": {
+            "family": "AL2023_ARM_64_STANDARD",
+            "version": "1.36.4-20261012",
+        },
     }
     record = node_images.read_record(out / "sizing" / "node-images.json")
-    assert record["karpenter_ami_alias"] == {"value": "al2023@v20261012", "release": "v20261012"}
+    assert record["karpenter_ami_alias"] == {
+        "value": "al2023@v20261012",
+        "release": "v20261012",
+    }
     overlay = (out / "sizing" / "node-pools.values.yaml").read_text(encoding="utf-8")
-    assert "pools:\n  aws:\n    nodeClass:\n      amiAlias: al2023@v20261012\n" in overlay
+    assert (
+        "pools:\n  aws:\n    nodeClass:\n      amiAlias: al2023@v20261012\n" in overlay
+    )
 
 
 def test_the_chart_overlay_sets_the_key_the_chart_reads() -> None:
@@ -970,7 +1118,10 @@ def test_a_pinned_dial_writes_no_key_and_leaves_the_record(
 ) -> None:
     out = _root(tmp_path)
     assert _images(_dial(tmp_path, pin="true"), out, "--fixtures", str(FIXTURES)) == 0
-    assert json.loads((out / "node-images.auto.tfvars.json").read_text(encoding="utf-8")) == {}
+    assert (
+        json.loads((out / "node-images.auto.tfvars.json").read_text(encoding="utf-8"))
+        == {}
+    )
     assert not (out / "sizing").exists()
     assert "node_image.pin is true" in capsys.readouterr().err
 
@@ -982,9 +1133,14 @@ def test_every_failed_lookup_still_exits_zero_and_warns(
     empty = tmp_path / "no-answers"
     empty.mkdir()
     assert _images(_dial(tmp_path), out, "--fixtures", str(empty)) == 0
-    assert json.loads((out / "node-images.auto.tfvars.json").read_text(encoding="utf-8")) == {}
+    assert (
+        json.loads((out / "node-images.auto.tfvars.json").read_text(encoding="utf-8"))
+        == {}
+    )
     assert not (out / "sizing" / "node-pools.values.yaml").exists()
-    assert capsys.readouterr().err.count("WARNING node image") == len(node_images.LOOKUPS["aws"])
+    assert capsys.readouterr().err.count("WARNING node image") == len(
+        node_images.LOOKUPS["aws"]
+    )
 
 
 def test_previous_holds_the_deploy_repos_value_when_nothing_clears_the_gates(
@@ -1015,7 +1171,9 @@ def test_previous_holds_the_deploy_repos_value_when_nothing_clears_the_gates(
         str(deploy / "node-images.json"),
     ]
     assert resolve_sizing.main(argv) == 0
-    tfvars = json.loads((out / "node-images.auto.tfvars.json").read_text(encoding="utf-8"))
+    tfvars = json.loads(
+        (out / "node-images.auto.tfvars.json").read_text(encoding="utf-8")
+    )
     assert tfvars["node_image"] == held["node_image"]["value"]
     assert (
         node_images.read_record(out / "sizing" / "node-images.json")["node_image"]
@@ -1037,7 +1195,9 @@ def test_a_gcp_or_azure_dial_resolves_against_the_shared_platform_range(
     out = _root(tmp_path)
     dial = _dial(tmp_path, cloud=cloud, region=region)
     assert _images(dial, out, "--fixtures", str(FIXTURES)) == 0
-    written = json.loads((out / "node-images.auto.tfvars.json").read_text(encoding="utf-8"))
+    written = json.loads(
+        (out / "node-images.auto.tfvars.json").read_text(encoding="utf-8")
+    )
     assert written == {"node_image": {"family": family}}
     assert not (out / "sizing" / "node-pools.values.yaml").exists()
 
@@ -1050,7 +1210,10 @@ def _existing(out: Path) -> Path:
             {
                 "forwarder_ami_id": "ami-11111111111111111",
                 "instance_ami_id": "ami-00000000000000000",
-                "node_image": {"family": "AL2023_ARM_64_STANDARD", "version": "1.36.1-20260901"},
+                "node_image": {
+                    "family": "AL2023_ARM_64_STANDARD",
+                    "version": "1.36.1-20260901",
+                },
             }
         ),
         encoding="utf-8",
@@ -1063,14 +1226,27 @@ def test_only_one_key_is_resolved_and_the_rest_of_the_file_kept(tmp_path: Path) 
     out = _root(tmp_path)
     path = _existing(out)
     assert (
-        _images(_dial(tmp_path), out, "--fixtures", str(FIXTURES), "--only", "instance_ami_id") == 0
+        _images(
+            _dial(tmp_path),
+            out,
+            "--fixtures",
+            str(FIXTURES),
+            "--only",
+            "instance_ami_id",
+        )
+        == 0
     )
     assert json.loads(path.read_text(encoding="utf-8")) == {
         "forwarder_ami_id": "ami-11111111111111111",
         "instance_ami_id": "ami-0957e38de3db270cc",
-        "node_image": {"family": "AL2023_ARM_64_STANDARD", "version": "1.36.1-20260901"},
+        "node_image": {
+            "family": "AL2023_ARM_64_STANDARD",
+            "version": "1.36.1-20260901",
+        },
     }
-    assert set(node_images.read_record(out / "sizing" / "node-images.json")) == {"instance_ami_id"}
+    assert set(node_images.read_record(out / "sizing" / "node-images.json")) == {
+        "instance_ami_id"
+    }
     assert not (out / "sizing" / "node-pools.values.yaml").exists()
 
 
@@ -1081,7 +1257,10 @@ def test_a_pinned_only_run_leaves_nothing_an_earlier_resolve_wrote(
     out = _root(tmp_path)
     path = _existing(out)
     dial = _dial(tmp_path, pin="true")
-    assert _images(dial, out, "--fixtures", str(FIXTURES), "--only", "instance_ami_id") == 0
+    assert (
+        _images(dial, out, "--fixtures", str(FIXTURES), "--only", "instance_ami_id")
+        == 0
+    )
     assert json.loads(path.read_text(encoding="utf-8")) == {}
     assert "node_image.pin is true" in capsys.readouterr().err
 
@@ -1094,10 +1273,18 @@ def test_expected_fail_a_failed_lookup_with_nothing_recorded_drops_the_stale_key
     path = _existing(out)
     empty = tmp_path / "no-answers"
     empty.mkdir()
-    assert _images(_dial(tmp_path), out, "--fixtures", str(empty), "--only", "instance_ami_id") == 0
+    assert (
+        _images(
+            _dial(tmp_path), out, "--fixtures", str(empty), "--only", "instance_ami_id"
+        )
+        == 0
+    )
     assert json.loads(path.read_text(encoding="utf-8")) == {
         "forwarder_ami_id": "ami-11111111111111111",
-        "node_image": {"family": "AL2023_ARM_64_STANDARD", "version": "1.36.1-20260901"},
+        "node_image": {
+            "family": "AL2023_ARM_64_STANDARD",
+            "version": "1.36.1-20260901",
+        },
     }
     err = capsys.readouterr().err
     assert err.count("WARNING node image") == 1
@@ -1120,18 +1307,38 @@ def test_a_failed_lookup_holds_the_recorded_ami(
     )
     empty = tmp_path / "no-answers"
     empty.mkdir()
-    assert _images(_dial(tmp_path), out, "--fixtures", str(empty), "--only", "instance_ami_id") == 0
-    assert json.loads(path.read_text(encoding="utf-8"))["instance_ami_id"] == held["value"]
-    assert node_images.read_record(out / "sizing" / "node-images.json") == {"instance_ami_id": held}
-    assert "WARNING node image instance_ami_id holds its recorded" in capsys.readouterr().err
+    assert (
+        _images(
+            _dial(tmp_path), out, "--fixtures", str(empty), "--only", "instance_ami_id"
+        )
+        == 0
+    )
+    assert (
+        json.loads(path.read_text(encoding="utf-8"))["instance_ami_id"] == held["value"]
+    )
+    assert node_images.read_record(out / "sizing" / "node-images.json") == {
+        "instance_ami_id": held
+    }
+    assert (
+        "WARNING node image instance_ami_id holds its recorded"
+        in capsys.readouterr().err
+    )
 
 
-def test_expected_fail_only_a_key_the_cloud_does_not_resolve_is_refused(tmp_path: Path) -> None:
+def test_expected_fail_only_a_key_the_cloud_does_not_resolve_is_refused(
+    tmp_path: Path,
+) -> None:
     out = _root(tmp_path)
     path = _existing(out)
-    assert _images(_dial(tmp_path), out, "--fixtures", str(FIXTURES), "--only", "node_pools") == 1
     assert (
-        json.loads(path.read_text(encoding="utf-8"))["instance_ami_id"] == "ami-00000000000000000"
+        _images(
+            _dial(tmp_path), out, "--fixtures", str(FIXTURES), "--only", "node_pools"
+        )
+        == 1
+    )
+    assert (
+        json.loads(path.read_text(encoding="utf-8"))["instance_ami_id"]
+        == "ami-00000000000000000"
     )
 
 
@@ -1166,12 +1373,17 @@ def test_an_on_prem_dial_resolves_nothing(
 
 def test_expected_fail_a_pin_that_is_not_a_boolean_is_refused(tmp_path: Path) -> None:
     out = _root(tmp_path)
-    assert _images(_dial(tmp_path, pin="sometimes"), out, "--fixtures", str(FIXTURES)) == 1
+    assert (
+        _images(_dial(tmp_path, pin="sometimes"), out, "--fixtures", str(FIXTURES)) == 1
+    )
     assert not (out / "node-images.auto.tfvars.json").exists()
 
 
 def test_expected_fail_a_missing_tofu_root_is_refused(tmp_path: Path) -> None:
-    assert _images(_dial(tmp_path), tmp_path / "no-such-root", "--fixtures", str(FIXTURES)) == 1
+    assert (
+        _images(_dial(tmp_path), tmp_path / "no-such-root", "--fixtures", str(FIXTURES))
+        == 1
+    )
 
 
 # --- the sizing lock never sees a node image ---------------------------------
@@ -1197,16 +1409,30 @@ def test_a_moved_node_image_never_trips_the_sizing_lock(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     out = _root(tmp_path)
-    sizing_argv = ["--dial", str(dial), "--fixtures", str(SIZING_FIXTURES), "--out", str(out)]
+    sizing_argv = [
+        "--dial",
+        str(dial),
+        "--fixtures",
+        str(SIZING_FIXTURES),
+        "--out",
+        str(out),
+    ]
     assert resolve_sizing.main(sizing_argv) == 0
     resolved = out / "sizing" / "resolved.yaml"
     before = resolved.read_bytes()
 
     assert _images(dial, out, "--fixtures", str(FIXTURES)) == 0
-    first = node_images.read_record(out / "sizing" / "node-images.json")["node_image"]["release"]
+    first = node_images.read_record(out / "sizing" / "node-images.json")["node_image"][
+        "release"
+    ]
     later = ("--fixtures", str(FIXTURES), "--now", "2026-10-29T00:00:00Z")
-    assert resolve_sizing.main(["images", "--dial", str(dial), "--out", str(out), *later]) == 0
-    second = node_images.read_record(out / "sizing" / "node-images.json")["node_image"]["release"]
+    assert (
+        resolve_sizing.main(["images", "--dial", str(dial), "--out", str(out), *later])
+        == 0
+    )
+    second = node_images.read_record(out / "sizing" / "node-images.json")["node_image"][
+        "release"
+    ]
     assert (first, second) == ("v20261012", "v20261019")
     assert resolved.read_bytes() == before
 

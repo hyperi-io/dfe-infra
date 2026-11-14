@@ -63,11 +63,25 @@ class Engine:
     new_password: str = field(default="", repr=False)
 
     def login(self) -> None:
-        reply = self._request("POST", "/auth/login", {"username": self.user, "password": self.password}, auth=False)
-        if reply.status == 401 and self.new_password and self.new_password != self.password:
+        reply = self._request(
+            "POST",
+            "/auth/login",
+            {"username": self.user, "password": self.password},
+            auth=False,
+        )
+        if (
+            reply.status == 401
+            and self.new_password
+            and self.new_password != self.password
+        ):
             # An earlier run already replaced the issued password.
             self.password = self.new_password
-            reply = self._request("POST", "/auth/login", {"username": self.user, "password": self.password}, auth=False)
+            reply = self._request(
+                "POST",
+                "/auth/login",
+                {"username": self.user, "password": self.password},
+                auth=False,
+            )
         if reply.status != 200:
             raise RuntimeError(f"engine login failed: {reply.status} {reply.body}")
         self.token = str(reply["access_token"])
@@ -83,11 +97,14 @@ class Engine:
             )
         # The engine's own-password route takes the password as well as the session.
         changed = self._request(
-            "POST", "/auth/accounts/reset-password",
+            "POST",
+            "/auth/accounts/reset-password",
             {"current_password": self.password, "new_password": self.new_password},
         )
         if changed.status != 200:
-            raise RuntimeError(f"forced password change failed: {changed.status} {changed.body}")
+            raise RuntimeError(
+                f"forced password change failed: {changed.status} {changed.body}"
+            )
         # The change ends every session the account held, so call() signs in again on the next 401.
         self.password = self.new_password
 
@@ -100,16 +117,23 @@ class Engine:
             reply = self._request(method, path, body)
         return reply
 
-    def _request(self, method: str, path: str, body: object = None, *, auth: bool = True) -> Reply:
+    def _request(
+        self, method: str, path: str, body: object = None, *, auth: bool = True
+    ) -> Reply:
         data = json.dumps(body).encode() if body is not None else None
         headers = {"Content-Type": "application/json", "Accept": "application/json"}
         if auth:
             headers["Authorization"] = f"Bearer {self.token}"
         request = urllib.request.Request(
-            f"{self.base.rstrip('/')}/api/v1{path}", data=data, method=method, headers=headers
+            f"{self.base.rstrip('/')}/api/v1{path}",
+            data=data,
+            method=method,
+            headers=headers,
         )
         try:
-            with urllib.request.urlopen(request, timeout=180, context=tls_context(self.verify)) as response:
+            with urllib.request.urlopen(
+                request, timeout=180, context=tls_context(self.verify)
+            ) as response:
                 raw = response.read()
                 status = response.status
         except urllib.error.HTTPError as exc:
@@ -151,7 +175,9 @@ class Datastore:
         )
 
     def query(self, sql: str) -> list[list]:
-        params = urllib.parse.urlencode({"database": self.database, "default_format": "JSONCompact"})
+        params = urllib.parse.urlencode(
+            {"database": self.database, "default_format": "JSONCompact"}
+        )
         scheme = "https" if self.secure else "http"
         request = urllib.request.Request(
             f"{scheme}://{self.host}:{self.port}/?{params}",
@@ -164,18 +190,27 @@ class Datastore:
                 return json.loads(response.read())["data"]
         except urllib.error.HTTPError as exc:
             text = exc.read().decode(errors="replace")
-            if "UNKNOWN_TABLE" in text or "doesn't exist" in text or "does not exist" in text:
+            if (
+                "UNKNOWN_TABLE" in text
+                or "doesn't exist" in text
+                or "does not exist" in text
+            ):
                 return []
-            raise RuntimeError(f"datastore refused the query: {exc.code} {text[:300]}") from exc
+            raise RuntimeError(
+                f"datastore refused the query: {exc.code} {text[:300]}"
+            ) from exc
 
     def scalar(self, sql: str) -> int:
         rows = self.query(sql)
         return int(rows[0][0]) if rows else 0
 
     def table_exists(self, name: str) -> bool:
-        return self.scalar(
-            f"SELECT count() FROM system.tables WHERE database = '{self.database}' AND name = '{name}'"
-        ) > 0
+        return (
+            self.scalar(
+                f"SELECT count() FROM system.tables WHERE database = '{self.database}' AND name = '{name}'"
+            )
+            > 0
+        )
 
 
 def source_names(engine_url: str, verify: bool, token: str) -> tuple[str, ...]:
@@ -184,11 +219,15 @@ def source_names(engine_url: str, verify: bool, token: str) -> tuple[str, ...]:
         f"{engine_url.rstrip('/')}/api/v1/sources",
         headers={"Authorization": f"Bearer {token}"},
     )
-    with urllib.request.urlopen(request, timeout=60, context=tls_context(verify)) as response:
+    with urllib.request.urlopen(
+        request, timeout=60, context=tls_context(verify)
+    ) as response:
         return tuple(str(item["name"]) for item in json.loads(response.read())["items"])
 
 
-def remove_source(engine_url: str, verify: bool, token: str, name: str, deadline: float) -> str:
+def remove_source(
+    engine_url: str, verify: bool, token: str, name: str, deadline: float
+) -> str:
     """Delete a source the run created, and confirm it went.
 
     Through the API rather than the console: this is the run tidying up after
@@ -215,7 +254,9 @@ def remove_source(engine_url: str, verify: bool, token: str, name: str, deadline
     )
     status = ""
     try:
-        with urllib.request.urlopen(request, timeout=120, context=tls_context(verify)) as response:
+        with urllib.request.urlopen(
+            request, timeout=120, context=tls_context(verify)
+        ) as response:
             status = str(response.status)
     except urllib.error.HTTPError as exc:
         status = str(exc.code)
@@ -227,10 +268,12 @@ def remove_source(engine_url: str, verify: bool, token: str, name: str, deadline
         try:
             if name not in source_names(engine_url, verify, token):
                 return f"removed {name} (delete answered {status})"
-        except (urllib.error.URLError, OSError, ValueError, KeyError):
+        except urllib.error.URLError, OSError, ValueError, KeyError:
             pass
         if time.monotonic() >= until:
-            return f"could NOT remove {name}: still there {deadline:.0f}s after a {status}"
+            return (
+                f"could NOT remove {name}: still there {deadline:.0f}s after a {status}"
+            )
         time.sleep(5)
 
 
@@ -243,9 +286,11 @@ def engine_token(engine_url: str, verify: bool, user: str, password: str) -> str
         headers={"Content-Type": "application/json"},
     )
     try:
-        with urllib.request.urlopen(request, timeout=60, context=tls_context(verify)) as response:
+        with urllib.request.urlopen(
+            request, timeout=60, context=tls_context(verify)
+        ) as response:
             return str(json.loads(response.read())["access_token"])
-    except (urllib.error.URLError, OSError, ValueError, KeyError):
+    except urllib.error.URLError, OSError, ValueError, KeyError:
         return ""
 
 
@@ -266,7 +311,9 @@ def setup_status(engine_url: str, verify: bool) -> dict:
 
     url = f"{engine_url.rstrip('/')}/api/v1/auth/setup-status"
     try:
-        with urllib.request.urlopen(url, timeout=30, context=tls_context(verify)) as response:
+        with urllib.request.urlopen(
+            url, timeout=30, context=tls_context(verify)
+        ) as response:
             return json.loads(response.read())
     except (urllib.error.URLError, OSError, ValueError) as exc:
         raise wizard.OnboardingError(f"the engine did not serve {url}: {exc}") from exc
@@ -276,7 +323,9 @@ def companion(repo: Path, name: str) -> Path:
     """The checkout beside *repo*'s main clone, so a worktree resolves the same as a clone."""
     common = subprocess.run(
         ["git", "-C", str(repo), "rev-parse", "--git-common-dir"],
-        capture_output=True, text=True, check=False,
+        capture_output=True,
+        text=True,
+        check=False,
     ).stdout.strip()
     home = (repo / common).resolve().parent if common else repo
     return home.parent / name

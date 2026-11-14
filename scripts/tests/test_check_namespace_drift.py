@@ -133,7 +133,9 @@ def test_a_subchart_is_held_to_its_own_namespace_override() -> None:
         found,
     )
     problems = nsdrift.compare(
-        dict(SSOT, cnpg="cnpg-system"), dict(NETPOL, cnpg="cnpg-system"), {**APPSETS, **found}
+        dict(SSOT, cnpg="cnpg-system"),
+        dict(NETPOL, cnpg="cnpg-system"),
+        {**APPSETS, **found},
     )
     expect(
         "a subchart moved off the SSoT namespace is caught",

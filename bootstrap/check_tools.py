@@ -34,14 +34,20 @@ import sys
 TOOLS: tuple[tuple[str, str], ...] = (
     ("kubectl", "every cluster call bootstrap.sh and destroy.sh make"),
     ("helm", "every chart install in bootstrap.sh and uninstall in destroy.sh"),
-    ("python3", "the helpers both scripts call, from reading versions.yaml to rendering templates"),
+    (
+        "python3",
+        "the helpers both scripts call, from reading versions.yaml to rendering templates",
+    ),
     ("openssl", "mints the bundled deploy repo's admin password and webhook secret"),
 )
 
 # Only where DFE_CLOUD names the cloud.
 CLOUD_TOOLS: dict[str, tuple[tuple[str, str], ...]] = {
     "aws": (
-        ("aws", "destroy.sh step 9 terminates a test run's leftover nodes and security groups"),
+        (
+            "aws",
+            "destroy.sh step 9 terminates a test run's leftover nodes and security groups",
+        ),
     ),
 }
 

@@ -155,18 +155,26 @@ def get_tf_outputs(tf_dir: str) -> dict[str, tuple[str, bool]]:
             check=False,
         )
     except OSError as exc:
-        raise TerraformOutputError(f"could not run {tf_bin} output in {tf_dir}: {exc}") from exc
+        raise TerraformOutputError(
+            f"could not run {tf_bin} output in {tf_dir}: {exc}"
+        ) from exc
     if result.returncode != 0:
         raise TerraformOutputError(f"{tf_bin} output failed:\n{result.stderr}")
     try:
         raw = json.loads(result.stdout)
     except json.JSONDecodeError as exc:
-        raise TerraformOutputError(f"{tf_bin} output -json printed no JSON: {exc}") from exc
-    return {k: (str(v["value"]), bool(v.get("sensitive", False))) for k, v in raw.items()}
+        raise TerraformOutputError(
+            f"{tf_bin} output -json printed no JSON: {exc}"
+        ) from exc
+    return {
+        k: (str(v["value"]), bool(v.get("sensitive", False))) for k, v in raw.items()
+    }
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Bridge Terraform outputs to bootstrap.sh")
+    parser = argparse.ArgumentParser(
+        description="Bridge Terraform outputs to bootstrap.sh"
+    )
     parser.add_argument(
         "--tf-dir",
         default="terraform/environments/local",
@@ -215,7 +223,10 @@ def main() -> None:
     required = _required_vars(env_vars)
     missing = required - set(env_vars.keys())
     if missing:
-        print(f"ERROR: Missing required outputs: {', '.join(sorted(missing))}", file=sys.stderr)
+        print(
+            f"ERROR: Missing required outputs: {', '.join(sorted(missing))}",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     # Show env vars summary

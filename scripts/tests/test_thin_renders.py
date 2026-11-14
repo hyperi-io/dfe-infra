@@ -65,7 +65,9 @@ def _label(service: str, profile: str, cloud: str, scenario: str) -> str:
 def expected_text(service: str, profile: str, cloud: str, scenario: str) -> str:
     """The golden file a cell's live render writes."""
     label = _label(service, profile, cloud, scenario)
-    return HEADER.format(cell=label) + golden_text(cell(service, profile, cloud, scenario))
+    return HEADER.format(cell=label) + golden_text(
+        cell(service, profile, cloud, scenario)
+    )
 
 
 @pytest.mark.parametrize(("service", "profile", "cloud", "scenario"), CELLS)
@@ -74,10 +76,14 @@ def test_each_golden_is_the_live_render(
 ) -> None:
     path = golden_path(service, profile, cloud, scenario)
     assert path.is_file(), f"{path} is missing: run {REWRITE}"
-    committed = [d for d in yaml.safe_load_all(unmask(path.read_text(encoding="utf-8"))) if d]
+    committed = [
+        d for d in yaml.safe_load_all(unmask(path.read_text(encoding="utf-8"))) if d
+    ]
     live = cell(service, profile, cloud, scenario)
     assert render_differences(committed, live) == []
-    assert path.read_text(encoding="utf-8") == expected_text(service, profile, cloud, scenario)
+    assert path.read_text(encoding="utf-8") == expected_text(
+        service, profile, cloud, scenario
+    )
 
 
 def test_no_golden_is_left_without_its_cell() -> None:
@@ -88,13 +94,17 @@ def test_no_golden_is_left_without_its_cell() -> None:
 def test_every_token_names_a_pin_the_stack_carries() -> None:
     found = set()
     for path in GOLDENS.rglob("*.yaml"):
-        found |= {m.group(1) for m in PIN_TOKEN_RE.finditer(path.read_text(encoding="utf-8"))}
+        found |= {
+            m.group(1) for m in PIN_TOKEN_RE.finditer(path.read_text(encoding="utf-8"))
+        }
     assert sorted(found - set(pins())) == []
 
 
 def test_a_moved_leaf_fails_the_check() -> None:
     """A deployer-visible change the goldens do not hold is named leaf by leaf."""
-    moved = render_app("dfe-ui", "slim", "local", overlay={"fullnameOverride": "dfe-ui-renamed"})
+    moved = render_app(
+        "dfe-ui", "slim", "local", overlay={"fullnameOverride": "dfe-ui-renamed"}
+    )
     found = render_differences(golden("dfe-ui", "slim", "local"), moved)
     assert "only left: Deployment/dfe-ui" in found, found
     assert "only right: Deployment/dfe-ui-renamed" in found, found
@@ -125,7 +135,10 @@ def test_a_chart_label_carries_the_chart_version_token() -> None:
 def test_a_value_inside_a_longer_version_is_left_alone() -> None:
     value = pins()["apps.dfe-receiver"]
     assert mask(f"tag: {value}.9\n") == f"tag: {value}.9\n"
-    assert mask(f"tag: 1{value.removeprefix('v')}\n") == f"tag: 1{value.removeprefix('v')}\n"
+    assert (
+        mask(f"tag: 1{value.removeprefix('v')}\n")
+        == f"tag: 1{value.removeprefix('v')}\n"
+    )
     assert mask(f"tag: {value}\n") == f"tag: <pin:{_key_of(value)}>\n"
 
 
