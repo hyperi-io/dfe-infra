@@ -144,7 +144,9 @@ class StubGateway:
 
 class _StubHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
-        status, headers = self.server.stub.answer(self.headers.get("Host", ""), self.path)
+        status, headers = self.server.stub.answer(
+            self.headers.get("Host", ""), self.path
+        )
         body = b"stub\n"
         self.send_response(status)
         for name, value in headers.items():
@@ -249,7 +251,9 @@ def test_parse_edge_reads_the_dials_own_key_names() -> None:
 
 def test_parse_edge_reads_the_retired_otel_public_flag_for_one_release() -> None:
     """render_dial.py still feeds edge.ingest.otel.enabled from it, so the probe must too."""
-    text = DIAL_TEXT.replace("      enabled: false\n      port: 4319", "      public: true")
+    text = DIAL_TEXT.replace(
+        "      enabled: false\n      port: 4319", "      public: true"
+    )
     assert probe.parse_edge(probe.parse_yaml_subset(text)).otel_enabled is True
 
 
@@ -269,8 +273,12 @@ def test_parse_edge_takes_the_deployments_own_defaults_for_an_absent_block() -> 
 
 def test_expected_fail_a_retired_receiver_door_is_refused_rather_than_read() -> None:
     """render_dial.py refuses it, so a probe that read it would measure a dial nothing deploys."""
-    text = DIAL_TEXT.replace("  ingest:\n    otel:", "  ingest:\n    receiver:\n      mode: vpn\n    otel:")
-    with pytest.raises(probe.EdgeProbeError, match=r"edge\.ingest\.receiver\.mode is retired"):
+    text = DIAL_TEXT.replace(
+        "  ingest:\n    otel:", "  ingest:\n    receiver:\n      mode: vpn\n    otel:"
+    )
+    with pytest.raises(
+        probe.EdgeProbeError, match=r"edge\.ingest\.receiver\.mode is retired"
+    ):
         probe.parse_edge(probe.parse_yaml_subset(text))
 
 
@@ -294,9 +302,13 @@ def test_read_dial_reads_a_real_file(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_dial_address_prefers_the_target_over_any_lookup(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_dial_address_prefers_the_target_over_any_lookup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """--target exists for a name DNS does not carry yet, so it never asks."""
-    monkeypatch.setattr(probe, "_resolves", lambda host: pytest.fail("DNS was consulted"))
+    monkeypatch.setattr(
+        probe, "_resolves", lambda host: pytest.fail("DNS was consulted")
+    )
     assert probe.dial_address(PRODUCT, "198.51.100.7") == "198.51.100.7"
 
 
@@ -373,7 +385,9 @@ def test_tls_floor_fails_when_a_handshake_capped_below_it_is_accepted(
     gateway: StubGateway, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     gateway.routes[(PRODUCT, "/")] = 200
-    monkeypatch.setattr(probe, "_reach", _at_stub_over_tls(gateway, capped_refused=False))
+    monkeypatch.setattr(
+        probe, "_reach", _at_stub_over_tls(gateway, capped_refused=False)
+    )
     check = probe.check_tls_floor(_settings(), PRODUCT, "127.0.0.1")
     assert check.verdict == probe.FAIL
     assert "capped at TLSv1.1" in check.evidence
@@ -383,7 +397,9 @@ def test_tls_floor_fails_when_the_negotiated_protocol_is_under_the_floor(
     gateway: StubGateway, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     gateway.routes[(PRODUCT, "/")] = 200
-    monkeypatch.setattr(probe, "_reach", _at_stub_over_tls(gateway, negotiated="TLSv1.1"))
+    monkeypatch.setattr(
+        probe, "_reach", _at_stub_over_tls(gateway, negotiated="TLSv1.1")
+    )
     check = probe.check_tls_floor(_settings(), PRODUCT, "127.0.0.1")
     assert check.verdict == probe.FAIL
     assert "under the 1.2 floor" in check.evidence
@@ -408,7 +424,9 @@ def test_tls_floor_passes_on_the_negotiated_protocol_when_this_machine_cannot_ca
 
     def reach(request: probe.Request) -> probe.Answer:
         if request.tls_cap:
-            return probe.Answer(reached=False, client_capped=True, error="no protocols available")
+            return probe.Answer(
+                reached=False, client_capped=True, error="no protocols available"
+            )
         return plain(request)
 
     gateway.routes[(PRODUCT, "/")] = 200
@@ -493,7 +511,9 @@ def test_rate_limit_sends_no_more_than_the_burst_plus_one(
 
 
 def test_rate_limit_skips_when_the_limit_is_disabled() -> None:
-    check = probe.check_rate_limit(_settings(rate_limit_enabled=False), PRODUCT, "127.0.0.1")
+    check = probe.check_rate_limit(
+        _settings(rate_limit_enabled=False), PRODUCT, "127.0.0.1"
+    )
     assert check.verdict == probe.SKIP
     assert "edge.product.rate_limit.enabled is false" in check.evidence
 
@@ -522,7 +542,9 @@ def test_cidr_filter_skips_when_this_machine_is_on_the_list(
     """An on-list address proves nothing, and the evidence says which skip it is."""
     gateway.routes[(PRODUCT, "/")] = 200
     monkeypatch.setattr(probe, "_reach", _at_stub(gateway))
-    check = probe.check_cidr_filter(_settings(allowed_cidrs=("127.0.0.0/8",)), PRODUCT, "127.0.0.1")
+    check = probe.check_cidr_filter(
+        _settings(allowed_cidrs=("127.0.0.0/8",)), PRODUCT, "127.0.0.1"
+    )
     assert check.verdict == probe.SKIP
     assert "inside the allow-list" in check.evidence
 
@@ -584,7 +606,9 @@ def test_cidr_filter_skips_rather_than_failing_a_deployment_probed_from_behind_n
 def test_cidr_filter_passes_when_the_listener_refuses_this_machine(
     gateway: StubGateway, closed_port: int, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(probe, "_reach", _at_stub(gateway, {probe.HTTPS_PORT: closed_port}))
+    monkeypatch.setattr(
+        probe, "_reach", _at_stub(gateway, {probe.HTTPS_PORT: closed_port})
+    )
     check = probe.check_cidr_filter(
         _settings(allowed_cidrs=("203.0.113.0/24",)), PRODUCT, "127.0.0.1"
     )
@@ -603,6 +627,7 @@ def _resolving(**names: str) -> Callable:
     A literal address resolves to itself, matching getaddrinfo, so a --target
     and a published name compare through the same call.
     """
+
     def resolved(host: str) -> set[str]:
         try:
             return {str(ipaddress.ip_address(host))}
@@ -615,7 +640,7 @@ def _resolving(**names: str) -> Callable:
 
 
 def test_receiver_passes_when_no_record_was_published_for_it(
-    monkeypatch: pytest.MonkeyPatch
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A name that does not resolve is a door that was never opened, and it is
     the only thing provable from outside when the receiver holds a ClusterIP."""
@@ -627,7 +652,7 @@ def test_receiver_passes_when_no_record_was_published_for_it(
 
 
 def test_receiver_skips_rather_than_passing_on_the_gateways_own_address(
-    monkeypatch: pytest.MonkeyPatch
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The gateway carries the HTTP plane's listeners only, so its refusal on
     8080 is true in every configuration and proves nothing."""
@@ -667,7 +692,7 @@ def test_receiver_fails_when_its_own_load_balancer_accepts_a_connection(
 
 
 def test_receiver_skips_when_no_public_domain_is_named(
-    monkeypatch: pytest.MonkeyPatch
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(probe, "_reach", lambda request: pytest.fail("a dial was made"))
     check = probe.check_receiver_private(_settings(domain=""), "203.0.113.10")
@@ -675,20 +700,43 @@ def test_receiver_skips_when_no_public_domain_is_named(
     assert "no receiver name is published" in check.evidence
 
 
-@pytest.mark.parametrize(("door", "allow", "said"), [
-    ("loadbalancer", ("198.51.100.0/24",), "edge.groups.ingest.door is loadbalancer admitting 198.51.100.0/24"),
-    ("gateway", (), "edge.groups.ingest.door is gateway -- a public door is intended"),
-])
-def test_receiver_skips_when_a_public_door_is_intended(door: str, allow: tuple[str, ...], said: str) -> None:
-    check = probe.check_receiver_private(_settings(ingest_door=door, ingest_allow=allow), "127.0.0.1")
+@pytest.mark.parametrize(
+    ("door", "allow", "said"),
+    [
+        (
+            "loadbalancer",
+            ("198.51.100.0/24",),
+            "edge.groups.ingest.door is loadbalancer admitting 198.51.100.0/24",
+        ),
+        (
+            "gateway",
+            (),
+            "edge.groups.ingest.door is gateway -- a public door is intended",
+        ),
+    ],
+)
+def test_receiver_skips_when_a_public_door_is_intended(
+    door: str, allow: tuple[str, ...], said: str
+) -> None:
+    check = probe.check_receiver_private(
+        _settings(ingest_door=door, ingest_allow=allow), "127.0.0.1"
+    )
     assert check.verdict == probe.SKIP
     assert said in check.evidence
 
 
-@pytest.mark.parametrize("overrides", [
-    {"ingest_door": "loadbalancer", "ingest_allow": ()},
-    {"ingest_door": "loadbalancer", "ingest_allow": ("198.51.100.0/24",), "ingest_enabled": False},
-], ids=["closed-load-balancer-door", "group-off"])
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"ingest_door": "loadbalancer", "ingest_allow": ()},
+        {
+            "ingest_door": "loadbalancer",
+            "ingest_allow": ("198.51.100.0/24",),
+            "ingest_enabled": False,
+        },
+    ],
+    ids=["closed-load-balancer-door", "group-off"],
+)
 def test_expected_fail_a_door_with_no_senders_is_probed_as_private(
     overrides: dict, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -718,7 +766,9 @@ def test_otel_off_passes_on_a_404_on_every_flavour(
 def test_otel_off_passes_when_the_connection_is_refused(
     gateway: StubGateway, closed_port: int, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(probe, "_reach", _at_stub(gateway, {probe.HTTPS_PORT: closed_port}))
+    monkeypatch.setattr(
+        probe, "_reach", _at_stub(gateway, {probe.HTTPS_PORT: closed_port})
+    )
     check = probe.check_otel_ingress(_settings(), "127.0.0.1")
     assert check.verdict == probe.PASS
 
@@ -740,7 +790,9 @@ def test_otel_on_passes_when_a_request_with_no_token_is_refused(
     """401 is the collector's bearer-token receiver answering: the door is there and shut."""
     gateway.routes[(OTEL, probe.OTEL_PROBE_PATH)] = 401
     monkeypatch.setattr(probe, "_reach", _at_stub(gateway))
-    check = probe.check_otel_ingress(_settings(flavour=flavour, otel_enabled=True), "127.0.0.1")
+    check = probe.check_otel_ingress(
+        _settings(flavour=flavour, otel_enabled=True), "127.0.0.1"
+    )
     assert check.verdict == probe.PASS
     assert f"{OTEL}{probe.OTEL_PROBE_PATH} answered 401" in check.evidence
 
@@ -770,7 +822,9 @@ def test_otel_on_fails_when_no_route_is_programmed(
 def test_otel_on_fails_when_nothing_answers(
     gateway: StubGateway, closed_port: int, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(probe, "_reach", _at_stub(gateway, {probe.HTTPS_PORT: closed_port}))
+    monkeypatch.setattr(
+        probe, "_reach", _at_stub(gateway, {probe.HTTPS_PORT: closed_port})
+    )
     check = probe.check_otel_ingress(_settings(otel_enabled=True), "127.0.0.1")
     assert check.verdict == probe.FAIL
     assert "answered nothing" in check.evidence
@@ -871,7 +925,9 @@ def test_login_fails_when_the_route_404s(
 def test_login_fails_when_nothing_answers_at_all(
     gateway: StubGateway, closed_port: int, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(probe, "_reach", _at_stub(gateway, {probe.HTTPS_PORT: closed_port}))
+    monkeypatch.setattr(
+        probe, "_reach", _at_stub(gateway, {probe.HTTPS_PORT: closed_port})
+    )
     check = probe.check_login(_settings(), PRODUCT, "127.0.0.1")
     assert check.verdict == probe.FAIL
 
@@ -905,12 +961,18 @@ def test_engine_expectation_opens_the_spec_with_the_cli_families() -> None:
 
 def test_engine_expectation_gives_scim_its_own_switch() -> None:
     assert probe.engine_path_expectation("engine scim", _settings())[0] is True
-    assert probe.engine_path_expectation(
-        "engine scim", _settings(engine_cli_families_public=True)
-    )[0] is True
-    assert probe.engine_path_expectation(
-        "engine scim", _settings(engine_scim_public=True)
-    )[0] is False
+    assert (
+        probe.engine_path_expectation(
+            "engine scim", _settings(engine_cli_families_public=True)
+        )[0]
+        is True
+    )
+    assert (
+        probe.engine_path_expectation(
+            "engine scim", _settings(engine_scim_public=True)
+        )[0]
+        is False
+    )
 
 
 def test_engine_expectation_keeps_the_swagger_surface_off_under_every_switch() -> None:
@@ -931,7 +993,11 @@ def test_engine_browser_family_passes_when_the_product_hostname_answers_it(
     gateway.routes[(PRODUCT, probe.ENGINE_BROWSER_PATH)] = 200
     monkeypatch.setattr(probe, "_reach", _at_stub(gateway))
     check = probe.check_engine_path(
-        _settings(), "engine browser family", probe.ENGINE_BROWSER_PATH, PRODUCT, "127.0.0.1"
+        _settings(),
+        "engine browser family",
+        probe.ENGINE_BROWSER_PATH,
+        PRODUCT,
+        "127.0.0.1",
     )
     assert check.verdict == probe.PASS
     assert "answered 200" in check.evidence
@@ -944,7 +1010,11 @@ def test_engine_browser_family_fails_on_a_404_because_that_is_the_whole_fault(
     of a public product with no engine route behind it."""
     monkeypatch.setattr(probe, "_reach", _at_stub(gateway))
     check = probe.check_engine_path(
-        _settings(), "engine browser family", probe.ENGINE_BROWSER_PATH, PRODUCT, "127.0.0.1"
+        _settings(),
+        "engine browser family",
+        probe.ENGINE_BROWSER_PATH,
+        PRODUCT,
+        "127.0.0.1",
     )
     assert check.verdict == probe.FAIL
     assert "carries no route for it" in check.evidence
@@ -980,8 +1050,11 @@ def test_engine_private_family_fails_on_a_404_once_its_switch_is_on(
     is a failure rather than a quiet pass."""
     monkeypatch.setattr(probe, "_reach", _at_stub(gateway))
     check = probe.check_engine_path(
-        _settings(engine_cli_families_public=True), "engine cli family",
-        probe.ENGINE_CLI_PATH, PRODUCT, "127.0.0.1",
+        _settings(engine_cli_families_public=True),
+        "engine cli family",
+        probe.ENGINE_CLI_PATH,
+        PRODUCT,
+        "127.0.0.1",
     )
     assert check.verdict == probe.FAIL
 
@@ -990,8 +1063,10 @@ def test_engine_docs_and_spec_pass_on_a_404(
     gateway: StubGateway, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(probe, "_reach", _at_stub(gateway))
-    for name, path in (("engine docs", probe.ENGINE_DOCS_PATH),
-                       ("engine openapi", probe.ENGINE_SPEC_PATH)):
+    for name, path in (
+        ("engine docs", probe.ENGINE_DOCS_PATH),
+        ("engine openapi", probe.ENGINE_SPEC_PATH),
+    ):
         check = probe.check_engine_path(_settings(), name, path, PRODUCT, "127.0.0.1")
         assert check.verdict == probe.PASS, check
 
@@ -1020,7 +1095,7 @@ def test_engine_jwks_fails_when_the_keys_do_not_answer(
 
 
 def test_every_engine_check_skips_when_the_engine_is_off_the_public_hostname(
-    monkeypatch: pytest.MonkeyPatch
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(probe, "_reach", lambda request: pytest.fail("a dial was made"))
     settings = _settings(engine_with_product=False)
@@ -1031,9 +1106,12 @@ def test_every_engine_check_skips_when_the_engine_is_off_the_public_hostname(
 
 
 def test_parse_edge_reads_the_engine_api_switches() -> None:
-    settings = probe.parse_edge(probe.parse_yaml_subset(
-        DIAL_TEXT + "  engine_api:\n    cli_families_public: true\n    scim_public: true\n"
-    ))
+    settings = probe.parse_edge(
+        probe.parse_yaml_subset(
+            DIAL_TEXT
+            + "  engine_api:\n    cli_families_public: true\n    scim_public: true\n"
+        )
+    )
     assert settings.engine_with_product is True
     assert settings.engine_cli_families_public is True
     assert settings.engine_scim_public is True
@@ -1055,7 +1133,10 @@ def _healthy_gateway(stub: StubGateway) -> None:
 
 
 def test_a_healthy_deployment_exits_zero_with_no_failed_check(
-    gateway: StubGateway, closed_port: int, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    gateway: StubGateway,
+    closed_port: int,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
     capsys: pytest.CaptureFixture,
 ) -> None:
     _healthy_gateway(gateway)
@@ -1071,7 +1152,10 @@ def test_a_healthy_deployment_exits_zero_with_no_failed_check(
 
 
 def test_one_failed_check_exits_non_zero(
-    gateway: StubGateway, closed_port: int, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    gateway: StubGateway,
+    closed_port: int,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
     capsys: pytest.CaptureFixture,
 ) -> None:
     """An admin UI answering on the public edge is enough on its own."""
@@ -1088,7 +1172,10 @@ def test_one_failed_check_exits_non_zero(
 
 
 def test_every_check_is_reported_on_its_own_line(
-    gateway: StubGateway, closed_port: int, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    gateway: StubGateway,
+    closed_port: int,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
     capsys: pytest.CaptureFixture,
 ) -> None:
     _healthy_gateway(gateway)
@@ -1102,7 +1189,11 @@ def test_every_check_is_reported_on_its_own_line(
         assert f"] {name}:" in err
     # And the converse, or a check added to run_checks and not to check_names
     # would go missing from the all-skip path with nothing failing.
-    reported = {line.split("] ", 1)[1].split(":", 1)[0] for line in err.splitlines() if "] " in line}
+    reported = {
+        line.split("] ", 1)[1].split(":", 1)[0]
+        for line in err.splitlines()
+        if "] " in line
+    }
     assert reported == set(probe.check_names())
 
 
@@ -1142,10 +1233,16 @@ def test_a_dial_still_on_the_deprecated_spellings_is_read_rather_than_skipped() 
     assert tuple(settings.allowed_cidrs) == ("203.0.113.0/24",)
 
 
-def test_an_inline_allow_list_loses_its_brackets_before_any_address_is_weighed() -> None:
-    settings = probe.parse_edge(probe.parse_yaml_subset(
-        DIAL_TEXT.replace('allowed_cidrs: ""', "allowed_cidrs: [10.0.0.0/8, 192.168.0.0/16]")
-    ))
+def test_an_inline_allow_list_loses_its_brackets_before_any_address_is_weighed() -> (
+    None
+):
+    settings = probe.parse_edge(
+        probe.parse_yaml_subset(
+            DIAL_TEXT.replace(
+                'allowed_cidrs: ""', "allowed_cidrs: [10.0.0.0/8, 192.168.0.0/16]"
+            )
+        )
+    )
     assert tuple(settings.allowed_cidrs) == ("10.0.0.0/8", "192.168.0.0/16")
 
 
@@ -1222,12 +1319,16 @@ ARGO = probe.AdminLink(name="Argo CD", url=f"https://{ARGO_HOST}")
 KAFBAT = probe.AdminLink(name="Kafbat", url="https://kafbat.example.test")
 
 
-def _redirect(stub: StubGateway, host: str, path: str, location: str, status: int = 302) -> None:
+def _redirect(
+    stub: StubGateway, host: str, path: str, location: str, status: int = 302
+) -> None:
     stub.routes[(host, path)] = status
     stub.locations[(host, path)] = location
 
 
-def test_an_admin_ui_answering_200_loads(gateway: StubGateway, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_an_admin_ui_answering_200_loads(
+    gateway: StubGateway, monkeypatch: pytest.MonkeyPatch
+) -> None:
     gateway.routes[(ARGO_HOST, "/")] = 200
     monkeypatch.setattr(probe, "_reach", _at_stub(gateway))
     check = probe.check_admin_link(ARGO, "127.0.0.1")
@@ -1243,7 +1344,9 @@ def test_a_redirect_back_to_the_same_url_is_a_loop(
     monkeypatch.setattr(probe, "_reach", _at_stub(gateway))
     check = probe.check_admin_link(ARGO, "127.0.0.1")
     assert check.verdict == probe.FAIL, check
-    assert check.evidence == f"redirect loop: https://{ARGO_HOST}/ -> https://{ARGO_HOST}/"
+    assert (
+        check.evidence == f"redirect loop: https://{ARGO_HOST}/ -> https://{ARGO_HOST}/"
+    )
     assert gateway.seen == [(ARGO_HOST, "/")]
 
 
@@ -1267,13 +1370,18 @@ def test_a_5xx_fails(gateway: StubGateway, monkeypatch: pytest.MonkeyPatch) -> N
     assert check.evidence.endswith("answered 502")
 
 
-def test_a_5xx_behind_a_redirect_fails(gateway: StubGateway, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_5xx_behind_a_redirect_fails(
+    gateway: StubGateway, monkeypatch: pytest.MonkeyPatch
+) -> None:
     _redirect(gateway, ARGO_HOST, "/", "/login")
     gateway.routes[(ARGO_HOST, "/login")] = 503
     monkeypatch.setattr(probe, "_reach", _at_stub(gateway))
     check = probe.check_admin_link(ARGO, "127.0.0.1")
     assert check.verdict == probe.FAIL, check
-    assert check.evidence == f"https://{ARGO_HOST}/ -> https://{ARGO_HOST}/login answered 503"
+    assert (
+        check.evidence
+        == f"https://{ARGO_HOST}/ -> https://{ARGO_HOST}/login answered 503"
+    )
 
 
 def test_a_login_handed_to_an_idp_loads_and_the_idp_is_not_dialled(
@@ -1333,7 +1441,9 @@ def test_a_redirect_with_nowhere_to_go_fails(
     assert "no Location" in check.evidence
 
 
-def test_a_login_wall_is_the_ui_answering(gateway: StubGateway, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_login_wall_is_the_ui_answering(
+    gateway: StubGateway, monkeypatch: pytest.MonkeyPatch
+) -> None:
     gateway.routes[(ARGO_HOST, "/")] = 401
     monkeypatch.setattr(probe, "_reach", _at_stub(gateway))
     assert probe.check_admin_link(ARGO, "127.0.0.1").verdict == probe.PASS
@@ -1381,7 +1491,9 @@ def test_only_an_auth_answer_or_an_absent_page_is_a_4xx_that_loads(
 def test_an_admin_ui_that_answers_nothing_fails(
     gateway: StubGateway, monkeypatch: pytest.MonkeyPatch, closed_port: int
 ) -> None:
-    monkeypatch.setattr(probe, "_reach", _at_stub(gateway, {probe.HTTPS_PORT: closed_port}))
+    monkeypatch.setattr(
+        probe, "_reach", _at_stub(gateway, {probe.HTTPS_PORT: closed_port})
+    )
     check = probe.check_admin_link(ARGO, "127.0.0.1")
     assert check.verdict == probe.FAIL, check
     assert "answered nothing through 127.0.0.1" in check.evidence
@@ -1402,11 +1514,15 @@ def test_a_single_label_domain_is_still_a_domain(
 ) -> None:
     gateway.routes[("argocd.corp", "/")] = 200
     monkeypatch.setattr(probe, "_reach", _at_stub(gateway))
-    check = probe.check_admin_link(probe.AdminLink("Argo CD", "https://argocd.corp"), "127.0.0.1")
+    check = probe.check_admin_link(
+        probe.AdminLink("Argo CD", "https://argocd.corp"), "127.0.0.1"
+    )
     assert check.verdict == probe.PASS, check
 
 
-def test_an_undomained_link_skips_without_dialling(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_an_undomained_link_skips_without_dialling(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(probe, "_reach", lambda request: pytest.fail("a dial was made"))
     for url in ("https://argocd.", "https://argocd"):
         check = probe.check_admin_link(probe.AdminLink("Argo CD", url), "127.0.0.1")
@@ -1418,7 +1534,12 @@ def test_an_undomained_link_skips_without_dialling(monkeypatch: pytest.MonkeyPat
 def _configmap(*links: probe.AdminLink) -> dict:
     """dfe-admin-links as the gateway chart renders it."""
     entries = [
-        {"name": link.name, "purpose": "p", "url": link.url, "probe_url": "http://svc.ns.svc:80"}
+        {
+            "name": link.name,
+            "purpose": "p",
+            "url": link.url,
+            "probe_url": "http://svc.ns.svc:80",
+        }
         for link in links
     ]
     return {"data": {probe.ADMIN_LINKS_KEY: json.dumps(entries)}}
@@ -1436,14 +1557,22 @@ def _cluster(
     def kubectl_json(kube: list[str], *argv: str) -> tuple[dict, str]:
         if "configmap" in argv:
             if configmap is None:
-                return {}, 'Error from server (NotFound): configmaps "dfe-admin-links" not found'
+                return (
+                    {},
+                    'Error from server (NotFound): configmaps "dfe-admin-links" not found',
+                )
             return configmap, ""
         if "gateway" in argv:
             return {"items": gateways or []}, ""
         if "secret" in argv and probe.CLUSTER_SECRET_NAME in argv:
             if self_ranges is None:
-                return {}, 'Error from server (Forbidden): secrets "dfe-cluster" is forbidden'
-            annotations = {probe.SELF_RANGES_ANNOTATION: self_ranges} if self_ranges else {}
+                return (
+                    {},
+                    'Error from server (Forbidden): secrets "dfe-cluster" is forbidden',
+                )
+            annotations = (
+                {probe.SELF_RANGES_ANNOTATION: self_ranges} if self_ranges else {}
+            )
             return {"metadata": {"annotations": annotations}}, ""
         pytest.fail(f"unexpected kubectl {argv}")
 
@@ -1481,9 +1610,13 @@ def test_an_empty_list_is_one_skip(monkeypatch: pytest.MonkeyPatch) -> None:
     assert check.verdict == probe.SKIP
 
 
-def test_a_configmap_it_cannot_read_is_an_error_not_a_skip(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_configmap_it_cannot_read_is_an_error_not_a_skip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(probe, "_kubectl_json", lambda kube, *argv: ({}, "Forbidden"))
-    with pytest.raises(probe.EdgeProbeError, match="cannot read dfe-local/dfe-admin-links"):
+    with pytest.raises(
+        probe.EdgeProbeError, match="cannot read dfe-local/dfe-admin-links"
+    ):
         probe.admin_ui_checks([], "dfe-local")
 
 
@@ -1499,7 +1632,9 @@ def test_a_gateway_this_machine_cannot_reach_skips_every_ui(
     gateway: StubGateway, monkeypatch: pytest.MonkeyPatch, closed_port: int
 ) -> None:
     _cluster(monkeypatch, _configmap(ARGO, KAFBAT), GATEWAYS)
-    monkeypatch.setattr(probe, "_reach", _at_stub(gateway, {probe.HTTPS_PORT: closed_port}))
+    monkeypatch.setattr(
+        probe, "_reach", _at_stub(gateway, {probe.HTTPS_PORT: closed_port})
+    )
     checks = probe.admin_ui_checks([], "dfe-local")
     assert [c.verdict for c in checks] == [probe.SKIP, probe.SKIP]
     assert "does not answer from this machine" in checks[0].evidence
@@ -1516,10 +1651,14 @@ def test_expected_fail_a_dead_door_from_inside_the_self_ranges_fails_every_ui(
 ) -> None:
     """The gateway admits its self ranges, so silence there is a door that is down."""
     _cluster(monkeypatch, _configmap(ARGO, KAFBAT), GATEWAYS, SELF_RANGES)
-    monkeypatch.setattr(probe, "_reach", _at_stub(gateway, {probe.HTTPS_PORT: closed_port}))
+    monkeypatch.setattr(
+        probe, "_reach", _at_stub(gateway, {probe.HTTPS_PORT: closed_port})
+    )
     checks = probe.admin_ui_checks([], "dfe-local", source=RUNNER)
     assert [c.verdict for c in checks] == [probe.FAIL, probe.FAIL]
-    assert f"this machine ({RUNNER}) is inside exposure.selfRanges" in checks[0].evidence
+    assert (
+        f"this machine ({RUNNER}) is inside exposure.selfRanges" in checks[0].evidence
+    )
     assert probe.exit_code(checks) == 1
 
 
@@ -1527,7 +1666,9 @@ def test_a_dead_door_from_outside_the_self_ranges_skips_and_says_why(
     gateway: StubGateway, monkeypatch: pytest.MonkeyPatch, closed_port: int
 ) -> None:
     _cluster(monkeypatch, _configmap(ARGO), GATEWAYS, SELF_RANGES)
-    monkeypatch.setattr(probe, "_reach", _at_stub(gateway, {probe.HTTPS_PORT: closed_port}))
+    monkeypatch.setattr(
+        probe, "_reach", _at_stub(gateway, {probe.HTTPS_PORT: closed_port})
+    )
     (check,) = probe.admin_ui_checks([], "dfe-local", source="192.0.2.50")
     assert check.verdict == probe.SKIP, check
     assert "this machine (192.0.2.50) is outside exposure.selfRanges" in check.evidence
@@ -1539,17 +1680,24 @@ def test_this_machines_own_route_counts_when_it_sits_inside_the_self_ranges(
 ) -> None:
     """An on-prem operator on the cluster's own network needs no --source."""
     _cluster(monkeypatch, _configmap(ARGO), GATEWAYS, "127.0.0.0/8")
-    monkeypatch.setattr(probe, "_reach", _at_stub(gateway, {probe.HTTPS_PORT: closed_port}))
+    monkeypatch.setattr(
+        probe, "_reach", _at_stub(gateway, {probe.HTTPS_PORT: closed_port})
+    )
     (check,) = probe.admin_ui_checks([], "dfe-local")
     assert check.verdict == probe.FAIL, check
-    assert "this machine (127.0.0.1) is inside exposure.selfRanges (127.0.0.0/8)" in check.evidence
+    assert (
+        "this machine (127.0.0.1) is inside exposure.selfRanges (127.0.0.0/8)"
+        in check.evidence
+    )
 
 
 def test_behind_nat_with_no_source_skips_and_names_the_flag(
     gateway: StubGateway, monkeypatch: pytest.MonkeyPatch, closed_port: int
 ) -> None:
     _cluster(monkeypatch, _configmap(ARGO), GATEWAYS, SELF_RANGES)
-    monkeypatch.setattr(probe, "_reach", _at_stub(gateway, {probe.HTTPS_PORT: closed_port}))
+    monkeypatch.setattr(
+        probe, "_reach", _at_stub(gateway, {probe.HTTPS_PORT: closed_port})
+    )
     (check,) = probe.admin_ui_checks([], "dfe-local")
     assert check.verdict == probe.SKIP, check
     assert "behind NAT" in check.evidence
@@ -1560,7 +1708,9 @@ def test_an_unreadable_cluster_secret_skips_and_says_so(
     gateway: StubGateway, monkeypatch: pytest.MonkeyPatch, closed_port: int
 ) -> None:
     _cluster(monkeypatch, _configmap(ARGO), GATEWAYS, None)
-    monkeypatch.setattr(probe, "_reach", _at_stub(gateway, {probe.HTTPS_PORT: closed_port}))
+    monkeypatch.setattr(
+        probe, "_reach", _at_stub(gateway, {probe.HTTPS_PORT: closed_port})
+    )
     (check,) = probe.admin_ui_checks([], "dfe-local", source=RUNNER)
     assert check.verdict == probe.SKIP, check
     assert "cannot read argocd/dfe-cluster" in check.evidence
@@ -1574,7 +1724,9 @@ def test_expected_fail_no_gateway_address_from_inside_the_self_ranges_fails_ever
     monkeypatch.setattr(probe, "_reach", lambda request: pytest.fail("a dial was made"))
     checks = probe.admin_ui_checks([], "dfe-local", source=RUNNER)
     assert [c.verdict for c in checks] == [probe.FAIL, probe.FAIL]
-    assert f"this machine ({RUNNER}) is inside exposure.selfRanges" in checks[0].evidence
+    assert (
+        f"this machine ({RUNNER}) is inside exposure.selfRanges" in checks[0].evidence
+    )
     assert probe.exit_code(checks) == 1
 
 
@@ -1604,7 +1756,9 @@ def test_expected_fail_a_gateway_with_no_address_for_the_whole_wait_fails_the_ve
     monkeypatch.setattr(probe.time, "sleep", sleeps.append)
     assert probe.cmd_admin_probe(_admin_args(wait=0.02, source=RUNNER)) == 1
     err = capsys.readouterr().err
-    assert sleeps, "a Gateway with no address, probed from inside the self ranges, was never retried"
+    assert sleeps, (
+        "a Gateway with no address, probed from inside the self ranges, was never retried"
+    )
     assert "[FAIL] admin ui Argo CD" in err
 
 
@@ -1619,10 +1773,18 @@ def test_a_door_that_answers_is_never_weighed_against_the_self_ranges(
     assert check.verdict == probe.PASS, check
 
 
-@pytest.mark.parametrize(("raw", "address"), [
-    ("", ""), (RUNNER, RUNNER), (f"{RUNNER}/32", RUNNER), ("2001:db8::7/128", "2001:db8::7"),
-])
-def test_the_source_takes_one_address_bare_or_as_a_host_cidr(raw: str, address: str) -> None:
+@pytest.mark.parametrize(
+    ("raw", "address"),
+    [
+        ("", ""),
+        (RUNNER, RUNNER),
+        (f"{RUNNER}/32", RUNNER),
+        ("2001:db8::7/128", "2001:db8::7"),
+    ],
+)
+def test_the_source_takes_one_address_bare_or_as_a_host_cidr(
+    raw: str, address: str
+) -> None:
     assert probe.source_address(raw) == address
 
 
@@ -1632,7 +1794,9 @@ def test_expected_fail_a_source_that_is_not_one_address_is_refused(raw: str) -> 
         probe.source_address(raw)
 
 
-def test_each_listed_ui_gets_its_own_verdict(gateway: StubGateway, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_each_listed_ui_gets_its_own_verdict(
+    gateway: StubGateway, monkeypatch: pytest.MonkeyPatch
+) -> None:
     _cluster(monkeypatch, _configmap(ARGO, KAFBAT), GATEWAYS)
     _redirect(gateway, ARGO_HOST, "/", f"https://{ARGO_HOST}/", status=307)
     gateway.routes[("kafbat.example.test", "/")] = 200
@@ -1645,8 +1809,14 @@ def test_each_listed_ui_gets_its_own_verdict(gateway: StubGateway, monkeypatch: 
     assert probe.exit_code(checks) == 1
 
 
-def test_the_deployments_own_gateway_is_dialled_before_any_other(monkeypatch: pytest.MonkeyPatch) -> None:
-    _cluster(monkeypatch, None, [_gateway("someone-elses", "192.0.2.1"), _gateway("dfe-gateway", "192.0.2.2")])
+def test_the_deployments_own_gateway_is_dialled_before_any_other(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _cluster(
+        monkeypatch,
+        None,
+        [_gateway("someone-elses", "192.0.2.1"), _gateway("dfe-gateway", "192.0.2.2")],
+    )
     assert probe.gateway_address([]) == "192.0.2.2"
     _cluster(monkeypatch, None, [_gateway("someone-elses", "192.0.2.1")])
     assert probe.gateway_address([]) == "192.0.2.1"
@@ -1654,8 +1824,15 @@ def test_the_deployments_own_gateway_is_dialled_before_any_other(monkeypatch: py
 
 # --- the verb ----------------------------------------------------------------
 def _admin_args(**overrides: object) -> argparse.Namespace:
-    values = {"namespace": "dfe-local", "kubeconfig": "", "context": "", "gateway": "dfe-gateway",
-              "target": "", "wait": 0.0, "source": ""}
+    values = {
+        "namespace": "dfe-local",
+        "kubeconfig": "",
+        "context": "",
+        "gateway": "dfe-gateway",
+        "target": "",
+        "wait": 0.0,
+        "source": "",
+    }
     return argparse.Namespace(**{**values, **overrides})
 
 
@@ -1707,7 +1884,9 @@ def test_a_door_dead_from_outside_the_self_ranges_still_exits_zero_and_says_why(
 ) -> None:
     _cluster(monkeypatch, _configmap(ARGO), GATEWAYS, SELF_RANGES)
     monkeypatch.setattr(probe, "_reach", _door_down_for(gateway, 10_000))
-    monkeypatch.setattr(probe.time, "sleep", lambda seconds: pytest.fail("a SKIP was retried"))
+    monkeypatch.setattr(
+        probe.time, "sleep", lambda seconds: pytest.fail("a SKIP was retried")
+    )
     assert probe.cmd_admin_probe(_admin_args(wait=30.0, source="192.0.2.50")) == 0
     err = capsys.readouterr().err
     assert "[SKIP] admin ui Argo CD" in err
@@ -1728,7 +1907,9 @@ def test_the_source_comes_from_the_environment_when_the_flag_is_empty(
 def test_a_source_that_is_not_one_address_fails_the_verb_before_any_probe(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
 ) -> None:
-    monkeypatch.setattr(probe, "_kubectl_json", lambda kube, *argv: pytest.fail("the cluster was read"))
+    monkeypatch.setattr(
+        probe, "_kubectl_json", lambda kube, *argv: pytest.fail("the cluster was read")
+    )
     assert probe.cmd_admin_probe(_admin_args(source="203.0.113.0/24")) == 1
     assert "dfe-ops admin-probe: --source" in capsys.readouterr().err
 
@@ -1748,10 +1929,12 @@ def test_a_failing_ui_fails_the_verb(
 def test_the_wait_re_probes_until_the_ui_loads(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
 ) -> None:
-    passes = iter([
-        [probe.Check("admin ui Argo CD", probe.FAIL, "redirect loop")],
-        [probe.Check("admin ui Argo CD", probe.PASS, "answered 200")],
-    ])
+    passes = iter(
+        [
+            [probe.Check("admin ui Argo CD", probe.FAIL, "redirect loop")],
+            [probe.Check("admin ui Argo CD", probe.PASS, "answered 200")],
+        ]
+    )
     monkeypatch.setattr(probe, "admin_ui_checks", lambda *args: next(passes))
     monkeypatch.setattr(probe.time, "sleep", lambda seconds: None)
     assert probe.cmd_admin_probe(_admin_args(wait=60.0)) == 0
@@ -1772,8 +1955,14 @@ def test_the_subparser_registers_the_verb_as_admin_probe() -> None:
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="command")
     probe.add_admin_probe_subparser(sub)
-    args = parser.parse_args(["admin-probe", "--namespace", "dfe-prod", "--wait", "120"])
+    args = parser.parse_args(
+        ["admin-probe", "--namespace", "dfe-prod", "--wait", "120"]
+    )
     assert args.func is probe.cmd_admin_probe
-    assert (args.namespace, args.wait, args.gateway) == ("dfe-prod", 120.0, "dfe-gateway")
+    assert (args.namespace, args.wait, args.gateway) == (
+        "dfe-prod",
+        120.0,
+        "dfe-gateway",
+    )
     assert args.source == ""
     assert parser.parse_args(["admin-probe", "--source", RUNNER]).source == RUNNER

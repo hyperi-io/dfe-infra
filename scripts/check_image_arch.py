@@ -251,7 +251,10 @@ CHART_DEFAULT_IMAGES = {
 # Renovate's helm-values manager moves them: name -> (values file, path to the
 # full reference).
 CHART_VALUES_IMAGES = {
-    "forgejo setup Job curl": (Path("helm/charts/forgejo/values.yaml"), ("setup", "image")),
+    "forgejo setup Job curl": (
+        Path("helm/charts/forgejo/values.yaml"),
+        ("setup", "image"),
+    ),
     # The MSK bootstrap Job, and the smoke test's and dfe-ops diagnostics' Kafka client pods.
     "kafka CLI": (Path("helm/charts/kafka/values.yaml"), ("kafka", "cliImage")),
     # The images the DocumentDB CR names, until a stack pins them.
@@ -311,7 +314,9 @@ def _top_level(text: str, name: str) -> str:
     return ""
 
 
-def _require_version(declared: str, chart_ref: str, digest: str, chart_version: str) -> None:
+def _require_version(
+    declared: str, chart_ref: str, digest: str, chart_version: str
+) -> None:
     """Fail a chart read at a digest whose archive declares another version than the pin."""
     if digest and declared != chart_version:
         raise RuntimeError(
@@ -347,7 +352,9 @@ def chart_app_version(
         raise RuntimeError(
             gave_up or result.stderr.strip() or f"helm show chart {chart_ref} failed"
         )
-    _require_version(_top_level(result.stdout, "version"), chart_ref, digest, chart_version)
+    _require_version(
+        _top_level(result.stdout, "version"), chart_ref, digest, chart_version
+    )
     app_version = _top_level(result.stdout, "appVersion")
     if not app_version:
         raise RuntimeError(f"{chart_ref} {chart_version}: no appVersion in the chart")
@@ -382,11 +389,15 @@ def pull_chart(
     except OSError as exc:
         raise RuntimeError(f"cannot run helm: {exc}") from exc
     if result.returncode != 0:
-        raise RuntimeError(gave_up or result.stderr.strip() or f"helm pull {chart_ref} failed")
+        raise RuntimeError(
+            gave_up or result.stderr.strip() or f"helm pull {chart_ref} failed"
+        )
     # Helm 4 pulling by digest also leaves an empty `<chart>@sha256:...` directory beside the chart.
     charts = [path for path in into.iterdir() if (path / "Chart.yaml").is_file()]
     if len(charts) != 1:
-        raise RuntimeError(f"helm pull {chart_ref} left {len(charts)} charts, expected 1")
+        raise RuntimeError(
+            f"helm pull {chart_ref} left {len(charts)} charts, expected 1"
+        )
     return charts[0]
 
 
@@ -438,7 +449,9 @@ def default_image_ref(
         raise ValueError(f"{where}.repository is not set")
     tag = _field(layers, path, "tag") or app_version
     if not tag:
-        raise ValueError(f"{where}.tag is not set and the chart has no appVersion fallback")
+        raise ValueError(
+            f"{where}.tag is not set and the chart has no appVersion fallback"
+        )
     digest = _field(layers, path, "digest") if with_digest else ""
     return f"{repository}:{tag}@{digest}" if digest else f"{repository}:{tag}"
 
@@ -452,7 +465,9 @@ def values_image_ref(values: dict, path: tuple[str, ...]) -> str:
     *parent, leaf = path
     ref = _block(values, tuple(parent)).get(leaf)
     if not isinstance(ref, str) or ":" not in ref.rsplit("/", 1)[-1]:
-        raise ValueError(f"{'.'.join(path)} is {ref!r}, not an image reference with a tag")
+        raise ValueError(
+            f"{'.'.join(path)} is {ref!r}, not an image reference with a tag"
+        )
     return ref
 
 
@@ -489,7 +504,9 @@ def chart_dir_refs(chart: Path, images: list[DefaultImage]) -> list[str]:
         layers = [parent]
         if subchart:
             layers = [_block(parent, (subchart,)), _parsed(source / "values.yaml")]
-        app_version = _parsed(source / "Chart.yaml").get("appVersion") if falls_back else None
+        app_version = (
+            _parsed(source / "Chart.yaml").get("appVersion") if falls_back else None
+        )
         fallback = app_version if isinstance(app_version, str) else None
         try:
             refs.append(default_image_ref(layers, path, fallback, with_digest))
@@ -518,9 +535,13 @@ def chart_default_refs(
             chart_dir_refs failed.
     """
     with tempfile.TemporaryDirectory(prefix="check-image-arch-") as scratch:
-        chart = pull_chart(chart_ref, repo_url, chart_version, Path(scratch), budget, digest)
+        chart = pull_chart(
+            chart_ref, repo_url, chart_version, Path(scratch), budget, digest
+        )
         if digest:
-            declared = _top_level((chart / "Chart.yaml").read_text(encoding="utf-8"), "version")
+            declared = _top_level(
+                (chart / "Chart.yaml").read_text(encoding="utf-8"), "version"
+            )
             _require_version(declared, chart_ref, digest, chart_version)
         return chart_dir_refs(chart, images)
 
@@ -622,15 +643,21 @@ class VerdictCache:
         self.record_chart(source, version, "appVersion", found)
         return found
 
-    def recall_images(self, source: str, version: str, names: list[str]) -> list[str] | None:
+    def recall_images(
+        self, source: str, version: str, names: list[str]
+    ) -> list[str] | None:
         """The default image refs an earlier run read from ``source``, in ``names`` order."""
         value = self._recalled_field(source, version, "images")
-        if not isinstance(value, dict) or not all(isinstance(value.get(n), str) for n in names):
+        if not isinstance(value, dict) or not all(
+            isinstance(value.get(n), str) for n in names
+        ):
             self.chart_misses += 1
             return None
         self.chart_hits += 1
         found = [str(value[n]) for n in names]
-        self.record_chart(source, version, "images", dict(zip(names, found, strict=True)))
+        self.record_chart(
+            source, version, "images", dict(zip(names, found, strict=True))
+        )
         return found
 
     def record_chart(self, source: str, version: str, name: str, value: object) -> None:
@@ -731,7 +758,9 @@ def save_verdicts(path: Path, cache: VerdictCache) -> None:
 
 def cache_summary(cache: VerdictCache, reads: dict[str, int]) -> str:
     """One line: image and chart cache hits and misses, and registry reads per host."""
-    hosts = ", ".join(f"{host}={count}" for host, count in sorted(reads.items())) or "none"
+    hosts = (
+        ", ".join(f"{host}={count}" for host, count in sorted(reads.items())) or "none"
+    )
     return (
         f"verdict cache: {cache.hits} hit, {cache.misses} miss, "
         f"{cache.by_tag} by tag (never cached); "
@@ -750,7 +779,9 @@ def chart_digests(
     """
     found: dict[str, str] = {}
     problems: list[str] = []
-    for key, (chart_ref, _repo_url, _repos, _prefix) in sorted(OPERATOR_VIA_CHART.items()):
+    for key, (chart_ref, _repo_url, _repos, _prefix) in sorted(
+        OPERATOR_VIA_CHART.items()
+    ):
         digest = digests.get(key, "")
         label, chart_version = _chart_pin(pins, key)
         if not digest or not chart_version:
@@ -775,7 +806,9 @@ def _app_version(
     """The appVersion of one OPERATOR_VIA_CHART chart, recalled when it is read at a digest."""
     chart_ref, repo_url, _repos, _prefix = OPERATOR_VIA_CHART[key]
     source = f"{chart_ref}@{digest}" if digest else ""
-    recalled = cache.recall_app_version(source, chart_version) if cache and source else None
+    recalled = (
+        cache.recall_app_version(source, chart_version) if cache and source else None
+    )
     if recalled:
         return recalled
     app_version = chart_app_version(chart_ref, repo_url, chart_version, budget, digest)
@@ -796,12 +829,18 @@ def _default_refs(
     chart_ref, repo_url, _repos, _prefix = OPERATOR_VIA_CHART[key]
     source = f"{chart_ref}@{digest}" if digest else ""
     names = [name for name, *_ in images]
-    recalled = cache.recall_images(source, chart_version, names) if cache and source else None
+    recalled = (
+        cache.recall_images(source, chart_version, names) if cache and source else None
+    )
     if recalled:
         return recalled
-    refs = chart_default_refs(chart_ref, repo_url, chart_version, images, budget, digest)
+    refs = chart_default_refs(
+        chart_ref, repo_url, chart_version, images, budget, digest
+    )
     if cache and source:
-        cache.record_chart(source, chart_version, "images", dict(zip(names, refs, strict=True)))
+        cache.record_chart(
+            source, chart_version, "images", dict(zip(names, refs, strict=True))
+        )
     return refs
 
 
@@ -843,7 +882,9 @@ def image_refs(
         for key, value in _section(stack_map, name).items()
     }
     digests = _section(stack_map, "services-digests")
-    pinned = [(f"services.{key}", repo) for key, _var, repo in dfe_stack._DOCKER_THIRDPARTY]
+    pinned = [
+        (f"services.{key}", repo) for key, _var, repo in dfe_stack._DOCKER_THIRDPARTY
+    ]
     pinned += DIGEST_PINNED.items()
     for path, repo in sorted(pinned):
         tag = pins.get(path)
@@ -858,17 +899,23 @@ def image_refs(
     for name, (values_file, path) in sorted(CHART_VALUES_IMAGES.items()):
         label = f"{values_file} ({name})"
         try:
-            refs.append((label, values_image_ref(_parsed(REPO_ROOT / values_file), path)))
+            refs.append(
+                (label, values_image_ref(_parsed(REPO_ROOT / values_file), path))
+            )
         except (OSError, ValueError) as err:
             broken.append(f"{label}: {err}")
 
     for key, (repos, prefix) in sorted(OPERATOR_TAG_IS_CHART.items()):
         label, chart_version = _chart_pin(pins, key)
         if chart_version:
-            refs += [(label, f"{repo}:{prefixed(chart_version, prefix)}") for repo in repos]
+            refs += [
+                (label, f"{repo}:{prefixed(chart_version, prefix)}") for repo in repos
+            ]
     pinned_charts, problems = chart_digests(digests, pins)
     broken += problems
-    for key, (_chart_ref, _repo_url, repos, prefix) in sorted(OPERATOR_VIA_CHART.items()):
+    for key, (_chart_ref, _repo_url, repos, prefix) in sorted(
+        OPERATOR_VIA_CHART.items()
+    ):
         label, chart_version = _chart_pin(pins, key)
         if not chart_version or not repos:
             continue
@@ -896,8 +943,16 @@ def image_refs(
                 )
 
     by_chart: dict[str, list[DefaultImage]] = {}
-    for name, (key, subchart, path, falls_back, with_digest) in CHART_DEFAULT_IMAGES.items():
-        by_chart.setdefault(key, []).append((name, subchart, path, falls_back, with_digest))
+    for name, (
+        key,
+        subchart,
+        path,
+        falls_back,
+        with_digest,
+    ) in CHART_DEFAULT_IMAGES.items():
+        by_chart.setdefault(key, []).append(
+            (name, subchart, path, falls_back, with_digest)
+        )
     for key, images in sorted(by_chart.items()):
         label, chart_version = _chart_pin(pins, key)
         if not chart_version:
@@ -912,7 +967,9 @@ def image_refs(
                 key, chart_version, pinned_charts.get(key, ""), images, budget, cache
             )
         except RuntimeError as err:
-            broken.append(f"{label}: chart {chart_version} images {names} did not resolve ({err})")
+            broken.append(
+                f"{label}: chart {chart_version} images {names} did not resolve ({err})"
+            )
             continue
         refs += [(label, ref) for ref in defaults]
 
@@ -981,20 +1038,32 @@ def _check(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--stack", help="stack version to check (default: the `current` pointer)")
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument(
+        "--stack", help="stack version to check (default: the `current` pointer)"
+    )
     parser.add_argument(
         "--require",
         default=",".join(dfe_stack.REQUIRED_PLATFORMS),
         help="comma-separated os/arch set every image must carry",
     )
-    parser.add_argument("--resolve-charts", action="store_true", help="resolve operator appVersions with helm show chart (network)")
+    parser.add_argument(
+        "--resolve-charts",
+        action="store_true",
+        help="resolve operator appVersions with helm show chart (network)",
+    )
     parser.add_argument(
         "--third-party-only",
         action="store_true",
         help="skip the DFE images under digests:, which dfe-stack release-gate checks",
     )
-    parser.add_argument("--image", action="append", help="check only these image references, ignoring versions.yaml")
+    parser.add_argument(
+        "--image",
+        action="append",
+        help="check only these image references, ignoring versions.yaml",
+    )
     parser.add_argument(
         "--verdict-cache",
         type=Path,
@@ -1026,9 +1095,14 @@ def main() -> int:
         if args.verdict_cache:
             save_verdicts(args.verdict_cache, cache)
     print(cache_summary(cache, budget.reads))
-    print(f"{len(refs)} image(s) checked, {len(failures)} failure(s), {len(skipped)} skipped")
+    print(
+        f"{len(refs)} image(s) checked, {len(failures)} failure(s), {len(skipped)} skipped"
+    )
     if failures:
-        print("\nAn image missing an architecture pulls fine and dies at exec on that node.", file=sys.stderr)
+        print(
+            "\nAn image missing an architecture pulls fine and dies at exec on that node.",
+            file=sys.stderr,
+        )
         return 1
     return 0
 

@@ -71,7 +71,9 @@ def test_quotes_export_and_comments(tmp_path):
 def test_only_one_layer_of_quotes_is_stripped(tmp_path):
     """A value that is itself quoted keeps its inner quotes."""
     path = tmp_path / "a.env"
-    path.write_text("NESTED=\"'inner'\"\nMISMATCHED=\"unclosed\n", encoding="utf-8", newline="\n")
+    path.write_text(
+        'NESTED="\'inner\'"\nMISMATCHED="unclosed\n', encoding="utf-8", newline="\n"
+    )
     got = envfile.parse_env_file(path)
     assert got["NESTED"] == "'inner'"
     assert got["MISMATCHED"] == '"unclosed'
@@ -81,10 +83,7 @@ def test_values_are_never_expanded_as_shell(tmp_path):
     """The whole point: a token file is data, never a script."""
     path = tmp_path / "a.env"
     path.write_text(
-        "HOME_REF=$HOME\n"
-        'BRACED="${OTHER}/tail"\n'
-        "SUBST=$(id -u)\n"
-        "OTHER=set\n",
+        'HOME_REF=$HOME\nBRACED="${OTHER}/tail"\nSUBST=$(id -u)\nOTHER=set\n',
         encoding="utf-8",
         newline="\n",
     )
@@ -114,8 +113,12 @@ def test_missing_file_raises(tmp_path):
 def test_later_file_wins_and_earlier_keys_survive(tmp_path):
     first = tmp_path / "first.env"
     second = tmp_path / "second.env"
-    first.write_text("SHARED=from-first\nONLY_FIRST=1\n", encoding="utf-8", newline="\n")
-    second.write_text("SHARED=from-second\nONLY_SECOND=2\n", encoding="utf-8", newline="\n")
+    first.write_text(
+        "SHARED=from-first\nONLY_FIRST=1\n", encoding="utf-8", newline="\n"
+    )
+    second.write_text(
+        "SHARED=from-second\nONLY_SECOND=2\n", encoding="utf-8", newline="\n"
+    )
     got = envfile.load_env_files([first, second])
     assert got == {"SHARED": "from-second", "ONLY_FIRST": "1", "ONLY_SECOND": "2"}
 
@@ -138,7 +141,11 @@ def main() -> int:
     import tempfile
 
     failures = 0
-    tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_") and callable(f)]
+    tests = [
+        (n, f)
+        for n, f in sorted(globals().items())
+        if n.startswith("test_") and callable(f)
+    ]
     for name, fn in tests:
         params = fn.__code__.co_varnames[: fn.__code__.co_argcount]
         with tempfile.TemporaryDirectory() as td:

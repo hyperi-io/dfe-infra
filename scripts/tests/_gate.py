@@ -74,8 +74,18 @@ INSTANCE: dict[str, dict[str, dict]] = {
     "culvert": {
         "local": {
             "listeners": [
-                {"name": "wireguard", "port": 51820, "protocol": "UDP", "exposed": True},
-                {"name": "openvpn-udp", "port": 1194, "protocol": "UDP", "exposed": True},
+                {
+                    "name": "wireguard",
+                    "port": 51820,
+                    "protocol": "UDP",
+                    "exposed": True,
+                },
+                {
+                    "name": "openvpn-udp",
+                    "port": 1194,
+                    "protocol": "UDP",
+                    "exposed": True,
+                },
                 {"name": "metrics", "port": 9090, "protocol": "TCP", "exposed": False},
             ]
         },
@@ -111,10 +121,15 @@ SCENARIOS: dict[str, dict] = {
     "clickhouse-ca-configmap": {
         "facts": {},
         "infra": {
-            "clickhouse": {"tls": {"ca": {"secretName": "", "configMapName": "example-ca-bundle"}}}
+            "clickhouse": {
+                "tls": {"ca": {"secretName": "", "configMapName": "example-ca-bundle"}}
+            }
         },
     },
-    "clickhouse-plaintext": {"facts": {}, "infra": {"clickhouse": {"tls": {"enabled": False}}}},
+    "clickhouse-plaintext": {
+        "facts": {},
+        "infra": {"clickhouse": {"tls": {"enabled": False}}},
+    },
     # The receiver's load balancer door as docs/ingest-edge.md documents it, with
     # RFC 5737 ranges standing in for the deployment's own senders.
     "public-ingest": {
@@ -201,7 +216,9 @@ def _cell_options(service: str, cloud: str, scenario: str) -> Iterator[dict]:
 
 
 @functools.cache
-def _rendered(service: str, profile: str, cloud: str, scenario: str) -> tuple[dict, ...]:
+def _rendered(
+    service: str, profile: str, cloud: str, scenario: str
+) -> tuple[dict, ...]:
     with _cell_options(service, cloud, scenario) as options:
         return tuple(render_app(service, profile, cloud, **options))
 
@@ -212,7 +229,9 @@ def cell(service: str, profile: str, cloud: str, scenario: str = DEFAULT) -> lis
 
 
 @functools.cache
-def _published(service: str, profile: str, cloud: str, scenario: str) -> tuple[dict, ...]:
+def _published(
+    service: str, profile: str, cloud: str, scenario: str
+) -> tuple[dict, ...]:
     chart = published_chart(service)
     with _cell_options(service, cloud, scenario) as options:
         return tuple(render_app(service, profile, cloud, chart=chart, **options))
@@ -254,7 +273,9 @@ def configmap_files(doc: dict) -> dict[str, str]:
         try:
             files[name] = base64.b64decode(value, validate=True).decode("utf-8")
         except (binascii.Error, UnicodeDecodeError) as error:
-            message = f"{where} binaryData[{name}] is not base64-encoded UTF-8 text: {error}"
+            message = (
+                f"{where} binaryData[{name}] is not base64-encoded UTF-8 text: {error}"
+            )
             raise ValueError(message) from error
     return files
 
@@ -265,7 +286,9 @@ def configmap_files(doc: dict) -> dict[str, str]:
 PIN_TOKEN = "<pin:{}>"
 PIN_TOKEN_RE = re.compile(r"<pin:([A-Za-z0-9_.-]+)>")
 # The pins worth tokenising: digests, and version tags of three numbered parts or more.
-PIN_VALUE_RE = re.compile(r"^(sha256:[0-9a-f]{64}|v?\d+\.\d+\.\d+(?:[.+-][0-9A-Za-z.+-]+)?)$")
+PIN_VALUE_RE = re.compile(
+    r"^(sha256:[0-9a-f]{64}|v?\d+\.\d+\.\d+(?:[.+-][0-9A-Za-z.+-]+)?)$"
+)
 # The current stack's sections whose pins reach a render.
 PIN_SECTIONS = ("apps", "content", "digests", "services", "services-digests")
 # A thin chart's version is its image tag less the v, so each app and content tag
@@ -274,9 +297,13 @@ CHART_VERSION = "chart-version"
 VERSIONED_SECTIONS = ("apps", "content")
 
 
-def golden_path(service: str, profile: str, cloud: str, scenario: str = DEFAULT) -> Path:
+def golden_path(
+    service: str, profile: str, cloud: str, scenario: str = DEFAULT
+) -> Path:
     """Where a cell's golden render is committed."""
-    name = f"{profile}-{cloud}" if scenario == DEFAULT else f"{profile}-{cloud}-{scenario}"
+    name = (
+        f"{profile}-{cloud}" if scenario == DEFAULT else f"{profile}-{cloud}-{scenario}"
+    )
     return GOLDENS / service / f"{name}.yaml"
 
 
@@ -340,7 +367,9 @@ def _golden(service: str, profile: str, cloud: str, scenario: str) -> tuple[dict
     return tuple(d for d in yaml.safe_load_all(unmask(text)) if isinstance(d, dict))
 
 
-def golden(service: str, profile: str, cloud: str, scenario: str = DEFAULT) -> list[dict]:
+def golden(
+    service: str, profile: str, cloud: str, scenario: str = DEFAULT
+) -> list[dict]:
     """A cell's committed golden render with today's pins; the copy returned is the caller's."""
     return copy.deepcopy(list(_golden(service, profile, cloud, scenario)))
 
@@ -400,7 +429,9 @@ def port_numbers(docs: list[dict]) -> dict[str, int]:
         if doc.get("kind") not in WORKLOAD_KINDS:
             continue
         pod = pod_spec(doc)
-        for container in (pod.get("containers") or []) + (pod.get("initContainers") or []):
+        for container in (pod.get("containers") or []) + (
+            pod.get("initContainers") or []
+        ):
             for port in container.get("ports") or []:
                 if "name" in port:
                     numbers.setdefault(port["name"], port.get("containerPort"))
@@ -444,18 +475,25 @@ def _effective_env(container: dict, configmaps: dict[str, dict]) -> Keyed:
 
 def effective_env(docs: list[dict], workload: str) -> dict[str, object]:
     """The main container's effective env of one workload (``Kind/name``) in a render."""
-    configmaps = {d["metadata"]["name"]: d for d in docs if d.get("kind") == "ConfigMap"}
+    configmaps = {
+        d["metadata"]["name"]: d for d in docs if d.get("kind") == "ConfigMap"
+    }
     doc = next(d for d in docs if object_id(d) == workload)
     return dict(_effective_env(pod_spec(doc)["containers"][0], configmaps))
 
 
-def _container(container: dict, configmaps: dict[str, dict], numbers: dict[str, int]) -> dict:
+def _container(
+    container: dict, configmaps: dict[str, dict], numbers: dict[str, int]
+) -> dict:
     out = {k: v for k, v in container.items() if k not in ("env", "envFrom")}
     out["env"] = _effective_env(container, configmaps)
     if container.get("envFrom"):
         out["envFrom"] = [_canon(source) for source in container["envFrom"]]
     out["ports"] = Keyed(
-        (f"{p.get('containerPort')}/{p.get('protocol', 'TCP')}", {"name": p.get("name")})
+        (
+            f"{p.get('containerPort')}/{p.get('protocol', 'TCP')}",
+            {"name": p.get("name")},
+        )
         for p in container.get("ports") or []
     )
     out["volumeMounts"] = Keyed(
@@ -501,11 +539,15 @@ def _workload(doc: dict, configmaps: dict[str, dict]) -> dict:
         for v in pod.pop("volumes", None) or []
     )
     pulls = pod.pop("imagePullSecrets", None) or []
-    pod["imagePullSecrets"] = sorted(p["name"] if isinstance(p, dict) else p for p in pulls)
+    pod["imagePullSecrets"] = sorted(
+        p["name"] if isinstance(p, dict) else p for p in pulls
+    )
     if doc.get("kind") == "Deployment":
         spec["strategy"] = spec.get("strategy") or DEFAULT_STRATEGY
     meta = {
-        k: v for k, v in (template.get("metadata") or {}).items() if k in ("labels", "annotations")
+        k: v
+        for k, v in (template.get("metadata") or {}).items()
+        if k in ("labels", "annotations")
     }
     holder["template"] = {"metadata": meta, "spec": pod}
     return {"metadata": _metadata(doc), "spec": spec}
@@ -517,8 +559,13 @@ def _service(doc: dict, numbers: dict[str, int]) -> dict:
     for p in spec.pop("ports", None) or []:
         target = p.get("targetPort", p.get("port"))
         resolved = numbers.get(target, target) if isinstance(target, str) else target
-        entry = {k: v for k, v in p.items() if k not in ("port", "protocol", "targetPort")}
-        ports[f"{p.get('port')}/{p.get('protocol', 'TCP')}"] = {**entry, "targetPort": resolved}
+        entry = {
+            k: v for k, v in p.items() if k not in ("port", "protocol", "targetPort")
+        }
+        ports[f"{p.get('port')}/{p.get('protocol', 'TCP')}"] = {
+            **entry,
+            "targetPort": resolved,
+        }
     spec["ports"] = Keyed(ports)
     return {"metadata": _metadata(doc), "spec": spec}
 
@@ -532,7 +579,9 @@ def runtime_view(docs: list[dict]) -> dict[str, dict[str, object]]:
     merges by key are compared by that key. A ConfigMap's ``binaryData`` holds the
     decoded text each file mounts as.
     """
-    configmaps = {d["metadata"]["name"]: d for d in docs if d.get("kind") == "ConfigMap"}
+    configmaps = {
+        d["metadata"]["name"]: d for d in docs if d.get("kind") == "ConfigMap"
+    }
     numbers = port_numbers(docs)
     view = {}
     for doc in docs:
@@ -544,7 +593,11 @@ def runtime_view(docs: list[dict]) -> dict[str, dict[str, object]]:
         else:
             body = {"metadata": _metadata(doc)}
             body.update(
-                {k: v for k, v in doc.items() if k not in ("apiVersion", "kind", "metadata")}
+                {
+                    k: v
+                    for k, v in doc.items()
+                    if k not in ("apiVersion", "kind", "metadata")
+                }
             )
             if kind == "ConfigMap" and doc.get("binaryData"):
                 files = configmap_files(doc)
@@ -592,13 +645,17 @@ def forward_references(docs: list[dict]) -> list[str]:
     library renders extraEnv in name order, so a reference to a later name breaks
     silently.
     """
-    configmaps = {d["metadata"]["name"]: d for d in docs if d.get("kind") == "ConfigMap"}
+    configmaps = {
+        d["metadata"]["name"]: d for d in docs if d.get("kind") == "ConfigMap"
+    }
     found = []
     for doc in docs:
         if doc.get("kind") not in WORKLOAD_KINDS:
             continue
         pod = pod_spec(doc)
-        for container in (pod.get("initContainers") or []) + (pod.get("containers") or []):
+        for container in (pod.get("initContainers") or []) + (
+            pod.get("containers") or []
+        ):
             declared = set()
             for source in container.get("envFrom") or []:
                 ref = (source.get("configMapRef") or {}).get("name")
@@ -607,7 +664,9 @@ def forward_references(docs: list[dict]) -> list[str]:
                 data = (configmaps.get(ref) or {}).get("data") or {}
                 declared |= {prefix + name for name in data}
             for entry in container.get("env") or []:
-                for name in re.findall(r"\$\(([A-Za-z_][A-Za-z0-9_]*)\)", entry.get("value") or ""):
+                for name in re.findall(
+                    r"\$\(([A-Za-z_][A-Za-z0-9_]*)\)", entry.get("value") or ""
+                ):
                     if name not in declared:
                         found.append(
                             f"{object_id(doc)} {container.get('name')} {entry['name']} -> {name}"
@@ -624,32 +683,57 @@ def references(docs: list[dict]) -> list[tuple[str, str, bool, str]]:
             continue
         pod = pod_spec(doc)
         where = object_id(doc)
-        for container in (pod.get("initContainers") or []) + (pod.get("containers") or []):
+        for container in (pod.get("initContainers") or []) + (
+            pod.get("containers") or []
+        ):
             at = f"{where} {container.get('name')}"
             for entry in container.get("env") or []:
                 source = entry.get("valueFrom") or {}
-                for key, kind in (("secretKeyRef", "Secret"), ("configMapKeyRef", "ConfigMap")):
+                for key, kind in (
+                    ("secretKeyRef", "Secret"),
+                    ("configMapKeyRef", "ConfigMap"),
+                ):
                     ref = source.get(key)
                     if ref:
                         optional = bool(ref.get("optional"))
-                        found.append((kind, ref.get("name"), optional, f"{at} env {entry['name']}"))
+                        found.append(
+                            (
+                                kind,
+                                ref.get("name"),
+                                optional,
+                                f"{at} env {entry['name']}",
+                            )
+                        )
             for source in container.get("envFrom") or []:
-                for key, kind in (("secretRef", "Secret"), ("configMapRef", "ConfigMap")):
+                for key, kind in (
+                    ("secretRef", "Secret"),
+                    ("configMapRef", "ConfigMap"),
+                ):
                     ref = source.get(key)
                     if ref:
                         found.append(
-                            (kind, ref.get("name"), bool(ref.get("optional")), f"{at} envFrom")
+                            (
+                                kind,
+                                ref.get("name"),
+                                bool(ref.get("optional")),
+                                f"{at} envFrom",
+                            )
                         )
         for volume in pod.get("volumes") or []:
             at = f"{where} volume {volume.get('name')}"
-            for item in [volume, *((volume.get("projected") or {}).get("sources") or [])]:
+            for item in [
+                volume,
+                *((volume.get("projected") or {}).get("sources") or []),
+            ]:
                 if "secret" in item:
                     ref = item["secret"]
                     name = ref.get("secretName") or ref.get("name")
                     found.append(("Secret", name, bool(ref.get("optional")), at))
                 if "configMap" in item:
                     ref = item["configMap"]
-                    found.append(("ConfigMap", ref.get("name"), bool(ref.get("optional")), at))
+                    found.append(
+                        ("ConfigMap", ref.get("name"), bool(ref.get("optional")), at)
+                    )
         for pull in pod.get("imagePullSecrets") or []:
             name = pull.get("name") if isinstance(pull, dict) else pull
             found.append(("Secret", name, False, f"{where} imagePullSecrets"))
@@ -696,11 +780,16 @@ def route_problems(docs: list[dict]) -> list[str]:
         namespace = (doc.get("metadata") or {}).get("namespace") or NAMESPACE
         for rule in (doc.get("spec") or {}).get("rules") or []:
             for ref in rule.get("backendRefs") or []:
-                if ref.get("group", "") != "" or ref.get("kind", "Service") != "Service":
+                if (
+                    ref.get("group", "") != ""
+                    or ref.get("kind", "Service") != "Service"
+                ):
                     continue
                 target = (ref.get("namespace") or namespace, ref.get("name"))
                 if target not in served:
-                    found.append(f"{object_id(doc)} -> Service {target[1]}, which the render lacks")
+                    found.append(
+                        f"{object_id(doc)} -> Service {target[1]}, which the render lacks"
+                    )
                 elif ref.get("port") not in served[target]:
                     found.append(
                         f"{object_id(doc)} -> Service {target[1]} port {ref.get('port')}, "
@@ -714,9 +803,13 @@ def exposed(docs: list[dict]) -> dict[str, dict]:
     found = {}
     for doc in docs:
         spec = doc.get("spec") or {}
-        if doc.get("kind") == "Service" and spec.get("type") in ("LoadBalancer", "NodePort"):
+        if doc.get("kind") == "Service" and spec.get("type") in (
+            "LoadBalancer",
+            "NodePort",
+        ):
             ports = sorted(
-                f"{p.get('port')}/{p.get('protocol', 'TCP')}" for p in spec.get("ports") or []
+                f"{p.get('port')}/{p.get('protocol', 'TCP')}"
+                for p in spec.get("ports") or []
             )
             found[object_id(doc)] = {"type": spec["type"], "ports": ports}
     return found

@@ -71,7 +71,9 @@ from dfe_ops_readiness_report import kubectl_prefix
 from dfe_ops_redact import redact_stream
 
 HEAD_BYTES = 1024 * 1024  # bytes of a run kept from its start, written as they arrive
-TAIL_BYTES = 1024 * 1024  # newest bytes of a run kept past its head, written when it ends
+TAIL_BYTES = (
+    1024 * 1024
+)  # newest bytes of a run kept past its head, written when it ends
 MARKER_ROOM = 256  # bytes the line between a run's head and tail may take
 RUN_BYTES = HEAD_BYTES + TAIL_BYTES + MARKER_ROOM
 POD_BYTES = 8 * 1024 * 1024  # bytes every run of one pod may keep together
@@ -80,7 +82,9 @@ MAX_STREAMS = 64  # log streams one follower holds open at once
 MAX_SECONDS = 6 * 3600.0  # a follower stops itself after this, whoever owns it
 # Seconds before the start the first read reaches back, for clock skew between here and the nodes.
 SINCE_MARGIN = 60
-WATCH_SECONDS = 300  # the API server ends each watch after this, and the reconnect lists every pod
+WATCH_SECONDS = (
+    300  # the API server ends each watch after this, and the reconnect lists every pod
+)
 WATCH_PAUSE = 1.0  # seconds between a watch that ended cleanly and the next
 MAX_WATCH_FAILURES = 5  # failed watches in a row before a namespace's watch gives up
 # etcd caps one object at 1.5 MiB, so one watch event always fits.
@@ -145,7 +149,9 @@ def _ended_since(state: dict, since: datetime) -> bool:
     return finished is None or finished >= since
 
 
-def _container_runs(namespace: str, pod: str, status: dict, since: datetime) -> list[Run]:
+def _container_runs(
+    namespace: str, pod: str, status: dict, since: datetime
+) -> list[Run]:
     """The runs of one container that were alive at or after `since`, the earlier first."""
     container = str(status.get("name") or "")
     if not container:
@@ -154,12 +160,17 @@ def _container_runs(namespace: str, pod: str, status: dict, since: datetime) -> 
     last = (status.get("lastState") or {}).get("terminated") or {}
     if last.get("containerID") and _ended_since(last, since):
         started = str(last.get("startedAt") or "")
-        runs.append(Run(namespace, pod, container, str(last["containerID"]), started, True))
+        runs.append(
+            Run(namespace, pod, container, str(last["containerID"]), started, True)
+        )
     state = status.get("state") or {}
     running, ended = state.get("running"), state.get("terminated")
     current, started = "", ""
     if running is not None:
-        current, started = str(status.get("containerID") or ""), str(running.get("startedAt") or "")
+        current, started = (
+            str(status.get("containerID") or ""),
+            str(running.get("startedAt") or ""),
+        )
     elif ended is not None and _ended_since(ended, since):
         current = str(ended.get("containerID") or status.get("containerID") or "")
         started = str(ended.get("startedAt") or "")
@@ -204,7 +215,11 @@ def run_path(run: Run) -> Path:
 
 def log_query(run: Run, since: datetime) -> str:
     """The pod-log request for one run: timestamped, from `since`, followed unless previous."""
-    params = {"container": run.container, "timestamps": "true", "sinceTime": rfc3339(since)}
+    params = {
+        "container": run.container,
+        "timestamps": "true",
+        "sinceTime": rfc3339(since),
+    }
     params["previous" if run.previous else "follow"] = "true"
     pod = urllib.parse.quote(run.pod, safe="")
     return f"/api/v1/namespaces/{run.namespace}/pods/{pod}/log?{urllib.parse.urlencode(params)}"
@@ -224,7 +239,9 @@ class RunLog:
         dropped: Bytes past the head that fell out of the tail.
     """
 
-    def __init__(self, path: Path, head: int = HEAD_BYTES, tail: int = TAIL_BYTES) -> None:
+    def __init__(
+        self, path: Path, head: int = HEAD_BYTES, tail: int = TAIL_BYTES
+    ) -> None:
         self.path = path
         self.kept = 0
         self.dropped = 0
@@ -310,7 +327,7 @@ def _refusal(response: http.client.HTTPResponse) -> str:
     body = response.read(ERROR_BODY)
     try:
         message = str(json.loads(body).get("message") or "")
-    except (ValueError, AttributeError):
+    except ValueError, AttributeError:
         message = body.decode("utf-8", errors="replace").strip()
     return f"HTTP {response.status}: {' '.join((message or response.reason).split())}"
 
@@ -356,7 +373,10 @@ class Follower:
 
     def note(self, line: str) -> None:
         """One line in index.txt, redacted."""
-        with self._lock, (self.out / fe.INDEX).open("a", encoding="utf-8", newline="\n") as index:
+        with (
+            self._lock,
+            (self.out / fe.INDEX).open("a", encoding="utf-8", newline="\n") as index,
+        ):
             index.write(fe.redact(line) + "\n")
 
     def spawn(self, target: Callable[..., None], *args: object) -> None:
@@ -394,7 +414,9 @@ class Follower:
                 self._open += 1
                 self.runs += 1
                 if path in self._paths:
-                    path = path.with_name(f"{path.stem}-{fe.safe_name(run.container_id[-12:])}.log")
+                    path = path.with_name(
+                        f"{path.stem}-{fe.safe_name(run.container_id[-12:])}.log"
+                    )
                 self._paths.add(path)
         if why:
             if fresh:
@@ -455,12 +477,17 @@ class Follower:
                     how = "still open when the follower stopped"
         except (OSError, http.client.HTTPException, ValueError) as exc:
             stopped = self.stop.is_set()
-            how = "still open when the follower stopped" if stopped else f"broke: {exc!r}"
+            how = (
+                "still open when the follower stopped" if stopped else f"broke: {exc!r}"
+            )
         finally:
             try:
                 kept = log.close()
             except OSError as exc:  # a full disk ends this file, never the follower
-                how, kept = f"{how}, then its file could not be finished: {exc}", log.kept
+                how, kept = (
+                    f"{how}, then its file could not be finished: {exc}",
+                    log.kept,
+                )
             if conn is not None:
                 self._drop(conn, sock)
             self.release(run, kept)
@@ -468,16 +495,22 @@ class Follower:
         if kept:
             self.note(f"{path.as_posix()}: {how}, {kept} bytes kept{lost}")
         else:
-            self.note(f"{path.as_posix()}: {how}, nothing since {rfc3339(self.since)}, no file")
+            self.note(
+                f"{path.as_posix()}: {how}, nothing since {rfc3339(self.since)}, no file"
+            )
 
     def _watch_once(self, namespace: str) -> str:
         """One watch of `namespace`'s pods, fed to on_pod: empty when it ended cleanly, else why."""
         conn, sock = None, None
-        query = urllib.parse.urlencode({"watch": "true", "timeoutSeconds": WATCH_SECONDS})
+        query = urllib.parse.urlencode(
+            {"watch": "true", "timeoutSeconds": WATCH_SECONDS}
+        )
         try:
             conn = self._connect()
             sock = conn.sock
-            conn.request("GET", f"/api/v1/namespaces/{namespace}/pods?{query}", headers=HEADERS)
+            conn.request(
+                "GET", f"/api/v1/namespaces/{namespace}/pods?{query}", headers=HEADERS
+            )
             response = conn.getresponse()
             if response.status != 200:
                 return f"refused: {_refusal(response)}"
@@ -509,7 +542,9 @@ class Follower:
             if why:
                 self.note(f"watch {namespace}: {why}")
             if failures >= MAX_WATCH_FAILURES:
-                self.note(f"watch {namespace}: given up after {failures} failures in a row")
+                self.note(
+                    f"watch {namespace}: given up after {failures} failures in a row"
+                )
                 return
             self.stop.wait(min(2.0**failures, 30.0) if failures else WATCH_PAUSE)
 
@@ -535,12 +570,19 @@ class Follower:
 # --- the proxy and the run ----------------------------------------------------------------
 
 
-def proxy_argv(args: argparse.Namespace, socket_path: Path, namespaces: list[str]) -> list[str]:
+def proxy_argv(
+    args: argparse.Namespace, socket_path: Path, namespaces: list[str]
+) -> list[str]:
     """`kubectl proxy` on `socket_path`, admitting a GET of pods and pod logs in `namespaces`."""
     server = ["--server", args.server] if args.server else []
     return [
-        "kubectl", *kubectl_prefix(args), *server, "proxy", f"--unix-socket={socket_path}",
-        f"--accept-paths={accept_paths(namespaces)}", f"--reject-methods={REJECT_METHODS}",
+        "kubectl",
+        *kubectl_prefix(args),
+        *server,
+        "proxy",
+        f"--unix-socket={socket_path}",
+        f"--accept-paths={accept_paths(namespaces)}",
+        f"--reject-methods={REJECT_METHODS}",
     ]
 
 
@@ -608,7 +650,9 @@ def _stop_on_signals(follower: Follower) -> None:
     for name in ("SIGINT", "SIGTERM", "SIGHUP"):
         number = getattr(signal, name, None)
         if number is not None:
-            signal.signal(number, lambda _signum, _frame, name=name: follower.stop_with(name))
+            signal.signal(
+                number, lambda _signum, _frame, name=name: follower.stop_with(name)
+            )
 
 
 def cmd_pod_logs(args: argparse.Namespace) -> int:
@@ -623,7 +667,9 @@ def cmd_pod_logs(args: argparse.Namespace) -> int:
     named = ", ".join(namespaces)
     try:
         out.mkdir(parents=True, exist_ok=True)
-        header = f"pod logs of {named}: every container run alive from {rfc3339(since)}\n"
+        header = (
+            f"pod logs of {named}: every container run alive from {rfc3339(since)}\n"
+        )
         (out / fe.INDEX).write_text(header, encoding="utf-8", newline="\n")
     except OSError as exc:
         print(f"pod-logs: skipped: {out} cannot be written: {exc}", file=sys.stderr)
@@ -642,7 +688,9 @@ def cmd_pod_logs(args: argparse.Namespace) -> int:
     follower.note(f"(the proxy): kubectl {shlex.join(argv[1:])}")
     proxy = None
     try:
-        proxy = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+        proxy = subprocess.Popen(
+            argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL
+        )
         _follow(follower, proxy, namespaces, args.max_seconds)
     except OSError as exc:
         follower.stop_with(f"could not start kubectl: {exc.strerror or exc}")
@@ -650,7 +698,9 @@ def cmd_pod_logs(args: argparse.Namespace) -> int:
         still = follower.shutdown()
         _stop_proxy(proxy)
         shutil.rmtree(work, ignore_errors=True)
-    open_at_stop = f", {still} stream(s) still open after {JOIN_TIMEOUT:g}s" if still else ""
+    open_at_stop = (
+        f", {still} stream(s) still open after {JOIN_TIMEOUT:g}s" if still else ""
+    )
     summary = (
         f"stopped {rfc3339(datetime.now(UTC))}: {follower.why}. {follower.runs} run(s) followed, "
         f"{follower.files} file(s), {follower.kept} bytes kept{open_at_stop}"
@@ -677,7 +727,9 @@ def stage_dir(root: str, label: str) -> Path:
     return Path(root) / f"{stamp}-{fe.safe_name(label)}-pod-logs"
 
 
-def spawn(self_cmd: list[str], out: Path, namespaces: list[str], kube: list[str]) -> Owned | None:
+def spawn(
+    self_cmd: list[str], out: Path, namespaces: list[str], kube: list[str]
+) -> Owned | None:
     """Start `dfe-ops pod-logs` writing `out`, which finish() stops by closing its input.
 
     It stays in this process group, so whatever stops the stage's group stops it too.
@@ -697,7 +749,10 @@ def spawn(self_cmd: list[str], out: Path, namespaces: list[str], kube: list[str]
     try:
         proc = subprocess.Popen([*argv, *kube], stdin=subprocess.PIPE)
     except OSError as exc:
-        print(f"  [warn] dfe-ops pod-logs could not start: {exc.strerror or exc}", file=sys.stderr)
+        print(
+            f"  [warn] dfe-ops pod-logs could not start: {exc.strerror or exc}",
+            file=sys.stderr,
+        )
         return None
     return Owned(proc, out)
 
@@ -747,13 +802,22 @@ def add_pod_logs_subparser(sub: argparse._SubParsersAction) -> None:
         "when the proxy exits, or at --max-seconds. Reads no Secret. Exits 0.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    pl.add_argument("--out", required=True, help="directory the logs and index.txt go in")
     pl.add_argument(
-        "--namespace", action="append", required=True, help="namespace to follow (repeatable)"
+        "--out", required=True, help="directory the logs and index.txt go in"
     )
-    pl.add_argument("--kubeconfig", default="", help="kubeconfig to read, empty for kubectl's own")
     pl.add_argument(
-        "--context", default="", help="kubeconfig context to read, empty for its current one"
+        "--namespace",
+        action="append",
+        required=True,
+        help="namespace to follow (repeatable)",
+    )
+    pl.add_argument(
+        "--kubeconfig", default="", help="kubeconfig to read, empty for kubectl's own"
+    )
+    pl.add_argument(
+        "--context",
+        default="",
+        help="kubeconfig context to read, empty for its current one",
     )
     pl.add_argument(
         "--server",
@@ -761,7 +825,10 @@ def add_pod_logs_subparser(sub: argparse._SubParsersAction) -> None:
         help="API server address, for a kubeconfig whose server name does not resolve here",
     )
     pl.add_argument(
-        "--max-seconds", type=_seconds, default=MAX_SECONDS, help="seconds before it stops itself"
+        "--max-seconds",
+        type=_seconds,
+        default=MAX_SECONDS,
+        help="seconds before it stops itself",
     )
     pl.add_argument(
         "--stop-on-eof",

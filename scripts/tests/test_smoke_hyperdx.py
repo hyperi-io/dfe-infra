@@ -147,7 +147,10 @@ class Frontend(BaseHTTPRequestHandler):
             self.reply(200, "Ok.\n")
         elif parts.path == "/" and parts.query:
             seen["queries"].append(parse_qs(parts.query)["query"][0])
-            sent = (self.headers.get("X-ClickHouse-User"), self.headers.get("X-ClickHouse-Key"))
+            sent = (
+                self.headers.get("X-ClickHouse-User"),
+                self.headers.get("X-ClickHouse-Key"),
+            )
             if sent == (CH_USER, CH_FIXTURE_VALUE):
                 seen["ch_credentials_ok"] = True
                 self.reply(200, "42\n")
@@ -163,7 +166,9 @@ class Frontend(BaseHTTPRequestHandler):
         elif parts.path == "/api/me":
             seen["bearer"] = self.headers.get("Authorization")
             seen["bearers"].append(seen["bearer"])
-            ok = cfg["accept_any_bearer"] or (seen["bearer"] == f"Bearer {TOKEN}" and not cfg["reject_bearer"])
+            ok = cfg["accept_any_bearer"] or (
+                seen["bearer"] == f"Bearer {TOKEN}" and not cfg["reject_bearer"]
+            )
             self.reply(200 if ok else 401, '{"email":"smoke"}' if ok else "")
         else:
             self.reply(404)
@@ -198,7 +203,12 @@ def run_smoke(
         "reject_bearer": False,
         **(serve or {}),
     }
-    server.seen = {"queries": [], "ch_credentials_ok": False, "bearer": None, "bearers": []}
+    server.seen = {
+        "queries": [],
+        "ch_credentials_ok": False,
+        "bearer": None,
+        "bearers": [],
+    }
     threading.Thread(target=server.serve_forever, daemon=True).start()
     base = f"http://127.0.0.1:{server.server_address[1]}"
     try:
@@ -222,7 +232,9 @@ def run_smoke(
                 "env": settings if in_deployment_env else {},
                 "configmap_env": {} if in_deployment_env else settings,
                 "pod_env": dict(pod_env or {}),
-                "secrets": {} if reader_password is None else {CH_SECRET: reader_password},
+                "secrets": {}
+                if reader_password is None
+                else {CH_SECRET: reader_password},
             }
             if engine_token:
                 pod["engine_token"] = engine_token
@@ -233,7 +245,9 @@ def run_smoke(
                     "DFE_ENGINE_CLICKHOUSE_PORT": base.rsplit(":", 1)[1],
                     **engine_ch,
                 }
-                pod["engine_env"] = {k: v for k, v in engine_env.items() if v is not None}
+                pod["engine_env"] = {
+                    k: v for k, v in engine_env.items() if v is not None
+                }
             fixture = Path(tmp) / "pod.json"
             fixture.write_text(json.dumps(pod), encoding="utf-8", newline="\n")
 
@@ -263,7 +277,9 @@ def run_smoke(
 
 def verdict(out: subprocess.CompletedProcess, tag: str, name: str) -> bool:
     """Whether a `[tag] name...` line was printed (name is a prefix of the check)."""
-    return any(line.strip().startswith(f"[{tag}] {name}") for line in out.stdout.splitlines())
+    return any(
+        line.strip().startswith(f"[{tag}] {name}") for line in out.stdout.splitlines()
+    )
 
 
 def test_a_node_only_pod_passes_all_three_checks() -> None:
@@ -278,7 +294,9 @@ def test_a_node_only_pod_passes_all_three_checks() -> None:
         seen["queries"] == ["SELECT count() FROM dfe.otel_logs"],
     )
     expect("the query reader's credentials were sent", seen["ch_credentials_ok"])
-    expect("the password is never echoed", CH_FIXTURE_VALUE not in out.stdout + out.stderr)
+    expect(
+        "the password is never echoed", CH_FIXTURE_VALUE not in out.stdout + out.stderr
+    )
 
 
 def test_hyperdx_holding_a_credential_of_its_own_is_not_used() -> None:
@@ -295,7 +313,9 @@ def test_hyperdx_holding_a_credential_of_its_own_is_not_used() -> None:
 def test_unreadable_headers_skip_the_embed_checks() -> None:
     out, _ = run_smoke(serve={"head_status": 500})
 
-    expect("the embed checks are skipped", verdict(out, "SKIP", EMBED_SKIPPED), out.stdout)
+    expect(
+        "the embed checks are skipped", verdict(out, "SKIP", EMBED_SKIPPED), out.stdout
+    )
     expect("X-Frame-Options does not pass", not verdict(out, "PASS", XFO), out.stdout)
     expect("CSP does not pass", not verdict(out, "PASS", CSP), out.stdout)
 
@@ -303,11 +323,17 @@ def test_unreadable_headers_skip_the_embed_checks() -> None:
 def test_a_pod_that_answers_nothing_passes_no_embed_check() -> None:
     out, _ = run_smoke(node=False)
 
-    expect("the embed checks are skipped", verdict(out, "SKIP", EMBED_SKIPPED), out.stdout)
+    expect(
+        "the embed checks are skipped", verdict(out, "SKIP", EMBED_SKIPPED), out.stdout
+    )
     expect("X-Frame-Options does not pass", not verdict(out, "PASS", XFO), out.stdout)
     # An unreadable env must not read as the DFE middleware being off.
     expect("the env read fails", verdict(out, "FAIL", ENV_UNREAD), out.stdout)
-    expect("auth is not skipped as unset", not verdict(out, "SKIP", "DFE_AUTH_MODE unset"), out.stdout)
+    expect(
+        "auth is not skipped as unset",
+        not verdict(out, "SKIP", "DFE_AUTH_MODE unset"),
+        out.stdout,
+    )
     for name in (PING, TABLE):
         expect(f"{name} fails", verdict(out, "FAIL", name), out.stdout)
 
@@ -358,24 +384,40 @@ def test_rejected_clickhouse_credentials_fail_the_table_check() -> None:
 
 
 def test_the_engine_issued_token_is_presented_as_a_bearer() -> None:
-    out, seen = run_smoke(engine_token=TOKEN, engine_ch={"DFE_ENGINE_CLICKHOUSE_SECURE": "false"})
+    out, seen = run_smoke(
+        engine_token=TOKEN, engine_ch={"DFE_ENGINE_CLICKHOUSE_SECURE": "false"}
+    )
 
     expect("the round trip passes", verdict(out, "PASS", BEARER), out.stdout)
     expect("the server saw the bearer", f"Bearer {TOKEN}" in seen["bearers"])
-    expect("a token the engine never signed is refused", verdict(out, "PASS", REFUSES), out.stdout)
+    expect(
+        "a token the engine never signed is refused",
+        verdict(out, "PASS", REFUSES),
+        out.stdout,
+    )
     expect("no check failed", "0 failed" in out.stdout, out.stdout)
     expect("the token is never echoed", TOKEN not in out.stdout + out.stderr)
 
 
 def test_the_account_that_signed_in_is_named() -> None:
-    out, _ = run_smoke(engine_token=TOKEN, engine_account="breakglass", engine_ch={"DFE_ENGINE_CLICKHOUSE_SECURE": "false"})
+    out, _ = run_smoke(
+        engine_token=TOKEN,
+        engine_account="breakglass",
+        engine_ch={"DFE_ENGINE_CLICKHOUSE_SECURE": "false"},
+    )
 
-    expect("break-glass is named", "signed in to dfe-engine as breakglass" in out.stdout, out.stdout)
+    expect(
+        "break-glass is named",
+        "signed in to dfe-engine as breakglass" in out.stdout,
+        out.stdout,
+    )
 
 
 def test_a_hyperdx_that_rejects_the_engines_token_fails_the_round_trip() -> None:
     out, _ = run_smoke(
-        serve={"reject_bearer": True}, engine_token=TOKEN, engine_ch={"DFE_ENGINE_CLICKHOUSE_SECURE": "false"}
+        serve={"reject_bearer": True},
+        engine_token=TOKEN,
+        engine_ch={"DFE_ENGINE_CLICKHOUSE_SECURE": "false"},
     )
 
     expect("the round trip fails", verdict(out, "FAIL", BEARER), out.stdout)
@@ -383,7 +425,9 @@ def test_a_hyperdx_that_rejects_the_engines_token_fails_the_round_trip() -> None
 
 def test_a_hyperdx_that_accepts_any_bearer_fails_the_refusal_check() -> None:
     out, _ = run_smoke(
-        serve={"accept_any_bearer": True}, engine_token=TOKEN, engine_ch={"DFE_ENGINE_CLICKHOUSE_SECURE": "false"}
+        serve={"accept_any_bearer": True},
+        engine_token=TOKEN,
+        engine_ch={"DFE_ENGINE_CLICKHOUSE_SECURE": "false"},
     )
 
     expect("the acceptance passes", verdict(out, "PASS", BEARER), out.stdout)
@@ -391,10 +435,18 @@ def test_a_hyperdx_that_accepts_any_bearer_fails_the_refusal_check() -> None:
 
 
 def test_an_engine_that_gives_no_token_fails_rather_than_skips() -> None:
-    out, seen = run_smoke(engine_ch={"DFE_ENGINE_CLICKHOUSE_SECURE": "false"}, engine_token=None)
+    out, seen = run_smoke(
+        engine_ch={"DFE_ENGINE_CLICKHOUSE_SECURE": "false"}, engine_token=None
+    )
 
-    expect("the round trip is a failure", "[FAIL] engine-issued-token round trip" in out.stdout, out.stdout)
-    expect("it is not a skip", "[SKIP] engine-issued-token" not in out.stdout, out.stdout)
+    expect(
+        "the round trip is a failure",
+        "[FAIL] engine-issued-token round trip" in out.stdout,
+        out.stdout,
+    )
+    expect(
+        "it is not a skip", "[SKIP] engine-issued-token" not in out.stdout, out.stdout
+    )
     expect("no bearer was sent", seen["bearers"] == [], str(seen["bearers"]))
 
 
@@ -449,7 +501,9 @@ def test_an_engine_that_names_no_clickhouse_fails_the_probe_saying_so() -> None:
 
     expect("the probe fails", verdict(out, "FAIL", PING), out.stdout)
     expect(
-        "naming the engine", "deploy/dfe-engine named no ClickHouse URL" in out.stdout, out.stdout
+        "naming the engine",
+        "deploy/dfe-engine named no ClickHouse URL" in out.stdout,
+        out.stdout,
     )
     expect("and the table check fails", verdict(out, "FAIL", TABLE), out.stdout)
 

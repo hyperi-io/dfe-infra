@@ -122,13 +122,17 @@ def merge(dial: Tree, overlay: Tree, at: tuple[str, ...] = ()) -> list[str]:
                 changed += merge(current, value, here)
                 continue
             if current is not None and not _is_empty_map(current):
-                raise BackendError(f"the overlay makes {label} a map, and the dial holds a value there")
+                raise BackendError(
+                    f"the overlay makes {label} a map, and the dial holds a value there"
+                )
             branch: Tree = {}
             dial[key] = branch
             changed += merge(branch, value, here)
             continue
         if isinstance(current, dict):
-            raise BackendError(f"the overlay makes {label} a value, and the dial holds a map there")
+            raise BackendError(
+                f"the overlay makes {label} a value, and the dial holds a map there"
+            )
         if current != value:
             dial[key] = value
             changed.append(label)
@@ -138,12 +142,16 @@ def merge(dial: Tree, overlay: Tree, at: tuple[str, ...] = ()) -> list[str]:
 def _quoted(value: str, label: str) -> str:
     """One scalar in the quoting the subset reads back unchanged."""
     if "\n" in value:
-        raise BackendError(f"{label} holds a line break, which the dial's YAML subset cannot carry")
+        raise BackendError(
+            f"{label} holds a line break, which the dial's YAML subset cannot carry"
+        )
     if '"' not in value:
         return f'"{value}"'
     if "'" not in value:
         return f"'{value}'"
-    raise BackendError(f"{label} holds both quote characters, which the dial's YAML subset cannot carry")
+    raise BackendError(
+        f"{label} holds both quote characters, which the dial's YAML subset cannot carry"
+    )
 
 
 def dump(tree: Tree, at: tuple[str, ...] = (), indent: int = 0) -> str:
@@ -169,7 +177,9 @@ def apply(dial_path: Path, backend: str, env: Mapping[str, str]) -> list[str]:
     if not overlay:
         return []
     try:
-        dial = parse_yaml_subset(dial_path.read_text(encoding="utf-8"), source=str(dial_path))
+        dial = parse_yaml_subset(
+            dial_path.read_text(encoding="utf-8"), source=str(dial_path)
+        )
     except YamlSubsetError as error:
         raise BackendError(str(error)) from error
     changed = merge(dial, overlay)
@@ -183,8 +193,12 @@ def main() -> int:
         description="Apply a managed-backend overlay to a cloud-cycle dial, in place.",
     )
     parser.add_argument("--dial", type=Path, help="the dial to rewrite")
-    parser.add_argument("--backend", default=DEFAULT, help=f"one of {', '.join(available())}")
-    parser.add_argument("--list", action="store_true", help="print every backend and stop")
+    parser.add_argument(
+        "--backend", default=DEFAULT, help=f"one of {', '.join(available())}"
+    )
+    parser.add_argument(
+        "--list", action="store_true", help="print every backend and stop"
+    )
     args = parser.parse_args()
 
     if args.list:
@@ -198,11 +212,16 @@ def main() -> int:
         print(f"cycle_backend: {error}. Nothing was created.", file=sys.stderr)
         return 1
     if args.backend == DEFAULT:
-        print("cycle_backend: default -- the dial runs as the e2e-runner environment wrote it",
-              file=sys.stderr)
+        print(
+            "cycle_backend: default -- the dial runs as the e2e-runner environment wrote it",
+            file=sys.stderr,
+        )
     else:
-        print(f"cycle_backend: {args.backend} set {len(changed)} dial key(s): "
-              + (", ".join(changed) or "none, the dial already matched"), file=sys.stderr)
+        print(
+            f"cycle_backend: {args.backend} set {len(changed)} dial key(s): "
+            + (", ".join(changed) or "none, the dial already matched"),
+            file=sys.stderr,
+        )
     return 0
 
 

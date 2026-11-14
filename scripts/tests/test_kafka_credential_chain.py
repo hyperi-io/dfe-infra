@@ -74,7 +74,9 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 CHARTS = REPO_ROOT / "helm" / "charts"
 KAFKA = CHARTS / "kafka"
 KAFBAT = CHARTS / "kafbat"
-KAFBAT_EXAMPLE = REPO_ROOT / "argocd" / "values" / "staging" / "kafbat-oidc-rbac.example.yaml"
+KAFBAT_EXAMPLE = (
+    REPO_ROOT / "argocd" / "values" / "staging" / "kafbat-oidc-rbac.example.yaml"
+)
 LIBRARY_HARNESS = REPO_ROOT / "helm" / "library" / "dfe-common" / "tests" / "lint-test"
 LAYER2_DATA = REPO_ROOT / "argocd" / "appsets" / "layer2-data.yaml"
 ARGO_VALUES = REPO_ROOT / "argocd" / "values"
@@ -135,7 +137,12 @@ def licence(provider: str) -> tuple[str, ...]:
 
 def _run(cmd: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False
+        cmd,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
     )
 
 
@@ -152,7 +159,9 @@ def _helm(
     return _run(cmd)
 
 
-def render(chart: Path, *sets: str, values: tuple[Path, ...] = (), show: str = "") -> list[dict]:
+def render(
+    chart: Path, *sets: str, values: tuple[Path, ...] = (), show: str = ""
+) -> list[dict]:
     """Rendered docs. Raises with helm's own message when the chart refuses."""
     out = _helm(chart, *sets, values=values, show=show)
     if out.returncode != 0:
@@ -172,7 +181,9 @@ def build_deps(chart: Path) -> None:
         return
     out = _run(["helm", "dependency", "build", str(chart)])
     if out.returncode != 0:
-        raise SystemExit(f"helm dependency build failed for {chart.name}:\n{out.stderr}")
+        raise SystemExit(
+            f"helm dependency build failed for {chart.name}:\n{out.stderr}"
+        )
 
 
 def build_harness_deps() -> None:
@@ -180,7 +191,11 @@ def build_harness_deps() -> None:
 
 
 def layer2_data(
-    chart: Path, profile: str, cloud: str, infra: dict | None = None, provider: str = "strimzi"
+    chart: Path,
+    profile: str,
+    cloud: str,
+    infra: dict | None = None,
+    provider: str = "strimzi",
 ) -> list[dict]:
     """One layer2-data chart as its Application renders it for an in-cluster broker.
 
@@ -224,7 +239,9 @@ def kafbat_infra(profile: str, cloud: str) -> dict:
 
 def bootstrap_servers(profile: str, cloud: str) -> str:
     """The broker address the tier hands its apps, read off the archiver's render."""
-    env = effective_env(golden("dfe-archiver", profile, cloud), "Deployment/dfe-archiver")
+    env = effective_env(
+        golden("dfe-archiver", profile, cloud), "Deployment/dfe-archiver"
+    )
     return str(env.get("DFE_ARCHIVER_KAFKA_BROKERS"))
 
 
@@ -312,11 +329,16 @@ def test_every_consumer_key_is_one_the_scale_render_supplies() -> None:
     for cloud in CLOUDS:
         apps = app_side("scale", cloud)
         read = secret_key_refs(apps, "dfe-kafka-user")
-        expect(f"the consumers do read that secret [{cloud}]", read,
-               "nothing referenced dfe-kafka-user")
+        expect(
+            f"the consumers do read that secret [{cloud}]",
+            read,
+            "nothing referenced dfe-kafka-user",
+        )
         for service in SECRET_CONSUMERS:
             own = secret_key_refs(golden(service, "scale", cloud), "dfe-kafka-user")
-            expect(f"{service} reads it on the scale tier [{cloud}]", own, "no reference")
+            expect(
+                f"{service} reads it on the scale tier [{cloud}]", own, "no reference"
+            )
         for provider in IN_CLUSTER:
             docs = layer2_data(KAFKA, "scale", cloud, provider=provider)
             written = written_keys(docs, "dfe-kafka-user")
@@ -364,7 +386,8 @@ def test_the_app_keys_merge_rather_than_claim_the_name() -> None:
             *licence(provider),
         )
         appkeys = [
-            d for d in docs
+            d
+            for d in docs
             if d.get("kind") == "ExternalSecret"
             and d["metadata"]["name"].endswith("-appkeys")
         ]
@@ -375,7 +398,11 @@ def test_the_app_keys_merge_rather_than_claim_the_name() -> None:
         )
         spec = appkeys[0]["spec"] if appkeys else {}
         policy = spec.get("target", {}).get("creationPolicy")
-        expect(f"{provider}: it merges into the operator's Secret", policy == "Merge", f"got {policy}")
+        expect(
+            f"{provider}: it merges into the operator's Secret",
+            policy == "Merge",
+            f"got {policy}",
+        )
         # The ESO admission webhook refuses an ExternalSecret with neither.
         expect(
             f"{provider}: it has data or dataFrom",
@@ -422,7 +449,11 @@ def test_the_table_derives_the_contract_pair_for_every_provider() -> None:
 def test_plain_never_crosses_a_cleartext_transport() -> None:
     """The one hard floor: a PLAIN password rides SASL_SSL or it does not ride."""
     plain = [k for k, (_, mech) in CONTRACT_TABLE.items() if mech == "PLAIN"]
-    expect("confluent-cloud is the only PLAIN target", plain == ["confluent-cloud"], f"got {plain}")
+    expect(
+        "confluent-cloud is the only PLAIN target",
+        plain == ["confluent-cloud"],
+        f"got {plain}",
+    )
     for provider in plain:
         got = derived(provider)
         expect(
@@ -460,13 +491,21 @@ def test_kafbat_matches_the_broker_in_its_own_render() -> None:
         for cloud in CLOUDS:
             at = f"{profile}/{cloud}"
             config = [
-                d for d in layer2_data(KAFBAT, profile, cloud, kafbat_infra(profile, cloud))
-                if d.get("kind") == "ConfigMap" and d["metadata"]["name"].endswith("kafbat-config")
+                d
+                for d in layer2_data(
+                    KAFBAT, profile, cloud, kafbat_infra(profile, cloud)
+                )
+                if d.get("kind") == "ConfigMap"
+                and d["metadata"]["name"].endswith("kafbat-config")
             ]
-            expect(f"{at}: kafbat renders a config", len(config) == 1, f"got {len(config)}")
+            expect(
+                f"{at}: kafbat renders a config", len(config) == 1, f"got {len(config)}"
+            )
             if not config:
                 continue
-            clusters = yaml.safe_load(config[0]["data"]["application-local.yml"])["kafka"]
+            clusters = yaml.safe_load(config[0]["data"]["application-local.yml"])[
+                "kafka"
+            ]
             cluster = clusters["clusters"][0]
             expect(
                 f"{at}: kafbat speaks SASL_PLAINTEXT to a DFE-owned broker",
@@ -478,7 +517,9 @@ def test_kafbat_matches_the_broker_in_its_own_render() -> None:
                 cluster["properties"]["sasl.mechanism"] == "SCRAM-SHA-512",
                 f"got {cluster['properties']['sasl.mechanism']}",
             )
-            env = effective_env(golden("dfe-archiver", profile, cloud), "Deployment/dfe-archiver")
+            env = effective_env(
+                golden("dfe-archiver", profile, cloud), "Deployment/dfe-archiver"
+            )
             protocol = env.get("DFE_ARCHIVER_KAFKA_SECURITY_PROTOCOL")
             expect(
                 f"{at}: the same protocol the tier's apps dial",
@@ -507,7 +548,9 @@ def test_the_matrix_catches_a_hand_set_mechanism() -> None:
     """A check that passes on anything is what #10 asks this to stop being."""
     cell = deploy_matrix.Cell("kafka", "cluster", "scale", ("kafka.provider=strimzi",))
     clean = "  security.protocol: SASL_PLAINTEXT\n  sasl.mechanism: SCRAM-SHA-512\n"
-    expect("a derived render passes", not deploy_matrix.assert_derived_auth(cell, clean))
+    expect(
+        "a derived render passes", not deploy_matrix.assert_derived_auth(cell, clean)
+    )
     handset = "  sasl.mechanism: PLAIN\n"
     expect(
         "a hand-set mechanism fails",
@@ -541,14 +584,20 @@ def test_naming_the_external_provider_gives_the_shared_secret_shape() -> None:
     )
     secrets = [d for d in docs if d.get("kind") == "ExternalSecret"]
     mechanism = secrets[0]["spec"]["target"]["template"]["data"]["sasl.mechanism"]
-    expect("with PLAIN derived for Confluent Cloud", mechanism == "PLAIN", f"got {mechanism}")
+    expect(
+        "with PLAIN derived for Confluent Cloud",
+        mechanism == "PLAIN",
+        f"got {mechanism}",
+    )
 
 
 def test_an_unnamed_external_provider_renders_the_pre_contract_shape() -> None:
     """A deployment that seeded only a password keeps resolving."""
     docs = render(KAFKA, "kafka.mode=external", "kafka.external.bootstrap=broker:9092")
     written = written_keys(docs, "dfe-kafka-external")
-    expect("only the password is read", written == {"password"}, f"got {sorted(written)}")
+    expect(
+        "only the password is read", written == {"password"}, f"got {sorted(written)}"
+    )
 
 
 def test_iam_stays_confined_to_external_mode() -> None:
@@ -559,7 +608,11 @@ def test_iam_stays_confined_to_external_mode() -> None:
         "kafka.external.provider=msk_iam",
         "kafka.external.auth.type=scram",
     )
-    expect("provider msk_iam with a static auth type refuses", "msk_iam" in err, f"got {err!r}")
+    expect(
+        "provider msk_iam with a static auth type refuses",
+        "msk_iam" in err,
+        f"got {err!r}",
+    )
     err = render_error(
         KAFKA,
         "kafka.mode=external",
@@ -624,10 +677,14 @@ def appset_values(broker: str) -> dict:
         chart = Path(tmp) / "appset-values"
         (chart / "templates").mkdir(parents=True)
         (chart / "Chart.yaml").write_text(
-            "apiVersion: v2\nname: appset-values\nversion: 0.0.0\n", encoding="utf-8", newline="\n"
+            "apiVersion: v2\nname: appset-values\nversion: 0.0.0\n",
+            encoding="utf-8",
+            newline="\n",
         )
         template = "{{- with .Values.cluster }}\n" + block + "\n{{- end }}\n"
-        (chart / "templates" / "values.yaml").write_text(template, encoding="utf-8", newline="\n")
+        (chart / "templates" / "values.yaml").write_text(
+            template, encoding="utf-8", newline="\n"
+        )
         facts = Path(tmp) / "cluster.yaml"
         facts.write_text(yaml.safe_dump(cluster), encoding="utf-8", newline="\n")
         docs = render(chart, values=(facts,))
@@ -643,7 +700,9 @@ def layer2_kafka(broker: str, *sets: str) -> list[dict]:
     facts = {**CLUSTER, **BROKERS[broker]}
     with tempfile.TemporaryDirectory() as tmp:
         overlay = Path(tmp) / "appset.yaml"
-        overlay.write_text(yaml.safe_dump(appset_values(broker)), encoding="utf-8", newline="\n")
+        overlay.write_text(
+            yaml.safe_dump(appset_values(broker)), encoding="utf-8", newline="\n"
+        )
         cascade = (
             ARGO_VALUES / "common.yaml",
             ARGO_VALUES / "aws.yaml",
@@ -667,7 +726,8 @@ def layer2_kafka(broker: str, *sets: str) -> list[dict]:
 def app_credential(docs: list[dict]) -> dict:
     """The one ClusterExternalSecret writing dfe-kafka-user, or {} if not exactly one."""
     found = [
-        d for d in docs
+        d
+        for d in docs
         if d.get("kind") == "ClusterExternalSecret"
         and d["spec"]["externalSecretSpec"]["target"]["name"] == "dfe-kafka-user"
     ]
@@ -696,7 +756,10 @@ def store_reads(docs: list[dict]) -> set[tuple[str, str]]:
             spec = doc["spec"]["externalSecretSpec"]
         else:
             continue
-        reads |= {(d["remoteRef"]["key"], d["remoteRef"]["property"]) for d in spec.get("data", [])}
+        reads |= {
+            (d["remoteRef"]["key"], d["remoteRef"]["property"])
+            for d in spec.get("data", [])
+        }
     return reads
 
 
@@ -704,7 +767,11 @@ def test_the_appset_names_a_managed_provider_to_the_chart() -> None:
     """The fact was on the cluster secret; nothing handed it to kafka.external."""
     for broker in MANAGED:
         got = appset_values(broker).get("kafka", {}).get("external", {}).get("provider")
-        expect(f"{broker}: the appset sets kafka.external.provider", got == broker, f"got {got!r}")
+        expect(
+            f"{broker}: the appset sets kafka.external.provider",
+            got == broker,
+            f"got {got!r}",
+        )
     got = appset_values("strimzi")
     expect(
         "an in-cluster broker gets no kafka block from the appset",
@@ -751,7 +818,9 @@ def test_a_managed_broker_reads_only_the_path_the_deploy_layer_seeds() -> None:
     anything else is an ExternalSecret that never syncs.
     """
     for broker in SEEDED:
-        seed = next(name for name in render_dial._seeds(broker) if name.startswith("kafka/"))
+        seed = next(
+            name for name in render_dial._seeds(broker) if name.startswith("kafka/")
+        )
         keys = {key for key, _ in store_reads(layer2_kafka(broker))}
         expect(
             f"{broker}: the chart reads dfe/test/{seed} and nothing else",
@@ -763,27 +832,41 @@ def test_a_managed_broker_reads_only_the_path_the_deploy_layer_seeds() -> None:
 def test_msk_reads_the_one_copy_msk_holds() -> None:
     """No kafka/msk seed exists, so the apps' copy reads MSK's own secret by ARN, through the
     store with no path prefix, for the password field scram.tf writes into it."""
-    expect("render_dial seeds no kafka entry for msk",
-           not any(name.startswith("kafka/") for name in render_dial._seeds("msk")),
-           f"got {sorted(render_dial._seeds('msk'))}")
+    expect(
+        "render_dial seeds no kafka entry for msk",
+        not any(name.startswith("kafka/") for name in render_dial._seeds("msk")),
+        f"got {sorted(render_dial._seeds('msk'))}",
+    )
     doc = app_credential(layer2_kafka("msk"))
     arn = BROKERS["msk"]["dfe.hyperi.io/kafka_credential_ref"]
-    expect("the copy reads the AmazonMSK_ secret's password alone",
-           store_reads([doc]) == {(arn, "password")}, f"got {sorted(store_reads([doc]))}")
-    store = doc["spec"]["externalSecretSpec"]["secretStoreRef"]["name"] if doc else ""
-    expect("through the unprefixed store", store == "dfe-secret-store-unprefixed", f"got {store!r}")
-    scram = (REPO_ROOT / "terraform" / "modules" / "managed-kafka" / "msk" / "scram.tf").read_text(
-        encoding="utf-8"
+    expect(
+        "the copy reads the AmazonMSK_ secret's password alone",
+        store_reads([doc]) == {(arn, "password")},
+        f"got {sorted(store_reads([doc]))}",
     )
-    expect("and scram.tf writes a password field into that secret",
-           re.search(r"^\s*password\s*=\s*var\.scram_password\s*$", scram, re.M) is not None,
-           "no password field in the AmazonMSK_ secret_string")
+    store = doc["spec"]["externalSecretSpec"]["secretStoreRef"]["name"] if doc else ""
+    expect(
+        "through the unprefixed store",
+        store == "dfe-secret-store-unprefixed",
+        f"got {store!r}",
+    )
+    scram = (
+        REPO_ROOT / "terraform" / "modules" / "managed-kafka" / "msk" / "scram.tf"
+    ).read_text(encoding="utf-8")
+    expect(
+        "and scram.tf writes a password field into that secret",
+        re.search(r"^\s*password\s*=\s*var\.scram_password\s*$", scram, re.M)
+        is not None,
+        "no password field in the AmazonMSK_ secret_string",
+    )
 
 
 def test_bootstrap_creates_the_unprefixed_store_the_msk_copy_names() -> None:
     """The store prefix would turn an AmazonMSK_ ARN into a key that does not exist, so the
     copy reads through a second store with none, fenced to the namespaces the copy lands in."""
-    template = REPO_ROOT / "bootstrap" / "templates" / "eso-cluster-secret-store-aws.yaml.tpl"
+    template = (
+        REPO_ROOT / "bootstrap" / "templates" / "eso-cluster-secret-store-aws.yaml.tpl"
+    )
     env = {
         "PATH": "/usr/bin:/bin",
         "DFE_NAMESPACE": "dfe-aws",
@@ -793,18 +876,39 @@ def test_bootstrap_creates_the_unprefixed_store_the_msk_copy_names() -> None:
     out = subprocess.run(
         [sys.executable, str(REPO_ROOT / "bootstrap" / "render_env.py")],
         input=template.read_text(encoding="utf-8"),
-        env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=True,
     ).stdout
     stores = {d["metadata"]["name"]: d for d in yaml.safe_load_all(out) if d}
     chart = yaml.safe_load((KAFKA / "values.yaml").read_text(encoding="utf-8"))
     name = chart["user"]["password"]["unprefixedStoreName"]
-    expect("bootstrap creates the store the chart names", name in stores, f"got {sorted(stores)}")
+    expect(
+        "bootstrap creates the store the chart names",
+        name in stores,
+        f"got {sorted(stores)}",
+    )
     aws = stores.get(name, {}).get("spec", {}).get("provider", {}).get("aws", {})
     expect("with no prefix", "prefix" not in aws, f"got {aws}")
-    allowed = {n for c in stores.get(name, {}).get("spec", {}).get("conditions", []) for n in c["namespaces"]}
-    expect("fenced to the namespaces the copy lands in", allowed == APP_NAMESPACES, f"got {sorted(allowed)}")
-    expect("and the prefixed store keeps its prefix",
-           stores["dfe-secret-store"]["spec"]["provider"]["aws"]["prefix"] == "org-secrets/", "")
+    allowed = {
+        n
+        for c in stores.get(name, {}).get("spec", {}).get("conditions", [])
+        for n in c["namespaces"]
+    }
+    expect(
+        "fenced to the namespaces the copy lands in",
+        allowed == APP_NAMESPACES,
+        f"got {sorted(allowed)}",
+    )
+    expect(
+        "and the prefixed store keeps its prefix",
+        stores["dfe-secret-store"]["spec"]["provider"]["aws"]["prefix"]
+        == "org-secrets/",
+        "",
+    )
 
 
 def test_a_managed_broker_seeds_every_property_its_chart_reads() -> None:
@@ -822,7 +926,10 @@ def test_a_managed_broker_seeds_every_property_its_chart_reads() -> None:
 
 def test_only_confluent_cloud_reads_its_username_from_the_store() -> None:
     """Confluent's API key IS the username; a SCRAM principal is a fixed name."""
-    reads = {prop for _, prop in store_reads([app_credential(layer2_kafka("confluent-cloud"))])}
+    reads = {
+        prop
+        for _, prop in store_reads([app_credential(layer2_kafka("confluent-cloud"))])
+    }
     expect(
         "confluent-cloud reads username and password",
         reads == {"username", "password"},
@@ -831,7 +938,11 @@ def test_only_confluent_cloud_reads_its_username_from_the_store() -> None:
     for broker in ("msk", "redpanda-cloud"):
         doc = app_credential(layer2_kafka(broker))
         reads = {prop for _, prop in store_reads([doc])}
-        expect(f"{broker} reads only the password", reads == {"password"}, f"got {sorted(reads)}")
+        expect(
+            f"{broker} reads only the password",
+            reads == {"password"},
+            f"got {sorted(reads)}",
+        )
         expect(
             f"{broker} authenticates as dfe-kafka-user",
             template_data(doc).get("username") == "dfe-kafka-user",
@@ -841,7 +952,9 @@ def test_only_confluent_cloud_reads_its_username_from_the_store() -> None:
 
 def test_msk_authenticates_as_the_principal_its_acls_name() -> None:
     """The bootstrap Job writes ACLs for msk.scramUsername; the apps must log in as it."""
-    doc = app_credential(layer2_kafka("msk", "kafka.external.msk.scramUsername=dfe-cloud"))
+    doc = app_credential(
+        layer2_kafka("msk", "kafka.external.msk.scramUsername=dfe-cloud")
+    )
     expect(
         "the projected username follows kafka.external.msk.scramUsername",
         template_data(doc).get("username") == "dfe-cloud",
@@ -861,7 +974,10 @@ def test_the_in_cluster_credential_is_unchanged() -> None:
         ],
         "externalSecretSpec": {
             "refreshInterval": "1h",
-            "secretStoreRef": {"name": "dfe-secret-store", "kind": "ClusterSecretStore"},
+            "secretStoreRef": {
+                "name": "dfe-secret-store",
+                "kind": "ClusterSecretStore",
+            },
             "target": {
                 "name": "dfe-kafka-user",
                 "creationPolicy": "Owner",
@@ -877,7 +993,10 @@ def test_the_in_cluster_credential_is_unchanged() -> None:
             "data": [
                 {
                     "secretKey": "password",
-                    "remoteRef": {"key": "dfe/test/kafka/strimzi", "property": "password"},
+                    "remoteRef": {
+                        "key": "dfe/test/kafka/strimzi",
+                        "property": "password",
+                    },
                 },
             ],
         },
@@ -894,14 +1013,19 @@ def password_ref(docs: list[dict], kind: str) -> dict:
     found = [d for d in docs if d.get("kind") == kind]
     if len(found) != 1:
         return {}
-    return found[0]["spec"]["authentication"].get("password", {}).get("valueFrom", {}).get(
-        "secretKeyRef", {}
+    return (
+        found[0]["spec"]["authentication"]
+        .get("password", {})
+        .get("valueFrom", {})
+        .get("secretKeyRef", {})
     )
 
 
 def test_in_cluster_redpanda_projects_the_strimzi_credential() -> None:
     """The Redpanda operator's own Secret carries a password alone, so the apps read this copy."""
-    seed = next(name for name in render_dial._seeds("redpanda") if name.startswith("kafka/"))
+    seed = next(
+        name for name in render_dial._seeds("redpanda") if name.startswith("kafka/")
+    )
     want = copy.deepcopy(app_credential(layer2_kafka("strimzi")).get("spec", {}))
     if want:
         want["externalSecretSpec"]["data"][0]["remoteRef"]["key"] = f"dfe/test/{seed}"
@@ -936,11 +1060,16 @@ def test_the_redpanda_user_takes_the_password_its_clients_are_given() -> None:
         f"got {ref}, KafkaUser reads {strimzi}",
     )
     store = [
-        d for d in docs
+        d
+        for d in docs
         if d.get("kind") == "ExternalSecret"
         and d["spec"].get("target", {}).get("name") == ref.get("name")
     ]
-    expect("an ExternalSecret in the broker namespace writes it", len(store) == 1, f"got {len(store)}")
+    expect(
+        "an ExternalSecret in the broker namespace writes it",
+        len(store) == 1,
+        f"got {len(store)}",
+    )
     expect(
         "with the key the User names",
         ref.get("key") in written_keys(store, ref.get("name", "")),
@@ -974,7 +1103,9 @@ def mechanism_read(env_value: object, secret: dict) -> object:
     """The mechanism an env entry resolves to against dfe-kafka-user's templated keys."""
     if isinstance(env_value, dict):
         ref = (env_value.get("valueFrom") or {}).get("secretKeyRef") or {}
-        return secret.get(ref.get("key")) if ref.get("name") == "dfe-kafka-user" else None
+        return (
+            secret.get(ref.get("key")) if ref.get("name") == "dfe-kafka-user" else None
+        )
     return env_value
 
 
@@ -985,7 +1116,9 @@ def test_every_client_reads_the_mechanism_its_broker_serves() -> None:
         want = CONTRACT_TABLE[broker][1]
         for service, name in sorted(MECHANISM_ENV.items()):
             for profile, cloud in BUS_CELLS:
-                env = effective_env(golden(service, profile, cloud), f"Deployment/{service}")
+                env = effective_env(
+                    golden(service, profile, cloud), f"Deployment/{service}"
+                )
                 got = mechanism_read(env.get(name), secret)
                 expect(
                     f"{broker}: {service} reads {want} from {name} [{profile}/{cloud}]",

@@ -35,7 +35,9 @@ TAG = "9.9.9"
 BRANCH = f"stack-latest/{TAG}"
 PR_URL = "https://github.com/example/dfe-infra/pull/7"
 APP_TOKEN = "${{ steps.latest-token.outputs.token }}"
-RELEASE_ONLY = "steps.ver.outputs.cut == 'true' && steps.ver.outputs.maturity == 'release'"
+RELEASE_ONLY = (
+    "steps.ver.outputs.cut == 'true' && steps.ver.outputs.maturity == 'release'"
+)
 
 # Loads the real dfe-stack by path and points it at this checkout, so set-latest edits the copy.
 _DFE_STACK_SHIM = f"""\
@@ -137,8 +139,16 @@ def _advance() -> dict:
 
 
 def _git(repo: Path, *args: str) -> str:
-    done = subprocess.run(["git", *args], cwd=repo, env=_base_env(repo.parent), capture_output=True,
-                          text=True, encoding="utf-8", errors="replace", check=True)
+    done = subprocess.run(
+        ["git", *args],
+        cwd=repo,
+        env=_base_env(repo.parent),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=True,
+    )
     return done.stdout.strip()
 
 
@@ -172,10 +182,16 @@ class Origin:
         }.items():
             (bin_dir / name).write_text(body, encoding="utf-8")
             (bin_dir / name).chmod(0o755)
-        (root / ".gitconfig").write_text("[init]\n\tdefaultBranch = main\n[commit]\n\tgpgsign = false\n",
-                                         encoding="utf-8")
+        (root / ".gitconfig").write_text(
+            "[init]\n\tdefaultBranch = main\n[commit]\n\tgpgsign = false\n",
+            encoding="utf-8",
+        )
 
-        subprocess.run(["git", "init", "-q", "--bare", str(self.bare)], env=_base_env(root), check=True)
+        subprocess.run(
+            ["git", "init", "-q", "--bare", str(self.bare)],
+            env=_base_env(root),
+            check=True,
+        )
         seed = root / "seed"
         seed.mkdir()
         _git(seed, "init", "-q")
@@ -185,15 +201,29 @@ class Origin:
         _git(seed, "add", ".")
         _git(seed, "commit", "-q", "-m", "seed")
         _git(seed, "push", "-q", str(self.bare), "HEAD:refs/heads/main")
-        subprocess.run(["git", "clone", "-q", "--branch", "main", str(self.bare), str(self.work)],
-                       env=_base_env(root), check=True)
-        subprocess.run(["git", "clone", "-q", str(self.bare), str(root / "mover")], env=_base_env(root),
-                       check=True)
+        subprocess.run(
+            ["git", "clone", "-q", "--branch", "main", str(self.bare), str(self.work)],
+            env=_base_env(root),
+            check=True,
+        )
+        subprocess.run(
+            ["git", "clone", "-q", str(self.bare), str(root / "mover")],
+            env=_base_env(root),
+            check=True,
+        )
 
     def scenario(self, **overrides: object) -> None:
-        state = {"log": str(self.log), "origin": str(self.bare), "mover": str(self.root / "mover"),
-                 "branch": BRANCH, "pr_url": PR_URL, "existing_pr": "", "watch_exit": 0,
-                 "merge_results": [], "merge_states": []}
+        state = {
+            "log": str(self.log),
+            "origin": str(self.bare),
+            "mover": str(self.root / "mover"),
+            "branch": BRANCH,
+            "pr_url": PR_URL,
+            "existing_pr": "",
+            "watch_exit": 0,
+            "merge_results": [],
+            "merge_states": [],
+        }
         state.update(overrides)
         self.state.write_text(json.dumps(state), encoding="utf-8")
 
@@ -202,17 +232,32 @@ class Origin:
 
     def run(self, git_trace: Path | None = None) -> subprocess.CompletedProcess:
         step = _advance()
-        env = {**_base_env(self.root), "GH_STUB_STATE": str(self.state), "TAG": TAG,
-               "GH_TOKEN": "stub-token"}
+        env = {
+            **_base_env(self.root),
+            "GH_STUB_STATE": str(self.state),
+            "TAG": TAG,
+            "GH_TOKEN": "stub-token",
+        }
         if git_trace:
             env["GIT_TRACE"] = str(git_trace)
         # The runner's own invocation for `run:` with the default bash shell.
-        return subprocess.run(["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", step["run"]],
-                              cwd=self.work, env=env, capture_output=True, text=True, encoding="utf-8",
-                              errors="replace", check=False)
+        return subprocess.run(
+            ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", step["run"]],
+            cwd=self.work,
+            env=env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
 
     def gh_calls(self) -> list[str]:
-        return self.log.read_text(encoding="utf-8").splitlines() if self.log.exists() else []
+        return (
+            self.log.read_text(encoding="utf-8").splitlines()
+            if self.log.exists()
+            else []
+        )
 
     def rev(self, ref: str) -> str:
         return _git(self.root / "seed", "--git-dir", str(self.bare), "rev-parse", ref)
@@ -241,13 +286,18 @@ def test_no_step_pushes_to_main() -> None:
 
 
 def test_the_token_checkout_and_advance_run_only_for_a_release_maturity_cut() -> None:
-    names = ("Mint a dfe-infra token for the `latest` pull request", "Check out main with the App token",
-             "Advance `latest` through a pull request")
+    names = (
+        "Mint a dfe-infra token for the `latest` pull request",
+        "Check out main with the App token",
+        "Advance `latest` through a pull request",
+    )
     for name in names:
         assert _step(name)["if"] == RELEASE_ONLY, name
     order = [s.get("name") for s in _steps()]
     assert [order.index(n) for n in names] == sorted(order.index(n) for n in names)
-    assert order.index(names[0]) > order.index("Cosign sign the artifact (keyless, GitHub OIDC)")
+    assert order.index(names[0]) > order.index(
+        "Cosign sign the artifact (keyless, GitHub OIDC)"
+    )
 
 
 def test_the_app_token_is_scoped_to_this_repository_and_what_the_advance_does() -> None:
@@ -284,14 +334,19 @@ def test_the_push_and_every_gh_call_use_the_app_token() -> None:
 
 
 def test_maturity_is_read_once_and_both_consumers_take_it_from_there() -> None:
-    assert _step("Attach to the GitHub release")["env"]["MATURITY"] == "${{ steps.ver.outputs.maturity }}"
+    assert (
+        _step("Attach to the GitHub release")["env"]["MATURITY"]
+        == "${{ steps.ver.outputs.maturity }}"
+    )
     assert sum("dfe-stack maturity" in s.get("run", "") for s in _steps()) == 1
 
 
 # --- the step itself ------------------------------------------------------------------------------
 
 
-def test_the_advance_merges_a_pull_request_pinned_to_the_head_it_pushed(origin: Origin, tmp_path: Path) -> None:
+def test_the_advance_merges_a_pull_request_pinned_to_the_head_it_pushed(
+    origin: Origin, tmp_path: Path
+) -> None:
     main_before = origin.rev("refs/heads/main")
     origin.scenario()
     trace = tmp_path / "git-trace"
@@ -301,23 +356,41 @@ def test_the_advance_merges_a_pull_request_pinned_to_the_head_it_pushed(origin: 
     head = origin.rev(f"refs/heads/{BRANCH}")
     assert origin.rev(f"{head}^") == main_before
     assert f'latest: "{TAG}"' in origin.show(f"{head}:versions.yaml")
-    assert origin.show("--no-patch", "--format=%B", head).strip() == f"chore: advance latest -> {TAG}"
+    assert (
+        origin.show("--no-patch", "--format=%B", head).strip()
+        == f"chore: advance latest -> {TAG}"
+    )
     assert origin.rev("refs/heads/main") == main_before, "the step pushed to main"
     assert origin.read_state()["merged"] == head
 
     calls = origin.gh_calls()
-    assert _verbs(calls) == ["gh pr list", "gh pr create", "gh pr view", "gh pr checks", "gh pr checks",
-                             "gh pr merge"]
-    assert f"--base main --head {BRANCH} --title chore: advance latest -> {TAG}" in calls[1]
+    assert _verbs(calls) == [
+        "gh pr list",
+        "gh pr create",
+        "gh pr view",
+        "gh pr checks",
+        "gh pr checks",
+        "gh pr merge",
+    ]
+    assert (
+        f"--base main --head {BRANCH} --title chore: advance latest -> {TAG}"
+        in calls[1]
+    )
     assert "--watch --fail-fast --interval 30" in calls[4]
     assert calls[5] == f"gh pr merge {PR_URL} --squash --match-head-commit {head}"
 
-    pushes = [line.split("built-in: ", 1)[1] for line in trace.read_text(encoding="utf-8").splitlines()
-              if "built-in: git" in line and (" push " in line or " commit " in line or " fetch " in line)]
+    pushes = [
+        line.split("built-in: ", 1)[1]
+        for line in trace.read_text(encoding="utf-8").splitlines()
+        if "built-in: git" in line
+        and (" push " in line or " commit " in line or " fetch " in line)
+    ]
     print("\n".join(["git fetch/commit/push, then gh:", *pushes, *calls]))
 
 
-def test_a_failing_check_leaves_the_pull_request_open_and_merges_nothing(origin: Origin) -> None:
+def test_a_failing_check_leaves_the_pull_request_open_and_merges_nothing(
+    origin: Origin,
+) -> None:
     origin.scenario(watch_exit=1)
     done = origin.run()
     assert done.returncode == 1
@@ -335,14 +408,20 @@ def test_a_conflict_with_a_moved_main_rebuilds_the_branch_on_it(origin: Origin) 
     moved_main = origin.rev("refs/heads/main")
     head = origin.rev(f"refs/heads/{BRANCH}")
     assert moved_main != first_main
-    assert origin.rev(f"{head}^") == moved_main, "the second attempt was not cut from the moved main"
+    assert origin.rev(f"{head}^") == moved_main, (
+        "the second attempt was not cut from the moved main"
+    )
     assert origin.read_state()["merged"] == head
     verbs = _verbs(origin.gh_calls())
-    assert verbs.count("gh pr create") == 1, "the rebuilt branch opened a second pull request"
+    assert verbs.count("gh pr create") == 1, (
+        "the rebuilt branch opened a second pull request"
+    )
     assert verbs.count("gh pr merge") == 2
 
 
-def test_a_required_check_reporting_late_is_waited_for_before_the_merge_is_judged(origin: Origin) -> None:
+def test_a_required_check_reporting_late_is_waited_for_before_the_merge_is_judged(
+    origin: Origin,
+) -> None:
     origin.scenario(merge_results=[False, False], merge_states=["BLOCKED", "BLOCKED"])
     done = origin.run()
     assert done.returncode == 0, done.stdout + done.stderr
@@ -351,7 +430,9 @@ def test_a_required_check_reporting_late_is_waited_for_before_the_merge_is_judge
     assert verbs.count("gh pr create") == 1
 
 
-def test_a_merge_refused_for_good_fails_the_step_and_names_the_state(origin: Origin) -> None:
+def test_a_merge_refused_for_good_fails_the_step_and_names_the_state(
+    origin: Origin,
+) -> None:
     origin.scenario(merge_results=[False] * 10, merge_states=["BLOCKED"] * 10)
     done = origin.run()
     assert done.returncode == 1
@@ -359,7 +440,9 @@ def test_a_merge_refused_for_good_fails_the_step_and_names_the_state(origin: Ori
     assert _verbs(origin.gh_calls()).count("gh pr merge") == 10
 
 
-def test_a_branch_and_pull_request_left_by_an_earlier_run_are_reused(origin: Origin) -> None:
+def test_a_branch_and_pull_request_left_by_an_earlier_run_are_reused(
+    origin: Origin,
+) -> None:
     mover = origin.root / "mover"
     _git(mover, "checkout", "-q", "-b", "stale")
     (mover / "STALE.md").write_text("an earlier attempt\n", encoding="utf-8")
@@ -375,7 +458,9 @@ def test_a_branch_and_pull_request_left_by_an_earlier_run_are_reused(origin: Ori
     assert origin.rev(f"{head}^") == origin.rev("refs/heads/main")
 
 
-def test_a_push_to_the_branch_by_anyone_else_is_never_overwritten(origin: Origin) -> None:
+def test_a_push_to_the_branch_by_anyone_else_is_never_overwritten(
+    origin: Origin,
+) -> None:
     """The lease names the head this step last pushed, so a stranger's commit refuses the rebuild."""
     origin.scenario(merge_results=[False], merge_states=["DIRTY"], on_refusal="branch")
     done = origin.run()
@@ -388,8 +473,13 @@ def test_a_push_to_the_branch_by_anyone_else_is_never_overwritten(origin: Origin
 def test_a_main_already_pointing_at_the_tag_opens_nothing(origin: Origin) -> None:
     seed = origin.root / "seed"
     _git(seed, "pull", "-q", str(origin.bare), "main")
-    subprocess.run([sys.executable, str(seed / "scripts" / "dfe-stack"), "set-latest", TAG], cwd=seed,
-                   env=_base_env(origin.root), check=True, capture_output=True)
+    subprocess.run(
+        [sys.executable, str(seed / "scripts" / "dfe-stack"), "set-latest", TAG],
+        cwd=seed,
+        env=_base_env(origin.root),
+        check=True,
+        capture_output=True,
+    )
     _git(seed, "commit", "-q", "-am", "latest already moved")
     _git(seed, "push", "-q", str(origin.bare), "HEAD:refs/heads/main")
     origin.scenario()

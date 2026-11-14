@@ -86,7 +86,9 @@ def parse(text: str) -> dict[str, tuple[str, str]]:
     found: dict[str, tuple[str, str]] = {}
     for line in text.splitlines():
         cells = [c.strip() for c in line.strip().strip("|").split("|")]
-        if len(cells) != 3 or not all(c.startswith("`") and c.endswith("`") for c in cells[1:]):
+        if len(cells) != 3 or not all(
+            c.startswith("`") and c.endswith("`") for c in cells[1:]
+        ):
             continue
         found[cells[0].lower()] = (cells[1].strip("`"), cells[2].strip("`"))
     return found

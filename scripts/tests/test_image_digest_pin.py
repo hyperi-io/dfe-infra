@@ -77,7 +77,9 @@ def _parse_nested(text: str) -> dict:
         if not raw.strip() or raw.lstrip().startswith("#"):
             continue
         indent = len(raw) - len(raw.lstrip())
-        m = re.match(r'^([A-Za-z0-9_.-]+):\s*(?:"([^"]*)"|([^#]*?))?\s*(?:#.*)?$', raw.strip())
+        m = re.match(
+            r'^([A-Za-z0-9_.-]+):\s*(?:"([^"]*)"|([^#]*?))?\s*(?:#.*)?$', raw.strip()
+        )
         if not m:
             continue
         key, quoted = m.group(1), m.group(2)
@@ -151,7 +153,11 @@ def test_every_published_app_renders_its_digest() -> None:
     digests = current_stack()["digests"]
     for service in COMPONENTS:
         app = json.loads(contract(service).read_text(encoding="utf-8"))["app_name"]
-        expect(f"versions.yaml pins a digest for {app}", app in digests, f"{sorted(digests)}")
+        expect(
+            f"versions.yaml pins a digest for {app}",
+            app in digests,
+            f"{sorted(digests)}",
+        )
         if app not in digests:
             continue
         rendered = images(cell(service, "slim", "local"))
@@ -323,7 +329,11 @@ THIRD_PARTY_WORKLOADS = [
     ("kafka", ("kafka.mode=single",), "apache/kafka", "kafka-version"),
     (
         "kafka",
-        ("kafka.mode=single", "kafka.provider=redpanda", "kafka.redpanda.acceptLicense=true"),
+        (
+            "kafka.mode=single",
+            "kafka.provider=redpanda",
+            "kafka.redpanda.acceptLicense=true",
+        ),
         "docker.redpanda.com/redpandadata/redpanda",
         "redpanda-version",
     ),
@@ -344,7 +354,9 @@ def test_every_upstream_image_a_chart_runs_carries_the_ssot_digest() -> None:
     digest versions.yaml certified, not whatever the tag points at today."""
     for chart, sets, repository, key in THIRD_PARTY_WORKLOADS:
         want = _pin(repository, key)
-        rendered = [i for i in images(render(chart, *sets)) if i.split(":", 1)[0] == repository]
+        rendered = [
+            i for i in images(render(chart, *sets)) if i.split(":", 1)[0] == repository
+        ]
         expect(
             f"{chart} {' '.join(sets) or '(defaults)'} runs {repository} by tag@sha256",
             rendered and all(i == want for i in rendered),
@@ -354,9 +366,13 @@ def test_every_upstream_image_a_chart_runs_carries_the_ssot_digest() -> None:
 
 def test_the_msk_bootstrap_job_runs_the_digest_pinned_cli_image() -> None:
     """Both of the Job's containers run kafka.cliImage exactly as the chart pins it."""
-    values = yaml.safe_load((CHARTS / "kafka" / "values.yaml").read_text(encoding="utf-8"))
+    values = yaml.safe_load(
+        (CHARTS / "kafka" / "values.yaml").read_text(encoding="utf-8")
+    )
     want = values["kafka"]["cliImage"]
-    rendered = images([d for d in render("kafka", *MSK_BOOTSTRAP) if d.get("kind") == "Job"])
+    rendered = images(
+        [d for d in render("kafka", *MSK_BOOTSTRAP) if d.get("kind") == "Job"]
+    )
     expect("the CLI pin names its digest", "@sha256:" in want, want)
     expect(
         "the init and main containers both run it",
@@ -367,17 +383,25 @@ def test_the_msk_bootstrap_job_runs_the_digest_pinned_cli_image() -> None:
 
 def test_the_documentdb_cr_names_each_image_by_digest() -> None:
     """The operator pulls exactly the references the CR names, so each carries its digest."""
-    values = yaml.safe_load((CHARTS / "documentdb" / "values.yaml").read_text(encoding="utf-8"))
+    values = yaml.safe_load(
+        (CHARTS / "documentdb" / "values.yaml").read_text(encoding="utf-8")
+    )
     want = values["documentdb"]["image"]
     (cr,) = [d for d in render("documentdb") if d.get("kind") == "DocumentDB"]
     rendered = cr["spec"]["image"]
     expect(
         "every image the values pin names its digest",
         sorted(want) == ["documentDB", "gateway", "postgres"]
-        and all(re.search(r":[^/@]+@sha256:[0-9a-f]{64}$", ref) for ref in want.values()),
+        and all(
+            re.search(r":[^/@]+@sha256:[0-9a-f]{64}$", ref) for ref in want.values()
+        ),
         f"{want}",
     )
-    expect("the CR names them unchanged", rendered == want, f"wanted {want}, got {rendered}")
+    expect(
+        "the CR names them unchanged",
+        rendered == want,
+        f"wanted {want}, got {rendered}",
+    )
 
 
 def test_the_clickhouse_operator_crs_carry_the_digest_in_the_tag() -> None:

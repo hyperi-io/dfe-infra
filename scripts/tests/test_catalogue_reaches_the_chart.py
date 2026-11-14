@@ -79,10 +79,14 @@ def _file_set_cases() -> list:
 
 
 @pytest.mark.parametrize(("service", "file_set"), _file_set_cases())
-def test_a_file_set_the_engine_writes_reaches_the_chart(service: str, file_set: dict) -> None:
+def test_a_file_set_the_engine_writes_reaches_the_chart(
+    service: str, file_set: dict
+) -> None:
     probe = f"{PROBE}-{service}-{file_set['name']}"
     name = f"probe{file_set['suffixes'][0]}"
-    overlay = _nested(file_set["values_path"], [{"name": name, "content": f"{probe}\n"}])
+    overlay = _nested(
+        file_set["values_path"], [{"name": name, "content": f"{probe}\n"}]
+    )
     assert probe in _render(service, overlay)
 
 
@@ -98,7 +102,11 @@ def _engine_written_paths(app: dict) -> list[str]:
     """Every overlay path apps.yaml tells the engine to write for one app."""
     paths: list[str] = []
     for fs in app.get("files") or []:
-        paths += [fs[key] for key in ("values_path", "dir_setting", "entries_path") if fs.get(key)]
+        paths += [
+            fs[key]
+            for key in ("values_path", "dir_setting", "entries_path")
+            if fs.get(key)
+        ]
     paths += list((app.get("routing") or {}).get("values_paths", {}).values())
     paths += list(app.get("source_binding") or {})
     paths += [app[key] for key in ("reload_setting", "variant_path") if app.get(key)]

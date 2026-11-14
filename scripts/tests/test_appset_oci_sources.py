@@ -64,7 +64,10 @@ COMPONENTS = (
 APPS = "layer2-apps.yaml"
 EDGE = "layer2-edge.yaml"
 # culvert from the edge module, and from layer2-apps' bridge for a cluster it does not reach.
-CASES = [(s, APPS) for s in COMPONENTS if s != "culvert"] + [("culvert", EDGE), ("culvert", APPS)]
+CASES = [(s, APPS) for s in COMPONENTS if s != "culvert"] + [
+    ("culvert", EDGE),
+    ("culvert", APPS),
+]
 IDS = [f"{service}@{name}" for service, name in CASES]
 
 EXTRAS_PATH = "helm/charts/dfe-extras"
@@ -153,7 +156,11 @@ def ref_conflicts(app: dict) -> list[str]:
         if url.startswith("oci://"):
             continue
         revisions.setdefault(_repo(url), set()).add(source.get("targetRevision", ""))
-    return [f"{url} at {sorted(revs)}" for url, revs in sorted(revisions.items()) if len(revs) > 1]
+    return [
+        f"{url} at {sorted(revs)}"
+        for url, revs in sorted(revisions.items())
+        if len(revs) > 1
+    ]
 
 
 def broken(appset_name: str, service: str, pin: str | None) -> str:
@@ -176,7 +183,9 @@ def _written(tmp_path: Path, name: str, text: str) -> Path:
 
 
 @pytest.mark.parametrize(("service", "appset_name"), CASES, ids=IDS)
-def test_every_component_gets_four_sources_in_order(service: str, appset_name: str) -> None:
+def test_every_component_gets_four_sources_in_order(
+    service: str, appset_name: str
+) -> None:
     app = application(service, appset_name)
     sources = app["spec"]["sources"]
     assert len(sources) == 4, sources
@@ -233,11 +242,15 @@ def test_dfe_extras_reads_what_the_chart_reads_plus_its_chart_name(
     chart, extras = helm_sources(application(service, appset_name, facts=facts))
     assert params(extras) == {**params(chart), "chartName": service}
     assert params(extras)["profile"] == "scale"
-    assert yaml.safe_load(extras["helm"]["values"]) == yaml.safe_load(chart["helm"]["values"])
+    assert yaml.safe_load(extras["helm"]["values"]) == yaml.safe_load(
+        chart["helm"]["values"]
+    )
 
 
 @pytest.mark.parametrize(("service", "appset_name"), CASES, ids=IDS)
-def test_the_cluster_secret_facts_reach_both_sources(service: str, appset_name: str) -> None:
+def test_the_cluster_secret_facts_reach_both_sources(
+    service: str, appset_name: str
+) -> None:
     for source in helm_sources(application(service, appset_name, cloud="gcp")):
         found = params(source)
         assert found["cloud"] == "gcp"
@@ -259,8 +272,10 @@ def test_the_receivers_elastic_ips_reach_both_its_sources_and_no_other_app(
         values = yaml.safe_load(source["helm"].get("values") or "") or {}
         public = (values.get("exposure") or {}).get("public")
         if service == "dfe-receiver":
-            assert public == {"eipAllocations": ["eipalloc-1", "eipalloc-2"],
-                              "subnets": ["subnet-1", "subnet-2"]}, values
+            assert public == {
+                "eipAllocations": ["eipalloc-1", "eipalloc-2"],
+                "subnets": ["subnet-1", "subnet-2"],
+            }, values
         else:
             assert public is None, values
 
@@ -278,7 +293,9 @@ def test_no_repo_is_read_at_two_revisions(service: str, appset_name: str) -> Non
 
 @pytest.mark.parametrize("service", COMPONENTS)
 def test_each_chart_is_named_by_its_contract(service: str) -> None:
-    contract = yaml.safe_load((CONTRACTS / f"{service}.json").read_text(encoding="utf-8"))
+    contract = yaml.safe_load(
+        (CONTRACTS / f"{service}.json").read_text(encoding="utf-8")
+    )
     name = APPS if service != "culvert" else EDGE
     chart, extras = helm_sources(application(service, name))
     assert chart["repoURL"].rsplit("/", 1)[-1] == contract["app_name"]
@@ -297,9 +314,14 @@ def test_the_pin_maps_carry_exactly_the_versions_yaml_digests() -> None:
         if key.startswith("chart-digests.")
     }
     assert set(pinned) == set(COMPONENTS)
-    texts = {path: (REPO_ROOT / path).read_text(encoding="utf-8") for path in d.CHART_PIN_APPSETS}
+    texts = {
+        path: (REPO_ROOT / path).read_text(encoding="utf-8")
+        for path in d.CHART_PIN_APPSETS
+    }
     assert d.chart_pin_map(texts[Path("argocd/appsets") / APPS]) == pinned
-    assert d.chart_pin_map(texts[Path("argocd/appsets") / EDGE]) == {"culvert": pinned["culvert"]}
+    assert d.chart_pin_map(texts[Path("argocd/appsets") / EDGE]) == {
+        "culvert": pinned["culvert"]
+    }
     assert d.chart_pin_problems(versions, texts) == []
 
 
@@ -311,14 +333,18 @@ def test_the_committed_appsets_refuse_each_chart_not_yet_published() -> None:
         for service, pin in sorted(pins.items()):
             if DIGEST_RE.fullmatch(pin):
                 continue
-            with pytest.raises(w.WeaveError, match=f"the chart digest pinned for {service} is"):
+            with pytest.raises(
+                w.WeaveError, match=f"the chart digest pinned for {service} is"
+            ):
                 application(service, name, path=committed)
 
 
 # ---------------------------------------------------------------- expected fails
 
 
-@pytest.mark.parametrize(("service", "appset_name"), [("dfe-ui", APPS), ("culvert", EDGE)])
+@pytest.mark.parametrize(
+    ("service", "appset_name"), [("dfe-ui", APPS), ("culvert", EDGE)]
+)
 def test_a_service_with_no_digest_fails_the_render(
     tmp_path: Path, service: str, appset_name: str
 ) -> None:
@@ -327,8 +353,12 @@ def test_a_service_with_no_digest_fails_the_render(
         application(service, appset_name, path=path)
 
 
-@pytest.mark.parametrize("pin", ["unpublished", "sha256:abc", "1.2.3", "sha256:" + "AB" * 32])
-@pytest.mark.parametrize(("service", "appset_name"), [("dfe-hyperdx", APPS), ("culvert", EDGE)])
+@pytest.mark.parametrize(
+    "pin", ["unpublished", "sha256:abc", "1.2.3", "sha256:" + "AB" * 32]
+)
+@pytest.mark.parametrize(
+    ("service", "appset_name"), [("dfe-hyperdx", APPS), ("culvert", EDGE)]
+)
 def test_a_placeholder_digest_fails_the_render(
     tmp_path: Path, service: str, appset_name: str, pin: str
 ) -> None:
@@ -349,7 +379,11 @@ def test_a_broken_entry_leaves_every_other_service_rendering(tmp_path: Path) -> 
 @pytest.mark.parametrize("appset_name", [APPS, EDGE])
 @pytest.mark.parametrize(
     "deploy_url",
-    [w.INFRA_REPO_URL, "HTTPS://git.example.com/dfe-infra", "https://git.example.com/dfe-infra/"],
+    [
+        w.INFRA_REPO_URL,
+        "HTTPS://git.example.com/dfe-infra",
+        "https://git.example.com/dfe-infra/",
+    ],
     ids=["same-url", "case-and-no-suffix", "trailing-slash"],
 )
 def test_the_deploy_repo_on_the_chart_repo_at_another_revision_is_refused(
@@ -373,18 +407,37 @@ def test_one_repo_at_two_revisions_is_caught() -> None:
     app = {
         "spec": {
             "sources": [
-                {"repoURL": "oci://registry.example.com/dfe/charts/dfe-ui", "targetRevision": "x"},
-                {"repoURL": w.INFRA_REPO_URL, "targetRevision": "main", "path": EXTRAS_PATH},
-                {"repoURL": w.INFRA_REPO_URL.upper(), "targetRevision": "other", "ref": "infra"},
+                {
+                    "repoURL": "oci://registry.example.com/dfe/charts/dfe-ui",
+                    "targetRevision": "x",
+                },
+                {
+                    "repoURL": w.INFRA_REPO_URL,
+                    "targetRevision": "main",
+                    "path": EXTRAS_PATH,
+                },
+                {
+                    "repoURL": w.INFRA_REPO_URL.upper(),
+                    "targetRevision": "other",
+                    "ref": "infra",
+                },
             ]
         }
     }
-    assert ref_conflicts(app) == ["https://git.example.com/dfe-infra at ['main', 'other']"]
+    assert ref_conflicts(app) == [
+        "https://git.example.com/dfe-infra at ['main', 'other']"
+    ]
 
 
-@pytest.mark.parametrize(("service", "appset_name"), [("dfe-ui", APPS), ("culvert", EDGE)])
-def test_a_cluster_with_no_registry_gets_no_chart_source(service: str, appset_name: str) -> None:
-    with pytest.raises(w.WeaveError, match=re.escape("carries no dfe.hyperi.io/registry")):
+@pytest.mark.parametrize(
+    ("service", "appset_name"), [("dfe-ui", APPS), ("culvert", EDGE)]
+)
+def test_a_cluster_with_no_registry_gets_no_chart_source(
+    service: str, appset_name: str
+) -> None:
+    with pytest.raises(
+        w.WeaveError, match=re.escape("carries no dfe.hyperi.io/registry")
+    ):
         application(service, appset_name, facts={"dfe.hyperi.io/registry": ""})
 
 
@@ -401,6 +454,6 @@ def test_bootstrap_registers_a_pull_credential_for_every_chart() -> None:
     assert '--from-literal=url="oci://${DFE_REGISTRY}/charts/${chart}"' in loop
     assert '--from-literal=password="${DFE_PULL_SECRET_TOKEN}"' in loop
     assert "argocd.argoproj.io/secret-type=repository" in loop
-    assert text.index("DFE_THIN_CHARTS=") < text.index('==> [7/7]'), (
+    assert text.index("DFE_THIN_CHARTS=") < text.index("==> [7/7]"), (
         "the credentials must exist before the ApplicationSets are applied"
     )

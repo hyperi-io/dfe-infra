@@ -61,9 +61,15 @@ def render_notes(*extra_values: Path) -> str:
     emits at all. `helm install --dry-run=client` does print it, appended
     after a `NOTES:` marker, so that is what this reads."""
     cmd = [
-        "helm", "install", "kafka", str(CHART),
-        "--dry-run=client", "--namespace", "default",
-        "--set", "appNamespace=dfe",
+        "helm",
+        "install",
+        "kafka",
+        str(CHART),
+        "--dry-run=client",
+        "--namespace",
+        "default",
+        "--set",
+        "appNamespace=dfe",
     ]
     for v in [*BASE_CASCADE, *extra_values]:
         cmd += ["-f", str(v)]
@@ -85,12 +91,25 @@ def test_scale_defaults_render_no_autoscaler_and_say_why() -> None:
     """The shipped scale profile declares no landing source and no Prometheus
     endpoint -- exactly the shape that used to ship a broken ScaledObject."""
     docs = render()
-    expect("no ScaledObject at the shipped defaults", not scaled_objects(docs), scaled_objects(docs))
-    expect("no TriggerAuthentication either -- nothing left to authenticate for",
-           not trigger_auths(docs), trigger_auths(docs))
-    expect("no broker-scaler username ConfigMap either",
-           not [d for d in docs if d.get("kind") == "ConfigMap"
-                and d["metadata"]["name"].endswith("-broker-scaler-username")])
+    expect(
+        "no ScaledObject at the shipped defaults",
+        not scaled_objects(docs),
+        scaled_objects(docs),
+    )
+    expect(
+        "no TriggerAuthentication either -- nothing left to authenticate for",
+        not trigger_auths(docs),
+        trigger_auths(docs),
+    )
+    expect(
+        "no broker-scaler username ConfigMap either",
+        not [
+            d
+            for d in docs
+            if d.get("kind") == "ConfigMap"
+            and d["metadata"]["name"].endswith("-broker-scaler-username")
+        ],
+    )
     notes = render_notes()
     expect(
         "NOTES.txt explains autoscaling is armed but idle",
@@ -108,11 +127,19 @@ def test_one_landing_source_renders_one_trigger() -> None:
     scaled = scaled_objects(docs)
     expect("exactly one ScaledObject renders", len(scaled) == 1, scaled)
     triggers = scaled[0]["spec"]["triggers"]
-    expect("exactly one trigger, for the one landing source", len(triggers) == 1, triggers)
-    expect("the trigger watches that source's landing topic",
-           triggers[0]["metadata"]["topic"] == "okta_land", triggers[0])
-    expect("a TriggerAuthentication renders to back it",
-           len(trigger_auths(docs)) == 1, trigger_auths(docs))
+    expect(
+        "exactly one trigger, for the one landing source", len(triggers) == 1, triggers
+    )
+    expect(
+        "the trigger watches that source's landing topic",
+        triggers[0]["metadata"]["topic"] == "okta_land",
+        triggers[0],
+    )
+    expect(
+        "a TriggerAuthentication renders to back it",
+        len(trigger_auths(docs)) == 1,
+        trigger_auths(docs),
+    )
 
 
 def test_two_landing_sources_render_two_triggers() -> None:
@@ -129,12 +156,18 @@ def test_two_landing_sources_render_two_triggers() -> None:
     triggers = scaled[0]["spec"]["triggers"]
     expect("exactly two triggers, one per landing source", len(triggers) == 2, triggers)
     topics = {t["metadata"]["topic"] for t in triggers}
-    expect("one trigger per source's landing topic",
-           topics == {"okta_land", "m365_land"}, topics)
+    expect(
+        "one trigger per source's landing topic",
+        topics == {"okta_land", "m365_land"},
+        topics,
+    )
     notes = render_notes(overlay)
     overlay.unlink()
-    expect("no idle-autoscaler NOTES line once triggers exist",
-           "no KEDA ScaledObject was rendered" not in notes, notes)
+    expect(
+        "no idle-autoscaler NOTES line once triggers exist",
+        "no KEDA ScaledObject was rendered" not in notes,
+        notes,
+    )
 
 
 def test_the_prometheus_trigger_alone_is_enough_to_render() -> None:
@@ -149,14 +182,24 @@ def test_the_prometheus_trigger_alone_is_enough_to_render() -> None:
         overlay = Path(fh.name)
     docs = render(overlay)
     scaled = scaled_objects(docs)
-    expect("the ScaledObject renders on the Prometheus trigger alone", len(scaled) == 1, scaled)
+    expect(
+        "the ScaledObject renders on the Prometheus trigger alone",
+        len(scaled) == 1,
+        scaled,
+    )
     triggers = scaled[0]["spec"]["triggers"]
-    expect("exactly one trigger, the prometheus one", len(triggers) == 1 and triggers[0]["type"] == "prometheus",
-           triggers)
+    expect(
+        "exactly one trigger, the prometheus one",
+        len(triggers) == 1 and triggers[0]["type"] == "prometheus",
+        triggers,
+    )
     notes = render_notes(overlay)
     overlay.unlink()
-    expect("NOTES.txt stays quiet -- the autoscaler is not idle",
-           "no KEDA ScaledObject was rendered" not in notes, notes)
+    expect(
+        "NOTES.txt stays quiet -- the autoscaler is not idle",
+        "no KEDA ScaledObject was rendered" not in notes,
+        notes,
+    )
 
 
 REPLICAS_OWNER = "dfe.hyperi.io/replicas-owner"
@@ -167,7 +210,8 @@ def _pool_owners(docs: list[dict]) -> dict[str, str | None]:
     """Each KafkaNodePool's replicas-owner label, by pool name."""
     return {
         d["metadata"]["name"]: (d["metadata"].get("labels") or {}).get(REPLICAS_OWNER)
-        for d in docs if d.get("kind") == "KafkaNodePool"
+        for d in docs
+        if d.get("kind") == "KafkaNodePool"
     }
 
 
@@ -184,23 +228,37 @@ def test_only_the_pool_keda_scales_is_marked_as_keda_owned() -> None:
     scaled = _pool_owners(render(split, source))
     split.unlink()
     source.unlink()
-    expect("no pool is KEDA-owned while no ScaledObject renders",
-           set(idle.values()) == {None}, idle)
-    expect("the broker pool is KEDA-owned once the ScaledObject renders",
-           scaled.get("dfe-kafka-pool") == "keda", scaled)
-    expect("the controller pool never is", scaled.get("dfe-kafka-controller") is None, scaled)
+    expect(
+        "no pool is KEDA-owned while no ScaledObject renders",
+        set(idle.values()) == {None},
+        idle,
+    )
+    expect(
+        "the broker pool is KEDA-owned once the ScaledObject renders",
+        scaled.get("dfe-kafka-pool") == "keda",
+        scaled,
+    )
+    expect(
+        "the controller pool never is",
+        scaled.get("dfe-kafka-controller") is None,
+        scaled,
+    )
 
 
 def test_the_appset_ignores_replicas_only_on_a_keda_owned_pool() -> None:
-    spec = yaml.safe_load(APPSET.read_text(encoding="utf-8"))["spec"]["template"]["spec"]
+    spec = yaml.safe_load(APPSET.read_text(encoding="utf-8"))["spec"]["template"][
+        "spec"
+    ]
     rules = [d for d in spec["ignoreDifferences"] if d.get("kind") == "KafkaNodePool"]
     expect("one KafkaNodePool rule", len(rules) == 1, rules)
     rule = rules[0] if rules else {}
     expect("no unconditional jsonPointer on replicas", "jsonPointers" not in rule, rule)
-    expect("the jq path selects on the replicas-owner label",
-           rule.get("jqPathExpressions")
-           == [f'select(.metadata.labels["{REPLICAS_OWNER}"] == "keda") | .spec.replicas'],
-           rule)
+    expect(
+        "the jq path selects on the replicas-owner label",
+        rule.get("jqPathExpressions")
+        == [f'select(.metadata.labels["{REPLICAS_OWNER}"] == "keda") | .spec.replicas'],
+        rule,
+    )
 
 
 def main() -> int:

@@ -428,13 +428,16 @@ def _range_check(
             ACTION_HUMAN_READ,
         )
     verdicts = [
-        (declaration, admits(declaration.spec, producer_version)) for declaration in ranged
+        (declaration, admits(declaration.spec, producer_version))
+        for declaration in ranged
     ]
     unread = [declaration for declaration, verdict in verdicts if verdict is None]
     if unread:
         return CheckResult(
             None,
-            _with_note(edge, f"{_declared(manifest, unread)}, which this cannot parse."),
+            _with_note(
+                edge, f"{_declared(manifest, unread)}, which this cannot parse."
+            ),
             ACTION_HUMAN_READ,
         )
     narrow = [declaration for declaration, verdict in verdicts if not verdict]

@@ -65,7 +65,9 @@ def test_local_path_on_an_empty_cluster_passes() -> None:
 
 def test_no_named_class_uses_the_default() -> None:
     level, msg = verdict("", "aws", ["gp2"], ["gp2"])
-    expect("a default class is ok", level == "ok" and "gp2" in msg, f"got {level}: {msg}")
+    expect(
+        "a default class is ok", level == "ok" and "gp2" in msg, f"got {level}: {msg}"
+    )
 
 
 def test_no_named_class_and_no_default_warns() -> None:

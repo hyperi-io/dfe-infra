@@ -58,7 +58,12 @@ PROFILES = ("slim", "single", "scale", "mesh")
 MATRIX = list(itertools.product(sorted(CLOUDS), PROFILES, (False, True), (False, True)))
 
 PROVIDER = [{"name": "acme", "issuerUrl": "https://id.example.com", "clientId": "dfe"}]
-OIDC = ("--set", "oidc.enabled=true", "--set-json", f"oidc.providers={json.dumps(PROVIDER)}")
+OIDC = (
+    "--set",
+    "oidc.enabled=true",
+    "--set-json",
+    f"oidc.providers={json.dumps(PROVIDER)}",
+)
 
 # The engine's AdminLink model refuses any other key.
 ENTRY_KEYS = {"name", "purpose", "url", "probe_url"}
@@ -67,7 +72,11 @@ ENTRY_KEYS = {"name", "purpose", "url", "probe_url"}
 def helm(release: str, chart: Path, *args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["helm", "template", release, str(chart), *args],
-        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
     )
 
 
@@ -85,14 +94,22 @@ def gateway(*args: str) -> tuple[dict, ...]:
 def cascade(cloud: str, profile: str, oidc: bool, bundled: bool) -> tuple[str, ...]:
     """The value files and parameters layer2-edge.yaml hands the gateway."""
     args = (
-        "--namespace", "envoy-gateway-system",
-        "-f", str(VALUES / "common.yaml"),
-        "-f", str(VALUES / f"{cloud}.yaml"),
-        "-f", str(VALUES / f"edge-{CLOUDS[cloud]}.yaml"),
-        "-f", str(VALUES / f"profile-{profile}.yaml"),
-        "--set", f"appNamespace={APP_NAMESPACE}",
-        "--set", f"domain={DOMAIN}",
-        "--set", f"deployRepo.bundled={str(bundled).lower()}",
+        "--namespace",
+        "envoy-gateway-system",
+        "-f",
+        str(VALUES / "common.yaml"),
+        "-f",
+        str(VALUES / f"{cloud}.yaml"),
+        "-f",
+        str(VALUES / f"edge-{CLOUDS[cloud]}.yaml"),
+        "-f",
+        str(VALUES / f"profile-{profile}.yaml"),
+        "--set",
+        f"appNamespace={APP_NAMESPACE}",
+        "--set",
+        f"domain={DOMAIN}",
+        "--set",
+        f"deployRepo.bundled={str(bundled).lower()}",
     )
     return (*args, *OIDC) if oidc else args
 
@@ -100,7 +117,8 @@ def cascade(cloud: str, profile: str, oidc: bool, bundled: bool) -> tuple[str, .
 def admin_links(docs: tuple[dict, ...]) -> tuple[dict, list[dict]]:
     """The ConfigMap, and the entries its one data key carries."""
     found = [
-        d for d in docs
+        d
+        for d in docs
         if d.get("kind") == "ConfigMap" and d["metadata"]["name"] == CONFIGMAP
     ]
     assert len(found) == 1, f"expected one {CONFIGMAP}, got {len(found)}"
@@ -130,11 +148,13 @@ def served(docs: tuple[dict, ...]) -> list[tuple[str, str, str]]:
         (host,) = doc["spec"]["hostnames"]
         (backend,) = doc["spec"]["rules"][0]["backendRefs"]
         namespace = doc["metadata"]["namespace"]
-        rows.append((
-            infra[doc["metadata"]["name"]]["adminLink"]["name"],
-            f"https://{host}",
-            f"http://{backend['name']}.{namespace}.svc:{backend['port']}",
-        ))
+        rows.append(
+            (
+                infra[doc["metadata"]["name"]]["adminLink"]["name"],
+                f"https://{host}",
+                f"http://{backend['name']}.{namespace}.svc:{backend['port']}",
+            )
+        )
     return sorted(rows)
 
 
@@ -183,9 +203,15 @@ def test_the_matrix_lists_every_infra_route_somewhere() -> None:
     assert seen == {route["adminLink"]["name"] for route in infra_routes().values()}
 
 
-def test_the_kill_switch_leaves_only_the_product_links_and_keeps_the_configmap() -> None:
+def test_the_kill_switch_leaves_only_the_product_links_and_keeps_the_configmap() -> (
+    None
+):
     """An engine restarted after a lock-down must read no infra link, not a stale list."""
-    docs = gateway(*cascade("local", "scale", True, True), "--set", "exposure.groups.admin.enabled=false")
+    docs = gateway(
+        *cascade("local", "scale", True, True),
+        "--set",
+        "exposure.groups.admin.enabled=false",
+    )
     _, entries = admin_links(docs)
     assert [entry["name"] for entry in entries] == ["Search"]
     assert listed(entries) == served(docs)
@@ -193,7 +219,11 @@ def test_the_kill_switch_leaves_only_the_product_links_and_keeps_the_configmap()
 
 def test_a_renamed_host_reaches_the_link() -> None:
     """The link is the route's own hostname, so an overlay rename moves both."""
-    docs = gateway(*cascade("local", "single", False, False), "--set", "routes.argocd.hostname=gitops")
+    docs = gateway(
+        *cascade("local", "single", False, False),
+        "--set",
+        "routes.argocd.hostname=gitops",
+    )
     urls = {entry["url"] for entry in admin_links(docs)[1]}
     assert f"https://gitops.{DOMAIN}" in urls, urls
     assert f"https://argocd.{DOMAIN}" not in urls, urls
@@ -202,8 +232,11 @@ def test_a_renamed_host_reaches_the_link() -> None:
 def test_an_infra_route_with_no_purpose_is_refused_by_name() -> None:
     """The engine drops an entry with an empty purpose, so the render says so first."""
     out = helm(
-        "envoy-gateway-config", GATEWAY,
-        *cascade("local", "single", False, False), "--set", "routes.kafbat.adminLink.purpose=",
+        "envoy-gateway-config",
+        GATEWAY,
+        *cascade("local", "single", False, False),
+        "--set",
+        "routes.kafbat.adminLink.purpose=",
     )
     assert out.returncode != 0, "the render was expected to refuse and succeeded"
     assert "routes.kafbat renders and carries no adminLink" in out.stderr, out.stderr
@@ -213,16 +246,25 @@ def test_a_withheld_route_needs_no_label() -> None:
     """Only a route that renders is listed, so only a route that renders is checked."""
     args = (
         *cascade("local", "single", False, False),
-        "--set", "routes.links.adminLink.name=", "--set", "routes.links.adminLink.purpose=",
+        "--set",
+        "routes.links.adminLink.name=",
+        "--set",
+        "routes.links.adminLink.purpose=",
     )
     docs = gateway(*args)
-    assert "links" not in {d["metadata"]["name"] for d in docs if d.get("kind") == "HTTPRoute"}
+    assert "links" not in {
+        d["metadata"]["name"] for d in docs if d.get("kind") == "HTTPRoute"
+    }
     assert listed(admin_links(docs)[1]) == served(docs)
 
 
 # --- the engine reads it, and only where it runs -----------------------------
-@pytest.mark.parametrize(("profile", "cloud"), list(itertools.product(PROFILES, ENGINE_CLOUDS)))
-def test_the_engine_reads_the_list_optionally_from_that_configmap(profile: str, cloud: str) -> None:
+@pytest.mark.parametrize(
+    ("profile", "cloud"), list(itertools.product(PROFILES, ENGINE_CLOUDS))
+)
+def test_the_engine_reads_the_list_optionally_from_that_configmap(
+    profile: str, cloud: str
+) -> None:
     """Optional, so an engine with no gateway, or started before it, still starts."""
     configmap, _ = admin_links(gateway(*cascade("local", "single", False, False)))
     (key,) = configmap["data"]
@@ -233,7 +275,9 @@ def test_the_engine_reads_the_list_optionally_from_that_configmap(profile: str, 
 
 def appsets(filename: str) -> list[dict]:
     text = (APPSETS / filename).read_text(encoding="utf-8")
-    return [d for d in yaml.safe_load_all(text) if d and d.get("kind") == "ApplicationSet"]
+    return [
+        d for d in yaml.safe_load_all(text) if d and d.get("kind") == "ApplicationSet"
+    ]
 
 
 def generated_apps(appset: dict) -> set[str]:
@@ -241,7 +285,10 @@ def generated_apps(appset: dict) -> set[str]:
     apps: set[str] = set()
     for generator in appset["spec"]["generators"]:
         for child in generator.get("matrix", {}).get("generators", []):
-            apps |= {element.get("app") for element in child.get("list", {}).get("elements", [])}
+            apps |= {
+                element.get("app")
+                for element in child.get("list", {}).get("elements", [])
+            }
     return apps
 
 
@@ -255,20 +302,32 @@ def test_the_configmap_lands_in_the_namespace_the_engine_runs_in() -> None:
         for appset in appsets(filename):
             if "envoy-gateway-config" in generated_apps(appset):
                 gateway_appsets.append((filename, appset))
-    assert [f for f, _ in gateway_appsets] == ["layer2-edge.yaml", "layer2-platform.yaml"]
+    assert [f for f, _ in gateway_appsets] == [
+        "layer2-edge.yaml",
+        "layer2-platform.yaml",
+    ]
     for filename, appset in gateway_appsets:
         params = {
             entry["name"]: entry["value"]
-            for entry in appset["spec"]["template"]["spec"]["sources"][0]["helm"]["parameters"]
+            for entry in appset["spec"]["template"]["spec"]["sources"][0]["helm"][
+                "parameters"
+            ]
         }
-        assert params.get("appNamespace") == DFE_NAMESPACE, (filename, params.get("appNamespace"))
+        assert params.get("appNamespace") == DFE_NAMESPACE, (
+            filename,
+            params.get("appNamespace"),
+        )
 
 
 # --- the links page carries no second list -----------------------------------
 def test_the_links_page_carries_no_list_for_a_reader_that_is_not_a_browser() -> None:
     docs = render(
-        "links", chart_dir("links"),
-        "-f", str(VALUES / "common.yaml"), "--set", f"domain={DOMAIN}",
+        "links",
+        chart_dir("links"),
+        "-f",
+        str(VALUES / "common.yaml"),
+        "--set",
+        f"domain={DOMAIN}",
     )
     pages = [d for d in docs if d.get("kind") == "ConfigMap"]
     assert len(pages) == 1, [d["metadata"]["name"] for d in pages]

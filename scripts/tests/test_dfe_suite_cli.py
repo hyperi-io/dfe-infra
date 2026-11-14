@@ -297,7 +297,13 @@ class CheckTests(unittest.TestCase):
         assert self.code == 0
         line = next(ln for ln in output.splitlines() if ln.startswith("suite-consumer"))
         fields = [field.strip() for field in line.split("|")]
-        assert fields[:5] == ["suite-consumer-xyzzy", "cargo-dep", "potential", "needs-change", "rebuild_rust"]
+        assert fields[:5] == [
+            "suite-consumer-xyzzy",
+            "cargo-dep",
+            "potential",
+            "needs-change",
+            "rebuild_rust",
+        ]
 
     def test_a_range_that_does_not_admit_also_reads_needs_change(self) -> None:
         # `moved` read as "the producer moved", which is true of every edge on
@@ -315,7 +321,10 @@ class CheckTests(unittest.TestCase):
         output = self._check('scalo = { version = ">=2.10.14, <3" }', "3.0.0")
         line = next(ln for ln in output.splitlines() if ln.startswith("suite-consumer"))
         assert "widen-range" in line
-        assert "suite-consumer-xyzzy/Cargo.toml [dependencies] declares '>=2.10.14, <3'" in line
+        assert (
+            "suite-consumer-xyzzy/Cargo.toml [dependencies] declares '>=2.10.14, <3'"
+            in line
+        )
 
     def test_a_missing_consumer_checkout_is_one_bad_line_not_a_crash(self) -> None:
         infra = _stub_infra(self.root)
@@ -504,7 +513,9 @@ class WalkConcurrencyTests(unittest.TestCase):
 
     def _run(self, jobs: int, walk_one: object) -> tuple[int, str]:
         payload = {"nodes": {"p": {"package": "scalo"}}}
-        edges = [{"from": "p", "to": name, "kind": "cargo-dep"} for name in self.CONSUMERS]
+        edges = [
+            {"from": "p", "to": name, "kind": "cargo-dep"} for name in self.CONSUMERS
+        ]
         buffer = io.StringIO()
         with (
             mock.patch.object(ds, "load_producer", return_value=payload),
@@ -834,7 +845,11 @@ class ReviewPlanTests(unittest.TestCase):
     def test_a_group_is_every_node_of_that_language(self) -> None:
         code, output = self._plan("rust")
         assert code == 0, output
-        assert self._members(output) == ["suite-rustlib-xyzzy", "suite-rustapp-xyzzy", "suite-rustalpha-xyzzy"]
+        assert self._members(output) == [
+            "suite-rustlib-xyzzy",
+            "suite-rustapp-xyzzy",
+            "suite-rustalpha-xyzzy",
+        ]
         assert "suite-pyapp-xyzzy" not in output
         assert "suite-tsapp-xyzzy" not in output
 
@@ -844,7 +859,9 @@ class ReviewPlanTests(unittest.TestCase):
         members = self._members(output)
         # The libraries lane comes before the consumers lane, whatever order
         # the nodes happen to be declared in.
-        assert members.index("suite-rustlib-xyzzy") < members.index("suite-rustapp-xyzzy")
+        assert members.index("suite-rustlib-xyzzy") < members.index(
+            "suite-rustapp-xyzzy"
+        )
         assert "lane order: libraries, consumers, deployment" in output
 
     def test_ts_is_an_alias_for_typescript(self) -> None:
@@ -878,13 +895,19 @@ class ReviewPlanTests(unittest.TestCase):
     def test_every_pack_says_what_is_not_on_this_model(self) -> None:
         code, output = self._plan("rust")
         assert code == 0, output
-        assert output.count("NOT ON THIS MODEL: the security pass -- it runs separately on " "the standard tier") == len(self._members(output))
+        assert output.count(
+            "NOT ON THIS MODEL: the security pass -- it runs separately on "
+            "the standard tier"
+        ) == len(self._members(output))
 
     def test_the_header_leaves_the_model_to_the_caller(self) -> None:
         code, output = self._plan("rust")
         assert code == 0, output
         assert "fable is gated and needs the user's opt-in" in output
-        assert "rule: one subagent per member, serial, the security pass to the " "standard tier" in output
+        assert (
+            "rule: one subagent per member, serial, the security pass to the "
+            "standard tier" in output
+        )
 
     def test_a_pack_carries_the_edges_both_ways_and_the_rules_file(self) -> None:
         code, output = self._plan("rust")
@@ -892,7 +915,10 @@ class ReviewPlanTests(unittest.TestCase):
         pack = output.split("## suite-rustapp-xyzzy")[1]
         assert "suite-rustlib-xyzzy | cargo-dep | potential" in pack
         assert "suite-infra-xyzzy | image-pin | lockstep" in pack
-        assert "language rules: ~/.local/share/hyperi-ai/standards/languages/rust.md" in pack
+        assert (
+            "language rules: ~/.local/share/hyperi-ai/standards/languages/rust.md"
+            in pack
+        )
 
     @NEEDS_HYPERI_AI
     def test_a_member_that_is_not_checked_out_is_said_so_not_guessed(self) -> None:
@@ -920,7 +946,11 @@ class ReviewPlanTests(unittest.TestCase):
         code, output = self._plan("rust", "--json")
         assert code == 0, output
         packs = json.loads(output)
-        assert [pack["member"] for pack in packs] == ["suite-rustlib-xyzzy", "suite-rustapp-xyzzy", "suite-rustalpha-xyzzy"]
+        assert [pack["member"] for pack in packs] == [
+            "suite-rustlib-xyzzy",
+            "suite-rustapp-xyzzy",
+            "suite-rustalpha-xyzzy",
+        ]
         first = packs[0]
         assert first["repo"] == "hyperi-io/suite-rustlib-xyzzy"
         assert first["language"] == "rust"

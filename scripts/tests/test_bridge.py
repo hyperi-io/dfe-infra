@@ -79,16 +79,24 @@ def test_missing_state_is_fatal_and_says_why() -> None:
     """Silently returning {} would surface later as a confusing 'missing var'."""
     with tempfile.TemporaryDirectory() as tmp:
         message = _raised(lambda: bridge._outputs_from_state(tmp))
-    expect("no state file raises rather than returning empty",
-           "no local state to fall back on" in message, message)
+    expect(
+        "no state file raises rather than returning empty",
+        "no local state to fall back on" in message,
+        message,
+    )
 
 
 def test_malformed_state_is_fatal() -> None:
     with tempfile.TemporaryDirectory() as tmp:
-        (Path(tmp) / "terraform.tfstate").write_text("{not json", encoding="utf-8", newline="\n")
+        (Path(tmp) / "terraform.tfstate").write_text(
+            "{not json", encoding="utf-8", newline="\n"
+        )
         message = _raised(lambda: bridge._outputs_from_state(tmp))
-    expect("unparseable state raises rather than yielding nothing",
-           message.startswith("could not read"), message)
+    expect(
+        "unparseable state raises rather than yielding nothing",
+        message.startswith("could not read"),
+        message,
+    )
 
 
 @contextlib.contextmanager
@@ -111,15 +119,21 @@ def test_a_failed_tofu_output_raises_naming_what_tofu_said() -> None:
     """A caller that can go on without the outputs catches this; one that cannot reports it."""
     with _path_holding({"tofu": "echo 'Error: no outputs found' >&2\nexit 1"}):
         message = _raised(lambda: bridge.get_tf_outputs("/"))
-    expect("a non-zero tofu output raises with tofu's own stderr",
-           message.startswith("tofu output failed") and "no outputs found" in message, message)
+    expect(
+        "a non-zero tofu output raises with tofu's own stderr",
+        message.startswith("tofu output failed") and "no outputs found" in message,
+        message,
+    )
 
 
 def test_tofu_output_that_is_not_json_raises() -> None:
     with _path_holding({"tofu": "echo 'Warning: no state'"}):
         message = _raised(lambda: bridge.get_tf_outputs("/"))
-    expect("output that is not JSON raises rather than a JSONDecodeError",
-           "printed no JSON" in message, message)
+    expect(
+        "output that is not JSON raises rather than a JSONDecodeError",
+        "printed no JSON" in message,
+        message,
+    )
 
 
 def test_the_cli_reports_an_unreadable_root_and_exits_1() -> None:
@@ -127,11 +141,18 @@ def test_the_cli_reports_an_unreadable_root_and_exits_1() -> None:
     with tempfile.TemporaryDirectory() as tmp, _path_holding({}):
         done = subprocess.run(
             [sys.executable, str(SCRIPT), "--tf-dir", tmp],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
         )
     expect("exit 1", done.returncode == 1, f"exit {done.returncode}\n{done.stderr}")
-    expect("ERROR names the missing state", "ERROR: neither terraform nor opentofu" in done.stderr,
-           done.stderr)
+    expect(
+        "ERROR names the missing state",
+        "ERROR: neither terraform nor opentofu" in done.stderr,
+        done.stderr,
+    )
 
 
 def test_json_output_reads_sensitive_flag_with_no_second_call() -> None:
@@ -167,7 +188,11 @@ def test_json_output_reads_sensitive_flag_with_no_second_call() -> None:
         bridge._find_tf_binary = real_finder
 
     expect("exactly one subprocess call", len(calls) == 1, f"{calls}")
-    expect("a plain output keeps its flag", out.get("DFE_ENV") == ("local", False), f"{out}")
+    expect(
+        "a plain output keeps its flag",
+        out.get("DFE_ENV") == ("local", False),
+        f"{out}",
+    )
     expect(
         "a sensitive output's real value comes from the one -json call",
         out.get("DFE_VAULT_ROLE_ID") == ("abc-123", True),
@@ -196,7 +221,11 @@ def test_aws_sm_backend_with_no_vault_vars_passes_validation() -> None:
     """The aws root never emits DFE_VAULT_ADDR/DFE_VAULT_ROLE_ID -- they are
     openbao-only, and an aws-sm deployment must not be refused for lacking
     them."""
-    env_vars = {**_BASE_ENV, "DFE_SECRETS_BACKEND": "aws-sm", "DFE_SECRETS_REGION": "us-east-1"}
+    env_vars = {
+        **_BASE_ENV,
+        "DFE_SECRETS_BACKEND": "aws-sm",
+        "DFE_SECRETS_REGION": "us-east-1",
+    }
     missing = bridge._required_vars(env_vars) - set(env_vars.keys())
     expect("an aws-sm deployment has nothing missing", not missing, f"{missing}")
 
@@ -206,8 +235,11 @@ def test_aws_sm_backend_demands_the_store_region_bootstrap_demands() -> None:
     two lists disagreeing makes this gate miss what bootstrap.sh then refuses."""
     env_vars = {**_BASE_ENV, "DFE_SECRETS_BACKEND": "aws-sm"}
     missing = bridge._required_vars(env_vars) - set(env_vars.keys())
-    expect("DFE_SECRETS_REGION is named as missing",
-           missing == {"DFE_SECRETS_REGION"}, f"{missing}")
+    expect(
+        "DFE_SECRETS_REGION is named as missing",
+        missing == {"DFE_SECRETS_REGION"},
+        f"{missing}",
+    )
 
 
 def test_an_empty_backend_output_takes_bootstrap_defaults() -> None:
@@ -216,11 +248,16 @@ def test_an_empty_backend_output_takes_bootstrap_defaults() -> None:
     cloud. Reading it as neither would drop every store check."""
     on_aws = {**_BASE_ENV, "DFE_SECRETS_BACKEND": ""}
     missing = bridge._required_vars(on_aws) - set(on_aws.keys())
-    expect("aws demands the store region", missing == {"DFE_SECRETS_REGION"}, f"{missing}")
+    expect(
+        "aws demands the store region", missing == {"DFE_SECRETS_REGION"}, f"{missing}"
+    )
     on_gcp = {**_BASE_ENV, "DFE_CLOUD": "gcp", "DFE_SECRETS_BACKEND": ""}
     missing = bridge._required_vars(on_gcp) - set(on_gcp.keys())
-    expect("another cloud demands the AppRole pair",
-           missing == {"DFE_VAULT_ADDR", "DFE_VAULT_ROLE_ID"}, f"{missing}")
+    expect(
+        "another cloud demands the AppRole pair",
+        missing == {"DFE_VAULT_ADDR", "DFE_VAULT_ROLE_ID"},
+        f"{missing}",
+    )
 
 
 def test_openbao_backend_with_no_vault_vars_still_fails_naming_both_keys() -> None:
@@ -228,8 +265,14 @@ def test_openbao_backend_with_no_vault_vars_still_fails_naming_both_keys() -> No
     ESO can never authenticate."""
     env_vars = {**_BASE_ENV, "DFE_CLOUD": "gcp"}
     missing = bridge._required_vars(env_vars) - set(env_vars.keys())
-    expect("DFE_VAULT_ADDR is named as missing", "DFE_VAULT_ADDR" in missing, f"{missing}")
-    expect("DFE_VAULT_ROLE_ID is named as missing", "DFE_VAULT_ROLE_ID" in missing, f"{missing}")
+    expect(
+        "DFE_VAULT_ADDR is named as missing", "DFE_VAULT_ADDR" in missing, f"{missing}"
+    )
+    expect(
+        "DFE_VAULT_ROLE_ID is named as missing",
+        "DFE_VAULT_ROLE_ID" in missing,
+        f"{missing}",
+    )
 
 
 def test_binary_finder_returns_none_rather_than_exiting() -> None:

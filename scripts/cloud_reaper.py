@@ -98,11 +98,12 @@ RUN_FACTS: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = (
 # Where the root names a resolved shape, and where an older record keeps the instance type it now carries.
 LEGACY_SHAPE_TYPES: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = (
     (("toolbox", "aws", "shape_ref"), ("toolbox", "aws", "instance_type")),
-    (("edge", "tunnel", "address", "shape_ref"), ("edge", "tunnel", "address", "instance_type")),
+    (
+        ("edge", "tunnel", "address", "shape_ref"),
+        ("edge", "tunnel", "address", "instance_type"),
+    ),
 )
-NOTICE_UNCONFIGURED = (
-    "::notice::cloud reaper not configured for this repository (DFE_REAPER_AWS_ROLE is unset); nothing to do."
-)
+NOTICE_UNCONFIGURED = "::notice::cloud reaper not configured for this repository (DFE_REAPER_AWS_ROLE is unset); nothing to do."
 # The credential each SaaS broker's provider reads from the environment; the values come from the runner's secrets.
 VENDOR_PROVIDER_ENV: dict[str, tuple[str, ...]] = {
     "confluent-cloud": ("CONFLUENT_CLOUD_API_KEY", "CONFLUENT_CLOUD_API_SECRET"),
@@ -112,9 +113,7 @@ VENDOR_PROVIDER_ENV: dict[str, tuple[str, ...]] = {
 PLACEHOLDER_PROVIDER_ENV = VENDOR_PROVIDER_ENV["redpanda-cloud"]
 PLACEHOLDER_VALUE = "unused-placeholder"
 CLICKHOUSE_PASSWORD_ENV = "TF_VAR_clickhouse_external_password"
-NOTICE_NO_CLICKHOUSE = (
-    "::notice::no ClickHouse Cloud service configured (DFE_CYCLE_CH_* unset); no access list to sweep."
-)
+NOTICE_NO_CLICKHOUSE = "::notice::no ClickHouse Cloud service configured (DFE_CYCLE_CH_* unset); no access list to sweep."
 
 
 class ReaperConfigError(ValueError):
@@ -149,13 +148,18 @@ def load_config(env: Mapping[str, str]) -> ReaperConfig | None:
     account = env.get("DFE_REAPER_AWS_ACCOUNT", "").strip() or parts[4]
     if not (account.isdigit() and len(account) == 12):
         raise ReaperConfigError(f"account {account!r} is not a 12-digit AWS account id")
-    regions = tuple(r.strip() for r in env.get("DFE_REAPER_AWS_REGIONS", "").split(",") if r.strip())
+    regions = tuple(
+        r.strip() for r in env.get("DFE_REAPER_AWS_REGIONS", "").split(",") if r.strip()
+    )
     if not regions:
-        raise ReaperConfigError("DFE_REAPER_AWS_REGIONS names no region; set it beside DFE_REAPER_AWS_ROLE")
+        raise ReaperConfigError(
+            "DFE_REAPER_AWS_REGIONS names no region; set it beside DFE_REAPER_AWS_ROLE"
+        )
     try:
         keys = cloud_run.RunTagKeys.from_env(env)
         prefix = cloud_run.validate_state_prefix(
-            env.get(cloud_run.STATE_PREFIX_ENV, "").strip() or cloud_run.DEFAULT_STATE_PREFIX
+            env.get(cloud_run.STATE_PREFIX_ENV, "").strip()
+            or cloud_run.DEFAULT_STATE_PREFIX
         )
     except cloud_run.RunTagError as exc:
         raise ReaperConfigError(str(exc)) from exc
@@ -177,14 +181,26 @@ def read_record(config: ReaperConfig, key: str) -> dict:
     with tempfile.TemporaryDirectory(prefix="dfe-reaper-") as scratch:
         out = Path(scratch) / "run.json"
         cloud_sweep.run_aws(
-            ["s3api", "get-object", "--bucket", config.state_bucket, "--key", key, str(out)], config.state_region
+            [
+                "s3api",
+                "get-object",
+                "--bucket",
+                config.state_bucket,
+                "--key",
+                key,
+                str(out),
+            ],
+            config.state_region,
         )
         return json.loads(out.read_text(encoding="utf-8"))
 
 
 def state_exists(config: ReaperConfig, key: str) -> bool:
     try:
-        cloud_sweep.run_aws(["s3api", "head-object", "--bucket", config.state_bucket, "--key", key], config.state_region)
+        cloud_sweep.run_aws(
+            ["s3api", "head-object", "--bucket", config.state_bucket, "--key", key],
+            config.state_region,
+        )
     except cloud_sweep.CloudSweepError as exc:
         if "Not Found" in str(exc) or "404" in str(exc) or "NoSuchKey" in str(exc):
             return False
@@ -193,13 +209,18 @@ def state_exists(config: ReaperConfig, key: str) -> bool:
 
 
 def delete_record(config: ReaperConfig, key: str) -> None:
-    cloud_sweep.run_aws(["s3api", "delete-object", "--bucket", config.state_bucket, "--key", key], config.state_region)
+    cloud_sweep.run_aws(
+        ["s3api", "delete-object", "--bucket", config.state_bucket, "--key", key],
+        config.state_region,
+    )
 
 
 def run_tofu(args: list[str], cwd: Path, env: Mapping[str, str]) -> int:
     """One tofu command, live output, in `cwd`."""
     print(f"==> tofu {' '.join(args)}  (in {cwd})", file=sys.stderr)
-    return subprocess.run([shutil.which("tofu") or "tofu", *args], cwd=cwd, env=dict(env), check=False).returncode
+    return subprocess.run(
+        [shutil.which("tofu") or "tofu", *args], cwd=cwd, env=dict(env), check=False
+    ).returncode
 
 
 def state_json(cwd: Path, env: Mapping[str, str]) -> dict:
@@ -209,8 +230,14 @@ def state_json(cwd: Path, env: Mapping[str, str]) -> dict:
     """
     try:
         done = subprocess.run(
-            [shutil.which("tofu") or "tofu", "show", "-json"], cwd=cwd, env=dict(env),
-            capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
+            [shutil.which("tofu") or "tofu", "show", "-json"],
+            cwd=cwd,
+            env=dict(env),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
         )
     except OSError:
         return {}
@@ -223,7 +250,10 @@ def state_json(cwd: Path, env: Mapping[str, str]) -> dict:
 
 
 # The state's secret resources, and the attribute naming the secret each belongs to.
-_SECRET_ARN_ATTRIBUTE = {"aws_secretsmanager_secret": "arn", "aws_secretsmanager_secret_version": "secret_id"}
+_SECRET_ARN_ATTRIBUTE = {
+    "aws_secretsmanager_secret": "arn",
+    "aws_secretsmanager_secret_version": "secret_id",
+}
 
 
 def _state_resources(module: Mapping[str, object]) -> list[Mapping[str, object]]:
@@ -240,7 +270,9 @@ def _secret_gone(arn: str) -> bool:
     if not region:
         return False
     try:
-        body = cloud_sweep.run_aws(["secretsmanager", "describe-secret", "--secret-id", arn], region)
+        body = cloud_sweep.run_aws(
+            ["secretsmanager", "describe-secret", "--secret-id", arn], region
+        )
     except cloud_sweep.CloudSweepError as exc:
         if "ResourceNotFoundException" in str(exc):
             return True
@@ -257,7 +289,9 @@ def stale_state_addresses(state: Mapping[str, object]) -> list[str]:
     DescribeSecret is not tag-conditioned, so it tells the two cases apart.
     """
     root = (state.get("values") or {}).get("root_module") or {}  # type: ignore[union-attr]
-    held = [r for r in _state_resources(root) if str(r.get("type")) in _SECRET_ARN_ATTRIBUTE]
+    held = [
+        r for r in _state_resources(root) if str(r.get("type")) in _SECRET_ARN_ATTRIBUTE
+    ]
     gone = {arn for arn in {_owning_arn(r) for r in held} if arn and _secret_gone(arn)}
     # The address is read off the resource itself, never off its values, which hold the secret.
     return [str(r["address"]) for r in held if _owning_arn(r) in gone]
@@ -277,12 +311,18 @@ def kafka_provider(record: Mapping[str, object]) -> str:
     return provider if isinstance(provider, str) else ""
 
 
-def missing_vendor_credentials(record: Mapping[str, object], env: Mapping[str, str]) -> list[str]:
+def missing_vendor_credentials(
+    record: Mapping[str, object], env: Mapping[str, str]
+) -> list[str]:
     """The vendor credential names a run's destroy needs that `env` leaves unset or blank.
 
     A runner passes an undefined secret through as an empty string, so blank counts as unset.
     """
-    return [name for name in VENDOR_PROVIDER_ENV.get(kafka_provider(record), ()) if not env.get(name, "").strip()]
+    return [
+        name
+        for name in VENDOR_PROVIDER_ENV.get(kafka_provider(record), ())
+        if not env.get(name, "").strip()
+    ]
 
 
 def clickhouse_mode(record: Mapping[str, object]) -> str:
@@ -301,7 +341,10 @@ def destroy_env(record: Mapping[str, object]) -> dict[str, str]:
             if not env.get(name, "").strip():
                 env[name] = PLACEHOLDER_VALUE
     # The root refuses an external run with no password, and the store already holds the one it was created with.
-    if clickhouse_mode(record) == "external" and not env.get(CLICKHOUSE_PASSWORD_ENV, "").strip():
+    if (
+        clickhouse_mode(record) == "external"
+        and not env.get(CLICKHOUSE_PASSWORD_ENV, "").strip()
+    ):
         env[CLICKHOUSE_PASSWORD_ENV] = PLACEHOLDER_VALUE
     return env
 
@@ -309,7 +352,9 @@ def destroy_env(record: Mapping[str, object]) -> dict[str, str]:
 # --- the destroy's tfvars ----------------------------------------------------------
 
 
-def merge_under(defaults: Mapping[str, object], stored: Mapping[str, object]) -> dict[str, object]:
+def merge_under(
+    defaults: Mapping[str, object], stored: Mapping[str, object]
+) -> dict[str, object]:
     """`stored`, with each key it lacks taken from `defaults` at every depth; a stored value always wins."""
     merged = dict(defaults)
     for key, value in stored.items():
@@ -348,11 +393,17 @@ def run_dial(tfvars: Mapping[str, object], cloud: str) -> dict[str, object]:
         _set_fact(dial, target, yaml_subset.at(tfvars, source))
     # An external server travels on endpoints.clickhouse_host, and the render refuses the mode without it.
     if yaml_subset.at(tfvars, ("clickhouse", "mode")) == "external":
-        _set_fact(dial, ("clickhouse", "host"), yaml_subset.at(tfvars, ("endpoints", "clickhouse_host")))
+        _set_fact(
+            dial,
+            ("clickhouse", "host"),
+            yaml_subset.at(tfvars, ("endpoints", "clickhouse_host")),
+        )
     return dial
 
 
-def _catalogue_shape(catalogue: Mapping[str, object], cloud: str, name: str) -> dict[str, object]:
+def _catalogue_shape(
+    catalogue: Mapping[str, object], cloud: str, name: str
+) -> dict[str, object]:
     """The arch and fixed root volume shapes/compute-shapes.yaml gives one use case, as resolved_shapes holds them."""
     entry = yaml_subset.at(catalogue, ("clouds", cloud, "use_cases", name))
     if not isinstance(entry, dict):
@@ -368,7 +419,10 @@ def _catalogue_shape(catalogue: Mapping[str, object], cloud: str, name: str) -> 
 
 
 def shape_defaults(
-    catalogue: Mapping[str, object], cloud: str, tfvars: Mapping[str, object], stored: Mapping[str, object]
+    catalogue: Mapping[str, object],
+    cloud: str,
+    tfvars: Mapping[str, object],
+    stored: Mapping[str, object],
 ) -> dict[str, object]:
     """Catalogue entries for every shape the stored record resolved, plus any shape it names by a legacy instance type.
 
@@ -377,12 +431,22 @@ def shape_defaults(
     """
     resolved = stored.get("resolved_shapes")
     names = list(resolved) if isinstance(resolved, Mapping) else []
-    defaults: dict[str, object] = {name: _catalogue_shape(catalogue, cloud, name) for name in names}
+    defaults: dict[str, object] = {
+        name: _catalogue_shape(catalogue, cloud, name) for name in names
+    }
     for ref_path, legacy_path in LEGACY_SHAPE_TYPES:
         name = yaml_subset.at(tfvars, ref_path)
         legacy = yaml_subset.at(stored, legacy_path)
-        if isinstance(name, str) and name not in defaults and isinstance(legacy, str) and legacy:
-            defaults[name] = {"instance_types": [legacy], **_catalogue_shape(catalogue, cloud, name)}
+        if (
+            isinstance(name, str)
+            and name not in defaults
+            and isinstance(legacy, str)
+            and legacy
+        ):
+            defaults[name] = {
+                "instance_types": [legacy],
+                **_catalogue_shape(catalogue, cloud, name),
+            }
     return defaults
 
 
@@ -400,23 +464,39 @@ def destroy_tfvars(record: Mapping[str, object]) -> dict[str, object]:
     stored = record["tfvars"]
     if not isinstance(stored, Mapping):
         raise TypeError(f"run {record['run_id']}: tfvars is not an object")
-    cloud = str(yaml_subset.at(stored, ("provision", "cloud")) or Path(str(record["tf_root"])).name)
+    cloud = str(
+        yaml_subset.at(stored, ("provision", "cloud"))
+        or Path(str(record["tf_root"])).name
+    )
     try:
         _cloud, rendered = render_dial._tofu_vars(run_dial(stored, cloud))
-        catalogue = yaml_subset.parse(SHAPES_FILE.read_text(encoding="utf-8"), source=str(SHAPES_FILE))
-    except (render_dial.DialError, yaml_subset.YamlSubsetError, KeyError, OSError) as exc:
-        print(f"run {record['run_id']}: today's renderer cannot fill its tfvars, so they go as stored: {exc}",
-              file=sys.stderr)
+        catalogue = yaml_subset.parse(
+            SHAPES_FILE.read_text(encoding="utf-8"), source=str(SHAPES_FILE)
+        )
+    except (
+        render_dial.DialError,
+        yaml_subset.YamlSubsetError,
+        KeyError,
+        OSError,
+    ) as exc:
+        print(
+            f"run {record['run_id']}: today's renderer cannot fill its tfvars, so they go as stored: {exc}",
+            file=sys.stderr,
+        )
         return dict(stored)
     filled = merge_under(rendered, stored)
     shapes = shape_defaults(catalogue, cloud, filled, stored)
     if shapes:
         resolved = stored.get("resolved_shapes")
-        filled["resolved_shapes"] = merge_under(shapes, resolved if isinstance(resolved, Mapping) else {})
+        filled["resolved_shapes"] = merge_under(
+            shapes, resolved if isinstance(resolved, Mapping) else {}
+        )
     added = sorted(key for key in filled if filled[key] != stored.get(key))
     if added:
-        print(f"run {record['run_id']}: filled what today's root needs under its stored tfvars: {', '.join(added)}",
-              file=sys.stderr)
+        print(
+            f"run {record['run_id']}: filled what today's root needs under its stored tfvars: {', '.join(added)}",
+            file=sys.stderr,
+        )
     return filled
 
 
@@ -429,27 +509,42 @@ def destroy_run(record: Mapping[str, object]) -> int:
         shutil.copytree(
             TERRAFORM,
             copy,
-            ignore=shutil.ignore_patterns(".terraform", "*.tfstate", "*.tfstate.*", "*.tfvars", "*.tfvars.json"),
+            ignore=shutil.ignore_patterns(
+                ".terraform", "*.tfstate", "*.tfstate.*", "*.tfvars", "*.tfvars.json"
+            ),
         )
         root = Path(scratch) / tf_root
         if not root.is_dir():
-            print(f"run {record['run_id']}: {tf_root} is not a root in this checkout", file=sys.stderr)
+            print(
+                f"run {record['run_id']}: {tf_root} is not a root in this checkout",
+                file=sys.stderr,
+            )
             return 1
-        (root / OVERLAY_NAME).write_text(json.dumps(destroy_tfvars(record)), encoding="utf-8", newline="\n")
+        (root / OVERLAY_NAME).write_text(
+            json.dumps(destroy_tfvars(record)), encoding="utf-8", newline="\n"
+        )
         returncode = run_tofu(["init", "-input=false", "-reconfigure"], root, env)
         if returncode == 0:
             try:
                 gone = stale_state_addresses(state_json(root, env))
             except cloud_sweep.CloudSweepError as exc:
-                print(f"run {record['run_id']}: could not check its secrets, destroying as is: {exc}", file=sys.stderr)
+                print(
+                    f"run {record['run_id']}: could not check its secrets, destroying as is: {exc}",
+                    file=sys.stderr,
+                )
                 gone = []
             for address in gone:
                 returncode = run_tofu(["state", "rm", address], root, env)
                 if returncode != 0:
                     return returncode
-            returncode = run_tofu(["destroy", "-auto-approve", "-input=false"], root, env)
+            returncode = run_tofu(
+                ["destroy", "-auto-approve", "-input=false"], root, env
+            )
             if returncode != 0 and nothing_left(root, env):
-                print(f"run {record['run_id']}: destroy failed, but a refresh finds nothing of the run left", file=sys.stderr)
+                print(
+                    f"run {record['run_id']}: destroy failed, but a refresh finds nothing of the run left",
+                    file=sys.stderr,
+                )
                 returncode = 0
         return returncode
 
@@ -463,31 +558,49 @@ def nothing_left(root: Path, env: Mapping[str, str]) -> bool:
     drops whatever the account no longer holds. A refresh or a state read that fails counts as
     something left, so a real failure is never reported as reaped.
     """
-    if run_tofu(["apply", "-refresh-only", "-auto-approve", "-input=false"], root, env) != 0:
+    if (
+        run_tofu(["apply", "-refresh-only", "-auto-approve", "-input=false"], root, env)
+        != 0
+    ):
         return False
     state = state_json(root, env)
     if not state:
         return False
     root_module = (state.get("values") or {}).get("root_module") or {}  # type: ignore[union-attr]
-    return not [r for r in _state_resources(root_module) if r.get("mode", "managed") == "managed"]
+    return not [
+        r
+        for r in _state_resources(root_module)
+        if r.get("mode", "managed") == "managed"
+    ]
 
 
 def reap_runs(config: ReaperConfig, now: float) -> list[str]:
     """Destroy every expired run with state; one message per run left behind."""
     problems: list[str] = []
-    for key in cloud_sweep.list_run_record_keys(config.state_bucket, config.state_region, config.state_prefix):
+    for key in cloud_sweep.list_run_record_keys(
+        config.state_bucket, config.state_region, config.state_prefix
+    ):
         try:
             record = read_record(config, key)
         except (cloud_sweep.CloudSweepError, json.JSONDecodeError) as exc:
             problems.append(f"{key}: unreadable run record: {exc}")
             continue
-        refused = cloud_run.record_problems(record, bucket=config.state_bucket, prefix=config.state_prefix)
-        if refused or key != cloud_run.record_key(config.state_prefix, str(record["run_id"])):
-            problems.append(f"{key}: refused, not acted on: {'; '.join(refused) or 'key does not match run_id'}")
+        refused = cloud_run.record_problems(
+            record, bucket=config.state_bucket, prefix=config.state_prefix
+        )
+        if refused or key != cloud_run.record_key(
+            config.state_prefix, str(record["run_id"])
+        ):
+            problems.append(
+                f"{key}: refused, not acted on: {'; '.join(refused) or 'key does not match run_id'}"
+            )
             continue
         run_id = str(record["run_id"])
         tags = cloud_run.run_tags(run_id, int(record["expires_at"]), config.keys)
-        if cloud_run.classify(tags, now=now, grace=0, keys=config.keys) is not cloud_run.ExpiryState.EXPIRED:
+        if (
+            cloud_run.classify(tags, now=now, grace=0, keys=config.keys)
+            is not cloud_run.ExpiryState.EXPIRED
+        ):
             print(f"run {run_id}: not expired, left alone", file=sys.stderr)
             continue
         state = cloud_run.state_key(config.state_prefix, run_id)
@@ -501,7 +614,9 @@ def reap_runs(config: ReaperConfig, now: float) -> list[str]:
                 )
                 continue
             if destroy_run(record) != 0:
-                problems.append(f"run {run_id}: tofu destroy failed; retried on the next schedule")
+                problems.append(
+                    f"run {run_id}: tofu destroy failed; retried on the next schedule"
+                )
                 continue
         delete_record(config, key)
         print(f"run {run_id}: destroyed and its record removed", file=sys.stderr)
@@ -512,8 +627,19 @@ def reap_runs(config: ReaperConfig, now: float) -> list[str]:
 
 
 def sweep_region(config: ReaperConfig, region: str) -> int:
-    argv = ["--provider", "aws", "--region", region, "--expired", "--grace", "0",
-            "--delete", "--yes", "--account", config.account]
+    argv = [
+        "--provider",
+        "aws",
+        "--region",
+        region,
+        "--expired",
+        "--grace",
+        "0",
+        "--delete",
+        "--yes",
+        "--account",
+        config.account,
+    ]
     if config.state_bucket:
         argv += ["--exclude-bucket", config.state_bucket]
     return cloud_sweep.main(argv)
@@ -525,7 +651,11 @@ def sweep_clickhouse_access(env: Mapping[str, str], now: float) -> list[str]:
     Every DFE_CYCLE_CH_* setting unset is a notice: the account runs no external
     ClickHouse. Some set and some not is a problem, and so is an API failure.
     """
-    named = [name for name in clickhouse_cloud_access.REQUIRED_ENV if env.get(name, "").strip()]
+    named = [
+        name
+        for name in clickhouse_cloud_access.REQUIRED_ENV
+        if env.get(name, "").strip()
+    ]
     if not named:
         print(NOTICE_NO_CLICKHOUSE)
         return []
@@ -534,7 +664,9 @@ def sweep_clickhouse_access(env: Mapping[str, str], now: float) -> list[str]:
         removed = clickhouse_cloud_access.sweep(api, now)
     except clickhouse_cloud_access.AccessError as exc:
         return [f"ClickHouse Cloud access list not swept: {exc}"]
-    print(f"cloud reaper: removed {removed} expired run address(es) from the ClickHouse Cloud access list")
+    print(
+        f"cloud reaper: removed {removed} expired run address(es) from the ClickHouse Cloud access list"
+    )
     return []
 
 
@@ -561,8 +693,12 @@ def cmd_plan(env: Mapping[str, str]) -> int:
         print(NOTICE_UNCONFIGURED)
         _write_outputs({"enabled": "false"})
         return 0
-    _write_outputs({"enabled": "true", "account": config.account, "region": config.regions[0]})
-    print(f"cloud reaper: account {config.account}, regions {', '.join(config.regions)}")
+    _write_outputs(
+        {"enabled": "true", "account": config.account, "region": config.regions[0]}
+    )
+    print(
+        f"cloud reaper: account {config.account}, regions {', '.join(config.regions)}"
+    )
     return 0
 
 
@@ -584,7 +720,9 @@ def cmd_reap(env: Mapping[str, str]) -> int:
             problems.append(f"run records could not be listed: {exc}")
     for region in config.regions:
         if sweep_region(config, region) != 0:
-            problems.append(f"{region}: expired run resources remain (see the sweep above)")
+            problems.append(
+                f"{region}: expired run resources remain (see the sweep above)"
+            )
     problems += sweep_clickhouse_access(env, time.time())
     for problem in problems:
         print(f"::error::{problem}")
@@ -595,7 +733,10 @@ def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv
     commands = {"plan": cmd_plan, "reap": cmd_reap}
     if len(args) != 1 or args[0] not in commands:
-        print("usage: cloud_reaper.py plan|reap  (configured by environment; see the module docstring)", file=sys.stderr)
+        print(
+            "usage: cloud_reaper.py plan|reap  (configured by environment; see the module docstring)",
+            file=sys.stderr,
+        )
         return 2
     return commands[args[0]](os.environ)
 

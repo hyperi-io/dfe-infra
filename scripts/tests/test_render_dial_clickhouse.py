@@ -37,7 +37,9 @@ def render(block: str = "", *, endpoint_host: str | None = None) -> dict[str, ob
     """The aws root's variables for the fixture dial with `block` appended."""
     text = DIAL
     if endpoint_host is not None:
-        text = text.replace(f"clickhouse_host: {IN_CLUSTER_HOST}", f'clickhouse_host: "{endpoint_host}"')
+        text = text.replace(
+            f"clickhouse_host: {IN_CLUSTER_HOST}", f'clickhouse_host: "{endpoint_host}"'
+        )
     _, variables = render_dial._tofu_vars(parse_dial(text + block, source="test-dial"))
     return variables
 
@@ -45,7 +47,9 @@ def render(block: str = "", *, endpoint_host: str | None = None) -> dict[str, ob
 def external(**fields: str) -> str:
     """A `clickhouse:` block in external mode, every field the dial writes as a string."""
     body = {"mode": "external", "host": HOST, **fields}
-    return "\nclickhouse:\n" + "".join(f'  {key}: "{value}"\n' for key, value in body.items())
+    return "\nclickhouse:\n" + "".join(
+        f'  {key}: "{value}"\n' for key, value in body.items()
+    )
 
 
 def test_a_dial_with_no_block_keeps_clickhouse_in_the_cluster() -> None:
@@ -71,7 +75,9 @@ def test_the_external_host_travels_on_the_endpoint_the_root_already_reads() -> N
 
 
 def test_the_same_host_on_both_keys_is_one_fact() -> None:
-    assert render(external(), endpoint_host=HOST)["endpoints"]["clickhouse_host"] == HOST
+    assert (
+        render(external(), endpoint_host=HOST)["endpoints"]["clickhouse_host"] == HOST
+    )
 
 
 def test_expected_fail_two_different_hosts_are_refused() -> None:
@@ -90,7 +96,9 @@ def test_every_field_the_dial_sets_reaches_the_root() -> None:
     }
 
 
-def test_external_seeds_an_empty_password_the_root_fills_from_its_own_variable() -> None:
+def test_external_seeds_an_empty_password_the_root_fills_from_its_own_variable() -> (
+    None
+):
     seeds = render(external(), endpoint_host="")["seeds"]
     assert seeds["clickhouse/external"] == {"password": ""}
     assert "ui/nextauth" in seeds
@@ -101,7 +109,15 @@ def test_expected_fail_external_with_no_host_is_refused() -> None:
         render('\nclickhouse:\n  mode: "external"\n', endpoint_host="")
 
 
-@pytest.mark.parametrize("host", ["https://ch.example.com", "ch.example.com:8443", "ch.example.com/db", "ch example.com"])
+@pytest.mark.parametrize(
+    "host",
+    [
+        "https://ch.example.com",
+        "ch.example.com:8443",
+        "ch.example.com/db",
+        "ch example.com",
+    ],
+)
 def test_expected_fail_a_host_that_is_not_a_bare_name_is_refused(host: str) -> None:
     with pytest.raises(render_dial.DialError, match=r"clickhouse\.host"):
         render(external(host=host), endpoint_host="")
@@ -112,8 +128,12 @@ def test_expected_fail_an_unknown_mode_is_refused() -> None:
         render('\nclickhouse:\n  mode: "cloud"\n')
 
 
-@pytest.mark.parametrize(("field", "value"), [("port", "https"), ("port", "0"), ("native_port", "70000")])
-def test_expected_fail_a_port_outside_1_to_65535_is_refused(field: str, value: str) -> None:
+@pytest.mark.parametrize(
+    ("field", "value"), [("port", "https"), ("port", "0"), ("native_port", "70000")]
+)
+def test_expected_fail_a_port_outside_1_to_65535_is_refused(
+    field: str, value: str
+) -> None:
     with pytest.raises(render_dial.DialError, match=rf"clickhouse\.{field}"):
         render(external(**{field: value}), endpoint_host="")
 
@@ -124,14 +144,18 @@ def test_expected_fail_secure_must_be_true_or_false() -> None:
 
 
 @pytest.mark.parametrize("field", ["host", "port", "native_port", "secure", "user"])
-def test_expected_fail_an_external_field_on_an_in_cluster_server_is_refused(field: str) -> None:
+def test_expected_fail_an_external_field_on_an_in_cluster_server_is_refused(
+    field: str,
+) -> None:
     """Read only in external mode, so set beside in_cluster it would do nothing."""
     with pytest.raises(render_dial.DialError, match=rf"clickhouse\.{field}"):
         render(f'\nclickhouse:\n  mode: "in_cluster"\n  {field}: "9440"\n')
 
 
 def test_expected_fail_a_password_in_the_dial_is_refused() -> None:
-    with pytest.raises(render_dial.DialError, match="TF_VAR_clickhouse_external_password"):
+    with pytest.raises(
+        render_dial.DialError, match="TF_VAR_clickhouse_external_password"
+    ):
         render(external() + '  password: "placeholder"\n', endpoint_host="")
 
 

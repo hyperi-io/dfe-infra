@@ -86,7 +86,10 @@ def run(*cmd: str, env: dict[str, str] | None = None) -> None:
     Raises:
         SystemExit: The command failed.
     """
-    if subprocess.run(cmd, cwd=aggregate.SITE_ROOT, env=env, check=False).returncode != 0:
+    if (
+        subprocess.run(cmd, cwd=aggregate.SITE_ROOT, env=env, check=False).returncode
+        != 0
+    ):
         raise SystemExit(f"error: {' '.join(cmd)} failed")
 
 
@@ -102,10 +105,14 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument("--port", default="3000", help="the dev server's port (default 3000)")
+    parser.add_argument(
+        "--port", default="3000", help="the dev server's port (default 3000)"
+    )
     parser.add_argument("--work-dir", type=Path, help="keep the member checkouts here")
     parser.add_argument(
-        "--no-aggregate", action="store_true", help="serve docs-site/content/ as it stands"
+        "--no-aggregate",
+        action="store_true",
+        help="serve docs-site/content/ as it stands",
     )
     parser.add_argument(
         "--local",
@@ -117,12 +124,16 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if not DOCUSAURUS.is_file():
-        raise SystemExit(f"error: {DOCUSAURUS} is missing: run npm ci in docs-site first")
+        raise SystemExit(
+            f"error: {DOCUSAURUS} is missing: run npm ci in docs-site first"
+        )
     if not args.no_aggregate:
         work = ["--work-dir", str(args.work_dir)] if args.work_dir else []
         local = [arg for value in args.local for arg in ("--local", value)]
         run(sys.executable, str(Path(aggregate.__file__)), *work, *local)
-    site = json.loads((aggregate.DEFAULT_OUT / aggregate.SITE_FILE).read_text(encoding="utf-8"))
+    site = json.loads(
+        (aggregate.DEFAULT_OUT / aggregate.SITE_FILE).read_text(encoding="utf-8")
+    )
     name = site["newest"]
     if not name:
         raise SystemExit("error: content/site.json names no release to preview")
@@ -133,7 +144,9 @@ def main(argv: list[str] | None = None) -> int:
 
     build_root = aggregate.DEFAULT_OUT / name
     saved = aggregate.DEFAULT_OUT / aggregate.QUICKSTART_DIR / f"{name}.json"
-    quickstart = json.loads(saved.read_text(encoding="utf-8")) if saved.is_file() else None
+    quickstart = (
+        json.loads(saved.read_text(encoding="utf-8")) if saved.is_file() else None
+    )
     seen = sync(build_root, {}, quickstart)
     server = subprocess.Popen(
         [str(DOCUSAURUS), "start", "--port", args.port, "--no-open"],

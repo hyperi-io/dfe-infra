@@ -24,7 +24,9 @@ from pathlib import Path
 
 import pytest
 
-REQUIREMENTS = Path(__file__).resolve().parent.parent / "acceptance" / "requirements.txt"
+REQUIREMENTS = (
+    Path(__file__).resolve().parent.parent / "acceptance" / "requirements.txt"
+)
 
 # The third-party imports of dfe-engine's tests/e2e/filebeat_corpus.py and the
 # tests/support/producer_contract.py it imports, which source/steps.py loads to
@@ -68,7 +70,9 @@ def test_every_requirement_is_an_exact_pin_carrying_a_sha256() -> None:
 def test_what_the_engine_corpus_wrapper_imports_is_pinned_here(module: str) -> None:
     pinned = requirements(REQUIREMENTS.read_text(encoding="utf-8"))
 
-    assert module in pinned, f"{module} is imported by the corpus wrapper and not pinned"
+    assert module in pinned, (
+        f"{module} is imported by the corpus wrapper and not pinned"
+    )
 
 
 def test_an_unhashed_or_loose_line_is_refused() -> None:

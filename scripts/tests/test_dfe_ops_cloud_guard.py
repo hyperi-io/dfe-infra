@@ -42,8 +42,17 @@ NOW = 1791460800.0
 ACCOUNT = "000000000000"
 BUDGET_ACTION = "e2e-account-cost:00000000-0000-0000-0000-000000000000"
 TFVARS = {
-    "provision": {"cloud": "aws", "account": ACCOUNT, "region": "us-west-2", "cidr": "10.90.0.0/16"},
-    "state": {"bucket": "example-state", "key": "deployments/example.tfstate", "region": "us-west-2"},
+    "provision": {
+        "cloud": "aws",
+        "account": ACCOUNT,
+        "region": "us-west-2",
+        "cidr": "10.90.0.0/16",
+    },
+    "state": {
+        "bucket": "example-state",
+        "key": "deployments/example.tfstate",
+        "region": "us-west-2",
+    },
     "tags": {"lifecycle": "ephemeral", "service-name": "dfe"},
     "name": "dfe-example",
     "profile": "single",
@@ -58,7 +67,14 @@ class FakeGuard:
         self.missing: set[str] = set()
         self.sweeper_state = "Active"
         self.scanning: dict = {"scanType": "BASIC", "rules": []}
-        self.boundary: object = {"Statement": [{"Effect": "Allow", "Action": ["logs:Describe*", "logs:FilterLogEvents"]}]}
+        self.boundary: object = {
+            "Statement": [
+                {
+                    "Effect": "Allow",
+                    "Action": ["logs:Describe*", "logs:FilterLogEvents"],
+                }
+            ]
+        }
         self.expiry: float | None = NOW + 10 * 3600
         self.expiry_error: str | None = None
         self.leftovers: list[cloud_sweep.Resource] = []
@@ -85,7 +101,9 @@ class FakeGuard:
 
     def budget_action(self, account: str, identifier: str) -> str:
         if ":" not in identifier:
-            raise guard_mod.GuardError(f"budget action {identifier!r} is not <budget-name>:<action-id>")
+            raise guard_mod.GuardError(
+                f"budget action {identifier!r} is not <budget-name>:<action-id>"
+            )
         return self._maybe_missing("budget", "STANDBY")
 
     def policy(self, arn: str) -> str:
@@ -104,12 +122,16 @@ class FakeGuard:
             raise guard_mod.GuardError(self.expiry_error)
         return self.expiry, "fake"
 
-    def run_resources(self, keys: object, exclude_bucket: str, gone: list | None = None) -> list:
+    def run_resources(
+        self, keys: object, exclude_bucket: str, gone: list | None = None
+    ) -> list:
         return self.leftovers
 
     def run_records(self, bucket: str, region: str, prefix: str) -> list[str]:
         if "records" in self.missing:
-            raise cloud_sweep.CloudSweepError("aws s3api list-objects-v2 failed: AccessDenied")
+            raise cloud_sweep.CloudSweepError(
+                "aws s3api list-objects-v2 failed: AccessDenied"
+            )
         return [key for key in self.records if key.startswith(f"{prefix}/")]
 
     def put_record(self, bucket: str, region: str, key: str, body: str) -> None:
@@ -125,7 +147,11 @@ class FakeGuard:
         if self.sweep_error:
             raise self.sweep_error
         if isinstance(self.sweep_code, list):
-            return self.sweep_code.pop(0) if len(self.sweep_code) > 1 else self.sweep_code[0]
+            return (
+                self.sweep_code.pop(0)
+                if len(self.sweep_code) > 1
+                else self.sweep_code[0]
+            )
         return self.sweep_code
 
     def write_kubeconfig(self, cluster: str, path: Path) -> None:
@@ -143,8 +169,12 @@ class FakeRunner:
     the Runner's DeadlineError once recorded.
     """
 
-    def __init__(self, codes: dict[str, int | list[int]] | None = None, on_run: dict | None = None,
-                 stalls: set[str] | None = None) -> None:
+    def __init__(
+        self,
+        codes: dict[str, int | list[int]] | None = None,
+        on_run: dict | None = None,
+        stalls: set[str] | None = None,
+    ) -> None:
         self.commands: list[list[str]] = []
         self.envs: list[dict | None] = []
         self.sessions: list[bool] = []
@@ -155,19 +185,34 @@ class FakeRunner:
         self.stalls = stalls or set()
         self.current = None
 
-    def run(self, cmd: list[str], *, env: dict | None = None, new_session: bool = False,
-            deadline: float | None = None, stop_timeout: float = 0,
-            extend: tuple[Path, float] | None = None) -> int:
+    def run(
+        self,
+        cmd: list[str],
+        *,
+        env: dict | None = None,
+        new_session: bool = False,
+        deadline: float | None = None,
+        stop_timeout: float = 0,
+        extend: tuple[Path, float] | None = None,
+    ) -> int:
         self.commands.append(cmd)
-        self.extends.append(None if extend is None else (extend[0], extend[1] - guard_mod.time.monotonic()))
+        self.extends.append(
+            None
+            if extend is None
+            else (extend[0], extend[1] - guard_mod.time.monotonic())
+        )
         self.envs.append(env)
         self.sessions.append(new_session)
-        self.deadlines.append(None if deadline is None else deadline - guard_mod.time.monotonic())
+        self.deadlines.append(
+            None if deadline is None else deadline - guard_mod.time.monotonic()
+        )
         for word, action in self.on_run.items():
             if word in cmd:
                 action()
         if self.stalls & set(cmd):
-            raise guard_mod.DeadlineError(f"{cmd[0]} ran past its deadline and was stopped")
+            raise guard_mod.DeadlineError(
+                f"{cmd[0]} ran past its deadline and was stopped"
+            )
         for word, code in self.codes.items():
             if word in cmd:
                 if isinstance(code, list):
@@ -200,16 +245,28 @@ def _tools(directory: Path, tools: tuple[str, ...] = DEPLOY_TOOLS) -> Path:
 @pytest.fixture
 def root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """A repo-shaped tree holding one root with a rendered JSON dial, on a PATH with every deploy tool."""
-    monkeypatch.setenv("PATH", f"{_tools(tmp_path / 'tools')}{os.pathsep}{os.environ.get('PATH', '')}")
+    monkeypatch.setenv(
+        "PATH", f"{_tools(tmp_path / 'tools')}{os.pathsep}{os.environ.get('PATH', '')}"
+    )
     monkeypatch.setattr(guard_mod, "REPO_ROOT", tmp_path)
     monkeypatch.setattr(guard_mod, "RUNS_DIR", tmp_path / ".tmp" / "cloud-runs")
     tf_dir = tmp_path / "terraform" / "environments" / "aws"
     tf_dir.mkdir(parents=True)
     (tf_dir / "dial.auto.tfvars.json").write_text(json.dumps(TFVARS), encoding="utf-8")
-    for name in ("DFE_GUARD_ROLE", "DFE_GUARD_SWEEPER", "DFE_GUARD_BUDGET_ACTION", "DFE_GUARD_PERMISSIONS_BOUNDARY",
-                 "DFE_GUARD_IAM_PATH", "DFE_GUARD_S3_BUCKET_PREFIX", "DFE_GUARD_INSPECTOR_EXCLUSION",
-                 "DFE_RUN_STATE_PREFIX", "DFE_RUN_TAG_KEY", "DFE_RUN_EXPIRY_KEY", "DFE_RUN_EXPIRY_FORMAT",
-                 "DFE_RUN_ENDPOINT_CIDR"):
+    for name in (
+        "DFE_GUARD_ROLE",
+        "DFE_GUARD_SWEEPER",
+        "DFE_GUARD_BUDGET_ACTION",
+        "DFE_GUARD_PERMISSIONS_BOUNDARY",
+        "DFE_GUARD_IAM_PATH",
+        "DFE_GUARD_S3_BUCKET_PREFIX",
+        "DFE_GUARD_INSPECTOR_EXCLUSION",
+        "DFE_RUN_STATE_PREFIX",
+        "DFE_RUN_TAG_KEY",
+        "DFE_RUN_EXPIRY_KEY",
+        "DFE_RUN_EXPIRY_FORMAT",
+        "DFE_RUN_ENDPOINT_CIDR",
+    ):
         monkeypatch.delenv(name, raising=False)
     return tf_dir
 
@@ -218,8 +275,21 @@ def _args(tf_dir: Path, **overrides: object) -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="command")
     guard_mod.add_cloud_guard_subparsers(sub)
-    argv = ["cloud-cycle", "--tf-dir", str(tf_dir), "--run-length", "2h", "--teardown-margin", "30m",
-            "--guard-role", "e2e-runner", "--guard-sweeper", "e2e-sweeper", "--guard-budget-action", BUDGET_ACTION]
+    argv = [
+        "cloud-cycle",
+        "--tf-dir",
+        str(tf_dir),
+        "--run-length",
+        "2h",
+        "--teardown-margin",
+        "30m",
+        "--guard-role",
+        "e2e-runner",
+        "--guard-sweeper",
+        "e2e-sweeper",
+        "--guard-budget-action",
+        BUDGET_ACTION,
+    ]
     args = parser.parse_args([*argv, "--", "--mode", "single"])
     for key, value in overrides.items():
         setattr(args, key, value)
@@ -230,7 +300,9 @@ def _config(tf_dir: Path, **overrides: object) -> guard_mod.GuardConfig:
     return guard_mod.resolve_config(_args(tf_dir, **overrides), {})
 
 
-def _preflight(tf_dir: Path, guard: FakeGuard, **overrides: object) -> guard_mod.PreflightReport:
+def _preflight(
+    tf_dir: Path, guard: FakeGuard, **overrides: object
+) -> guard_mod.PreflightReport:
     return guard_mod.run_preflight(_config(tf_dir, **overrides), guard, now=NOW, env={})
 
 
@@ -245,12 +317,20 @@ def test_a_fully_guarded_account_passes_every_check(root: Path) -> None:
     report = _preflight(root, FakeGuard())
     assert report.ok, report.checks
     assert [c.name for c in report.checks] == [
-        "account", "(a) guardrail role", "(a) sweeper", "(a) budget action", "(b) credential",
-        "(c) expired run resources", "(d) unfinished runs", "(e) deploy tools",
+        "account",
+        "(a) guardrail role",
+        "(a) sweeper",
+        "(a) budget action",
+        "(b) credential",
+        "(c) expired run resources",
+        "(d) unfinished runs",
+        "(e) deploy tools",
     ]
 
 
-def test_expected_fail_a_persistent_dial_is_refused_before_any_check(root: Path) -> None:
+def test_expected_fail_a_persistent_dial_is_refused_before_any_check(
+    root: Path,
+) -> None:
     (root / "dial.auto.tfvars.json").write_text(
         json.dumps({**TFVARS, "tags": {"lifecycle": "persistent"}}), encoding="utf-8"
     )
@@ -264,7 +344,9 @@ def test_expected_fail_an_hcl_tfvars_file_is_refused_by_name(root: Path) -> None
         _config(root)
 
 
-def test_expected_fail_a_root_outside_the_repository_is_refused(tmp_path: Path, root: Path) -> None:
+def test_expected_fail_a_root_outside_the_repository_is_refused(
+    tmp_path: Path, root: Path
+) -> None:
     outside = tmp_path.parent / f"{tmp_path.name}-outside"
     outside.mkdir()
     with pytest.raises(guard_mod.GuardError, match="inside this repository"):
@@ -272,25 +354,42 @@ def test_expected_fail_a_root_outside_the_repository_is_refused(tmp_path: Path, 
 
 
 def test_expected_fail_a_dial_with_no_state_bucket_is_refused(root: Path) -> None:
-    (root / "dial.auto.tfvars.json").write_text(json.dumps({**TFVARS, "state": {}}), encoding="utf-8")
+    (root / "dial.auto.tfvars.json").write_text(
+        json.dumps({**TFVARS, "state": {}}), encoding="utf-8"
+    )
     with pytest.raises(guard_mod.GuardError, match=r"state\.bucket"):
         _config(root)
 
 
-def test_tfvars_load_in_opentofus_order_and_skip_the_runs_own_overlay(root: Path) -> None:
-    (root / "later.auto.tfvars.json").write_text(json.dumps({"name": "later"}), encoding="utf-8")
-    (root / guard_mod.OVERLAY_NAME).write_text(json.dumps({"name": "stale-overlay"}), encoding="utf-8")
+def test_tfvars_load_in_opentofus_order_and_skip_the_runs_own_overlay(
+    root: Path,
+) -> None:
+    (root / "later.auto.tfvars.json").write_text(
+        json.dumps({"name": "later"}), encoding="utf-8"
+    )
+    (root / guard_mod.OVERLAY_NAME).write_text(
+        json.dumps({"name": "stale-overlay"}), encoding="utf-8"
+    )
     assert guard_mod.load_tfvars(root)["name"] == "later"
 
 
-@pytest.mark.parametrize("name", ["zz-later.auto.tfvars.json", "zzz.auto.tfvars.json", "zz-dfe-run2.auto.tfvars.json"])
+@pytest.mark.parametrize(
+    "name",
+    [
+        "zz-later.auto.tfvars.json",
+        "zzz.auto.tfvars.json",
+        "zz-dfe-run2.auto.tfvars.json",
+    ],
+)
 def test_expected_fail_an_auto_tfvars_file_sorting_after_the_overlay_is_refused(
     root: Path, monkeypatch: pytest.MonkeyPatch, name: str
 ) -> None:
     """OpenTofu loads auto tfvars in name order, so a later file would quietly
     replace the run's endpoint, state key or tags."""
-    (root / name).write_text(json.dumps({"endpoint": {"public": True, "allowed_cidrs": ["52.0.0.0/8"]}}),
-                             encoding="utf-8")
+    (root / name).write_text(
+        json.dumps({"endpoint": {"public": True, "allowed_cidrs": ["52.0.0.0/8"]}}),
+        encoding="utf-8",
+    )
     with pytest.raises(guard_mod.GuardError, match="sorts after"):
         guard_mod.load_tfvars(root)
     guard, runner = FakeGuard(), FakeRunner()
@@ -302,17 +401,27 @@ def test_expected_fail_an_auto_tfvars_file_sorting_after_the_overlay_is_refused(
 def test_an_empty_environment_variable_reads_as_unset(root: Path) -> None:
     """A workflow hands an unset repository variable over as an empty string. Read
     as a value, an empty state prefix would refuse every run."""
-    env = {cloud_run.STATE_PREFIX_ENV: "", "DFE_GUARD_IAM_PATH": "", "DFE_GUARD_PERMISSIONS_BOUNDARY": " ",
-           guard_mod.ENDPOINT_CIDR_ENV: ""}
+    env = {
+        cloud_run.STATE_PREFIX_ENV: "",
+        "DFE_GUARD_IAM_PATH": "",
+        "DFE_GUARD_PERMISSIONS_BOUNDARY": " ",
+        guard_mod.ENDPOINT_CIDR_ENV: "",
+    }
     config = guard_mod.resolve_config(_args(root), env)
     assert config.state_prefix == cloud_run.DEFAULT_STATE_PREFIX
-    assert (config.iam_path, config.permissions_boundary, config.endpoint_cidr) == ("", "", "")
+    assert (config.iam_path, config.permissions_boundary, config.endpoint_cidr) == (
+        "",
+        "",
+        "",
+    )
 
 
 def test_flags_win_over_the_environment(root: Path) -> None:
     config = guard_mod.resolve_config(_args(root), {"DFE_GUARD_ROLE": "from-env"})
     assert config.role == "e2e-runner"
-    config = guard_mod.resolve_config(_args(root, guard_role=None), {"DFE_GUARD_ROLE": "from-env"})
+    config = guard_mod.resolve_config(
+        _args(root, guard_role=None), {"DFE_GUARD_ROLE": "from-env"}
+    )
     assert config.role == "from-env"
 
 
@@ -320,7 +429,9 @@ def test_flags_win_over_the_environment(root: Path) -> None:
 
 
 @pytest.mark.parametrize("missing", ["role", "sweeper", "budget"])
-def test_refusal_a_a_guardrail_that_cannot_be_read_fails_its_check(root: Path, missing: str) -> None:
+def test_refusal_a_a_guardrail_that_cannot_be_read_fails_its_check(
+    root: Path, missing: str
+) -> None:
     guard = FakeGuard()
     guard.missing = {missing}
     report = _preflight(root, guard)
@@ -330,7 +441,9 @@ def test_refusal_a_a_guardrail_that_cannot_be_read_fails_its_check(root: Path, m
 
 
 @pytest.mark.parametrize("flag", ["guard_role", "guard_sweeper", "guard_budget_action"])
-def test_refusal_a_an_unconfigured_guardrail_fails_rather_than_skipping(root: Path, flag: str) -> None:
+def test_refusal_a_an_unconfigured_guardrail_fails_rather_than_skipping(
+    root: Path, flag: str
+) -> None:
     report = _preflight(root, FakeGuard(), **{flag: None})
     assert not report.ok
     assert any("not configured" in c.detail for c in report.checks if not c.ok)
@@ -343,12 +456,18 @@ def test_refusal_a_a_failed_sweeper_fails(root: Path) -> None:
 
 
 def test_refusal_a_a_malformed_budget_action_fails(root: Path) -> None:
-    assert _failed(_preflight(root, FakeGuard(), guard_budget_action="no-separator")) == ["(a) budget action"]
+    assert _failed(
+        _preflight(root, FakeGuard(), guard_budget_action="no-separator")
+    ) == ["(a) budget action"]
 
 
 CACHE_TFVARS = {
     "name": "dfe-example",
-    "registry_cache": {"enabled": True, "namespace": "", "upstreams": {"quay": {}, "k8s": {}}},
+    "registry_cache": {
+        "enabled": True,
+        "namespace": "",
+        "upstreams": {"quay": {}, "k8s": {}},
+    },
 }
 
 
@@ -356,7 +475,10 @@ def _enhanced(*rules: tuple[str, str]) -> dict:
     return {
         "scanType": "ENHANCED",
         "rules": [
-            {"scanFrequency": frequency, "repositoryFilters": [{"filter": pattern, "filterType": "WILDCARD"}]}
+            {
+                "scanFrequency": frequency,
+                "repositoryFilters": [{"filter": pattern, "filterType": "WILDCARD"}],
+            }
             for frequency, pattern in rules
         ],
     }
@@ -365,23 +487,54 @@ def _enhanced(*rules: tuple[str, str]) -> dict:
 @pytest.mark.parametrize(
     ("scanning", "cache", "failing"),
     [
-        pytest.param(_enhanced(("CONTINUOUS_SCAN", "*")), CACHE_TFVARS, True, id="a_registry_wide_rule"),
-        pytest.param(_enhanced(("SCAN_ON_PUSH", "dfe-example/*")), CACHE_TFVARS, True, id="the_namespace_rule"),
-        pytest.param(
-            _enhanced(("CONTINUOUS_SCAN", "dfe-fetcher-inspector-seed")), CACHE_TFVARS, False, id="the_seed_repo_only"
-        ),
-        pytest.param(_enhanced(("MANUAL", "*")), CACHE_TFVARS, False, id="a_manual_rule_assesses_nothing"),
-        pytest.param({"scanType": "BASIC", "rules": []}, CACHE_TFVARS, False, id="basic_scanning"),
-        pytest.param(_enhanced(("CONTINUOUS_SCAN", "*")), {"name": "dfe-example"}, False, id="no_cache_in_the_dial"),
         pytest.param(
             _enhanced(("CONTINUOUS_SCAN", "*")),
-            {**CACHE_TFVARS, "registry_cache": {"enabled": False, "upstreams": {"quay": {}}}},
+            CACHE_TFVARS,
+            True,
+            id="a_registry_wide_rule",
+        ),
+        pytest.param(
+            _enhanced(("SCAN_ON_PUSH", "dfe-example/*")),
+            CACHE_TFVARS,
+            True,
+            id="the_namespace_rule",
+        ),
+        pytest.param(
+            _enhanced(("CONTINUOUS_SCAN", "dfe-fetcher-inspector-seed")),
+            CACHE_TFVARS,
+            False,
+            id="the_seed_repo_only",
+        ),
+        pytest.param(
+            _enhanced(("MANUAL", "*")),
+            CACHE_TFVARS,
+            False,
+            id="a_manual_rule_assesses_nothing",
+        ),
+        pytest.param(
+            {"scanType": "BASIC", "rules": []}, CACHE_TFVARS, False, id="basic_scanning"
+        ),
+        pytest.param(
+            _enhanced(("CONTINUOUS_SCAN", "*")),
+            {"name": "dfe-example"},
+            False,
+            id="no_cache_in_the_dial",
+        ),
+        pytest.param(
+            _enhanced(("CONTINUOUS_SCAN", "*")),
+            {
+                **CACHE_TFVARS,
+                "registry_cache": {"enabled": False, "upstreams": {"quay": {}}},
+            },
             False,
             id="the_cache_switched_off",
         ),
         pytest.param(
             _enhanced(("CONTINUOUS_SCAN", "run-ns/*")),
-            {**CACHE_TFVARS, "registry_cache": {"namespace": "run-ns", "upstreams": {"quay": {}}}},
+            {
+                **CACHE_TFVARS,
+                "registry_cache": {"namespace": "run-ns", "upstreams": {"quay": {}}},
+            },
             True,
             id="a_namespace_the_dial_names",
         ),
@@ -390,7 +543,9 @@ def _enhanced(*rules: tuple[str, str]) -> dict:
 def test_the_registry_scanning_check_refuses_a_rule_that_assesses_the_cache(
     root: Path, scanning: dict, cache: dict, failing: bool
 ) -> None:
-    (root / "dial.auto.tfvars.json").write_text(json.dumps({**TFVARS, **cache}), encoding="utf-8")
+    (root / "dial.auto.tfvars.json").write_text(
+        json.dumps({**TFVARS, **cache}), encoding="utf-8"
+    )
     guard = FakeGuard()
     guard.scanning = scanning
     failed = _failed(_preflight(root, guard))
@@ -398,43 +553,138 @@ def test_the_registry_scanning_check_refuses_a_rule_that_assesses_the_cache(
 
 
 def test_the_registry_scanning_that_cannot_be_read_fails_the_check(root: Path) -> None:
-    (root / "dial.auto.tfvars.json").write_text(json.dumps({**TFVARS, **CACHE_TFVARS}), encoding="utf-8")
+    (root / "dial.auto.tfvars.json").write_text(
+        json.dumps({**TFVARS, **CACHE_TFVARS}), encoding="utf-8"
+    )
     guard = FakeGuard()
     guard.missing = {"scanning"}
     assert _failed(_preflight(root, guard)) == ["(a) registry scanning"]
 
 
-OTEL_TELEMETRY = {"sink": "otel", "retention_days": 2, "forced_retention_days": 1, "eks_log_types": ["audit"]}
+OTEL_TELEMETRY = {
+    "sink": "otel",
+    "retention_days": 2,
+    "forced_retention_days": 1,
+    "eks_log_types": ["audit"],
+}
 BOUNDARY_ARN = f"arn:aws:iam::{ACCOUNT}:policy/dfe-e2e-boundary"
 
 
 @pytest.mark.parametrize(
     ("tfvars", "boundary", "failing"),
     [
-        pytest.param({"telemetry": OTEL_TELEMETRY}, {"Statement": [{"Effect": "Allow", "Action": ["logs:Describe*"]}]}, True,
-                     id="the_boundary_lacks_filterlogevents"),
-        pytest.param({"telemetry": OTEL_TELEMETRY}, {"Statement": [{"Effect": "Allow", "Action": ["logs:Describe*", "logs:FilterLogEvents"]}]}, False,
-                     id="the_boundary_names_it"),
-        pytest.param({"telemetry": OTEL_TELEMETRY}, {"Statement": [{"Effect": "Allow", "Action": "logs:*"}]}, False, id="a_service_wildcard_covers_it"),
-        pytest.param({"telemetry": OTEL_TELEMETRY}, {"Statement": [{"Effect": "Allow", "Action": ["logs:Filter*"]}]}, False, id="a_filter_wildcard_covers_it"),
-        pytest.param({"telemetry": OTEL_TELEMETRY}, {"Statement": [{"Effect": "Allow", "Action": ["logs:Delete*"]}]}, True, id="a_delete_wildcard_does_not"),
-        pytest.param({"telemetry": OTEL_TELEMETRY}, {"Statement": [{"Effect": "Allow", "Action": ["logs:FILTERLOGEVENTS"]}]}, False, id="action_names_are_case_insensitive"),
-        pytest.param({"telemetry": OTEL_TELEMETRY}, {"Statement": [{"Effect": "Allow", "Action": ["logs:Describe*", "logs:CreateLogGroup", "logs:PutLogEvents"]}]}, True, id="the_boundary_that_failed_the_first_cycle"),
-        pytest.param({"telemetry": OTEL_TELEMETRY}, {"Statement": [{"Effect": "Allow", "Action": ["logs:Describe*", "logs:Filter*"]}]}, False, id="the_boundary_that_allows_it_by_wildcard"),
-        pytest.param({"telemetry": OTEL_TELEMETRY}, {"Statement": [{"Effect": "Deny", "Action": ["logs:FilterLogEvents"]}]}, True,
-                     id="a_deny_is_not_an_allow"),
-        pytest.param({"telemetry": OTEL_TELEMETRY}, "not a document", True, id="an_unreadable_document_fails_closed"),
-        pytest.param({"telemetry": {**OTEL_TELEMETRY, "sink": "cloudwatch"}}, {"Statement": []}, False, id="the_cloudwatch_sink_reads_nothing"),
-        pytest.param({"telemetry": {**OTEL_TELEMETRY, "eks_log_types": []}}, {"Statement": []}, False, id="no_stream_and_no_trail_reads_nothing"),
-        pytest.param({"telemetry": {**OTEL_TELEMETRY, "eks_log_types": []}, "cloudtrail": {"enabled": True}}, {"Statement": []}, True,
-                     id="the_trail_alone_is_read"),
+        pytest.param(
+            {"telemetry": OTEL_TELEMETRY},
+            {"Statement": [{"Effect": "Allow", "Action": ["logs:Describe*"]}]},
+            True,
+            id="the_boundary_lacks_filterlogevents",
+        ),
+        pytest.param(
+            {"telemetry": OTEL_TELEMETRY},
+            {
+                "Statement": [
+                    {
+                        "Effect": "Allow",
+                        "Action": ["logs:Describe*", "logs:FilterLogEvents"],
+                    }
+                ]
+            },
+            False,
+            id="the_boundary_names_it",
+        ),
+        pytest.param(
+            {"telemetry": OTEL_TELEMETRY},
+            {"Statement": [{"Effect": "Allow", "Action": "logs:*"}]},
+            False,
+            id="a_service_wildcard_covers_it",
+        ),
+        pytest.param(
+            {"telemetry": OTEL_TELEMETRY},
+            {"Statement": [{"Effect": "Allow", "Action": ["logs:Filter*"]}]},
+            False,
+            id="a_filter_wildcard_covers_it",
+        ),
+        pytest.param(
+            {"telemetry": OTEL_TELEMETRY},
+            {"Statement": [{"Effect": "Allow", "Action": ["logs:Delete*"]}]},
+            True,
+            id="a_delete_wildcard_does_not",
+        ),
+        pytest.param(
+            {"telemetry": OTEL_TELEMETRY},
+            {"Statement": [{"Effect": "Allow", "Action": ["logs:FILTERLOGEVENTS"]}]},
+            False,
+            id="action_names_are_case_insensitive",
+        ),
+        pytest.param(
+            {"telemetry": OTEL_TELEMETRY},
+            {
+                "Statement": [
+                    {
+                        "Effect": "Allow",
+                        "Action": [
+                            "logs:Describe*",
+                            "logs:CreateLogGroup",
+                            "logs:PutLogEvents",
+                        ],
+                    }
+                ]
+            },
+            True,
+            id="the_boundary_that_failed_the_first_cycle",
+        ),
+        pytest.param(
+            {"telemetry": OTEL_TELEMETRY},
+            {
+                "Statement": [
+                    {"Effect": "Allow", "Action": ["logs:Describe*", "logs:Filter*"]}
+                ]
+            },
+            False,
+            id="the_boundary_that_allows_it_by_wildcard",
+        ),
+        pytest.param(
+            {"telemetry": OTEL_TELEMETRY},
+            {"Statement": [{"Effect": "Deny", "Action": ["logs:FilterLogEvents"]}]},
+            True,
+            id="a_deny_is_not_an_allow",
+        ),
+        pytest.param(
+            {"telemetry": OTEL_TELEMETRY},
+            "not a document",
+            True,
+            id="an_unreadable_document_fails_closed",
+        ),
+        pytest.param(
+            {"telemetry": {**OTEL_TELEMETRY, "sink": "cloudwatch"}},
+            {"Statement": []},
+            False,
+            id="the_cloudwatch_sink_reads_nothing",
+        ),
+        pytest.param(
+            {"telemetry": {**OTEL_TELEMETRY, "eks_log_types": []}},
+            {"Statement": []},
+            False,
+            id="no_stream_and_no_trail_reads_nothing",
+        ),
+        pytest.param(
+            {
+                "telemetry": {**OTEL_TELEMETRY, "eks_log_types": []},
+                "cloudtrail": {"enabled": True},
+            },
+            {"Statement": []},
+            True,
+            id="the_trail_alone_is_read",
+        ),
         pytest.param({}, {"Statement": []}, False, id="no_telemetry_in_the_dial"),
     ],
 )
 def test_the_provider_logs_boundary_check_refuses_a_boundary_that_denies_the_receiver(
     root: Path, tfvars: dict, boundary: object, failing: bool
 ) -> None:
-    (root / "dial.auto.tfvars.json").write_text(json.dumps({**TFVARS, **tfvars}), encoding="utf-8")
+    (root / "dial.auto.tfvars.json").write_text(
+        json.dumps({**TFVARS, **tfvars}), encoding="utf-8"
+    )
     guard = FakeGuard()
     guard.boundary = boundary
     report = _preflight(root, guard, permissions_boundary=BOUNDARY_ARN)
@@ -442,7 +692,9 @@ def test_the_provider_logs_boundary_check_refuses_a_boundary_that_denies_the_rec
 
 
 def test_no_boundary_means_no_provider_logs_boundary_check(root: Path) -> None:
-    (root / "dial.auto.tfvars.json").write_text(json.dumps({**TFVARS, "telemetry": OTEL_TELEMETRY}), encoding="utf-8")
+    (root / "dial.auto.tfvars.json").write_text(
+        json.dumps({**TFVARS, "telemetry": OTEL_TELEMETRY}), encoding="utf-8"
+    )
     guard = FakeGuard()
     guard.boundary = {"Statement": []}
     assert _failed(_preflight(root, guard)) == []
@@ -451,7 +703,11 @@ def test_no_boundary_means_no_provider_logs_boundary_check(root: Path) -> None:
 def test_a_configured_boundary_must_exist_too(root: Path) -> None:
     guard = FakeGuard()
     guard.missing = {"policy"}
-    report = _preflight(root, guard, permissions_boundary=f"arn:aws:iam::{ACCOUNT}:policy/dfe-e2e-boundary")
+    report = _preflight(
+        root,
+        guard,
+        permissions_boundary=f"arn:aws:iam::{ACCOUNT}:policy/dfe-e2e-boundary",
+    )
     assert _failed(report) == ["(a) permissions boundary"]
 
 
@@ -466,7 +722,9 @@ def test_expected_fail_the_wrong_account_fails(root: Path) -> None:
 
 def test_refusal_b_a_credential_expiring_inside_the_window_fails(root: Path) -> None:
     guard = FakeGuard()
-    guard.expiry = NOW + 2 * 3600 + 30 * 60 - 1  # one second short of run length + margin
+    guard.expiry = (
+        NOW + 2 * 3600 + 30 * 60 - 1
+    )  # one second short of run length + margin
     assert _failed(_preflight(root, guard)) == ["(b) credential"]
 
 
@@ -482,18 +740,24 @@ def test_a_credential_with_no_expiry_passes(root: Path) -> None:
     assert _preflight(root, guard).ok
 
 
-def test_refusal_b_an_unreadable_credential_fails_rather_than_passing(root: Path) -> None:
+def test_refusal_b_an_unreadable_credential_fails_rather_than_passing(
+    root: Path,
+) -> None:
     guard = FakeGuard()
     guard.expiry_error = "could not resolve the active credential"
     assert _failed(_preflight(root, guard)) == ["(b) credential"]
 
 
-def test_expected_fail_a_session_credential_with_no_known_expiry_is_refused(root: Path) -> None:
+def test_expected_fail_a_session_credential_with_no_known_expiry_is_refused(
+    root: Path,
+) -> None:
     """A session credential always expires, so passing one whose expiry is unread
     lets an unattended run lose its identity mid-apply."""
     guard = FakeGuard()
     guard.expiry = None
-    report = guard_mod.run_preflight(_config(root), guard, now=NOW, env={"AWS_SESSION_TOKEN": "not-a-real-token"})
+    report = guard_mod.run_preflight(
+        _config(root), guard, now=NOW, env={"AWS_SESSION_TOKEN": "not-a-real-token"}
+    )
     assert _failed(report) == ["(b) credential"]
     detail = next(c.detail for c in report.checks if c.name == "(b) credential")
     assert "AWS_CREDENTIAL_EXPIRATION" in detail
@@ -503,11 +767,18 @@ def test_expected_fail_a_session_credential_with_no_known_expiry_is_refused(root
 def test_expected_fail_the_cli_resolving_a_session_credential_with_no_expiry_refuses(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    body = {"Version": 1, "AccessKeyId": "AKIDEXAMPLE", "SecretAccessKey": "not-a-real-secret",
-            "SessionToken": "not-a-real-token"}
+    body = {
+        "Version": 1,
+        "AccessKeyId": "AKIDEXAMPLE",
+        "SecretAccessKey": "not-a-real-secret",
+        "SessionToken": "not-a-real-token",
+    }
     monkeypatch.setattr(
-        guard_mod.aws_cli, "run_aws",
-        lambda args, **_: subprocess.CompletedProcess(args, 0, stdout=json.dumps(body), stderr=""),
+        guard_mod.aws_cli,
+        "run_aws",
+        lambda args, **_: subprocess.CompletedProcess(
+            args, 0, stdout=json.dumps(body), stderr=""
+        ),
     )
     with pytest.raises(guard_mod.GuardError, match="session credential") as excinfo:
         guard_mod.AwsGuard("us-west-2").credential_expiry({})
@@ -515,16 +786,30 @@ def test_expected_fail_the_cli_resolving_a_session_credential_with_no_expiry_ref
     assert "not-a-real-secret" not in str(excinfo.value)
 
 
-def test_a_long_term_key_with_no_expiry_still_reads_as_no_expiry(monkeypatch: pytest.MonkeyPatch) -> None:
-    body = {"Version": 1, "AccessKeyId": "AKIDEXAMPLE", "SecretAccessKey": "not-a-real-secret"}
+def test_a_long_term_key_with_no_expiry_still_reads_as_no_expiry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    body = {
+        "Version": 1,
+        "AccessKeyId": "AKIDEXAMPLE",
+        "SecretAccessKey": "not-a-real-secret",
+    }
     monkeypatch.setattr(
-        guard_mod.aws_cli, "run_aws",
-        lambda args, **_: subprocess.CompletedProcess(args, 0, stdout=json.dumps(body), stderr=""),
+        guard_mod.aws_cli,
+        "run_aws",
+        lambda args, **_: subprocess.CompletedProcess(
+            args, 0, stdout=json.dumps(body), stderr=""
+        ),
     )
-    assert guard_mod.AwsGuard("us-west-2").credential_expiry({}) == (None, "a credential with no expiry")
+    assert guard_mod.AwsGuard("us-west-2").credential_expiry({}) == (
+        None,
+        "a credential with no expiry",
+    )
 
 
-def test_credential_expiry_reads_the_environment_first(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_credential_expiry_reads_the_environment_first(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     def boom(*_args: object, **_kwargs: object) -> None:
         raise AssertionError("the CLI must not be asked when the environment answers")
 
@@ -535,21 +820,35 @@ def test_credential_expiry_reads_the_environment_first(monkeypatch: pytest.Monke
     assert (expires, source) == (NOW, "AWS_CREDENTIAL_EXPIRATION")
 
 
-def test_credential_expiry_keeps_only_the_expiration_from_the_cli(monkeypatch: pytest.MonkeyPatch) -> None:
-    body = {"Version": 1, "AccessKeyId": "AKIDEXAMPLE", "SecretAccessKey": "not-a-real-secret",
-            "Expiration": "2026-10-08T12:00:00+00:00"}
+def test_credential_expiry_keeps_only_the_expiration_from_the_cli(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    body = {
+        "Version": 1,
+        "AccessKeyId": "AKIDEXAMPLE",
+        "SecretAccessKey": "not-a-real-secret",
+        "Expiration": "2026-10-08T12:00:00+00:00",
+    }
     monkeypatch.setattr(
-        guard_mod.aws_cli, "run_aws",
-        lambda args, **_: subprocess.CompletedProcess(args, 0, stdout=json.dumps(body), stderr=""),
+        guard_mod.aws_cli,
+        "run_aws",
+        lambda args, **_: subprocess.CompletedProcess(
+            args, 0, stdout=json.dumps(body), stderr=""
+        ),
     )
     expires, _source = guard_mod.AwsGuard("us-west-2").credential_expiry({})
     assert expires == NOW
 
 
-def test_an_unparseable_cli_answer_never_echoes_what_it_printed(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_an_unparseable_cli_answer_never_echoes_what_it_printed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(
-        guard_mod.aws_cli, "run_aws",
-        lambda args, **_: subprocess.CompletedProcess(args, 0, stdout="SecretAccessKey=not-a-real-secret", stderr=""),
+        guard_mod.aws_cli,
+        "run_aws",
+        lambda args, **_: subprocess.CompletedProcess(
+            args, 0, stdout="SecretAccessKey=not-a-real-secret", stderr=""
+        ),
     )
     with pytest.raises(guard_mod.GuardError) as excinfo:
         guard_mod.AwsGuard("us-west-2").credential_expiry({})
@@ -559,9 +858,15 @@ def test_an_unparseable_cli_answer_never_echoes_what_it_printed(monkeypatch: pyt
 # --- (c) leftovers -----------------------------------------------------------------------------
 
 
-def _run_resource(name: str, expires_at: int, run_id: str = "r-prev") -> cloud_sweep.Resource:
+def _run_resource(
+    name: str, expires_at: int, run_id: str = "r-prev"
+) -> cloud_sweep.Resource:
     return cloud_sweep.Resource(
-        kind="ec2-instance", id=name, name=name, created=None, tagged=True,
+        kind="ec2-instance",
+        id=name,
+        name=name,
+        created=None,
+        tagged=True,
         tags=cloud_run.run_tags(run_id, expires_at),
     )
 
@@ -570,7 +875,9 @@ def _check(report: guard_mod.PreflightReport, name: str) -> guard_mod.Check:
     return next(c for c in report.checks if c.name == name)
 
 
-def test_refusal_c_expired_run_resources_fail_and_name_the_sweep_that_removes_them(root: Path) -> None:
+def test_refusal_c_expired_run_resources_fail_and_name_the_sweep_that_removes_them(
+    root: Path,
+) -> None:
     guard = FakeGuard()
     guard.leftovers = [_run_resource("i-1", int(NOW) - 60)]
     report = _preflight(root, guard)
@@ -581,7 +888,9 @@ def test_refusal_c_expired_run_resources_fail_and_name_the_sweep_that_removes_th
     assert "--expired --grace 0 --delete" in detail
 
 
-def test_refusal_d_a_live_run_resource_refuses_and_says_when_it_expires(root: Path) -> None:
+def test_refusal_d_a_live_run_resource_refuses_and_says_when_it_expires(
+    root: Path,
+) -> None:
     """A leg whose destroy failed leaves resources that have not expired yet; (c) alone passes them."""
     guard = FakeGuard()
     guard.leftovers = [_run_resource("i-2", int(NOW) + 3600)]
@@ -592,13 +901,27 @@ def test_refusal_d_a_live_run_resource_refuses_and_says_when_it_expires(root: Pa
     assert "tofu destroy" in detail
 
 
-def test_refusal_d_a_run_tag_with_no_readable_expiry_refuses_since_no_sweep_removes_it(root: Path) -> None:
+def test_refusal_d_a_run_tag_with_no_readable_expiry_refuses_since_no_sweep_removes_it(
+    root: Path,
+) -> None:
     guard = FakeGuard()
     guard.leftovers = [
-        cloud_sweep.Resource(kind="eip", id="eipalloc-1", name="192.0.2.7", created=None, tagged=True,
-                             tags={"dfe-e2e": "r-prev"}),
-        cloud_sweep.Resource(kind="vpc", id="vpc-1", name="vpc-1", created=None, tagged=True,
-                             tags={"dfe-e2e": "r-prev", "expires-at": "soon"}),
+        cloud_sweep.Resource(
+            kind="eip",
+            id="eipalloc-1",
+            name="192.0.2.7",
+            created=None,
+            tagged=True,
+            tags={"dfe-e2e": "r-prev"},
+        ),
+        cloud_sweep.Resource(
+            kind="vpc",
+            id="vpc-1",
+            name="vpc-1",
+            created=None,
+            tagged=True,
+            tags={"dfe-e2e": "r-prev", "expires-at": "soon"},
+        ),
     ]
     detail = _check(_preflight(root, guard), "(d) unfinished runs").detail
     assert "eip 192.0.2.7 (no-expiry)" in detail
@@ -611,17 +934,28 @@ def test_refusal_d_a_run_record_refuses_even_with_no_resource_left(root: Path) -
     guard.records = {"dfe-e2e-runs/r-prev/run.json": "{}"}
     report = _preflight(root, guard)
     assert _failed(report) == ["(d) unfinished runs"]
-    assert "run record dfe-e2e-runs/r-prev/run.json" in _check(report, "(d) unfinished runs").detail
+    assert (
+        "run record dfe-e2e-runs/r-prev/run.json"
+        in _check(report, "(d) unfinished runs").detail
+    )
 
 
-def test_an_untagged_resource_and_a_record_under_another_prefix_refuse_nothing(root: Path) -> None:
+def test_an_untagged_resource_and_a_record_under_another_prefix_refuse_nothing(
+    root: Path,
+) -> None:
     guard = FakeGuard()
-    guard.leftovers = [cloud_sweep.Resource(kind="vpc", id="vpc-9", name="vpc-9", created=None, tagged=False)]
+    guard.leftovers = [
+        cloud_sweep.Resource(
+            kind="vpc", id="vpc-9", name="vpc-9", created=None, tagged=False
+        )
+    ]
     guard.records = {"elsewhere/r-prev/run.json": "{}"}
     assert _preflight(root, guard).ok
 
 
-def test_refusal_d_run_records_that_cannot_be_listed_fail_rather_than_pass(root: Path) -> None:
+def test_refusal_d_run_records_that_cannot_be_listed_fail_rather_than_pass(
+    root: Path,
+) -> None:
     guard = FakeGuard()
     guard.missing = {"records"}
     report = _preflight(root, guard)
@@ -633,16 +967,23 @@ def test_refusal_d_resources_that_cannot_be_listed_fail_both_checks(root: Path) 
     guard = FakeGuard()
 
     def refuse(*_args: object, **_kwargs: object) -> list:
-        raise cloud_sweep.CloudSweepError("aws resourcegroupstaggingapi get-resources failed: Throttling")
+        raise cloud_sweep.CloudSweepError(
+            "aws resourcegroupstaggingapi get-resources failed: Throttling"
+        )
 
     guard.run_resources = refuse  # type: ignore[method-assign]
-    assert _failed(_preflight(root, guard)) == ["(c) expired run resources", "(d) unfinished runs"]
+    assert _failed(_preflight(root, guard)) == [
+        "(c) expired run resources",
+        "(d) unfinished runs",
+    ]
 
 
 # --- (e) every tool the deploy and its teardown run is on the run's PATH ------------------------
 
 
-def _path_without(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *absent: str) -> None:
+def _path_without(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *absent: str
+) -> None:
     """PATH as the run's children get it, holding every deploy tool but `absent`."""
     kept = tuple(t for t in DEPLOY_TOOLS if t not in absent)
     monkeypatch.setenv("PATH", str(_tools(tmp_path / "partial-tools", kept)))
@@ -656,7 +997,9 @@ def test_refusal_e_a_tool_missing_from_the_runs_path_fails_and_names_what_needs_
     report = _preflight(root, FakeGuard())
     assert _failed(report) == ["(e) deploy tools"]
     detail = _check(report, "(e) deploy tools").detail
-    assert detail.startswith("not on PATH: openssl: mints the bundled deploy repo's admin password")
+    assert detail.startswith(
+        "not on PATH: openssl: mints the bundled deploy repo's admin password"
+    )
     assert "kubectl" not in detail
 
 
@@ -685,7 +1028,10 @@ def test_a_tool_check_that_cannot_run_fails_rather_than_passing(
 
 
 def test_expected_fail_a_runner_missing_a_deploy_tool_creates_nothing(
-    root: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture
+    root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture,
 ) -> None:
     _path_without(monkeypatch, tmp_path, "kubectl")
     guard, runner = FakeGuard(), FakeRunner()
@@ -708,7 +1054,12 @@ ENDPOINT_ARN = f"arn:aws:ec2:us-west-2:{ACCOUNT}:vpc-endpoint/{ENDPOINT_ID}"
 INSTANCE_ARN = f"arn:aws:ec2:us-west-2:{ACCOUNT}:instance/{INSTANCE_ID}"
 RULE_ID = "sgr-0123456789abcdef0"
 RULE_ARN = f"arn:aws:ec2:us-west-2:{ACCOUNT}:security-group-rule/{RULE_ID}"
-ID_FLAGS = ("--nat-gateway-ids", "--vpc-endpoint-ids", "--instance-ids", "--security-group-rule-ids")
+ID_FLAGS = (
+    "--nat-gateway-ids",
+    "--vpc-endpoint-ids",
+    "--instance-ids",
+    "--security-group-rule-ids",
+)
 
 
 def _aws_ok(body: object) -> subprocess.CompletedProcess:
@@ -732,11 +1083,17 @@ def _instance(state: str) -> subprocess.CompletedProcess:
 
 
 def _instances(state: str) -> dict:
-    return {"Reservations": [{"Instances": [{"InstanceId": INSTANCE_ID, "State": {"Name": state}}]}]}
+    return {
+        "Reservations": [
+            {"Instances": [{"InstanceId": INSTANCE_ID, "State": {"Name": state}}]}
+        ]
+    }
 
 
 def _rule(rule_id: str = RULE_ID) -> subprocess.CompletedProcess:
-    return _aws_ok({"SecurityGroupRules": [{"SecurityGroupRuleId": rule_id, "GroupId": "sg-1"}]})
+    return _aws_ok(
+        {"SecurityGroupRules": [{"SecurityGroupRuleId": rule_id, "GroupId": "sg-1"}]}
+    )
 
 
 def _rule_not_found(rule_id: str = RULE_ID) -> subprocess.CompletedProcess:
@@ -763,8 +1120,12 @@ class AwsRegionGuard(FakeGuard):
     """FakeGuard's account reads, with the region's run resources and the teardown's sweep
     going through the real AwsGuard."""
 
-    def run_resources(self, keys: object, exclude_bucket: str, gone: list | None = None) -> list:
-        return guard_mod.AwsGuard("us-west-2").run_resources(keys, exclude_bucket, gone=gone)
+    def run_resources(
+        self, keys: object, exclude_bucket: str, gone: list | None = None
+    ) -> list:
+        return guard_mod.AwsGuard("us-west-2").run_resources(
+            keys, exclude_bucket, gone=gone
+        )
 
     def sweep(self, args: list[str]) -> int:
         return guard_mod.AwsGuard("us-west-2").sweep(args)
@@ -785,7 +1146,10 @@ def _stale_region(
     empty region. Returns the calls made.
     """
     calls: list[list[str]] = []
-    tags = [{"Key": k, "Value": v} for k, v in cloud_run.run_tags("r-prev", expires_at).items()]
+    tags = [
+        {"Key": k, "Value": v}
+        for k, v in cloud_run.run_tags("r-prev", expires_at).items()
+    ]
     mappings = [{"ResourceARN": arn, "Tags": tags} for arn in arns]
     unfiltered = listed or {}
 
@@ -807,29 +1171,50 @@ def _stale_region(
 # A deleted NAT gateway and a terminated instance stay in the unfiltered listing a while, which the
 # listers skip, so only the tagging API's hit reaches the guard.
 LISTED_DELETED_NAT = {
-    "describe-nat-gateways": {"NatGateways": [{"NatGatewayId": NAT_ID, "State": "deleted"}]}
+    "describe-nat-gateways": {
+        "NatGateways": [{"NatGatewayId": NAT_ID, "State": "deleted"}]
+    }
 }
 LISTED_TERMINATED_INSTANCE = {"describe-instances": _instances("terminated")}
 GONE_FROM_EC2 = [
-    pytest.param(NAT_ARN, _nat("deleted"), LISTED_DELETED_NAT, id="nat-gateway-deleted"),
+    pytest.param(
+        NAT_ARN, _nat("deleted"), LISTED_DELETED_NAT, id="nat-gateway-deleted"
+    ),
     pytest.param(NAT_ARN, NAT_NOT_FOUND, None, id="nat-gateway-no-longer-listed"),
     pytest.param(ENDPOINT_ARN, _endpoint("Deleted"), None, id="vpc-endpoint-deleted"),
     pytest.param(ENDPOINT_ARN, ENDPOINT_NOT_FOUND, None, id="vpc-endpoint-not-found"),
-    pytest.param(INSTANCE_ARN, _instance("terminated"), LISTED_TERMINATED_INSTANCE, id="instance-terminated"),
+    pytest.param(
+        INSTANCE_ARN,
+        _instance("terminated"),
+        LISTED_TERMINATED_INSTANCE,
+        id="instance-terminated",
+    ),
     pytest.param(INSTANCE_ARN, INSTANCE_NOT_FOUND, None, id="instance-not-found"),
     pytest.param(RULE_ARN, _rule_not_found(), None, id="security-group-rule-not-found"),
-    pytest.param(RULE_ARN, _aws_ok({"SecurityGroupRules": []}), None, id="security-group-rule-no-longer-listed"),
+    pytest.param(
+        RULE_ARN,
+        _aws_ok({"SecurityGroupRules": []}),
+        None,
+        id="security-group-rule-no-longer-listed",
+    ),
 ]
 
 
 @pytest.mark.parametrize(("arn", "answer", "listed"), GONE_FROM_EC2)
 def test_refusal_d_ignores_what_the_tagging_api_lists_after_ec2_deleted_it(
-    root: Path, monkeypatch: pytest.MonkeyPatch, arn: str, answer: subprocess.CompletedProcess,
+    root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    arn: str,
+    answer: subprocess.CompletedProcess,
     listed: dict[str, object] | None,
 ) -> None:
     """The tagging API lags a delete, and the run's expiry is still ahead, so (d) would call it unfinished."""
     _stale_region(
-        monkeypatch, [arn], {arn.rsplit("/", 1)[-1]: answer}, expires_at=int(NOW) + 3600, listed=listed
+        monkeypatch,
+        [arn],
+        {arn.rsplit("/", 1)[-1]: answer},
+        expires_at=int(NOW) + 3600,
+        listed=listed,
     )
     report = _preflight(root, AwsRegionGuard())
     assert report.ok, [c.detail for c in report.checks if not c.ok]
@@ -837,12 +1222,19 @@ def test_refusal_d_ignores_what_the_tagging_api_lists_after_ec2_deleted_it(
 
 @pytest.mark.parametrize(("arn", "answer", "listed"), GONE_FROM_EC2)
 def test_refusal_c_ignores_an_expired_resource_the_tagging_api_lists_after_ec2_deleted_it(
-    root: Path, monkeypatch: pytest.MonkeyPatch, arn: str, answer: subprocess.CompletedProcess,
+    root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    arn: str,
+    answer: subprocess.CompletedProcess,
     listed: dict[str, object] | None,
 ) -> None:
     """(c) sends the operator to a sweep that has no delete for a tagging-API hit, so it must not name one."""
     _stale_region(
-        monkeypatch, [arn], {arn.rsplit("/", 1)[-1]: answer}, expires_at=int(NOW) - 60, listed=listed
+        monkeypatch,
+        [arn],
+        {arn.rsplit("/", 1)[-1]: answer},
+        expires_at=int(NOW) - 60,
+        listed=listed,
     )
     report = _preflight(root, AwsRegionGuard())
     assert report.ok, [c.detail for c in report.checks if not c.ok]
@@ -852,29 +1244,66 @@ def test_refusal_c_ignores_an_expired_resource_the_tagging_api_lists_after_ec2_d
     ("arn", "answer", "name"),
     [
         pytest.param(NAT_ARN, _nat("available"), NAT_ID, id="nat-gateway-available"),
-        pytest.param(NAT_ARN, _nat("deleting"), NAT_ID, id="nat-gateway-still-deleting"),
-        pytest.param(ENDPOINT_ARN, _endpoint("Available"), ENDPOINT_ID, id="vpc-endpoint-available"),
-        pytest.param(ENDPOINT_ARN, _endpoint("Deleting"), ENDPOINT_ID, id="vpc-endpoint-still-deleting"),
-        pytest.param(INSTANCE_ARN, _instance("running"), INSTANCE_ID, id="instance-running"),
-        pytest.param(INSTANCE_ARN, _instance("shutting-down"), INSTANCE_ID, id="instance-shutting-down"),
+        pytest.param(
+            NAT_ARN, _nat("deleting"), NAT_ID, id="nat-gateway-still-deleting"
+        ),
+        pytest.param(
+            ENDPOINT_ARN,
+            _endpoint("Available"),
+            ENDPOINT_ID,
+            id="vpc-endpoint-available",
+        ),
+        pytest.param(
+            ENDPOINT_ARN,
+            _endpoint("Deleting"),
+            ENDPOINT_ID,
+            id="vpc-endpoint-still-deleting",
+        ),
+        pytest.param(
+            INSTANCE_ARN, _instance("running"), INSTANCE_ID, id="instance-running"
+        ),
+        pytest.param(
+            INSTANCE_ARN,
+            _instance("shutting-down"),
+            INSTANCE_ID,
+            id="instance-shutting-down",
+        ),
         pytest.param(RULE_ARN, _rule(), RULE_ID, id="security-group-rule-live"),
     ],
 )
 def test_refusal_d_still_refuses_a_tagged_resource_ec2_still_holds(
-    root: Path, monkeypatch: pytest.MonkeyPatch, arn: str, answer: subprocess.CompletedProcess, name: str
+    root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    arn: str,
+    answer: subprocess.CompletedProcess,
+    name: str,
 ) -> None:
     _stale_region(monkeypatch, [arn], {name: answer}, expires_at=int(NOW) + 3600)
     report = _preflight(root, AwsRegionGuard())
     assert _failed(report) == ["(d) unfinished runs"]
-    assert f"tagged:ec2 {name} (until 2026-10-08T13:00:00Z)" in _check(report, "(d) unfinished runs").detail
+    assert (
+        f"tagged:ec2 {name} (until 2026-10-08T13:00:00Z)"
+        in _check(report, "(d) unfinished runs").detail
+    )
 
 
 @pytest.mark.parametrize("reason", ["UnauthorizedOperation", "RequestLimitExceeded"])
-@pytest.mark.parametrize(("arn", "name"), [(NAT_ARN, NAT_ID), (RULE_ARN, RULE_ID)], ids=["nat-gateway", "rule"])
+@pytest.mark.parametrize(
+    ("arn", "name"),
+    [(NAT_ARN, NAT_ID), (RULE_ARN, RULE_ID)],
+    ids=["nat-gateway", "rule"],
+)
 def test_refusal_d_counts_a_resource_live_when_its_deletion_cannot_be_read(
-    root: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture, reason: str, arn: str, name: str
+    root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+    reason: str,
+    arn: str,
+    name: str,
 ) -> None:
-    denied = _aws_fail(f"An error occurred ({reason}) when calling the Describe operation")
+    denied = _aws_fail(
+        f"An error occurred ({reason}) when calling the Describe operation"
+    )
     _stale_region(monkeypatch, [arn], {name: denied}, expires_at=int(NOW) + 3600)
     report = _preflight(root, AwsRegionGuard())
     assert _failed(report) == ["(d) unfinished runs"]
@@ -884,7 +1313,12 @@ def test_refusal_d_counts_a_resource_live_when_its_deletion_cannot_be_read(
 
 
 # What one MSK run leaves in the tagging API: four rules that describe-security-group-rules answers NotFound.
-GHOST_RULE_IDS = ["sgr-0aaaaaaaaaaaaaaa1", "sgr-0aaaaaaaaaaaaaaa2", "sgr-0aaaaaaaaaaaaaaa3", "sgr-0aaaaaaaaaaaaaaa4"]
+GHOST_RULE_IDS = [
+    "sgr-0aaaaaaaaaaaaaaa1",
+    "sgr-0aaaaaaaaaaaaaaa2",
+    "sgr-0aaaaaaaaaaaaaaa3",
+    "sgr-0aaaaaaaaaaaaaaa4",
+]
 
 
 def _rule_arn(rule_id: str) -> str:
@@ -900,7 +1334,10 @@ def test_refusal_d_passes_on_ghost_rules_alone_and_says_how_many_it_dropped(
     report = _preflight(root, AwsRegionGuard())
     assert report.ok, [c.detail for c in report.checks if not c.ok]
     detail = _check(report, "(d) unfinished runs").detail
-    assert "dropped 4 tagged resource(s) the tagging API lists and AWS no longer has" in detail
+    assert (
+        "dropped 4 tagged resource(s) the tagging API lists and AWS no longer has"
+        in detail
+    )
     assert all(i in detail for i in GHOST_RULE_IDS)
     assert "dropped" not in _check(report, "(c) expired run resources").detail
 
@@ -911,7 +1348,12 @@ def test_refusal_d_drops_a_ghost_rule_beside_a_live_one_and_still_refuses_for_th
     live = "sgr-0bbbbbbbbbbbbbbb1"
     ghost = GHOST_RULE_IDS[0]
     described = {live: _rule(live), ghost: _rule_not_found(ghost)}
-    _stale_region(monkeypatch, [_rule_arn(live), _rule_arn(ghost)], described, expires_at=int(NOW) + 3600)
+    _stale_region(
+        monkeypatch,
+        [_rule_arn(live), _rule_arn(ghost)],
+        described,
+        expires_at=int(NOW) + 3600,
+    )
     report = _preflight(root, AwsRegionGuard())
     assert _failed(report) == ["(d) unfinished runs"]
     detail = _check(report, "(d) unfinished runs").detail
@@ -929,14 +1371,19 @@ def test_a_run_tagged_resource_of_another_class_is_never_judged_gone(
     root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     calls = _stale_region(
-        monkeypatch, [f"arn:aws:rds:us-west-2:{ACCOUNT}:db:run-db"], {}, expires_at=int(NOW) + 3600
+        monkeypatch,
+        [f"arn:aws:rds:us-west-2:{ACCOUNT}:db:run-db"],
+        {},
+        expires_at=int(NOW) + 3600,
     )
     assert _failed(_preflight(root, AwsRegionGuard())) == ["(d) unfinished runs"]
     described_by_id = [call for call in calls if any(flag in call for flag in ID_FLAGS)]
     assert described_by_id == []
 
 
-def test_a_second_leg_after_a_failed_destroy_creates_nothing(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_second_leg_after_a_failed_destroy_creates_nothing(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Leg 1's teardown failed, so its record and unexpired resources stay; leg 2 stops at preflight."""
     guard, runner = FakeGuard(), FakeRunner(codes={"destroy": 1})
     assert _cycle(root, monkeypatch, guard, runner) == 1
@@ -952,14 +1399,23 @@ def test_the_run_records_are_listed_under_the_prefix_in_the_state_region(
     root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     calls: list[list[str]] = []
-    listing = {"Contents": [{"Key": "dfe-e2e-runs/r-prev/run.json"}, {"Key": "dfe-e2e-runs/r-prev/terraform.tfstate"}]}
+    listing = {
+        "Contents": [
+            {"Key": "dfe-e2e-runs/r-prev/run.json"},
+            {"Key": "dfe-e2e-runs/r-prev/terraform.tfstate"},
+        ]
+    }
 
     def record(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess:
         calls.append(args)
-        return subprocess.CompletedProcess(args, 0, stdout=json.dumps(listing), stderr="")
+        return subprocess.CompletedProcess(
+            args, 0, stdout=json.dumps(listing), stderr=""
+        )
 
     monkeypatch.setattr(cloud_sweep.aws_cli, "run_aws", record)
-    keys = guard_mod.AwsGuard("eu-west-1").run_records("example-state", "us-west-2", "dfe-e2e-runs")
+    keys = guard_mod.AwsGuard("eu-west-1").run_records(
+        "example-state", "us-west-2", "dfe-e2e-runs"
+    )
     assert keys == ["dfe-e2e-runs/r-prev/run.json"]
     (call,) = calls
     assert call[call.index("--prefix") + 1] == "dfe-e2e-runs/"
@@ -974,49 +1430,110 @@ ARMED_ACTION = {
     "ApprovalModel": "AUTOMATIC",
     "ActionType": "APPLY_IAM_POLICY",
     "NotificationType": "ACTUAL",
-    "ActionThreshold": {"ActionThresholdValue": 100.0, "ActionThresholdType": "PERCENTAGE"},
-    "Definition": {"IamActionDefinition": {"PolicyArn": BRAKE, "Roles": ["e2e-runner"]}},
+    "ActionThreshold": {
+        "ActionThresholdValue": 100.0,
+        "ActionThresholdType": "PERCENTAGE",
+    },
+    "Definition": {
+        "IamActionDefinition": {"PolicyArn": BRAKE, "Roles": ["e2e-runner"]}
+    },
     "Status": "STANDBY",
 }
 
 
 def _applies(**iam: object) -> dict:
-    return {"Definition": {"IamActionDefinition": {"PolicyArn": BRAKE, "Roles": ["e2e-runner"], **iam}}}
+    return {
+        "Definition": {
+            "IamActionDefinition": {"PolicyArn": BRAKE, "Roles": ["e2e-runner"], **iam}
+        }
+    }
 
 
 @pytest.mark.parametrize(
     ("change", "refusal"),
     [
         pytest.param({}, None, id="armed_automatic_known_brake_at_the_ceiling"),
-        pytest.param({"ApprovalModel": "MANUAL"}, "approval model is MANUAL", id="manual_approval"),
-        pytest.param({"ApprovalModel": None}, "approval model is None", id="no_approval_model"),
-        pytest.param({"ActionType": "RUN_SSM_DOCUMENTS"}, "not APPLY_IAM_POLICY", id="a_non_deny_type"),
-        pytest.param({"ActionType": "APPLY_SCP_POLICY"}, "not APPLY_IAM_POLICY", id="an_scp_has_no_known_brake"),
-        pytest.param({"Status": "EXECUTION_FAILURE"}, "status is EXECUTION_FAILURE", id="a_failed_action"),
-        pytest.param({"Status": "EXECUTION_SUCCESS"}, "status is EXECUTION_SUCCESS", id="a_brake_already_on"),
         pytest.param(
-            {"ActionThreshold": {"ActionThresholdValue": 150.0, "ActionThresholdType": "PERCENTAGE"}},
+            {"ApprovalModel": "MANUAL"},
+            "approval model is MANUAL",
+            id="manual_approval",
+        ),
+        pytest.param(
+            {"ApprovalModel": None}, "approval model is None", id="no_approval_model"
+        ),
+        pytest.param(
+            {"ActionType": "RUN_SSM_DOCUMENTS"},
+            "not APPLY_IAM_POLICY",
+            id="a_non_deny_type",
+        ),
+        pytest.param(
+            {"ActionType": "APPLY_SCP_POLICY"},
+            "not APPLY_IAM_POLICY",
+            id="an_scp_has_no_known_brake",
+        ),
+        pytest.param(
+            {"Status": "EXECUTION_FAILURE"},
+            "status is EXECUTION_FAILURE",
+            id="a_failed_action",
+        ),
+        pytest.param(
+            {"Status": "EXECUTION_SUCCESS"},
+            "status is EXECUTION_SUCCESS",
+            id="a_brake_already_on",
+        ),
+        pytest.param(
+            {
+                "ActionThreshold": {
+                    "ActionThresholdValue": 150.0,
+                    "ActionThresholdType": "PERCENTAGE",
+                }
+            },
             "past the budget",
             id="a_percentage_past_the_ceiling",
         ),
         pytest.param(
-            {"ActionThreshold": {"ActionThresholdValue": 0, "ActionThresholdType": "PERCENTAGE"}},
+            {
+                "ActionThreshold": {
+                    "ActionThresholdValue": 0,
+                    "ActionThresholdType": "PERCENTAGE",
+                }
+            },
             "not a positive number",
             id="a_zero_threshold",
         ),
-        pytest.param({"ActionThreshold": {}}, "not a positive number", id="no_threshold"),
         pytest.param(
-            {"ActionThreshold": {"ActionThresholdValue": 50, "ActionThresholdType": "BYTES"}},
+            {"ActionThreshold": {}}, "not a positive number", id="no_threshold"
+        ),
+        pytest.param(
+            {
+                "ActionThreshold": {
+                    "ActionThresholdValue": 50,
+                    "ActionThresholdType": "BYTES",
+                }
+            },
             "threshold type is BYTES",
             id="an_unknown_threshold_type",
         ),
-        pytest.param(_applies(PolicyArn="arn:aws:iam::0:policy/some-other-deny"), "not the guardrails' e2e-deny-create",
-                     id="another_policy_that_may_hold_a_deny"),
+        pytest.param(
+            _applies(PolicyArn="arn:aws:iam::0:policy/some-other-deny"),
+            "not the guardrails' e2e-deny-create",
+            id="another_policy_that_may_hold_a_deny",
+        ),
         pytest.param(_applies(PolicyArn=""), "applies no policy", id="no_policy_named"),
         pytest.param({"Definition": {}}, "applies no policy", id="no_iam_definition"),
-        pytest.param(_applies(Roles=[]), "do not include e2e-runner", id="a_policy_applied_to_nobody"),
-        pytest.param(_applies(Roles=[], Users=["alice"]), "do not include e2e-runner", id="a_user_is_not_the_role"),
-        pytest.param(_applies(Roles=["other"]), "do not include e2e-runner", id="another_role"),
+        pytest.param(
+            _applies(Roles=[]),
+            "do not include e2e-runner",
+            id="a_policy_applied_to_nobody",
+        ),
+        pytest.param(
+            _applies(Roles=[], Users=["alice"]),
+            "do not include e2e-runner",
+            id="a_user_is_not_the_role",
+        ),
+        pytest.param(
+            _applies(Roles=["other"]), "do not include e2e-runner", id="another_role"
+        ),
     ],
 )
 def test_a_budget_action_passes_only_as_an_armed_automatic_known_brake_that_reaches_the_role(
@@ -1024,7 +1541,9 @@ def test_a_budget_action_passes_only_as_an_armed_automatic_known_brake_that_reac
 ) -> None:
     action = {**ARMED_ACTION, **change}
     if refusal is None:
-        assert guard_mod.check_budget_action(action, budget=BUDGET, role="e2e-runner").startswith("STANDBY")
+        assert guard_mod.check_budget_action(
+            action, budget=BUDGET, role="e2e-runner"
+        ).startswith("STANDBY")
         return
     with pytest.raises(guard_mod.GuardError, match=refusal):
         guard_mod.check_budget_action(action, budget=BUDGET, role="e2e-runner")
@@ -1033,9 +1552,21 @@ def test_a_budget_action_passes_only_as_an_armed_automatic_known_brake_that_reac
 @pytest.mark.parametrize(
     ("budget", "role", "refusal"),
     [
-        pytest.param("e2e-account-cost", "", "do not include a role this run", id="no_role_known"),
-        pytest.param("other-budget", "e2e-runner", "is not a -account-cost budget", id="not_the_guardrail_budget"),
-        pytest.param("dfe-account-cost", "e2e-runner", "not the guardrails' dfe-deny-create", id="the_prefix_names_the_policy"),
+        pytest.param(
+            "e2e-account-cost", "", "do not include a role this run", id="no_role_known"
+        ),
+        pytest.param(
+            "other-budget",
+            "e2e-runner",
+            "is not a -account-cost budget",
+            id="not_the_guardrail_budget",
+        ),
+        pytest.param(
+            "dfe-account-cost",
+            "e2e-runner",
+            "not the guardrails' dfe-deny-create",
+            id="the_prefix_names_the_policy",
+        ),
     ],
 )
 def test_a_budget_action_fails_closed_without_a_role_or_the_guardrail_budget(
@@ -1045,26 +1576,40 @@ def test_a_budget_action_fails_closed_without_a_role_or_the_guardrail_budget(
         guard_mod.check_budget_action(ARMED_ACTION, budget=budget, role=role)
 
 
-DENY_DOCUMENT = {"Version": "2012-10-17", "Statement": [{"Effect": "Deny", "Action": "ec2:RunInstances", "Resource": "*"}]}
-ALLOW_DOCUMENT = {"Version": "2012-10-17", "Statement": [{"Effect": "Allow", "Action": "*", "Resource": "*"}]}
+DENY_DOCUMENT = {
+    "Version": "2012-10-17",
+    "Statement": [{"Effect": "Deny", "Action": "ec2:RunInstances", "Resource": "*"}],
+}
+ALLOW_DOCUMENT = {
+    "Version": "2012-10-17",
+    "Statement": [{"Effect": "Allow", "Action": "*", "Resource": "*"}],
+}
 
 
 @pytest.mark.parametrize(
     ("document", "denies"),
     [
         pytest.param(DENY_DOCUMENT, True, id="a_deny_statement"),
-        pytest.param({"Statement": {"Effect": "Deny", "Action": "*", "Resource": "*"}}, True, id="one_statement_as_an_object"),
+        pytest.param(
+            {"Statement": {"Effect": "Deny", "Action": "*", "Resource": "*"}},
+            True,
+            id="one_statement_as_an_object",
+        ),
         pytest.param(ALLOW_DOCUMENT, False, id="allow_only"),
         pytest.param({"Statement": []}, False, id="no_statements"),
         pytest.param({}, False, id="no_statement_key"),
         pytest.param("not a document", False, id="not_a_document"),
     ],
 )
-def test_a_policy_stops_something_only_if_it_holds_a_deny(document: object, denies: bool) -> None:
+def test_a_policy_stops_something_only_if_it_holds_a_deny(
+    document: object, denies: bool
+) -> None:
     assert guard_mod.policy_document_denies(document) is denies
 
 
-def _budget_reads(monkeypatch: pytest.MonkeyPatch, action: dict, document: object, caller: str) -> None:
+def _budget_reads(
+    monkeypatch: pytest.MonkeyPatch, action: dict, document: object, caller: str
+) -> None:
     def read(args: list[str], _region: str) -> dict:
         if args[:2] == ["sts", "get-caller-identity"]:
             return {"Account": ACCOUNT, "Arn": caller}
@@ -1083,15 +1628,33 @@ RUNNER_SESSION = f"arn:aws:sts::{ACCOUNT}:assumed-role/e2e-runner/dfe-cloud-cycl
 @pytest.mark.parametrize(
     ("caller", "document", "refusal"),
     [
-        pytest.param(RUNNER_SESSION, DENY_DOCUMENT, None, id="the_runner_role_and_a_deny"),
-        pytest.param(RUNNER_SESSION, ALLOW_DOCUMENT, "no Deny statement", id="the_known_policy_without_a_deny"),
+        pytest.param(
+            RUNNER_SESSION, DENY_DOCUMENT, None, id="the_runner_role_and_a_deny"
+        ),
+        pytest.param(
+            RUNNER_SESSION,
+            ALLOW_DOCUMENT,
+            "no Deny statement",
+            id="the_known_policy_without_a_deny",
+        ),
         pytest.param(
             f"arn:aws:sts::{ACCOUNT}:assumed-role/AWSReservedSSO_AdministratorAccess_abc/someone@example.com",
-            DENY_DOCUMENT, "do not include AWSReservedSSO_AdministratorAccess_abc",
+            DENY_DOCUMENT,
+            "do not include AWSReservedSSO_AdministratorAccess_abc",
             id="an_sso_admin_session_the_brake_does_not_reach",
         ),
-        pytest.param(f"arn:aws:iam::{ACCOUNT}:user/alice", DENY_DOCUMENT, "not an assumed role", id="an_iam_user"),
-        pytest.param(f"arn:aws:iam::{ACCOUNT}:root", DENY_DOCUMENT, "not an assumed role", id="the_account_root"),
+        pytest.param(
+            f"arn:aws:iam::{ACCOUNT}:user/alice",
+            DENY_DOCUMENT,
+            "not an assumed role",
+            id="an_iam_user",
+        ),
+        pytest.param(
+            f"arn:aws:iam::{ACCOUNT}:root",
+            DENY_DOCUMENT,
+            "not an assumed role",
+            id="the_account_root",
+        ),
     ],
 )
 def test_the_guard_covers_the_role_it_runs_as_not_the_configured_one(
@@ -1122,27 +1685,90 @@ SCHEDULE = {
     [
         pytest.param({}, None, id="a_recurring_rate_inside_the_window"),
         pytest.param({"ScheduleExpression": "rate(1 hour)"}, None, id="hourly"),
-        pytest.param({"ScheduleExpression": "cron(0/30 * * * ? *)"}, None, id="a_half_hourly_cron"),
-        pytest.param({"ScheduleExpression": "cron(0 * ? * SUN-SAT *)"}, None, id="hourly_on_every_named_weekday"),
-        pytest.param({"Target": {**SCHEDULE["Target"], "Arn": SWEEPER_ARN + ":live"}}, None, id="an_alias_target"),
+        pytest.param(
+            {"ScheduleExpression": "cron(0/30 * * * ? *)"},
+            None,
+            id="a_half_hourly_cron",
+        ),
+        pytest.param(
+            {"ScheduleExpression": "cron(0 * ? * SUN-SAT *)"},
+            None,
+            id="hourly_on_every_named_weekday",
+        ),
+        pytest.param(
+            {"Target": {**SCHEDULE["Target"], "Arn": SWEEPER_ARN + ":live"}},
+            None,
+            id="an_alias_target",
+        ),
         pytest.param({"State": "DISABLED"}, "not ENABLED", id="disabled"),
-        pytest.param({"ScheduleExpression": "at(2999-01-01T00:00:00)"}, "one-shot", id="a_one_shot_at"),
-        pytest.param({"ScheduleExpression": "rate(1 day)"}, "between runs", id="a_daily_rate"),
-        pytest.param({"ScheduleExpression": "cron(0 3 * * ? *)"}, "between runs", id="a_daily_cron"),
-        pytest.param({"ScheduleExpression": "cron(0 * ? * 2 *)"}, "between runs", id="hourly_on_mondays_only"),
-        pytest.param({"ScheduleExpression": "cron(0 0 1 1 ? 2099)"}, "between runs", id="a_far_year"),
-        pytest.param({"ScheduleExpression": "every day"}, "neither rate", id="an_unreadable_expression"),
-        pytest.param({"ScheduleExpression": "cron(0 L * * ? *)"}, "cannot judge", id="a_cron_form_it_cannot_judge"),
-        pytest.param({"EndDate": "2020-01-01T00:00:00+00:00"}, "ends before", id="an_end_date_in_the_past"),
-        pytest.param({"EndDate": "2026-10-08T13:00:00+00:00"}, "ends before", id="an_end_date_inside_the_window"),
-        pytest.param({"StartDate": "2999-01-01T00:00:00+00:00"}, "not started", id="a_future_start"),
+        pytest.param(
+            {"ScheduleExpression": "at(2999-01-01T00:00:00)"},
+            "one-shot",
+            id="a_one_shot_at",
+        ),
+        pytest.param(
+            {"ScheduleExpression": "rate(1 day)"}, "between runs", id="a_daily_rate"
+        ),
+        pytest.param(
+            {"ScheduleExpression": "cron(0 3 * * ? *)"},
+            "between runs",
+            id="a_daily_cron",
+        ),
+        pytest.param(
+            {"ScheduleExpression": "cron(0 * ? * 2 *)"},
+            "between runs",
+            id="hourly_on_mondays_only",
+        ),
+        pytest.param(
+            {"ScheduleExpression": "cron(0 0 1 1 ? 2099)"},
+            "between runs",
+            id="a_far_year",
+        ),
+        pytest.param(
+            {"ScheduleExpression": "every day"},
+            "neither rate",
+            id="an_unreadable_expression",
+        ),
+        pytest.param(
+            {"ScheduleExpression": "cron(0 L * * ? *)"},
+            "cannot judge",
+            id="a_cron_form_it_cannot_judge",
+        ),
+        pytest.param(
+            {"EndDate": "2020-01-01T00:00:00+00:00"},
+            "ends before",
+            id="an_end_date_in_the_past",
+        ),
+        pytest.param(
+            {"EndDate": "2026-10-08T13:00:00+00:00"},
+            "ends before",
+            id="an_end_date_inside_the_window",
+        ),
+        pytest.param(
+            {"StartDate": "2999-01-01T00:00:00+00:00"},
+            "not started",
+            id="a_future_start",
+        ),
         pytest.param({"ScheduleExpressionTimezone": "Etc/UTC"}, None, id="etc_utc"),
         pytest.param({"ScheduleExpressionTimezone": "UTC"}, None, id="utc"),
-        pytest.param({"ScheduleExpressionTimezone": "Australia/Sydney"}, "only judged in UTC", id="a_local_timezone"),
-        pytest.param({"FlexibleTimeWindow": {"Mode": "FLEXIBLE", "MaximumWindowInMinutes": 180}},
-                     "between runs", id="a_flexible_window_that_pushes_it_out"),
-        pytest.param({"Target": {**SCHEDULE["Target"], "Arn": SWEEPER_ARN + "-other"}}, "not arn", id="another_function"),
-        pytest.param({"Target": {"Arn": SWEEPER_ARN}}, "no role", id="no_invoking_role"),
+        pytest.param(
+            {"ScheduleExpressionTimezone": "Australia/Sydney"},
+            "only judged in UTC",
+            id="a_local_timezone",
+        ),
+        pytest.param(
+            {"FlexibleTimeWindow": {"Mode": "FLEXIBLE", "MaximumWindowInMinutes": 180}},
+            "between runs",
+            id="a_flexible_window_that_pushes_it_out",
+        ),
+        pytest.param(
+            {"Target": {**SCHEDULE["Target"], "Arn": SWEEPER_ARN + "-other"}},
+            "not arn",
+            id="another_function",
+        ),
+        pytest.param(
+            {"Target": {"Arn": SWEEPER_ARN}}, "no role", id="no_invoking_role"
+        ),
     ],
 )
 def test_a_sweeper_schedule_has_to_recur_often_enough_and_be_aimed_at_the_function(
@@ -1151,13 +1777,19 @@ def test_a_sweeper_schedule_has_to_recur_often_enough_and_be_aimed_at_the_functi
     schedule = {**SCHEDULE, **change}
     now = 1791460800.0
     if refusal is None:
-        assert guard_mod.check_schedule(schedule, function_arn=SWEEPER_ARN, window=SWEEPER_WINDOW, now=now)
+        assert guard_mod.check_schedule(
+            schedule, function_arn=SWEEPER_ARN, window=SWEEPER_WINDOW, now=now
+        )
         return
     with pytest.raises(guard_mod.GuardError, match=refusal):
-        guard_mod.check_schedule(schedule, function_arn=SWEEPER_ARN, window=SWEEPER_WINDOW, now=now)
+        guard_mod.check_schedule(
+            schedule, function_arn=SWEEPER_ARN, window=SWEEPER_WINDOW, now=now
+        )
 
 
-def _aws_reads(monkeypatch: pytest.MonkeyPatch, state: str, schedules: list[dict]) -> None:
+def _aws_reads(
+    monkeypatch: pytest.MonkeyPatch, state: str, schedules: list[dict]
+) -> None:
     def read(args: list[str], _region: str) -> dict:
         if args[0] == "lambda":
             return {"State": state, "FunctionArn": SWEEPER_ARN}
@@ -1166,7 +1798,12 @@ def _aws_reads(monkeypatch: pytest.MonkeyPatch, state: str, schedules: list[dict
             return next(s for s in schedules if s["Name"] == name)
         return {
             "Schedules": [
-                {"Name": s["Name"], "GroupName": "default", "State": s["State"], "Target": {"Arn": s["Target"]["Arn"]}}
+                {
+                    "Name": s["Name"],
+                    "GroupName": "default",
+                    "State": s["State"],
+                    "Target": {"Arn": s["Target"]["Arn"]},
+                }
                 for s in schedules
             ]
         }
@@ -1177,29 +1814,63 @@ def _aws_reads(monkeypatch: pytest.MonkeyPatch, state: str, schedules: list[dict
 @pytest.mark.parametrize(
     ("state", "schedules", "outcome"),
     [
-        pytest.param("Active", [SCHEDULE], "Active, run by e2e-sweeper", id="a_working_schedule_targets_it"),
-        pytest.param("Failed", [], "Failed", id="failed_is_left_to_the_caller"),
-        pytest.param("Active", [{**SCHEDULE, "State": "DISABLED"}], None, id="a_disabled_schedule"),
-        pytest.param("Active", [{**SCHEDULE, "ScheduleExpression": "at(2999-01-01T00:00:00)"}], None, id="a_one_shot"),
-        pytest.param("Active", [{**SCHEDULE, "ScheduleExpression": "rate(1 day)"}], None, id="too_infrequent"),
         pytest.param(
-            "Active", [{**SCHEDULE, "Target": {**SCHEDULE["Target"], "Arn": SWEEPER_ARN + "-other"}}], None,
+            "Active",
+            [SCHEDULE],
+            "Active, run by e2e-sweeper",
+            id="a_working_schedule_targets_it",
+        ),
+        pytest.param("Failed", [], "Failed", id="failed_is_left_to_the_caller"),
+        pytest.param(
+            "Active",
+            [{**SCHEDULE, "State": "DISABLED"}],
+            None,
+            id="a_disabled_schedule",
+        ),
+        pytest.param(
+            "Active",
+            [{**SCHEDULE, "ScheduleExpression": "at(2999-01-01T00:00:00)"}],
+            None,
+            id="a_one_shot",
+        ),
+        pytest.param(
+            "Active",
+            [{**SCHEDULE, "ScheduleExpression": "rate(1 day)"}],
+            None,
+            id="too_infrequent",
+        ),
+        pytest.param(
+            "Active",
+            [
+                {
+                    **SCHEDULE,
+                    "Target": {**SCHEDULE["Target"], "Arn": SWEEPER_ARN + "-other"},
+                }
+            ],
+            None,
             id="a_schedule_for_another_function",
         ),
         pytest.param("Active", [], None, id="no_schedule_at_all"),
         pytest.param(
-            "Active", [{**SCHEDULE, "State": "DISABLED"}, {**SCHEDULE, "Name": "second"}],
-            "Active, run by second", id="one_working_schedule_among_broken_ones",
+            "Active",
+            [{**SCHEDULE, "State": "DISABLED"}, {**SCHEDULE, "Name": "second"}],
+            "Active, run by second",
+            id="one_working_schedule_among_broken_ones",
         ),
     ],
 )
 def test_the_sweeper_passes_only_with_a_working_schedule_that_targets_it(
-    monkeypatch: pytest.MonkeyPatch, state: str, schedules: list[dict], outcome: str | None
+    monkeypatch: pytest.MonkeyPatch,
+    state: str,
+    schedules: list[dict],
+    outcome: str | None,
 ) -> None:
     _aws_reads(monkeypatch, state, schedules)
     guard = guard_mod.AwsGuard("us-west-2")
     if outcome is None:
-        with pytest.raises(guard_mod.GuardError, match="no working EventBridge Scheduler schedule"):
+        with pytest.raises(
+            guard_mod.GuardError, match="no working EventBridge Scheduler schedule"
+        ):
             guard.sweeper("e2e-sweeper", SWEEPER_WINDOW, 1791460800.0)
         return
     assert guard.sweeper("e2e-sweeper", SWEEPER_WINDOW, 1791460800.0) == outcome
@@ -1208,19 +1879,35 @@ def test_the_sweeper_passes_only_with_a_working_schedule_that_targets_it(
 # --- the run's overlay ----------------------------------------------------------------------------
 
 
-def test_the_overlay_gives_the_run_its_own_state_key_tags_and_no_cloudtrail(root: Path) -> None:
+def test_the_overlay_gives_the_run_its_own_state_key_tags_and_no_cloudtrail(
+    root: Path,
+) -> None:
     overlay = guard_mod.build_overlay(_config(root), "run-1", int(NOW))
-    assert overlay["state"] == {"bucket": "example-state", "region": "us-west-2",
-                                "key": "dfe-e2e-runs/run-1/terraform.tfstate"}
+    assert overlay["state"] == {
+        "bucket": "example-state",
+        "region": "us-west-2",
+        "key": "dfe-e2e-runs/run-1/terraform.tfstate",
+    }
     assert overlay["run"] == cloud_run.run_tfvar("run-1", int(NOW))
     assert overlay["cloudtrail"] == {"enabled": False}
-    assert not {"permissions_boundary", "iam_path", "s3_bucket_prefix", "inspector_ec2_exclusion",
-                "endpoint", "edge_self_ranges"} & set(overlay)
+    assert not {
+        "permissions_boundary",
+        "iam_path",
+        "s3_bucket_prefix",
+        "inspector_ec2_exclusion",
+        "endpoint",
+        "edge_self_ranges",
+    } & set(overlay)
 
 
 def test_the_overlay_carries_every_configured_guardrail_input(root: Path) -> None:
-    config = _config(root, permissions_boundary=f"arn:aws:iam::{ACCOUNT}:policy/b", iam_path="/dfe-e2e/",
-                     s3_bucket_prefix="dfe-e2e-", inspector_exclusion=True)
+    config = _config(
+        root,
+        permissions_boundary=f"arn:aws:iam::{ACCOUNT}:policy/b",
+        iam_path="/dfe-e2e/",
+        s3_bucket_prefix="dfe-e2e-",
+        inspector_exclusion=True,
+    )
     overlay = guard_mod.build_overlay(config, "run-1", int(NOW))
     assert overlay["permissions_boundary"] == f"arn:aws:iam::{ACCOUNT}:policy/b"
     assert overlay["iam_path"] == "/dfe-e2e/"
@@ -1236,22 +1923,32 @@ RUNNER_CIDR = "20.1.2.3/32"
 def test_an_endpoint_cidr_opens_the_api_to_that_address_alone(root: Path) -> None:
     """The run's address replaces the dial's list rather than joining it."""
     (root / "dial.auto.tfvars.json").write_text(
-        json.dumps({**TFVARS, "endpoint": {"public": False, "allowed_cidrs": ["52.0.0.0/8"]}}),
+        json.dumps(
+            {**TFVARS, "endpoint": {"public": False, "allowed_cidrs": ["52.0.0.0/8"]}}
+        ),
         encoding="utf-8",
     )
-    overlay = guard_mod.build_overlay(_config(root, endpoint_cidr=RUNNER_CIDR), "run-1", int(NOW))
+    overlay = guard_mod.build_overlay(
+        _config(root, endpoint_cidr=RUNNER_CIDR), "run-1", int(NOW)
+    )
     assert overlay["endpoint"] == {"public": True, "allowed_cidrs": [RUNNER_CIDR]}
 
 
-def test_an_endpoint_cidr_makes_the_runner_one_of_the_gateways_self_ranges(root: Path) -> None:
+def test_an_endpoint_cidr_makes_the_runner_one_of_the_gateways_self_ranges(
+    root: Path,
+) -> None:
     """The gateway's load balancer is public too, and a run's console test reaches it
     from the runner; the root adds the cluster's own NAT addresses beside it."""
-    overlay = guard_mod.build_overlay(_config(root, endpoint_cidr=RUNNER_CIDR), "run-1", int(NOW))
+    overlay = guard_mod.build_overlay(
+        _config(root, endpoint_cidr=RUNNER_CIDR), "run-1", int(NOW)
+    )
     assert overlay["edge_self_ranges"] == [RUNNER_CIDR]
     assert "edge_allowed_cidrs" not in overlay
 
 
-def test_the_endpoint_cidr_comes_from_the_environment_and_the_flag_wins(root: Path) -> None:
+def test_the_endpoint_cidr_comes_from_the_environment_and_the_flag_wins(
+    root: Path,
+) -> None:
     env = {guard_mod.ENDPOINT_CIDR_ENV: RUNNER_CIDR}
     assert guard_mod.resolve_config(_args(root), env).endpoint_cidr == RUNNER_CIDR
     flagged = guard_mod.resolve_config(_args(root, endpoint_cidr="20.9.9.9/32"), env)
@@ -1262,24 +1959,31 @@ def test_a_bare_address_reads_as_its_own_slash_32() -> None:
     assert guard_mod.endpoint_cidr("20.1.2.3") == RUNNER_CIDR
 
 
-@pytest.mark.parametrize("raw", [
-    "0.0.0.0/0",          # the internet
-    "20.1.2.0/24",        # wider than one address
-    "20.1.2.3/24",        # host bits set under a wider prefix
-    "20.1.2.3/33",
-    "10.0.0.1/32",        # private
-    "100.64.0.1/32",      # carrier-grade NAT
-    "203.0.113.7/32",     # documentation range
-    "127.0.0.1",
-    "2600:1f14::1/128",   # IPv6
-    "not-an-address",
-])
-def test_expected_fail_anything_but_one_public_ipv4_address_is_refused(root: Path, raw: str) -> None:
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "0.0.0.0/0",  # the internet
+        "20.1.2.0/24",  # wider than one address
+        "20.1.2.3/24",  # host bits set under a wider prefix
+        "20.1.2.3/33",
+        "10.0.0.1/32",  # private
+        "100.64.0.1/32",  # carrier-grade NAT
+        "203.0.113.7/32",  # documentation range
+        "127.0.0.1",
+        "2600:1f14::1/128",  # IPv6
+        "not-an-address",
+    ],
+)
+def test_expected_fail_anything_but_one_public_ipv4_address_is_refused(
+    root: Path, raw: str
+) -> None:
     with pytest.raises(guard_mod.GuardError, match="endpoint CIDR"):
         _config(root, endpoint_cidr=raw)
 
 
-def test_a_refused_endpoint_cidr_creates_nothing(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_refused_endpoint_cidr_creates_nothing(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     guard, runner = FakeGuard(), FakeRunner()
     assert _cycle(root, monkeypatch, guard, runner, endpoint_cidr="0.0.0.0/0") == 2
     assert runner.commands == []
@@ -1295,10 +1999,14 @@ def test_the_run_applies_and_records_the_api_open_to_its_own_address(
     at_apply: list[tuple[dict, dict]] = []
 
     def capture() -> None:
-        overlay = json.loads((root / guard_mod.OVERLAY_NAME).read_text(encoding="utf-8"))
+        overlay = json.loads(
+            (root / guard_mod.OVERLAY_NAME).read_text(encoding="utf-8")
+        )
         record = json.loads(next(iter(guard.records.values())))
         at_apply.append((overlay["endpoint"], record["tfvars"]["endpoint"]))
-        at_apply.append((overlay["edge_self_ranges"], record["tfvars"]["edge_self_ranges"]))
+        at_apply.append(
+            (overlay["edge_self_ranges"], record["tfvars"]["edge_self_ranges"])
+        )
 
     runner.on_run = {"apply": capture}
     assert _cycle(root, monkeypatch, guard, runner, endpoint_cidr=RUNNER_CIDR) == 0
@@ -1308,14 +2016,25 @@ def test_the_run_applies_and_records_the_api_open_to_its_own_address(
     assert not (root / guard_mod.OVERLAY_NAME).exists()
 
 
-@pytest.mark.parametrize(("endpoint", "cidr", "names"), [
-    (None, RUNNER_CIDR, f"public to {RUNNER_CIDR} alone"),
-    ({"public": True, "allowed_cidrs": ["52.0.0.0/8"]}, None, "public to 52.0.0.0/8 as the dial sets"),
-    ({"public": False, "allowed_cidrs": []}, None, "private only"),
-])
+@pytest.mark.parametrize(
+    ("endpoint", "cidr", "names"),
+    [
+        (None, RUNNER_CIDR, f"public to {RUNNER_CIDR} alone"),
+        (
+            {"public": True, "allowed_cidrs": ["52.0.0.0/8"]},
+            None,
+            "public to 52.0.0.0/8 as the dial sets",
+        ),
+        ({"public": False, "allowed_cidrs": []}, None, "private only"),
+    ],
+)
 def test_preflight_says_who_can_reach_the_api(
-    root: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
-    endpoint: dict | None, cidr: str | None, names: str,
+    root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+    endpoint: dict | None,
+    cidr: str | None,
+    names: str,
 ) -> None:
     if endpoint is not None:
         (root / "dial.auto.tfvars.json").write_text(
@@ -1358,7 +2077,10 @@ def _preflight_command(root: Path, monkeypatch: pytest.MonkeyPatch) -> int:
 
 @pytest.mark.parametrize("missing", sorted(CH_ENV))
 def test_expected_fail_preflight_of_an_external_dial_missing_a_setting_is_refused(
-    root: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture, missing: str
+    root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+    missing: str,
 ) -> None:
     _clickhouse_dial(root, "external")
     env = {name: value for name, value in CH_ENV.items() if name != missing}
@@ -1374,7 +2096,10 @@ def test_expected_fail_preflight_of_an_external_dial_missing_a_setting_is_refuse
 
 @pytest.mark.parametrize("blank", ["", "   "])
 def test_expected_fail_preflight_reads_a_blank_clickhouse_setting_as_unset(
-    root: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture, blank: str
+    root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+    blank: str,
 ) -> None:
     _clickhouse_dial(root, "external")
     _clickhouse_env(monkeypatch, {**CH_ENV, "DFE_CYCLE_CH_SERVICE_ID": blank})
@@ -1393,7 +2118,10 @@ def test_preflight_of_an_external_dial_with_every_setting_passes(
 
 @pytest.mark.parametrize("mode", ["in_cluster", None])
 def test_preflight_of_an_in_cluster_dial_needs_no_clickhouse_setting(
-    root: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture, mode: str | None
+    root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+    mode: str | None,
 ) -> None:
     _clickhouse_dial(root, mode)
     _clickhouse_env(monkeypatch, {})
@@ -1413,13 +2141,21 @@ def test_preflight_and_cycle_refuse_an_external_dial_in_the_same_words(
     cycle = capsys.readouterr().err
     assert runner.commands == []
     assert all(name in preflight for name in CH_ENV)
-    assert preflight.replace("cloud-preflight refused", "cloud-cycle refused", 1) == cycle
+    assert (
+        preflight.replace("cloud-preflight refused", "cloud-cycle refused", 1) == cycle
+    )
 
 
 # --- cloud-cycle: nothing created on a refusal, torn down on every exit ------------------------------
 
 
-def _cycle(root: Path, monkeypatch: pytest.MonkeyPatch, guard: FakeGuard, runner: FakeRunner, **overrides: object) -> int:
+def _cycle(
+    root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    guard: FakeGuard,
+    runner: FakeRunner,
+    **overrides: object,
+) -> int:
     monkeypatch.setattr(guard_mod, "_make_guard", lambda config: guard)
     monkeypatch.setattr(guard_mod, "Runner", lambda: runner)
     monkeypatch.setattr(guard_mod, "_tofu_output", lambda tf_dir, name: "dfe-example")
@@ -1427,7 +2163,9 @@ def _cycle(root: Path, monkeypatch: pytest.MonkeyPatch, guard: FakeGuard, runner
     return guard_mod.cmd_cloud_cycle(_args(root, run_id="run-1", **overrides))
 
 
-def test_a_refused_preflight_creates_nothing(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_refused_preflight_creates_nothing(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     guard, runner = FakeGuard(), FakeRunner()
     guard.missing = {"role"}
     assert _cycle(root, monkeypatch, guard, runner) == 2
@@ -1436,10 +2174,16 @@ def test_a_refused_preflight_creates_nothing(root: Path, monkeypatch: pytest.Mon
     assert not (root / guard_mod.OVERLAY_NAME).exists()
 
 
-def test_a_successful_run_applies_cycles_destroys_and_clears_its_record(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_successful_run_applies_cycles_destroys_and_clears_its_record(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     guard, runner = FakeGuard(), FakeRunner()
     seen_overlay: list[dict] = []
-    runner.on_run = {"apply": lambda: seen_overlay.append(json.loads((root / guard_mod.OVERLAY_NAME).read_text()))}
+    runner.on_run = {
+        "apply": lambda: seen_overlay.append(
+            json.loads((root / guard_mod.OVERLAY_NAME).read_text())
+        )
+    }
     assert _cycle(root, monkeypatch, guard, runner) == 0
     assert runner.words() == ["init", "apply", "cycle", "destroy"]
     assert seen_overlay[0]["state"]["key"] == "dfe-e2e-runs/run-1/terraform.tfstate"
@@ -1451,7 +2195,9 @@ def test_a_successful_run_applies_cycles_destroys_and_clears_its_record(root: Pa
     assert cycle[-2:] == ["--mode", "single"]
 
 
-def test_the_run_record_is_written_before_the_apply(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_run_record_is_written_before_the_apply(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     guard, runner = FakeGuard(), FakeRunner()
     records_at_apply: list[int] = []
     runner.on_run = {"apply": lambda: records_at_apply.append(len(guard.records))}
@@ -1475,20 +2221,28 @@ def test_a_record_that_cannot_be_written_stops_before_tofu_and_cleans_up(
     assert not (root / guard_mod.OVERLAY_NAME).exists()
 
 
-def test_a_failed_apply_is_still_destroyed(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_failed_apply_is_still_destroyed(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     runner = FakeRunner(codes={"apply": 1})
     assert _cycle(root, monkeypatch, FakeGuard(), runner) == 1
     assert runner.words() == ["init", "apply", "destroy"]
 
 
-def test_an_exception_mid_run_is_still_destroyed(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_an_exception_mid_run_is_still_destroyed(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     guard, runner = FakeGuard(), FakeRunner()
-    guard.kubeconfig_error = cloud_sweep.CloudSweepError("aws eks update-kubeconfig failed")
+    guard.kubeconfig_error = cloud_sweep.CloudSweepError(
+        "aws eks update-kubeconfig failed"
+    )
     assert _cycle(root, monkeypatch, guard, runner) == 1
     assert runner.words() == ["init", "apply", "destroy"]
 
 
-def test_sigterm_during_the_cycle_removes_workloads_then_destroys(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_sigterm_during_the_cycle_removes_workloads_then_destroys(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The agent killed mid-run: the cycle never reached its own destroy, so the
     workloads go first and then the infrastructure, and the run says it was cut."""
     runner = FakeRunner(on_run={"cycle": lambda: os.kill(os.getpid(), signal.SIGTERM)})
@@ -1537,7 +2291,11 @@ def test_the_workload_teardown_is_held_to_half_the_margin_and_tofu_destroy_still
     assert runner.words() == ["init", "apply", "cycle", "teardown", "destroy"]
     teardown = runner.words().index("teardown")
     assert runner.sessions[teardown] is True
-    assert 30 * 60 * guard_mod.WORKLOAD_TEARDOWN_SHARE - 60 < runner.deadlines[teardown] <= 900
+    assert (
+        30 * 60 * guard_mod.WORKLOAD_TEARDOWN_SHARE - 60
+        < runner.deadlines[teardown]
+        <= 900
+    )
     assert runner.deadlines[runner.words().index("destroy")] is None
     assert guard.deleted == ["dfe-e2e-runs/run-1/run.json"]
     assert "passed its 900s share of the teardown margin" in capsys.readouterr().err
@@ -1604,7 +2362,10 @@ def test_every_child_of_a_run_lands_in_the_dials_region_not_the_shells(
     assert runner.words() == ["init", "apply", "cycle", "teardown", "destroy"]
     for cmd, env in zip(runner.commands, runner.envs, strict=True):
         assert env is not None, cmd
-        assert (env["AWS_REGION"], env["AWS_DEFAULT_REGION"]) == ("us-west-2", "us-west-2"), cmd
+        assert (env["AWS_REGION"], env["AWS_DEFAULT_REGION"]) == (
+            "us-west-2",
+            "us-west-2",
+        ), cmd
     assert runner.envs[3]["KUBECONFIG"].endswith("kubeconfig")
 
 
@@ -1614,7 +2375,9 @@ def test_the_cycle_hands_its_admin_probe_the_runners_address(
     """The runner is one of the gateway's self ranges, so a door that ignores it is down, not fenced."""
     monkeypatch.delenv(guard_mod.PROBE_SOURCE_ENV, raising=False)
     runner = FakeRunner()
-    assert _cycle(root, monkeypatch, FakeGuard(), runner, endpoint_cidr=RUNNER_CIDR) == 0
+    assert (
+        _cycle(root, monkeypatch, FakeGuard(), runner, endpoint_cidr=RUNNER_CIDR) == 0
+    )
     cycle_env = runner.envs[runner.words().index("cycle")]
     assert cycle_env is not None
     assert cycle_env[guard_mod.PROBE_SOURCE_ENV] == RUNNER_CIDR.split("/")[0]
@@ -1629,7 +2392,9 @@ def test_a_cycle_with_no_endpoint_cidr_names_no_probe_source(
     assert all(guard_mod.PROBE_SOURCE_ENV not in (env or {}) for env in runner.envs)
 
 
-def test_the_preflight_s3_listing_is_sent_to_the_dials_region(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_preflight_s3_listing_is_sent_to_the_dials_region(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The S3 client the sweep makes for check (c) names the run's region, whatever
     the shell's default -- the org fence denies ListBuckets sent anywhere else."""
     monkeypatch.setenv("AWS_DEFAULT_REGION", "ap-southeast-2")
@@ -1641,14 +2406,21 @@ def test_the_preflight_s3_listing_is_sent_to_the_dials_region(root: Path, monkey
 
     monkeypatch.setattr(cloud_sweep.aws_cli, "run_aws", record)
     config = _config(root)
-    assert guard_mod.AwsGuard(config.region).run_resources(config.keys, config.state_bucket) == []
+    assert (
+        guard_mod.AwsGuard(config.region).run_resources(
+            config.keys, config.state_bucket
+        )
+        == []
+    )
     list_buckets = [c for c in calls if c[:2] == ["s3api", "list-buckets"]]
     assert len(list_buckets) == 1
     assert list_buckets[0][list_buckets[0].index("--region") + 1] == "us-west-2"
     assert all(c[c.index("--region") + 1] == "us-west-2" for c in calls)
 
 
-def test_a_failed_destroy_keeps_the_record_and_overlay_for_the_reaper(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_failed_destroy_keeps_the_record_and_overlay_for_the_reaper(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     guard, runner = FakeGuard(), FakeRunner(codes={"destroy": 1})
     assert _cycle(root, monkeypatch, guard, runner) == 1
     assert guard.deleted == []
@@ -1661,8 +2433,17 @@ def test_a_failed_destroy_keeps_the_record_and_overlay_for_the_reaper(root: Path
 
 RUN_EXPIRES_AT = int(NOW) + 2 * 3600 + 30 * 60
 SWEEP_ARGS = [
-    "--provider", "aws", "--region", "us-west-2", "--tag-filter", "dfe-e2e=run-1",
-    "--delete", "--account", ACCOUNT, "--exclude-bucket", "example-state",
+    "--provider",
+    "aws",
+    "--region",
+    "us-west-2",
+    "--tag-filter",
+    "dfe-e2e=run-1",
+    "--delete",
+    "--account",
+    ACCOUNT,
+    "--exclude-bucket",
+    "example-state",
 ]
 
 
@@ -1684,7 +2465,9 @@ def test_a_successful_destroy_then_sweeps_the_runs_own_tag_in_its_region_and_acc
     assert guard.deleted == ["dfe-e2e-runs/run-1/run.json"]
 
 
-def test_a_renamed_run_tag_key_reaches_the_teardown_sweep(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_renamed_run_tag_key_reaches_the_teardown_sweep(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv("DFE_RUN_TAG_KEY", "ci-run")
     guard = FakeGuard()
     assert _cycle(root, monkeypatch, guard, FakeRunner()) == 0
@@ -1725,11 +2508,19 @@ def test_a_destroy_held_by_a_leaked_interface_sweeps_it_and_destroys_again(
     parsed = cloud_sweep.build_parser().parse_args(guard.sweeps[0])
     assert parsed.kind == ["eni"]
     assert cloud_sweep.parse_tag_filter(parsed.tag_filter) == {"dfe-e2e": "run-1"}
-    assert (parsed.expired, parsed.include_untagged, parsed.delete, parsed.yes) == (False, False, True, True)
+    assert (parsed.expired, parsed.include_untagged, parsed.delete, parsed.yes) == (
+        False,
+        False,
+        True,
+        True,
+    )
     assert guard.deleted == ["dfe-e2e-runs/run-1/run.json"]
     assert not (root / guard_mod.OVERLAY_NAME).exists()
     err = capsys.readouterr().err
-    assert "tofu destroy failed; deleting the network interfaces that carry dfe-e2e=run-1" in err
+    assert (
+        "tofu destroy failed; deleting the network interfaces that carry dfe-e2e=run-1"
+        in err
+    )
     assert "TEARDOWN FAILED" not in err
 
 
@@ -1750,12 +2541,19 @@ def test_an_interface_sweep_that_cannot_finish_still_destroys_again(
     root: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
 ) -> None:
     guard, runner = FakeGuard(), FakeRunner(codes={"destroy": [1, 0]})
-    guard.sweep_error = cloud_sweep.CloudSweepError("aws ec2 describe-network-interfaces failed: Throttling")
-    assert _cycle(root, monkeypatch, guard, runner) == 1  # the leftover sweep after it cannot list either
+    guard.sweep_error = cloud_sweep.CloudSweepError(
+        "aws ec2 describe-network-interfaces failed: Throttling"
+    )
+    assert (
+        _cycle(root, monkeypatch, guard, runner) == 1
+    )  # the leftover sweep after it cannot list either
     assert runner.words() == ["init", "apply", "cycle", "destroy", "destroy"]
     assert guard.deleted == ["dfe-e2e-runs/run-1/run.json"]
     err = capsys.readouterr().err
-    assert "the network interface sweep could not finish: aws ec2 describe-network-interfaces failed" in err
+    assert (
+        "the network interface sweep could not finish: aws ec2 describe-network-interfaces failed"
+        in err
+    )
     assert "TEARDOWN FAILED" not in err
 
 
@@ -1766,10 +2564,15 @@ def test_an_interface_ec2_will_not_delete_is_reported_and_the_destroy_still_runs
     guard.sweep_code = [1, 0]
     assert _cycle(root, monkeypatch, guard, runner) == 0
     assert runner.words() == ["init", "apply", "cycle", "destroy", "destroy"]
-    assert "network interfaces carrying dfe-e2e=run-1 are still there, named above" in capsys.readouterr().err
+    assert (
+        "network interfaces carrying dfe-e2e=run-1 are still there, named above"
+        in capsys.readouterr().err
+    )
 
 
-def test_a_run_that_created_nothing_sweeps_nothing(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_run_that_created_nothing_sweeps_nothing(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     guard = FakeGuard()
 
     def refuse(*_args: object) -> None:
@@ -1782,7 +2585,10 @@ def test_a_run_that_created_nothing_sweeps_nothing(root: Path, monkeypatch: pyte
 
 @pytest.mark.parametrize("code", [1, 2])
 def test_expected_fail_a_sweep_that_leaves_anything_fails_the_run_and_names_the_sweep(
-    root: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture, code: int
+    root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+    code: int,
 ) -> None:
     """The destroy succeeded, so the record goes; what is left keeps the run's tags for the reaper.
     Exit 2 stays the refusal that created nothing, so a refused sweep still fails the run with 1."""
@@ -1835,17 +2641,33 @@ class FakeRegion:
 
     def add_instance(self, instance_id: str, tags: dict[str, str]) -> str:
         tag_list = [{"Key": k, "Value": v} for k, v in tags.items()]
-        self.instances[instance_id] = {"InstanceId": instance_id, "State": {"Name": "running"}, "Tags": tag_list}
-        self.ever_tagged[f"arn:aws:ec2:us-west-2:{ACCOUNT}:instance/{instance_id}"] = tag_list
+        self.instances[instance_id] = {
+            "InstanceId": instance_id,
+            "State": {"Name": "running"},
+            "Tags": tag_list,
+        }
+        self.ever_tagged[f"arn:aws:ec2:us-west-2:{ACCOUNT}:instance/{instance_id}"] = (
+            tag_list
+        )
         return instance_id
 
-    def add_launch_template(self, template_id: str, name: str, tags: dict[str, str]) -> str:
+    def add_launch_template(
+        self, template_id: str, name: str, tags: dict[str, str]
+    ) -> str:
         tag_list = [{"Key": k, "Value": v} for k, v in tags.items()]
-        self.launch_templates[template_id] = {"LaunchTemplateId": template_id, "LaunchTemplateName": name, "Tags": tag_list}
-        self.ever_tagged[f"arn:aws:ec2:us-west-2:{ACCOUNT}:launch-template/{template_id}"] = tag_list
+        self.launch_templates[template_id] = {
+            "LaunchTemplateId": template_id,
+            "LaunchTemplateName": name,
+            "Tags": tag_list,
+        }
+        self.ever_tagged[
+            f"arn:aws:ec2:us-west-2:{ACCOUNT}:launch-template/{template_id}"
+        ] = tag_list
         return template_id
 
-    def _describe_launch_templates(self, args: list[str]) -> subprocess.CompletedProcess:
+    def _describe_launch_templates(
+        self, args: list[str]
+    ) -> subprocess.CompletedProcess:
         if "--launch-template-ids" not in args:
             return _aws_ok({"LaunchTemplates": list(self.launch_templates.values())})
         named = args[args.index("--launch-template-ids") + 1]
@@ -1876,7 +2698,9 @@ class FakeRegion:
                 mappings.append({"ResourceARN": arn, "Tags": tags})
         return mappings
 
-    def __call__(self, args: list[str], **_kwargs: object) -> subprocess.CompletedProcess:
+    def __call__(
+        self, args: list[str], **_kwargs: object
+    ) -> subprocess.CompletedProcess:
         self.calls.append(args)
         if args[:2] == ["sts", "get-caller-identity"]:
             return _aws_ok({"Account": ACCOUNT})
@@ -1896,8 +2720,14 @@ class FakeRegion:
             self.instances[instance_id]["State"] = {"Name": "terminated"}
             return _aws_ok({})
         if args[:2] == ["ec2", "describe-instances"]:
-            named = args[args.index("--instance-ids") + 1] if "--instance-ids" in args else None
-            found = [i for i in self.instances.values() if named in (None, i["InstanceId"])]
+            named = (
+                args[args.index("--instance-ids") + 1]
+                if "--instance-ids" in args
+                else None
+            )
+            found = [
+                i for i in self.instances.values() if named in (None, i["InstanceId"])
+            ]
             return _aws_ok({"Reservations": [{"Instances": found}]})
         if args[:2] == ["ec2", "describe-launch-templates"]:
             return self._describe_launch_templates(args)
@@ -1927,14 +2757,26 @@ def test_the_teardown_sweep_deletes_this_runs_resources_and_never_touches_anothe
     key = region.add_secret("dfe/test/pki/internal-ca-key", mine)
     node = region.add_instance("i-0run1", mine)
     others = [
-        region.add_secret("dfe/other/pki/internal-ca-crt", cloud_run.run_tags("run-2", RUN_EXPIRES_AT)),
+        region.add_secret(
+            "dfe/other/pki/internal-ca-crt", cloud_run.run_tags("run-2", RUN_EXPIRES_AT)
+        ),
         # A longer id that starts with this one's, which a prefix match would take.
-        region.add_secret("dfe/longer/pki/internal-ca-crt", cloud_run.run_tags("run-10", RUN_EXPIRES_AT)),
-        region.add_secret("dfe/shared/db", {"service-name": "dfe", "environment": "test"}),
+        region.add_secret(
+            "dfe/longer/pki/internal-ca-crt",
+            cloud_run.run_tags("run-10", RUN_EXPIRES_AT),
+        ),
+        region.add_secret(
+            "dfe/shared/db", {"service-name": "dfe", "environment": "test"}
+        ),
         region.add_instance("i-0run2", cloud_run.run_tags("run-2", RUN_EXPIRES_AT)),
     ]
     config = _config(root)
-    assert guard_mod.AwsGuard(config.region).sweep([*guard_mod.run_sweep_args(config, "run-1"), "--yes"]) == 0
+    assert (
+        guard_mod.AwsGuard(config.region).sweep(
+            [*guard_mod.run_sweep_args(config, "run-1"), "--yes"]
+        )
+        == 0
+    )
     assert sorted(region.deleted) == sorted([crt, key, node])
     named = [arg for call in region.calls for arg in call]
     assert [other for other in others if other in named] == []
@@ -1961,7 +2803,8 @@ class PipeOut:
 
 @pytest.mark.parametrize("fails", [False, True])
 def test_the_sweeps_own_lines_are_out_before_the_teardown_writes_the_next(
-    monkeypatch: pytest.MonkeyPatch, fails: bool,
+    monkeypatch: pytest.MonkeyPatch,
+    fails: bool,
 ) -> None:
     """Held until exit, they printed after TEARDOWN FAILED and read as interfaces left behind."""
     out = PipeOut()
@@ -1996,7 +2839,15 @@ def test_after_the_teardown_the_next_preflight_finds_nothing_of_the_run(
         pushed.append(region.add_secret("dfe/test/pki/internal-ca-crt", tags))
         pushed.append(region.add_secret("dfe/test/pki/internal-ca-key", tags))
 
-    assert _cycle(root, monkeypatch, AwsRegionGuard(), FakeRunner(on_run={"cycle": eso_pushes})) == 0
+    assert (
+        _cycle(
+            root,
+            monkeypatch,
+            AwsRegionGuard(),
+            FakeRunner(on_run={"cycle": eso_pushes}),
+        )
+        == 0
+    )
     report = guard_mod.run_preflight(_config(root), AwsRegionGuard(), now=NOW, env={})
     assert report.ok, [c.detail for c in report.checks if not c.ok]
     assert sorted(region.deleted) == sorted(pushed)
@@ -2013,10 +2864,21 @@ def test_a_launch_template_karpenter_left_is_swept_so_the_next_preflight_finds_n
     left: list[str] = []
 
     def karpenter_launches() -> None:
-        tags = {**cloud_run.run_tags("run-1", RUN_EXPIRES_AT), "karpenter.k8s.aws/ec2nodeclass": "general"}
+        tags = {
+            **cloud_run.run_tags("run-1", RUN_EXPIRES_AT),
+            "karpenter.k8s.aws/ec2nodeclass": "general",
+        }
         left.append(region.add_launch_template("lt-0run1", KARPENTER_LT_NAME, tags))
 
-    assert _cycle(root, monkeypatch, AwsRegionGuard(), FakeRunner(on_run={"cycle": karpenter_launches})) == 0
+    assert (
+        _cycle(
+            root,
+            monkeypatch,
+            AwsRegionGuard(),
+            FakeRunner(on_run={"cycle": karpenter_launches}),
+        )
+        == 0
+    )
     report = guard_mod.run_preflight(_config(root), AwsRegionGuard(), now=NOW, env={})
     assert report.ok, [c.detail for c in report.checks if not c.ok]
     assert region.deleted == left
@@ -2026,17 +2888,24 @@ def test_refusal_c_names_an_expired_launch_template_by_the_class_its_sweep_delet
     root: Path, region: FakeRegion
 ) -> None:
     """(c) hands the operator a sweep command, so what it names has to be something that sweep removes."""
-    region.add_launch_template("lt-0prev", KARPENTER_LT_NAME, cloud_run.run_tags("r-prev", int(NOW) - 60))
+    region.add_launch_template(
+        "lt-0prev", KARPENTER_LT_NAME, cloud_run.run_tags("r-prev", int(NOW) - 60)
+    )
     report = _preflight(root, AwsRegionGuard())
     assert _failed(report) == ["(c) expired run resources"]
-    assert f"launch-template {KARPENTER_LT_NAME}" in _check(report, "(c) expired run resources").detail
+    assert (
+        f"launch-template {KARPENTER_LT_NAME}"
+        in _check(report, "(c) expired run resources").detail
+    )
 
 
 def test_refusal_d_a_run_secret_only_scheduled_for_deletion_still_holds_its_name(
     root: Path, region: FakeRegion
 ) -> None:
     """A secret pending deletion keeps its name, so the next run's push of that name would fail."""
-    arn = region.add_secret("dfe/test/pki/internal-ca-crt", cloud_run.run_tags("r-prev", int(NOW) + 3600))
+    arn = region.add_secret(
+        "dfe/test/pki/internal-ca-crt", cloud_run.run_tags("r-prev", int(NOW) + 3600)
+    )
     region.secrets[arn]["DeletedDate"] = "2026-10-08T11:00:00+00:00"
     report = _preflight(root, AwsRegionGuard())
     assert _failed(report) == ["(d) unfinished runs"]
@@ -2044,28 +2913,43 @@ def test_refusal_d_a_run_secret_only_scheduled_for_deletion_still_holds_its_name
     assert "secret dfe/test/pki/internal-ca-crt (until 2026-10-08T13:00:00Z)" in detail
 
 
-@pytest.mark.parametrize("reserved", ["--keep", "--kubeconfig=x", "--from-terraform", "--ke", "--kubec=x", "--from"])
+@pytest.mark.parametrize(
+    "reserved",
+    ["--keep", "--kubeconfig=x", "--from-terraform", "--ke", "--kubec=x", "--from"],
+)
 def test_expected_fail_cycle_args_that_skip_the_destroy_or_clash_are_refused(
     root: Path, monkeypatch: pytest.MonkeyPatch, reserved: str
 ) -> None:
     """argparse expands an unambiguous prefix, so `--ke` reaches dfe-ops cycle as --keep."""
     runner = FakeRunner()
-    code = _cycle(root, monkeypatch, FakeGuard(), runner, cycle_args=["--", "--mode", "single", reserved])
+    code = _cycle(
+        root,
+        monkeypatch,
+        FakeGuard(),
+        runner,
+        cycle_args=["--", "--mode", "single", reserved],
+    )
     assert code == 2
     assert runner.commands == []
 
 
-@pytest.mark.parametrize("given", [
-    ["-keep"],                         # one dash: no such option
-    ["--require-label"],               # dangling, no value
-    ["--e2e", "--"],                   # a stray `--` turns the appended --mode into a positional
-    ["--", "--mode", "single"],        # everything after a stray `--` is a positional
-    ["--mode"],
-    ["--mode", "bogus"],
-    ["-h"],                            # the parser would print help and exit, running nothing
-])
+@pytest.mark.parametrize(
+    "given",
+    [
+        ["-keep"],  # one dash: no such option
+        ["--require-label"],  # dangling, no value
+        ["--e2e", "--"],  # a stray `--` turns the appended --mode into a positional
+        ["--", "--mode", "single"],  # everything after a stray `--` is a positional
+        ["--mode"],
+        ["--mode", "bogus"],
+        ["-h"],  # the parser would print help and exit, running nothing
+    ],
+)
 def test_expected_fail_what_the_cycles_own_parser_rejects_is_refused_before_the_apply(
-    root: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture, given: list[str]
+    root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+    given: list[str],
 ) -> None:
     """Each of these would otherwise exit 2 from dfe-ops cycle after the cluster was paid for."""
     guard, runner = FakeGuard(), FakeRunner()
@@ -2076,10 +2960,21 @@ def test_expected_fail_what_the_cycles_own_parser_rejects_is_refused_before_the_
     assert "dfe-ops cycle would" in capsys.readouterr().err
 
 
-def test_the_cycle_runs_the_exact_arguments_its_parser_accepted(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_cycle_runs_the_exact_arguments_its_parser_accepted(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     runner = FakeRunner()
-    assert _cycle(root, monkeypatch, FakeGuard(), runner, cycle_args=["--", "--e2e", "--env-file", "x.env"]) == 0
-    argv = runner.commands[2][runner.commands[2].index("cycle") + 1:]
+    assert (
+        _cycle(
+            root,
+            monkeypatch,
+            FakeGuard(),
+            runner,
+            cycle_args=["--", "--e2e", "--env-file", "x.env"],
+        )
+        == 0
+    )
+    argv = runner.commands[2][runner.commands[2].index("cycle") + 1 :]
     assert guard_mod._parse_cycle(argv).mode == "single"
     assert argv[:2] == ["--from-terraform", str(root)]
     assert argv[2] == "--kubeconfig"
@@ -2093,8 +2988,10 @@ def test_the_acceptance_stage_flag_passes_the_cycles_own_parser(
     refused it would refuse every cloud cycle before the apply."""
     runner = FakeRunner()
     given = ["--acceptance-suite", "source", "--env-file", "x.env"]
-    assert _cycle(root, monkeypatch, FakeGuard(), runner, cycle_args=["--", *given]) == 0
-    argv = runner.commands[2][runner.commands[2].index("cycle") + 1:]
+    assert (
+        _cycle(root, monkeypatch, FakeGuard(), runner, cycle_args=["--", *given]) == 0
+    )
+    argv = runner.commands[2][runner.commands[2].index("cycle") + 1 :]
     assert argv[4:] == [*given, "--mode", "single"]
     assert guard_mod._parse_cycle(argv).acceptance_suite == "source"
 
@@ -2115,24 +3012,41 @@ def _ingest_allow(monkeypatch: pytest.MonkeyPatch, value: str | None) -> None:
         monkeypatch.setenv(INGEST_ALLOW_VAR, value)
 
 
-@pytest.mark.parametrize(("value", "why"), [
-    (None, "is unset"),
-    ("", "is unset"),
-    ("   ", "is unset"),
-    ("0.0.0.0/0", "every address"),
-    ("::/0", "every address"),
-    ("not-an-address", "is not a network"),
-])
+@pytest.mark.parametrize(
+    ("value", "why"),
+    [
+        (None, "is unset"),
+        ("", "is unset"),
+        ("   ", "is unset"),
+        ("0.0.0.0/0", "every address"),
+        ("::/0", "every address"),
+        ("not-an-address", "is not a network"),
+    ],
+)
 def test_expected_fail_an_edge_cycle_without_a_usable_send_address_creates_nothing(
-    root: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture,
-    value: str | None, why: str
+    root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+    value: str | None,
+    why: str,
 ) -> None:
     """Found missing after the apply, it costs the cluster the apply built."""
     _ingest_allow(monkeypatch, value)
     guard, runner = FakeGuard(), FakeRunner()
-    assert _cycle(root, monkeypatch, guard, runner, cycle_args=["--", "--acceptance-suite", "edge"]) == 2
+    assert (
+        _cycle(
+            root,
+            monkeypatch,
+            guard,
+            runner,
+            cycle_args=["--", "--acceptance-suite", "edge"],
+        )
+        == 2
+    )
     printed = capsys.readouterr().err
-    assert printed.startswith("cloud-cycle refused: the edge acceptance stage cannot run: ")
+    assert printed.startswith(
+        "cloud-cycle refused: the edge acceptance stage cannot run: "
+    )
     assert INGEST_ALLOW_VAR in printed
     assert why in printed
     assert "PASS" not in printed
@@ -2146,7 +3060,16 @@ def test_an_edge_cycle_with_a_send_address_in_the_environment_runs(
 ) -> None:
     _ingest_allow(monkeypatch, INGEST_SENDER)
     runner = FakeRunner()
-    assert _cycle(root, monkeypatch, FakeGuard(), runner, cycle_args=["--", "--acceptance-suite", "edge"]) == 0
+    assert (
+        _cycle(
+            root,
+            monkeypatch,
+            FakeGuard(),
+            runner,
+            cycle_args=["--", "--acceptance-suite", "edge"],
+        )
+        == 0
+    )
     assert runner.words() == ["init", "apply", "cycle", "destroy"]
 
 
@@ -2158,60 +3081,92 @@ def test_an_edge_cycle_reads_the_send_address_from_the_env_file_it_passes(
     env_file.write_text(f"{INGEST_ALLOW_VAR}={INGEST_SENDER}\n", encoding="utf-8")
     runner = FakeRunner()
     given = ["--acceptance-suite", "edge", "--env-file", str(env_file)]
-    assert _cycle(root, monkeypatch, FakeGuard(), runner, cycle_args=["--", *given]) == 0
+    assert (
+        _cycle(root, monkeypatch, FakeGuard(), runner, cycle_args=["--", *given]) == 0
+    )
     assert runner.words() == ["init", "apply", "cycle", "destroy"]
 
 
 def test_expected_fail_an_edge_cycle_whose_env_file_cannot_be_read_creates_nothing(
-    root: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture, tmp_path: Path
+    root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+    tmp_path: Path,
 ) -> None:
     _ingest_allow(monkeypatch, INGEST_SENDER)
     runner = FakeRunner()
     given = ["--acceptance-suite", "edge", "--env-file", str(tmp_path / "absent.env")]
-    assert _cycle(root, monkeypatch, FakeGuard(), runner, cycle_args=["--", *given]) == 2
+    assert (
+        _cycle(root, monkeypatch, FakeGuard(), runner, cycle_args=["--", *given]) == 2
+    )
     assert "the edge acceptance stage cannot run" in capsys.readouterr().err
     assert runner.commands == []
 
 
-@pytest.mark.parametrize("given", [["--acceptance-suite", "source"], ["--acceptance-suite", "all"]])
+@pytest.mark.parametrize(
+    "given", [["--acceptance-suite", "source"], ["--acceptance-suite", "all"]]
+)
 def test_a_cycle_on_another_suite_never_asks_for_the_send_address(
     root: Path, monkeypatch: pytest.MonkeyPatch, given: list[str]
 ) -> None:
     _ingest_allow(monkeypatch, None)
     runner = FakeRunner()
-    assert _cycle(root, monkeypatch, FakeGuard(), runner, cycle_args=["--", *given]) == 0
+    assert (
+        _cycle(root, monkeypatch, FakeGuard(), runner, cycle_args=["--", *given]) == 0
+    )
     assert runner.words() == ["init", "apply", "cycle", "destroy"]
 
 
 # --- the cycle's mode is the dial's profile -------------------------------------------------------
 
 
-def test_with_no_mode_given_the_cycle_runs_in_the_dials_profile(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_with_no_mode_given_the_cycle_runs_in_the_dials_profile(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     runner = FakeRunner()
-    assert _cycle(root, monkeypatch, FakeGuard(), runner, cycle_args=["--", "--env-file", "x.env"]) == 0
+    assert (
+        _cycle(
+            root,
+            monkeypatch,
+            FakeGuard(),
+            runner,
+            cycle_args=["--", "--env-file", "x.env"],
+        )
+        == 0
+    )
     cycle = runner.commands[2]
     assert cycle[-4:] == ["--env-file", "x.env", "--mode", "single"]
     assert cycle.count("--mode") == 1
 
 
-@pytest.mark.parametrize("given", [["--mode", "single"], ["--mode=single"], ["--mod", "single"]])
+@pytest.mark.parametrize(
+    "given", [["--mode", "single"], ["--mode=single"], ["--mod", "single"]]
+)
 def test_a_mode_that_matches_the_dial_passes_through_once(
     root: Path, monkeypatch: pytest.MonkeyPatch, given: list[str]
 ) -> None:
     runner = FakeRunner()
-    assert _cycle(root, monkeypatch, FakeGuard(), runner, cycle_args=["--", *given]) == 0
-    assert runner.commands[2][-len(given):] == given
-    assert "--mode" not in runner.commands[2][:-len(given)]
+    assert (
+        _cycle(root, monkeypatch, FakeGuard(), runner, cycle_args=["--", *given]) == 0
+    )
+    assert runner.commands[2][-len(given) :] == given
+    assert "--mode" not in runner.commands[2][: -len(given)]
 
 
-@pytest.mark.parametrize("given", [
-    ["--mode", "scale"],
-    ["--mode=scale"],
-    ["--mo", "scale"],
-    ["--mode", "single", "--mode", "scale"],
-])
+@pytest.mark.parametrize(
+    "given",
+    [
+        ["--mode", "scale"],
+        ["--mode=scale"],
+        ["--mo", "scale"],
+        ["--mode", "single", "--mode", "scale"],
+    ],
+)
 def test_expected_fail_a_mode_that_is_not_the_dials_profile_creates_nothing(
-    root: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture, given: list[str]
+    root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+    given: list[str],
 ) -> None:
     guard, runner = FakeGuard(), FakeRunner()
     assert _cycle(root, monkeypatch, guard, runner, cycle_args=["--", *given]) == 2
@@ -2225,7 +3180,9 @@ def test_expected_fail_a_dial_profile_the_cycle_has_no_mode_for_creates_nothing(
     root: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
 ) -> None:
     """Only the composed command carries the dial's profile, so only its parse sees this."""
-    (root / "dial.auto.tfvars.json").write_text(json.dumps({**TFVARS, "profile": "docker-single"}), encoding="utf-8")
+    (root / "dial.auto.tfvars.json").write_text(
+        json.dumps({**TFVARS, "profile": "docker-single"}), encoding="utf-8"
+    )
     guard, runner = FakeGuard(), FakeRunner()
     assert _cycle(root, monkeypatch, guard, runner, cycle_args=["--"]) == 2
     assert runner.commands == []
@@ -2245,14 +3202,18 @@ def test_expected_fail_a_dial_with_no_profile_has_no_mode_and_creates_nothing(
 
 
 @pytest.mark.parametrize("provider", ["gcp", "azure"])
-def test_an_unbuilt_provider_refuses_by_name(root: Path, provider: str, capsys: pytest.CaptureFixture) -> None:
+def test_an_unbuilt_provider_refuses_by_name(
+    root: Path, provider: str, capsys: pytest.CaptureFixture
+) -> None:
     assert guard_mod.cmd_cloud_preflight(_args(root, provider=provider)) == 2
     assert f"no {provider} checks" in capsys.readouterr().err
 
 
 def test_the_runner_stops_the_child_in_flight() -> None:
     runner = guard_mod.Runner()
-    runner.current = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    runner.current = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(30)"]
+    )
     child = runner.current
     runner.stop_current(timeout=5)
     assert child.poll() is not None
@@ -2268,7 +3229,10 @@ def _gone(pid: int, within: float = 5.0) -> bool:
             os.kill(pid, 0)
         except ProcessLookupError:
             return True
-        if stat.is_file() and stat.read_text(encoding="utf-8").rsplit(")", 1)[-1].split()[0] == "Z":
+        if (
+            stat.is_file()
+            and stat.read_text(encoding="utf-8").rsplit(")", 1)[-1].split()[0] == "Z"
+        ):
             return True
         time.sleep(0.1)
     return False
@@ -2284,22 +3248,30 @@ SPAWNS_A_GRANDCHILD = (
 
 
 @pytest.mark.skipif(not hasattr(os, "killpg"), reason="process groups are POSIX")
-def test_the_runner_stops_a_child_at_its_deadline_with_its_whole_tree(tmp_path: Path) -> None:
+def test_the_runner_stops_a_child_at_its_deadline_with_its_whole_tree(
+    tmp_path: Path,
+) -> None:
     """The cycle's stages are its children, so stopping only the cycle would leave
     a destroy.sh and its kubectl running beside the guard's own teardown."""
     pid_file = tmp_path / "grandchild.pid"
     runner = guard_mod.Runner()
     started = time.monotonic()
     with pytest.raises(guard_mod.DeadlineError):
-        runner.run([sys.executable, "-c", SPAWNS_A_GRANDCHILD, str(pid_file)], new_session=True,
-                   deadline=time.monotonic() + 2, stop_timeout=10)
+        runner.run(
+            [sys.executable, "-c", SPAWNS_A_GRANDCHILD, str(pid_file)],
+            new_session=True,
+            deadline=time.monotonic() + 2,
+            stop_timeout=10,
+        )
     assert time.monotonic() - started < 15
     assert runner.current is None
     assert _gone(int(pid_file.read_text(encoding="utf-8")))
 
 
 @pytest.mark.skipif(not hasattr(os, "killpg"), reason="process groups are POSIX")
-def test_a_child_that_ignores_sigterm_is_killed_once_its_stop_timeout_passes(tmp_path: Path) -> None:
+def test_a_child_that_ignores_sigterm_is_killed_once_its_stop_timeout_passes(
+    tmp_path: Path,
+) -> None:
     ready = tmp_path / "ready"
     ignores = (
         "import pathlib, signal, sys, time\n"
@@ -2310,8 +3282,12 @@ def test_a_child_that_ignores_sigterm_is_killed_once_its_stop_timeout_passes(tmp
     runner = guard_mod.Runner()
     started = time.monotonic()
     with pytest.raises(guard_mod.DeadlineError):
-        runner.run([sys.executable, "-c", ignores, str(ready)], new_session=True,
-                   deadline=time.monotonic() + 2, stop_timeout=1)
+        runner.run(
+            [sys.executable, "-c", ignores, str(ready)],
+            new_session=True,
+            deadline=time.monotonic() + 2,
+            stop_timeout=1,
+        )
     assert ready.exists()
     assert time.monotonic() - started < 10
 
@@ -2326,22 +3302,34 @@ class _DeadlineTeardown:
     def run(self) -> None:
         probe = "import signal; print(int(signal.getsignal(signal.SIGTERM)), int(signal.getsignal(signal.SIGINT)))"
         self.dispositions = subprocess.run(
-            [sys.executable, "-c", probe], capture_output=True, text=True, encoding="utf-8", check=True
+            [sys.executable, "-c", probe],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=True,
         ).stdout.strip()
         started = time.monotonic()
         with contextlib.suppress(guard_mod.DeadlineError):
-            guard_mod.Runner().run([sys.executable, "-c", "import time; time.sleep(60)"], new_session=True,
-                                   deadline=time.monotonic() + 1, stop_timeout=30)
+            guard_mod.Runner().run(
+                [sys.executable, "-c", "import time; time.sleep(60)"],
+                new_session=True,
+                deadline=time.monotonic() + 1,
+                stop_timeout=30,
+            )
         self.stopped_after = time.monotonic() - started
 
 
 @pytest.mark.skipif(not hasattr(os, "killpg"), reason="process groups are POSIX")
-def test_expected_fail_a_child_the_teardown_starts_still_stops_on_its_deadline_sigterm() -> None:
+def test_expected_fail_a_child_the_teardown_starts_still_stops_on_its_deadline_sigterm() -> (
+    None
+):
     """An ignored SIGTERM passes to every child, which only SIGKILL then ends, stop_timeout later."""
     teardown = _DeadlineTeardown()
     with guard_mod.teardown_on_exit(teardown):
         pass
-    assert teardown.dispositions == f"{int(signal.SIG_DFL)} {int(signal.SIG_IGN)}", teardown.dispositions
+    assert teardown.dispositions == f"{int(signal.SIG_DFL)} {int(signal.SIG_IGN)}", (
+        teardown.dispositions
+    )
     assert teardown.stopped_after < 10, teardown.stopped_after
 
 
@@ -2357,7 +3345,7 @@ SWEEPS_IN_THE_TEARDOWN = (
     "    pass\n"
 )
 # An aws CLI that says it has started, then answers two seconds later.
-SLOW_AWS = "#!/usr/bin/env bash\nprintf '%s' \"$$\" > \"${FAKE_AWS_STARTED}\"\nsleep 2\nprintf '{\"ok\": true}\\n'\n"
+SLOW_AWS = '#!/usr/bin/env bash\nprintf \'%s\' "$$" > "${FAKE_AWS_STARTED}"\nsleep 2\nprintf \'{"ok": true}\\n\'\n'
 
 
 @pytest.mark.skipif(not hasattr(os, "killpg"), reason="process groups are POSIX")
@@ -2371,15 +3359,26 @@ def test_expected_fail_a_signal_to_the_guards_group_never_cuts_a_teardown_sweep_
     (bin_dir / "aws").write_text(SLOW_AWS, encoding="utf-8")
     (bin_dir / "aws").chmod(0o755)
     started = tmp_path / "aws-started"
-    env = {**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}", "FAKE_AWS_STARTED": str(started)}
+    env = {
+        **os.environ,
+        "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+        "FAKE_AWS_STARTED": str(started),
+    }
     guard = subprocess.Popen(
         [sys.executable, "-c", SWEEPS_IN_THE_TEARDOWN, str(REPO_ROOT / "scripts")],
-        env=env, start_new_session=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        env=env,
+        start_new_session=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
         encoding="utf-8",
     )
     try:
         give_up = time.monotonic() + 30
-        while not (started.is_file() and started.read_text(encoding="utf-8")) and time.monotonic() < give_up:
+        while (
+            not (started.is_file() and started.read_text(encoding="utf-8"))
+            and time.monotonic() < give_up
+        ):
             time.sleep(0.05)
         assert started.is_file(), "the fake aws never started"
         os.killpg(guard.pid, signum)
@@ -2409,13 +3408,27 @@ def test_the_guard_itself_outlives_a_sigterm_while_the_teardown_runs() -> None:
 MARK_THEN_SLEEP = "import pathlib, sys, time; time.sleep(0.3); pathlib.Path(sys.argv[1]).touch(); time.sleep(float(sys.argv[2]))"
 
 
-@pytest.mark.parametrize(("marks", "sleeps", "later", "stopped"), [
-    pytest.param(True, 2.0, 15, False, id="passed-run-slow-destroy-inside-the-margin-ends-green"),
-    pytest.param(True, 30.0, 3, True, id="destroy-past-the-margin-is-stopped-red"),
-    pytest.param(False, 30.0, 15, True, id="no-mark-keeps-the-run-length"),
-])
+@pytest.mark.parametrize(
+    ("marks", "sleeps", "later", "stopped"),
+    [
+        pytest.param(
+            True,
+            2.0,
+            15,
+            False,
+            id="passed-run-slow-destroy-inside-the-margin-ends-green",
+        ),
+        pytest.param(True, 30.0, 3, True, id="destroy-past-the-margin-is-stopped-red"),
+        pytest.param(False, 30.0, 15, True, id="no-mark-keeps-the-run-length"),
+    ],
+)
 def test_the_destroy_mark_moves_the_deadline_to_the_margin(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, marks: bool, sleeps: float, later: float, stopped: bool
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    marks: bool,
+    sleeps: float,
+    later: float,
+    stopped: bool,
 ) -> None:
     monkeypatch.setattr(guard_mod, "EXTEND_POLL", 0.1)
     mark = tmp_path / guard_mod.DESTROY_MARK_NAME
@@ -2425,19 +3438,35 @@ def test_the_destroy_mark_moves_the_deadline_to_the_margin(
     cmd = [sys.executable, "-c", MARK_THEN_SLEEP, target, str(sleeps)]
     if stopped:
         with pytest.raises(guard_mod.DeadlineError):
-            runner.run(cmd, new_session=True, deadline=started + 1, stop_timeout=5,
-                       extend=(mark, started + later))
+            runner.run(
+                cmd,
+                new_session=True,
+                deadline=started + 1,
+                stop_timeout=5,
+                extend=(mark, started + later),
+            )
         assert time.monotonic() - started < later + 5
     else:
-        assert runner.run(cmd, new_session=True, deadline=started + 1, stop_timeout=5,
-                          extend=(mark, started + later)) == 0
+        assert (
+            runner.run(
+                cmd,
+                new_session=True,
+                deadline=started + 1,
+                stop_timeout=5,
+                extend=(mark, started + later),
+            )
+            == 0
+        )
         assert time.monotonic() - started > 1
     assert (runner.current, runner.group) == (None, None)
 
 
 def test_a_child_that_ends_before_its_deadline_returns_its_own_code() -> None:
     runner = guard_mod.Runner()
-    code = runner.run([sys.executable, "-c", "raise SystemExit(3)"], new_session=True,
-                      deadline=time.monotonic() + 30)
+    code = runner.run(
+        [sys.executable, "-c", "raise SystemExit(3)"],
+        new_session=True,
+        deadline=time.monotonic() + 30,
+    )
     assert code == 3
     assert (runner.current, runner.group) == (None, None)

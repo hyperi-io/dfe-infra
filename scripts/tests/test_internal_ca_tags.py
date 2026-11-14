@@ -54,7 +54,11 @@ def _run(script: str, **env: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["bash", "-euo", "pipefail", "-c", script],
         env={"PATH": "/usr/bin:/bin", **env},
-        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
     )
 
 
@@ -66,7 +70,11 @@ def _annotation_block() -> str:
     """bootstrap.sh's own composition of the annotation, run on its own rather than copied."""
     lines = _bootstrap_lines()
     start = lines.index('export DFE_RESOURCE_TAGS="${DFE_RESOURCE_TAGS:-}"')
-    end = next(i for i, line in enumerate(lines) if line.startswith("export DFE_RESOURCE_TAGS_ANNOTATION="))
+    end = next(
+        i
+        for i, line in enumerate(lines)
+        if line.startswith("export DFE_RESOURCE_TAGS_ANNOTATION=")
+    )
     return "\n".join(lines[start : end + 1])
 
 
@@ -78,14 +86,33 @@ def _ca_tag_args_block() -> str:
 
 
 def _gateway(*sets: str, set_json: tuple[str, ...] = ()) -> list[dict]:
-    cmd = ["helm", "template", "gw", str(chart_dir("envoy-gateway-config")), "-f", str(COMMON_VALUES),
-           "--set", "domain=dfe.example.com", "--set", "env=local",
-           "--set", "tls.internalCA.persist.enabled=true",
-           "--show-only", "templates/internal-ca-persist.yaml"]
+    cmd = [
+        "helm",
+        "template",
+        "gw",
+        str(chart_dir("envoy-gateway-config")),
+        "-f",
+        str(COMMON_VALUES),
+        "--set",
+        "domain=dfe.example.com",
+        "--set",
+        "env=local",
+        "--set",
+        "tls.internalCA.persist.enabled=true",
+        "--show-only",
+        "templates/internal-ca-persist.yaml",
+    ]
     for item in sets:
         cmd += ["--set", item]
     cmd += list(set_json)
-    out = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
+    out = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
     assert out.returncode == 0, out.stderr
     return [d for d in yaml.safe_load_all(out.stdout) if d]
 
@@ -106,25 +133,39 @@ def test_the_aws_root_emits_its_whole_tag_set() -> None:
 
 
 def test_bootstrap_writes_the_annotation() -> None:
-    done = _run(_annotation_block() + '\nprintf "%s\\n" "$DFE_RESOURCE_TAGS_ANNOTATION"', DFE_RESOURCE_TAGS=TAGS_JSON)
+    done = _run(
+        _annotation_block() + '\nprintf "%s\\n" "$DFE_RESOURCE_TAGS_ANNOTATION"',
+        DFE_RESOURCE_TAGS=TAGS_JSON,
+    )
     assert done.returncode == 0, done.stderr
     assert done.stdout.splitlines() == [f"{KEY}: '{TAGS_JSON}'"]
 
 
 def test_no_tags_write_no_annotation() -> None:
-    done = _run(_annotation_block() + '\nprintf "%s\\n" "$DFE_RESOURCE_TAGS_ANNOTATION"')
+    done = _run(
+        _annotation_block() + '\nprintf "%s\\n" "$DFE_RESOURCE_TAGS_ANNOTATION"'
+    )
     assert done.returncode == 0, done.stderr
     assert done.stdout.splitlines() == [""]
 
 
 def test_the_cluster_secret_carries_the_tags() -> None:
-    done = _run(_annotation_block() + '\nprintf "%s\\n" "$DFE_RESOURCE_TAGS_ANNOTATION"',
-                DFE_RESOURCE_TAGS=json.dumps({**TAGS, "owner": "platform's"}))
+    done = _run(
+        _annotation_block() + '\nprintf "%s\\n" "$DFE_RESOURCE_TAGS_ANNOTATION"',
+        DFE_RESOURCE_TAGS=json.dumps({**TAGS, "owner": "platform's"}),
+    )
     rendered = subprocess.run(
         [sys.executable, str(RENDER_ENV)],
         input=CLUSTER_SECRET.read_text(encoding="utf-8"),
-        env={"PATH": "/usr/bin:/bin", "DFE_RESOURCE_TAGS_ANNOTATION": done.stdout.strip()},
-        capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
+        env={
+            "PATH": "/usr/bin:/bin",
+            "DFE_RESOURCE_TAGS_ANNOTATION": done.stdout.strip(),
+        },
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=True,
     ).stdout
     annotations = yaml.safe_load(rendered)["metadata"]["annotations"]
     assert json.loads(annotations[KEY]) == {**TAGS, "owner": "platform's"}
@@ -132,7 +173,10 @@ def test_the_cluster_secret_carries_the_tags() -> None:
 
 def test_bootstrap_hands_the_tags_to_its_own_ca_render() -> None:
     """bootstrap.sh applies the PushSecret ahead of Argo, so its render is the one that creates the entries."""
-    done = _run(_ca_tag_args_block() + '\nprintf "%s\\n" "${ca_tag_args[@]}"', DFE_RESOURCE_TAGS=TAGS_JSON)
+    done = _run(
+        _ca_tag_args_block() + '\nprintf "%s\\n" "${ca_tag_args[@]}"',
+        DFE_RESOURCE_TAGS=TAGS_JSON,
+    )
     assert done.returncode == 0, done.stderr
     args = tuple(done.stdout.splitlines())
     assert args == ("--set-json", f"tls.internalCA.persist.tags={TAGS_JSON}")
@@ -142,7 +186,10 @@ def test_bootstrap_hands_the_tags_to_its_own_ca_render() -> None:
 
 
 def test_bootstrap_adds_no_argument_without_tags() -> None:
-    done = _run(_ca_tag_args_block() + '\nprintf "%s\\n" "${#ca_tag_args[@]}"', DFE_RESOURCE_TAGS="")
+    done = _run(
+        _ca_tag_args_block() + '\nprintf "%s\\n" "${#ca_tag_args[@]}"',
+        DFE_RESOURCE_TAGS="",
+    )
     assert done.returncode == 0, done.stderr
     assert done.stdout.strip() == "0"
 
@@ -156,15 +203,24 @@ def _render_values_block(tmp_path: Path, annotations: dict[str, str]) -> dict:
     block = gateway["spec"]["template"]["spec"]["sources"][0]["helm"]["values"]
     chart = tmp_path / "appset-values"
     (chart / "templates").mkdir(parents=True)
-    (chart / "Chart.yaml").write_text("apiVersion: v2\nname: appset-values\nversion: 0.1.0\n", encoding="utf-8")
+    (chart / "Chart.yaml").write_text(
+        "apiVersion: v2\nname: appset-values\nversion: 0.1.0\n", encoding="utf-8"
+    )
     (chart / "templates" / "values.yaml").write_text(
         "{{- with .Values.cluster }}\n" + block + "\n{{- end }}\n", encoding="utf-8"
     )
     cluster = tmp_path / "cluster.yaml"
-    cluster.write_text(yaml.safe_dump({"cluster": {"metadata": {"annotations": annotations}}}), encoding="utf-8")
+    cluster.write_text(
+        yaml.safe_dump({"cluster": {"metadata": {"annotations": annotations}}}),
+        encoding="utf-8",
+    )
     out = subprocess.run(
         ["helm", "template", "appset-values", str(chart), "-f", str(cluster)],
-        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
     )
     assert out.returncode == 0, out.stderr
     return yaml.safe_load(out.stdout) or {}
@@ -184,7 +240,9 @@ def test_a_cluster_without_the_annotation_gets_no_tls_key(tmp_path: Path) -> Non
 
 
 def test_the_push_puts_the_tags_on_both_store_entries() -> None:
-    entries = _push_entries(_gateway(set_json=("--set-json", f"tls.internalCA.persist.tags={TAGS_JSON}")))
+    entries = _push_entries(
+        _gateway(set_json=("--set-json", f"tls.internalCA.persist.tags={TAGS_JSON}"))
+    )
     assert len(entries) == 2
     for entry in entries:
         meta = entry["metadata"]
@@ -202,13 +260,21 @@ def test_no_tags_render_no_metadata_block() -> None:
 def test_a_managed_by_tag_is_dropped_rather_than_failing_the_push() -> None:
     """ESO's AWS provider sets managed-by itself and fails a push whose tags already name it."""
     tags = {**TAGS, "managed-by": "opentofu"}
-    for entry in _push_entries(_gateway(set_json=("--set-json", f"tls.internalCA.persist.tags={json.dumps(tags)}"))):
+    for entry in _push_entries(
+        _gateway(
+            set_json=("--set-json", f"tls.internalCA.persist.tags={json.dumps(tags)}")
+        )
+    ):
         assert "managed-by" not in entry["metadata"]["spec"]["tags"], entry
         assert entry["metadata"]["spec"]["tags"] == TAGS, entry
 
 
 def test_a_number_in_the_tags_reaches_the_provider_as_a_string() -> None:
     """The provider reads tags as map[string]string, and a YAML number fails that parse."""
-    entries = _push_entries(_gateway(set_json=("--set-json", 'tls.internalCA.persist.tags={"cost-center":1234}')))
+    entries = _push_entries(
+        _gateway(
+            set_json=("--set-json", 'tls.internalCA.persist.tags={"cost-center":1234}')
+        )
+    )
     for entry in entries:
         assert entry["metadata"]["spec"]["tags"] == {"cost-center": "1234"}, entry

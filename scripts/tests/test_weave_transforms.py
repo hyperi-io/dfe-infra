@@ -28,11 +28,18 @@ import pytest
 from _gate import PROFILES, configmap_files, golden
 from _weave import contract, render_app
 
-SERVICES = ("dfe-archiver", "dfe-transform-vrl", "dfe-transform-vector", "dfe-transform-elastic")
+SERVICES = (
+    "dfe-archiver",
+    "dfe-transform-vrl",
+    "dfe-transform-vector",
+    "dfe-transform-elastic",
+)
 
 
 def _pod(docs: list[dict]) -> dict:
-    return next(d for d in docs if d["kind"] == "Deployment")["spec"]["template"]["spec"]
+    return next(d for d in docs if d["kind"] == "Deployment")["spec"]["template"][
+        "spec"
+    ]
 
 
 def _env(docs: list[dict]) -> dict[str, dict]:
@@ -58,7 +65,9 @@ def test_elastic_takes_a_deployers_extra_env() -> None:
 
 
 def test_the_archiver_contract_declares_its_secrets() -> None:
-    declared = json.loads(contract("dfe-archiver").read_text(encoding="utf-8"))["secrets"]
+    declared = json.loads(contract("dfe-archiver").read_text(encoding="utf-8"))[
+        "secrets"
+    ]
     assert {g["group_name"]: g.get("optional", False) for g in declared} == {
         "kafka": False,
         "s3": True,
@@ -68,12 +77,17 @@ def test_the_archiver_contract_declares_its_secrets() -> None:
         "name": "dfe-kafka-user",
         "key": "sasl.mechanism",
     }
-    assert env["DFE_ARCHIVER_S3_ACCESS_KEY_ID"]["valueFrom"]["secretKeyRef"]["optional"] is True
+    assert (
+        env["DFE_ARCHIVER_S3_ACCESS_KEY_ID"]["valueFrom"]["secretKeyRef"]["optional"]
+        is True
+    )
 
 
 @pytest.mark.parametrize("service", SERVICES)
 @pytest.mark.parametrize("profile", ["slim", "mesh"])
-def test_the_direct_profiles_carry_no_kafka_credentials(service: str, profile: str) -> None:
+def test_the_direct_profiles_carry_no_kafka_credentials(
+    service: str, profile: str
+) -> None:
     refs = [
         e["valueFrom"]["secretKeyRef"]["name"]
         for e in _env(golden(service, profile, "aws")).values()
@@ -91,8 +105,12 @@ TRANSFORMS_DIR_ENV = {
 @pytest.mark.parametrize("service", ["dfe-transform-vrl", "dfe-transform-vector"])
 def test_transform_files_reach_the_pod(service: str) -> None:
     files = [{"name": "10-route.vrl", "content": "  .x = 1\n.y = 2\n"}]
-    docs = _render_with(service, "single", {"fileSets": {"transforms": {"files": files}}})
-    configmap = next(d for d in docs if d["metadata"]["name"] == f"{service}-transforms")
+    docs = _render_with(
+        service, "single", {"fileSets": {"transforms": {"files": files}}}
+    )
+    configmap = next(
+        d for d in docs if d["metadata"]["name"] == f"{service}-transforms"
+    )
     assert configmap_files(configmap) == {"10-route.vrl": "  .x = 1\n.y = 2\n"}
     directory = f"/etc/{service}-transforms"
     mounts = {m["mountPath"]: m for m in _pod(docs)["containers"][0]["volumeMounts"]}

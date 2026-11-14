@@ -9,7 +9,7 @@
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
 """Assertions on dfe-ops' domain derivation.
 
-    python3 -m pytest scripts/tests/test_dfe_ops_domain.py -q
+python3 -m pytest scripts/tests/test_dfe_ops_domain.py -q
 """
 
 from __future__ import annotations
@@ -45,7 +45,8 @@ def test_explicit_domain_alone_is_a_supported_deploy_shape() -> None:
 
 def test_explicit_domain_matching_the_convention_passes() -> None:
     env = dfeops._apply_domain(
-        {"DFE_DOMAIN": "slim.dfe.example.com", "DFE_BASE_DOMAIN": "dfe.example.com"}, "slim"
+        {"DFE_DOMAIN": "slim.dfe.example.com", "DFE_BASE_DOMAIN": "dfe.example.com"},
+        "slim",
     )
     assert env["DFE_DOMAIN"] == "slim.dfe.example.com"
 

@@ -99,7 +99,13 @@ def has_staged_changes(repo: Path) -> bool:
 def _origin_name(repo: Path) -> str | None:
     """The repo name in the origin remote's URL, which every worktree of a repo shares."""
     proc = run(["git", "remote", "get-url", "origin"], cwd=repo, check=False)
-    tail = proc.stdout.strip().rstrip("/").removesuffix(".git").replace(":", "/").rsplit("/", 1)[-1]
+    tail = (
+        proc.stdout.strip()
+        .rstrip("/")
+        .removesuffix(".git")
+        .replace(":", "/")
+        .rsplit("/", 1)[-1]
+    )
     return tail if proc.returncode == 0 and tail else None
 
 
@@ -123,7 +129,9 @@ def repo_slug(repo: Path, org: str) -> str:
 def is_linked_worktree(repo: Path) -> bool:
     """True when ``repo`` is a linked worktree rather than the repo's main checkout."""
     git_dir = Path(git("rev-parse", "--absolute-git-dir", cwd=repo)).resolve()
-    common = Path(git("rev-parse", "--path-format=absolute", "--git-common-dir", cwd=repo)).resolve()
+    common = Path(
+        git("rev-parse", "--path-format=absolute", "--git-common-dir", cwd=repo)
+    ).resolve()
     return git_dir != common
 
 

@@ -43,14 +43,30 @@ HISTORY = {
 }
 # Another builder's tree, not scanned here.
 SKIPPED = ("docs-site/",)
-BINARY = (".tgz", ".png", ".jpg", ".jpeg", ".gif", ".ico", ".svg", ".woff", ".woff2", ".zip", ".gz")
+BINARY = (
+    ".tgz",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".ico",
+    ".svg",
+    ".woff",
+    ".woff2",
+    ".zip",
+    ".gz",
+)
 STACK_HEADER = re.compile(r"^  ([^\s#:][^:]*):\s*(?:#.*)?$")
 
 
 def tracked() -> list[str]:
     done = subprocess.run(
-        ["git", "-C", str(REPO_ROOT), "ls-files", "-z"], capture_output=True, text=True,
-        encoding="utf-8", errors="replace", check=True,
+        ["git", "-C", str(REPO_ROOT), "ls-files", "-z"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=True,
     )
     return [p for p in done.stdout.split("\0") if p]
 
@@ -62,11 +78,19 @@ def versions_history_end(lines: list[str]) -> int:
     needs no edit here.
     """
     data = yaml.safe_load("\n".join(lines))
-    carrying = [name for name, stack in (data.get("stacks") or {}).items() if "ferretdb" in (stack.get("services") or {})]
+    carrying = [
+        name
+        for name, stack in (data.get("stacks") or {}).items()
+        if "ferretdb" in (stack.get("services") or {})
+    ]
     if not carrying:
         return 0
     last = carrying[-1]
-    headers = [(index + 1, m.group(1)) for index, line in enumerate(lines) if (m := STACK_HEADER.match(line))]
+    headers = [
+        (index + 1, m.group(1))
+        for index, line in enumerate(lines)
+        if (m := STACK_HEADER.match(line))
+    ]
     names = [name for _, name in headers]
     following = headers[names.index(last) + 1][0]
     return following
@@ -77,7 +101,10 @@ def hits() -> list[str]:
     for path in tracked():
         if path.endswith(BINARY) or path.startswith(SKIPPED):
             continue
-        if any(path == key or (key.endswith("/") and path.startswith(key)) for key in HISTORY):
+        if any(
+            path == key or (key.endswith("/") and path.startswith(key))
+            for key in HISTORY
+        ):
             continue
         file = REPO_ROOT / path
         if not file.is_file():
@@ -101,13 +128,20 @@ def test_a_retired_name_stays_inside_the_files_that_record_history() -> None:
 def test_every_history_exemption_still_holds_the_name(path: str) -> None:
     """An exemption nothing needs any more is a hole the next leftover walks through."""
     target = REPO_ROOT / path
-    files = [p for p in target.rglob("*") if p.is_file()] if target.is_dir() else [target]
-    assert any(RETIRED["ferretdb"].search(f.read_text(encoding="utf-8", errors="replace")) for f in files), path
+    files = (
+        [p for p in target.rglob("*") if p.is_file()] if target.is_dir() else [target]
+    )
+    assert any(
+        RETIRED["ferretdb"].search(f.read_text(encoding="utf-8", errors="replace"))
+        for f in files
+    ), path
 
 
 def test_versions_yaml_history_ends_where_the_key_does() -> None:
     lines = (REPO_ROOT / "versions.yaml").read_text(encoding="utf-8").splitlines()
     end = versions_history_end(lines)
     assert end > 0
-    assert any(RETIRED["ferretdb"].search(line) for line in lines[: end - 1]), "no history left to exempt"
+    assert any(RETIRED["ferretdb"].search(line) for line in lines[: end - 1]), (
+        "no history left to exempt"
+    )
     assert not any(RETIRED["ferretdb"].search(line) for line in lines[end - 1 :])

@@ -265,11 +265,15 @@ class CargoDepTests(unittest.TestCase):
         )
         assert result.action == ACTION_WIDEN_RANGE
         # The detail has to name where the range is declared, or the finding is unactionable.
-        assert "dfe-loader/Cargo.toml [dependencies] declares '>=2.10.14, <3'" in result.detail
+        assert (
+            "dfe-loader/Cargo.toml [dependencies] declares '>=2.10.14, <3'"
+            in result.detail
+        )
 
     def test_a_dev_range_that_does_not_admit_asks_for_that_one_to_widen(self) -> None:
         edge = self._manifest(
-            'scalo = { version = ">=2.10.14, <4" }', dev='scalo = { version = ">=2.10.14, <3" }'
+            'scalo = { version = ">=2.10.14, <4" }',
+            dev='scalo = { version = ">=2.10.14, <3" }',
         )
         result = check_cargo_dep(
             edge, producer_version="3.0.0", consumer_repo=self.repo, package="scalo"
@@ -279,7 +283,9 @@ class CargoDepTests(unittest.TestCase):
         assert "[dependencies] declares" not in result.detail
 
     def test_every_range_admitting_asks_for_a_rebuild_naming_each(self) -> None:
-        edge = self._manifest('scalo = ">=2.10.14, <3"', dev='scalo = { version = "2.10.14" }')
+        edge = self._manifest(
+            'scalo = ">=2.10.14, <3"', dev='scalo = { version = "2.10.14" }'
+        )
         result = check_cargo_dep(
             edge, producer_version="2.11.0", consumer_repo=self.repo, package="scalo"
         )
@@ -387,13 +393,18 @@ class PythonDepTests(unittest.TestCase):
         )
         assert result.action == ACTION_WIDEN_RANGE
         assert (
-            "dfe-engine/pyproject.toml [project.dependencies] declares '>=2.30.0'" in result.detail
+            "dfe-engine/pyproject.toml [project.dependencies] declares '>=2.30.0'"
+            in result.detail
         )
 
     def test_a_dev_group_range_is_held_to_the_new_version_too(self) -> None:
         edge = self._pyproject('"scalo>=2.29.7"')
-        with (self.repo / "pyproject.toml").open("a", encoding="utf-8", newline="\n") as manifest:
-            manifest.write('\n[dependency-groups]\ndev = ["scalo[deployment]>=2.29.7,<2.29.10"]\n')
+        with (self.repo / "pyproject.toml").open(
+            "a", encoding="utf-8", newline="\n"
+        ) as manifest:
+            manifest.write(
+                '\n[dependency-groups]\ndev = ["scalo[deployment]>=2.29.7,<2.29.10"]\n'
+            )
         result = check_python_dep(
             edge, producer_version="2.29.20", consumer_repo=self.repo, package="scalo"
         )
@@ -582,7 +593,9 @@ class PinTests(unittest.TestCase):
         assert "`dfe-stack cut <version>`" in result.detail
         assert "dfe-stack bump-app dfe-engine" not in result.detail
 
-    def test_an_image_pin_in_an_unreleased_stack_still_hands_back_bump_app(self) -> None:
+    def test_an_image_pin_in_an_unreleased_stack_still_hands_back_bump_app(
+        self,
+    ) -> None:
         self._seed_stack(tag=False)
         result = self._image_pin()
         assert result.action == ACTION_BUMP_APP

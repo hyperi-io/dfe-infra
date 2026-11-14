@@ -35,37 +35,49 @@ RUN = "src-0123456789ab"
 
 # One of filebeat's own periodic snapshots, trimmed to the branch that carries
 # the count: it reports a delta per interval, so a run's total is their sum.
-SNAPSHOT = json.dumps({
-    "log.level": "info",
-    "log.logger": "monitoring",
-    "message": "Non-zero metrics in the last 30s",
-    "monitoring": {"metrics": {"libbeat": {"output": {"events": {"acked": 9, "batches": 1}}}}},
-})
-WARNING = json.dumps({
-    "log.level": "warn",
-    "log.logger": "input.filestream.scanner",
-    "message": "1 file is too small to be ingested, files need to be at least 1024 in size",
-})
+SNAPSHOT = json.dumps(
+    {
+        "log.level": "info",
+        "log.logger": "monitoring",
+        "message": "Non-zero metrics in the last 30s",
+        "monitoring": {
+            "metrics": {"libbeat": {"output": {"events": {"acked": 9, "batches": 1}}}}
+        },
+    }
+)
+WARNING = json.dumps(
+    {
+        "log.level": "warn",
+        "log.logger": "input.filestream.scanner",
+        "message": "1 file is too small to be ingested, files need to be at least 1024 in size",
+    }
+)
 
 
 @pytest.fixture
 def pair(tmp_path):
     return beats.Pair(
-        network="dfe_default", receiver_url="http://dfe-receiver:8080/ingest",
-        workdir=tmp_path / "beats", run_id=RUN,
+        network="dfe_default",
+        receiver_url="http://dfe-receiver:8080/ingest",
+        workdir=tmp_path / "beats",
+        run_id=RUN,
     )
 
 
 def write_inputs(pair: beats.Pair, lines: list[str]):
     """The pair's inputs, marked the way the filebeat case marks its corpus."""
-    return beats.write_inputs(pair, lines, DATASET, "_e2e", {"run": RUN, "kind": "corpus"})
+    return beats.write_inputs(
+        pair, lines, DATASET, "_e2e", {"run": RUN, "kind": "corpus"}
+    )
 
 
 class TestWhatTheContainersAreTold:
     def test_the_corpus_is_a_file_on_disk_for_the_agent_to_tail(self, pair):
         corpus = write_inputs(pair, ["one line", "two line"])
 
-        assert (corpus / "cisco_ios.log").read_text(encoding="utf-8") == "one line\ntwo line\n"
+        assert (corpus / "cisco_ios.log").read_text(
+            encoding="utf-8"
+        ) == "one line\ntwo line\n"
 
     def test_filebeat_ships_to_this_runs_own_logstash(self, pair):
         write_inputs(pair, ["a"])
@@ -136,8 +148,12 @@ class TestWhatTheContainersAreTold:
         assert "beats { port => 5044 }" in config
 
     def test_two_runs_never_share_a_container(self, tmp_path):
-        first = beats.Pair(network="n", receiver_url="u", workdir=tmp_path, run_id="src-a")
-        second = beats.Pair(network="n", receiver_url="u", workdir=tmp_path, run_id="src-b")
+        first = beats.Pair(
+            network="n", receiver_url="u", workdir=tmp_path, run_id="src-a"
+        )
+        second = beats.Pair(
+            network="n", receiver_url="u", workdir=tmp_path, run_id="src-b"
+        )
 
         assert first.filebeat != second.filebeat
         assert first.logstash != second.logstash
@@ -153,8 +169,11 @@ class TestWhatTheContainersAreTold:
 def direct(tmp_path):
     """A --via beats run: filebeat alone, shipping to the receiver's own listener."""
     return beats.Pair(
-        network="dfe_default", receiver_url="http://dfe-receiver:8080/ingest",
-        workdir=tmp_path / "beats", run_id=RUN, lumberjack="dfe-receiver:5044",
+        network="dfe_default",
+        receiver_url="http://dfe-receiver:8080/ingest",
+        workdir=tmp_path / "beats",
+        run_id=RUN,
+        lumberjack="dfe-receiver:5044",
     )
 
 
@@ -173,11 +192,15 @@ class TestShippingStraightToTheReceiver:
 
         def stamp(one: beats.Pair) -> str:
             config = (one.workdir / "filebeat.yml").read_text(encoding="utf-8")
-            return config[config.index("processors:"):config.index("output.logstash:")]
+            return config[
+                config.index("processors:") : config.index("output.logstash:")
+            ]
 
         assert stamp(pair) == stamp(direct)
 
-    def test_no_logstash_config_is_written_for_a_container_that_never_runs(self, direct):
+    def test_no_logstash_config_is_written_for_a_container_that_never_runs(
+        self, direct
+    ):
         write_inputs(direct, ["a"])
 
         assert not (direct.workdir / "logstash.conf").exists()
@@ -191,7 +214,11 @@ class TestPuttingTheReceiverBack:
     PATHS = tuple(beats.LUMBERJACK_SWITCHES)
 
     def test_an_overlay_that_set_nothing_is_cleared_back_to_the_app_defaults(self):
-        config = {"fields": [{"path": "config.lumberjack.enabled", "is_set": False, "value": False}]}
+        config = {
+            "fields": [
+                {"path": "config.lumberjack.enabled", "is_set": False, "value": False}
+            ]
+        }
 
         before = beats.held(config, self.PATHS)
 
@@ -199,21 +226,38 @@ class TestPuttingTheReceiverBack:
         assert beats.restore_plan(before, self.PATHS) == ({}, list(self.PATHS))
 
     def test_a_value_the_overlay_already_set_is_written_back_rather_than_cleared(self):
-        config = {"fields": [
-            {"path": "config.lumberjack.enabled", "is_set": True, "value": False},
-            {"path": "config.lumberjack.bind_address", "is_set": True, "value": "0.0.0.0:5044"},
-        ]}
+        config = {
+            "fields": [
+                {"path": "config.lumberjack.enabled", "is_set": True, "value": False},
+                {
+                    "path": "config.lumberjack.bind_address",
+                    "is_set": True,
+                    "value": "0.0.0.0:5044",
+                },
+            ]
+        }
 
         before = beats.held(config, self.PATHS)
 
         assert before == {"config.lumberjack.enabled": False}
         assert beats.restore_plan(before, self.PATHS) == (
-            {"config.lumberjack.enabled": False}, ["config.lumberjack.accept_unauthenticated"])
+            {"config.lumberjack.enabled": False},
+            ["config.lumberjack.accept_unauthenticated"],
+        )
 
-    def test_a_path_the_contract_does_not_declare_is_read_where_the_engine_reports_it(self):
-        config = {"fields": [], "unknown": [{"path": "config.lumberjack.accept_unauthenticated", "value": True}]}
+    def test_a_path_the_contract_does_not_declare_is_read_where_the_engine_reports_it(
+        self,
+    ):
+        config = {
+            "fields": [],
+            "unknown": [
+                {"path": "config.lumberjack.accept_unauthenticated", "value": True}
+            ],
+        }
 
-        assert beats.held(config, self.PATHS) == {"config.lumberjack.accept_unauthenticated": True}
+        assert beats.held(config, self.PATHS) == {
+            "config.lumberjack.accept_unauthenticated": True
+        }
 
     def test_a_body_that_is_not_the_config_view_holds_nothing(self):
         assert beats.held("bad gateway", self.PATHS) == {}
@@ -230,7 +274,9 @@ class TestWhatFilebeatSaysItDid:
         assert beats._published_events("starting filebeat\n" + SNAPSHOT) == 9
 
     def test_the_last_warning_is_what_it_says_when_it_ships_nothing(self):
-        assert "too small to be ingested" in beats._last_warning(f"{SNAPSHOT}\n{WARNING}\n")
+        assert "too small to be ingested" in beats._last_warning(
+            f"{SNAPSHOT}\n{WARNING}\n"
+        )
 
     def test_no_warning_reads_empty_rather_than_inventing_one(self):
         assert beats._last_warning(SNAPSHOT) == ""
@@ -253,11 +299,17 @@ class FakeStore:
 
 
 class TestTheEnvelopeThatLanded:
-    LANDED = json.dumps({
-        "@timestamp": "2026-09-15T21:20:00Z", "data_stream": {"dataset": DATASET}, "message": "...",
-        "log": {"file": {"path": beats.AGENT_PATH}, "offset": 0},
-        "agent": {"type": "filebeat"}, "ecs": {"version": "8.0.0"}, "tags": ["beats_input_raw_event"],
-    })
+    LANDED = json.dumps(
+        {
+            "@timestamp": "2026-09-15T21:20:00Z",
+            "data_stream": {"dataset": DATASET},
+            "message": "...",
+            "log": {"file": {"path": beats.AGENT_PATH}, "offset": 0},
+            "agent": {"type": "filebeat"},
+            "ecs": {"version": "8.0.0"},
+            "tags": ["beats_input_raw_event"],
+        }
+    )
 
     def test_it_counts_the_rows_that_came_off_the_agent_and_names_one(self):
         store = FakeStore(self.LANDED, carrying=12)
@@ -266,7 +318,15 @@ class TestTheEnvelopeThatLanded:
 
         assert refused == ""
         assert carrying == 12
-        assert keys == ["@timestamp", "agent", "data_stream", "ecs", "log", "message", "tags"]
+        assert keys == [
+            "@timestamp",
+            "agent",
+            "data_stream",
+            "ecs",
+            "log",
+            "message",
+            "tags",
+        ]
 
     def test_the_rows_are_found_by_the_path_only_an_agent_sets(self):
         store = FakeStore(self.LANDED)
@@ -292,7 +352,12 @@ class TestTheEnvelopeThatLanded:
 class KeptStore:
     """A datastore answering the agent-row count, the kept count, and one row that was not kept."""
 
-    def __init__(self, carrying: int, kept: int, landed: tuple[str, str] = ("dfe-receiver", "default")) -> None:
+    def __init__(
+        self,
+        carrying: int,
+        kept: int,
+        landed: tuple[str, str] = ("dfe-receiver", "default"),
+    ) -> None:
         self.carrying, self.kept, self.landed = carrying, kept, landed
         self.asked: list[str] = []
 
@@ -311,7 +376,10 @@ class TestTheFieldsTheShipperAndOperatorSent:
 
         assert status == "done"
         assert detail.startswith("12 of 12 agent row(s) kept agent.type filebeat")
-        assert f"data_stream.namespace {beats.DATA_STREAM_NAMESPACE} (operator-stamped" in detail
+        assert (
+            f"data_stream.namespace {beats.DATA_STREAM_NAMESPACE} (operator-stamped"
+            in detail
+        )
 
     def test_expected_fail_a_transform_writing_its_own_names_what_landed(self):
         """What dfe-transform-elastic wrote over a forwarded Beats document before it kept them."""

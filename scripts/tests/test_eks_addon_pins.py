@@ -30,7 +30,9 @@ import check_versions_drift as drift  # noqa: E402
 
 EKS_TF = REPO_ROOT / "terraform" / "modules" / "kubernetes-cluster" / "aws" / "eks.tf"
 EXAMPLE_DIAL = REPO_ROOT / "deployment.example.yaml"
-EXAMPLE_TFVARS = REPO_ROOT / "terraform" / "environments" / "aws" / "example.tfvars.json"
+EXAMPLE_TFVARS = (
+    REPO_ROOT / "terraform" / "environments" / "aws" / "example.tfvars.json"
+)
 
 
 def _minor(version: str) -> str:
@@ -50,7 +52,9 @@ def _pins() -> dict[str, str]:
 
 def _installed() -> list[str]:
     """The add-on names eks.tf's `addons` local installs."""
-    found = re.search(r"(?m)^\s*addons\s*=\s*\[([^\]]*)\]", EKS_TF.read_text(encoding="utf-8"))
+    found = re.search(
+        r"(?m)^\s*addons\s*=\s*\[([^\]]*)\]", EKS_TF.read_text(encoding="utf-8")
+    )
     assert found, f"{EKS_TF} carries no `addons = [...]` local"
     return sorted(re.findall(r'"([^"]+)"', found.group(1)))
 
@@ -77,7 +81,9 @@ def test_every_addon_the_module_installs_has_a_pin_and_a_drift_check() -> None:
 
 
 @pytest.mark.parametrize("where", sorted(_shipped_minors()))
-def test_the_kube_proxy_pin_is_built_for_the_minor_the_shipped_dials_run(where: str) -> None:
+def test_the_kube_proxy_pin_is_built_for_the_minor_the_shipped_dials_run(
+    where: str,
+) -> None:
     pinned, runs = _minor(_pins()["kube-proxy"]), _shipped_minors()[where]
     assert pinned == runs, (
         f"versions.yaml eks-addons pin kube-proxy for Kubernetes {pinned}, but {where} runs "
@@ -90,7 +96,10 @@ def test_the_kube_proxy_pin_sits_inside_the_supported_platform_window() -> None:
     window = drift.load_versions()["platform.kubernetes"]
     low, _, high = window.partition("-")
     pinned = _minor(_pins()["kube-proxy"])
-    assert _as_tuple(low) <= _as_tuple(pinned) <= _as_tuple(high or low), (pinned, window)
+    assert _as_tuple(low) <= _as_tuple(pinned) <= _as_tuple(high or low), (
+        pinned,
+        window,
+    )
 
 
 def test_expected_fail_a_pin_for_another_minor_is_caught() -> None:

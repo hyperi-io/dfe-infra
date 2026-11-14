@@ -73,7 +73,8 @@ def of_kind(docs: list[dict], kind: str) -> list[dict]:
 def gateway_egress(docs: list[dict]) -> list[dict]:
     """The NetworkPolicy that lets a DFE pod reach its own gateway."""
     return [
-        d for d in of_kind(docs, "NetworkPolicy")
+        d
+        for d in of_kind(docs, "NetworkPolicy")
         if d["metadata"]["name"] == "allow-gateway-egress"
     ]
 
@@ -81,7 +82,8 @@ def gateway_egress(docs: list[dict]) -> list[dict]:
 def login_policies(docs: list[dict]) -> list[dict]:
     """The per-provider interactive-login policies, not the infra group checks."""
     return [
-        d for d in of_kind(docs, "SecurityPolicy")
+        d
+        for d in of_kind(docs, "SecurityPolicy")
         if d["metadata"]["name"].startswith("dfe-oidc-")
         and not d["metadata"]["name"].endswith("-admin")
     ]
@@ -97,24 +99,39 @@ def test_issuer_only_stays_issuer_only() -> None:
         "oidc.providers[0].clientId=dfe",
     )
     policies = login_policies(docs)
-    expect("a public IdP renders one policy per target route", len(policies) >= 1,
-           f"got {len(policies)}")
+    expect(
+        "a public IdP renders one policy per target route",
+        len(policies) >= 1,
+        f"got {len(policies)}",
+    )
     provider = policies[0]["spec"]["oidc"]["provider"]
-    expect("a public IdP renders the issuer alone", set(provider) == {"issuer"},
-           f"got {sorted(provider)}")
+    expect(
+        "a public IdP renders the issuer alone",
+        set(provider) == {"issuer"},
+        f"got {sorted(provider)}",
+    )
 
 
 def test_private_ca_provider_skips_discovery() -> None:
     docs = render(GATEWAY, *PRIVATE_CA_PROVIDER)
     policies = login_policies(docs)
-    expect("a private-CA provider renders a policy", len(policies) >= 1, f"got {len(policies)}")
+    expect(
+        "a private-CA provider renders a policy",
+        len(policies) >= 1,
+        f"got {len(policies)}",
+    )
     provider = policies[0]["spec"]["oidc"]["provider"]
-    expect("both endpoints are named, so discovery is skipped",
-           provider.get("authorizationEndpoint") == "https://auth.example.com/auth"
-           and provider.get("tokenEndpoint") == "https://auth.example.com/token",
-           f"got {provider}")
-    expect("the issuer is still declared, because it must equal the token iss",
-           provider.get("issuer") == "https://auth.example.com", f"got {provider}")
+    expect(
+        "both endpoints are named, so discovery is skipped",
+        provider.get("authorizationEndpoint") == "https://auth.example.com/auth"
+        and provider.get("tokenEndpoint") == "https://auth.example.com/token",
+        f"got {provider}",
+    )
+    expect(
+        "the issuer is still declared, because it must equal the token iss",
+        provider.get("issuer") == "https://auth.example.com",
+        f"got {provider}",
+    )
 
 
 def test_private_ca_provider_keeps_the_token_exchange_in_cluster() -> None:
@@ -123,14 +140,25 @@ def test_private_ca_provider_keeps_the_token_exchange_in_cluster() -> None:
     refs = provider.get("backendRefs", [])
     expect("the token exchange targets the IdP Service", len(refs) == 1, f"got {refs}")
     if refs:
-        expect("the backend ref is a Service with a port",
-               refs[0]["kind"] == "Service" and refs[0]["port"] == 5556, f"got {refs[0]}")
-        expect("the backend ref carries its namespace",
-               refs[0]["namespace"] == "dfe-local", f"got {refs[0]}")
-    expect("backendSettings reaches the rendered policy",
-           provider.get("backendSettings", {}).get("timeout", {}).get("tcp", {}).get(
-               "connectTimeout") == "10s",
-           f"got {provider.get('backendSettings')}")
+        expect(
+            "the backend ref is a Service with a port",
+            refs[0]["kind"] == "Service" and refs[0]["port"] == 5556,
+            f"got {refs[0]}",
+        )
+        expect(
+            "the backend ref carries its namespace",
+            refs[0]["namespace"] == "dfe-local",
+            f"got {refs[0]}",
+        )
+    expect(
+        "backendSettings reaches the rendered policy",
+        provider.get("backendSettings", {})
+        .get("timeout", {})
+        .get("tcp", {})
+        .get("connectTimeout")
+        == "10s",
+        f"got {provider.get('backendSettings')}",
+    )
 
 
 def test_infra_routes_take_the_same_provider_block() -> None:
@@ -138,25 +166,42 @@ def test_infra_routes_take_the_same_provider_block() -> None:
     docs = render(GATEWAY, *PRIVATE_CA_PROVIDER)
     engine = login_policies(docs)[0]["spec"]["oidc"]["provider"]
     admins = [
-        d for d in of_kind(docs, "SecurityPolicy") if d["metadata"]["name"].endswith("-admin")
+        d
+        for d in of_kind(docs, "SecurityPolicy")
+        if d["metadata"]["name"].endswith("-admin")
     ]
-    expect("a private-CA provider renders the infra route policies", len(admins) >= 1,
-           f"got {len(admins)}")
-    differ = [d["metadata"]["name"] for d in admins if d["spec"]["oidc"]["provider"] != engine]
-    expect("every infra route's provider block is the engine route's", differ == [],
-           f"got {differ}")
+    expect(
+        "a private-CA provider renders the infra route policies",
+        len(admins) >= 1,
+        f"got {len(admins)}",
+    )
+    differ = [
+        d["metadata"]["name"] for d in admins if d["spec"]["oidc"]["provider"] != engine
+    ]
+    expect(
+        "every infra route's provider block is the engine route's",
+        differ == [],
+        f"got {differ}",
+    )
 
 
 def test_the_client_secret_lands_under_the_one_key_envoy_gateway_reads() -> None:
     """clientSecretKey renamed the key, and Envoy Gateway reads only client-secret."""
-    docs = render(GATEWAY, *PRIVATE_CA_PROVIDER, "oidc.providers[0].clientSecretKey=secret")
-    keys = sorted({
-        item["secretKey"]
-        for es in of_kind(docs, "ExternalSecret")
-        for item in es["spec"]["data"]
-    })
-    expect("every OIDC ExternalSecret writes key client-secret", keys == ["client-secret"],
-           f"got {keys}")
+    docs = render(
+        GATEWAY, *PRIVATE_CA_PROVIDER, "oidc.providers[0].clientSecretKey=secret"
+    )
+    keys = sorted(
+        {
+            item["secretKey"]
+            for es in of_kind(docs, "ExternalSecret")
+            for item in es["spec"]["data"]
+        }
+    )
+    expect(
+        "every OIDC ExternalSecret writes key client-secret",
+        keys == ["client-secret"],
+        f"got {keys}",
+    )
 
 
 def test_no_dead_oidc_switch_survives() -> None:
@@ -171,45 +216,69 @@ def test_no_dead_oidc_switch_survives() -> None:
 
 def test_gateway_egress_names_the_listener_port() -> None:
     policies = gateway_egress(render(POLICIES))
-    expect("every DFE namespace gets a gateway egress policy", len(policies) == 1,
-           f"got {len(policies)}")
+    expect(
+        "every DFE namespace gets a gateway egress policy",
+        len(policies) == 1,
+        f"got {len(policies)}",
+    )
     rule = policies[0]["spec"]["egress"][0]
     ports = {p["port"] for p in rule["ports"]}
-    expect("the policy names the proxy container ports, not the Service ports",
-           ports == {10443, 10080}, f"got {sorted(ports)}")
-    expect("443 alone is not what is permitted", 443 not in ports, f"got {sorted(ports)}")
+    expect(
+        "the policy names the proxy container ports, not the Service ports",
+        ports == {10443, 10080},
+        f"got {sorted(ports)}",
+    )
+    expect(
+        "443 alone is not what is permitted", 443 not in ports, f"got {sorted(ports)}"
+    )
 
 
 def test_gateway_egress_selects_the_proxy_pods() -> None:
     to = gateway_egress(render(POLICIES))[0]["spec"]["egress"][0]["to"][0]
-    expect("the destination is the gateway namespace",
-           to["namespaceSelector"]["matchLabels"]["kubernetes.io/metadata.name"]
-           == "envoy-gateway-system", f"got {to}")
-    expect("the destination is the managed proxy pods, not the control plane",
-           to["podSelector"]["matchLabels"] == {
-               "app.kubernetes.io/managed-by": "envoy-gateway",
-               "app.kubernetes.io/component": "proxy",
-           }, f"got {to.get('podSelector')}")
+    expect(
+        "the destination is the gateway namespace",
+        to["namespaceSelector"]["matchLabels"]["kubernetes.io/metadata.name"]
+        == "envoy-gateway-system",
+        f"got {to}",
+    )
+    expect(
+        "the destination is the managed proxy pods, not the control plane",
+        to["podSelector"]["matchLabels"]
+        == {
+            "app.kubernetes.io/managed-by": "envoy-gateway",
+            "app.kubernetes.io/component": "proxy",
+        },
+        f"got {to.get('podSelector')}",
+    )
 
 
 def test_gateway_egress_can_be_turned_off() -> None:
     policies = gateway_egress(render(POLICIES, "gatewayEgress.enabled=false"))
-    expect("gatewayEgress.enabled=false renders nothing", policies == [],
-           f"got {len(policies)}")
+    expect(
+        "gatewayEgress.enabled=false renders nothing",
+        policies == [],
+        f"got {len(policies)}",
+    )
 
 
 def test_external_dns_is_gated_on_a_declared_provider() -> None:
     """external-dns defaults its provider to aws, so an ungated install crash-loops."""
     appset = yaml.safe_load(
-        (REPO_ROOT / "argocd" / "appsets" / "layer1-addons.yaml").read_text(encoding="utf-8")
+        (REPO_ROOT / "argocd" / "appsets" / "layer1-addons.yaml").read_text(
+            encoding="utf-8"
+        )
     )
     gated = []
     for gen in appset["spec"]["generators"]:
-        charts = {e["chart"] for e in gen["matrix"]["generators"][1]["list"]["elements"]}
+        charts = {
+            e["chart"] for e in gen["matrix"]["generators"][1]["list"]["elements"]
+        }
         selector = gen["matrix"]["generators"][0]["clusters"]["selector"]
         if "external-dns" in charts:
             gated.append(selector.get("matchExpressions", []))
-    expect("external-dns is in exactly one generator", len(gated) == 1, f"got {len(gated)}")
+    expect(
+        "external-dns is in exactly one generator", len(gated) == 1, f"got {len(gated)}"
+    )
     if gated:
         keys = {(e["key"], e["operator"]) for e in gated[0]}
         expect(
@@ -219,8 +288,11 @@ def test_external_dns_is_gated_on_a_declared_provider() -> None:
             f"got {gated[0]}",
         )
         none_values = [e["values"] for e in gated[0] if e["operator"] == "NotIn"]
-        expect("the none provider is excluded too", none_values and "none" in none_values[0],
-               f"got {none_values}")
+        expect(
+            "the none provider is excluded too",
+            none_values and "none" in none_values[0],
+            f"got {none_values}",
+        )
 
 
 def main() -> int:

@@ -153,7 +153,9 @@ def check_shape(display: str, meta: list[dict]) -> str | None:
     if display in VALUELESS_TYPES:
         return None
     types = [c["type"] for c in meta]
-    if display in TIME_SERIES_TYPES and not any(t.startswith(DATE_TYPES) for t in types):
+    if display in TIME_SERIES_TYPES and not any(
+        t.startswith(DATE_TYPES) for t in types
+    ):
         return f"no Date/DateTime column (got {types})"
     if not any(NUMERIC.match(t) for t in types):
         return f"no numeric column (got {types})"
@@ -198,7 +200,9 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     args.window_ms = args.window_minutes * 60 * 1000
     args.interval_s = args.interval_seconds
     args.ch_password = (
-        pathlib.Path(args.ch_password_file).read_text(encoding="utf-8", errors="replace").strip()
+        pathlib.Path(args.ch_password_file)
+        .read_text(encoding="utf-8", errors="replace")
+        .strip()
     )
     return args
 
@@ -223,7 +227,9 @@ def main(argv: list[str] | None = None) -> int:
             except Exception as err:
                 failures += 1
                 detail = getattr(err, "read", None)
-                msg = detail().decode("utf-8", errors="replace")[:400] if detail else err
+                msg = (
+                    detail().decode("utf-8", errors="replace")[:400] if detail else err
+                )
                 print(f"  FAIL {tile['id']}: {msg}")
                 continue
             problem = check_shape(display, result.get("meta", []))

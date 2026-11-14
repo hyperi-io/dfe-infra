@@ -164,7 +164,9 @@ def free_output_available(text: str) -> Reading:
             continue
         if fields[0].rstrip(":").lower() == "mem":
             if "available" not in header:
-                raise ValueError("free printed no available column, so it cannot gate a lane")
+                raise ValueError(
+                    "free printed no available column, so it cannot gate a lane"
+                )
             total = int(fields[1])
             free = int(fields[header.index("available") + 1])
             return Reading(
@@ -220,7 +222,9 @@ def node_headroom(nodes: dict, pods: dict) -> Reading:
             continue
         containers = (spec.get("containers") or []) + (spec.get("initContainers") or [])
         requested += sum(
-            parse_mem((((c.get("resources") or {}).get("requests")) or {}).get("memory", "0"))
+            parse_mem(
+                (((c.get("resources") or {}).get("requests")) or {}).get("memory", "0")
+            )
             for c in containers
         )
 

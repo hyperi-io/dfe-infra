@@ -66,11 +66,7 @@ def test_every_boolean_is_refused_by_name(path: tuple[str, ...]) -> None:
 
 def test_each_boolean_reads_through_quoted_or_not() -> None:
     parsed = dial(
-        "edge:\n"
-        "  enabled: false\n"
-        "  ingest:\n"
-        "    tunnel:\n"
-        '      enabled: "true"\n'
+        'edge:\n  enabled: false\n  ingest:\n    tunnel:\n      enabled: "true"\n'
     )
     flags = render_dial._edge_flags(parsed)
     assert flags["edge.enabled"] is False
@@ -79,7 +75,10 @@ def test_each_boolean_reads_through_quoted_or_not() -> None:
 
 def test_the_tunnel_is_off_until_a_deployment_asks() -> None:
     """The module OFFERS the tunnel; the engine turns it on by writing a file."""
-    assert render_dial._edge_flags(dial("substrate: k8s\n"))["edge.ingest.tunnel.enabled"] is False
+    assert (
+        render_dial._edge_flags(dial("substrate: k8s\n"))["edge.ingest.tunnel.enabled"]
+        is False
+    )
     assert render_dial._edge_flags(example())["edge.ingest.tunnel.enabled"] is False
 
 
@@ -89,7 +88,9 @@ def test_the_tunnel_is_off_until_a_deployment_asks() -> None:
 
 
 @pytest.mark.parametrize("path", sorted(render_dial._EDGE_ENUMS))
-def test_every_enum_refuses_a_value_outside_its_vocabulary(path: tuple[str, ...]) -> None:
+def test_every_enum_refuses_a_value_outside_its_vocabulary(
+    path: tuple[str, ...],
+) -> None:
     body = "\n".join(
         f"{'  ' * depth}{key}:" + (" nosuchvalue" if depth == len(path) - 1 else "")
         for depth, key in enumerate(path)
@@ -108,18 +109,32 @@ def test_every_named_value_of_every_enum_reads_through(path: tuple[str, ...]) ->
         assert render_dial._edge_enums(dial(body + "\n"))[".".join(path)] == value
 
 
-@pytest.mark.parametrize(("cloud", "flavour"), [("aws", "aws"), ("gcp", "gcp"),
-                                                ("azure", "azure"), ("local", "onprem"),
-                                                ("local-dfe", "onprem"), ("rancher", "onprem")])
-def test_the_flavour_defaults_to_the_one_the_cloud_fact_selects(cloud: str, flavour: str) -> None:
+@pytest.mark.parametrize(
+    ("cloud", "flavour"),
+    [
+        ("aws", "aws"),
+        ("gcp", "gcp"),
+        ("azure", "azure"),
+        ("local", "onprem"),
+        ("local-dfe", "onprem"),
+        ("rancher", "onprem"),
+    ],
+)
+def test_the_flavour_defaults_to_the_one_the_cloud_fact_selects(
+    cloud: str, flavour: str
+) -> None:
     """The appset derives it the same way, so a dial that states none still reports it."""
     assert render_dial._edge_flavour(dial(f"k8s:\n  cloud: {cloud}\n")) == flavour
 
 
 def test_the_receivers_door_still_falls_back_to_the_cloud_overlay() -> None:
     """A dial naming no door reports whatever argocd/values applies for its cloud."""
-    for cloud, door in (("aws", "loadbalancer"), ("gcp", "loadbalancer"), ("azure", "loadbalancer"),
-                        ("local", "gateway")):
+    for cloud, door in (
+        ("aws", "loadbalancer"),
+        ("gcp", "loadbalancer"),
+        ("azure", "loadbalancer"),
+        ("local", "gateway"),
+    ):
         enums = render_dial._edge_enums(dial(f"k8s:\n  cloud: {cloud}\n"))
         assert enums["edge.groups.ingest.door"] == door, cloud
 
@@ -130,7 +145,9 @@ def test_the_receivers_door_still_falls_back_to_the_cloud_overlay() -> None:
 
 
 @pytest.mark.parametrize(("new", "old"), sorted(render_dial._EDGE_ALIASES.items()))
-def test_every_alias_feeds_its_new_path(new: tuple[str, ...], old: tuple[str, ...]) -> None:
+def test_every_alias_feeds_its_new_path(
+    new: tuple[str, ...], old: tuple[str, ...]
+) -> None:
     body = "\n".join(
         f"{'  ' * depth}{key}:" + (" fromtheoldpath" if depth == len(old) - 1 else "")
         for depth, key in enumerate(old)
@@ -197,7 +214,9 @@ TOKEN_PATH = "      auth:\n        remoteKey: dfe/local/otel/ingress\n"
 
 def test_otel_ingress_on_with_no_token_path_is_refused() -> None:
     """Both charts refuse the same pair, so the dial agrees before a deploy does."""
-    with pytest.raises(render_dial.DialError, match=r"edge\.ingest\.otel\.auth\.remoteKey"):
+    with pytest.raises(
+        render_dial.DialError, match=r"edge\.ingest\.otel\.auth\.remoteKey"
+    ):
         _refusals(OTEL_ON)
 
 
@@ -209,17 +228,23 @@ def test_otel_ingress_on_with_a_token_path_is_accepted() -> None:
 def test_auth_none_is_refused_whatever_the_switch(enabled: str) -> None:
     """There is no unauthenticated mode, so no dial may say there is one."""
     body = f"edge:\n  ingest:\n    otel:\n      enabled: {enabled}\n      auth: none\n"
-    with pytest.raises(render_dial.DialError, match=r"edge\.ingest\.otel\.auth") as raised:
+    with pytest.raises(
+        render_dial.DialError, match=r"edge\.ingest\.otel\.auth"
+    ) as raised:
         _refusals(body)
     assert "no unauthenticated mode" in str(raised.value)
 
 
 def test_the_retired_auth_required_reads_through_with_a_deprecation() -> None:
     """The one value it ever meant is now the only behaviour, so it is named, not refused."""
-    parsed = dial("edge:\n  ingest:\n    otel:\n      enabled: false\n      auth: required\n")
+    parsed = dial(
+        "edge:\n  ingest:\n    otel:\n      enabled: false\n      auth: required\n"
+    )
     render_dial._edge_refusals(parsed, render_dial._edge_flags(parsed))
     lines = render_dial._edge_deprecations(parsed)
-    assert any("edge.ingest.otel.auth" in line and "remoteKey" in line for line in lines), lines
+    assert any(
+        "edge.ingest.otel.auth" in line and "remoteKey" in line for line in lines
+    ), lines
 
 
 def test_the_old_public_flag_feeds_the_switch_for_one_release() -> None:
@@ -239,7 +264,9 @@ def test_an_otel_port_that_is_not_a_port_is_refused(port: str) -> None:
 def test_the_dial_block_is_the_common_yaml_block_verbatim() -> None:
     """The deployer pastes it under otel.ingress in infra/common.yaml, so it has
     to be that block, key for key and default for default."""
-    example_block = yaml.safe_load(EXAMPLE.read_text(encoding="utf-8"))["edge"]["ingest"]["otel"]
+    example_block = yaml.safe_load(EXAMPLE.read_text(encoding="utf-8"))["edge"][
+        "ingest"
+    ]["otel"]
     common = yaml.safe_load(COMMON.read_text(encoding="utf-8"))
     assert example_block == common["otel"]["ingress"]
 
@@ -259,7 +286,9 @@ def test_turning_otel_ingress_on_is_a_tier_two_exposure_with_no_spend() -> None:
 
 
 def _admin_peer(body: str) -> dict[str, object]:
-    return render_dial._edge_tunnel(dial(f"edge:\n  ingest:\n    tunnel:\n      admin_peer:\n{body}"))
+    return render_dial._edge_tunnel(
+        dial(f"edge:\n  ingest:\n    tunnel:\n      admin_peer:\n{body}")
+    )
 
 
 def test_an_admin_peer_ttl_other_than_the_default_is_refused_by_name() -> None:
@@ -286,7 +315,9 @@ def test_an_admin_peer_cidr_is_refused_by_name() -> None:
 
 def test_the_defaults_and_an_omitted_block_both_read_through() -> None:
     """The example dial writes both fields, so the value it ships must pass."""
-    _admin_peer(f"        ttl_minutes: {render_dial.ADMIN_PEER_TTL_MINUTES}\n        peer_cidr: \"\"\n")
+    _admin_peer(
+        f'        ttl_minutes: {render_dial.ADMIN_PEER_TTL_MINUTES}\n        peer_cidr: ""\n'
+    )
     render_dial._edge_tunnel(dial("substrate: k8s\n"))
     render_dial._edge(example())
 
@@ -309,11 +340,17 @@ def _tier2(parsed: dict) -> list[str]:
     """The tier-2 rows as main() computes them, the receiver's load balancer included."""
     enums, flags = render_dial._edge_enums(parsed), render_dial._edge_flags(parsed)
     opened = render_dial.ingest_opened(parsed, enums, flags)
-    return render_dial._edge_tier2_on({**enums, render_dial.INGEST_TIER2_KEY: opened}, flags)
+    return render_dial._edge_tier2_on(
+        {**enums, render_dial.INGEST_TIER2_KEY: opened}, flags
+    )
 
 
 def test_a_tier_two_key_is_named_with_its_bucket_and_never_a_rate() -> None:
-    lines = _tier2(dial("k8s:\n  cloud: aws\nedge:\n  groups:\n    ingest:\n      allow: [198.51.100.0/24]\n"))
+    lines = _tier2(
+        dial(
+            "k8s:\n  cloud: aws\nedge:\n  groups:\n    ingest:\n      allow: [198.51.100.0/24]\n"
+        )
+    )
     assert len(lines) == 1, lines
     assert "edge.groups.ingest: loadbalancer" in lines[0]
     assert "bucket L" in lines[0]
@@ -321,10 +358,23 @@ def test_a_tier_two_key_is_named_with_its_bucket_and_never_a_rate() -> None:
     assert not re.search(r"\$|USD|\d+\s*/\s*(month|hour)", lines[0]), lines[0]
 
 
-@pytest.mark.parametrize("ingest", ["allow: []", "door: gateway\n      allow: [198.51.100.0/24]",
-                                    "enabled: false\n      allow: [198.51.100.0/24]"])
-def test_expected_fail_no_receiver_load_balancer_is_no_tier_two_row(ingest: str) -> None:
-    assert _tier2(dial(f"k8s:\n  cloud: aws\nedge:\n  groups:\n    ingest:\n      {ingest}\n")) == []
+@pytest.mark.parametrize(
+    "ingest",
+    [
+        "allow: []",
+        "door: gateway\n      allow: [198.51.100.0/24]",
+        "enabled: false\n      allow: [198.51.100.0/24]",
+    ],
+)
+def test_expected_fail_no_receiver_load_balancer_is_no_tier_two_row(
+    ingest: str,
+) -> None:
+    assert (
+        _tier2(
+            dial(f"k8s:\n  cloud: aws\nedge:\n  groups:\n    ingest:\n      {ingest}\n")
+        )
+        == []
+    )
 
 
 def test_a_tier_two_key_that_costs_nothing_says_no_spend_instead_of_a_bucket() -> None:
@@ -361,31 +411,57 @@ def test_the_render_prints_the_edge_summary(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     result = subprocess.run(
-        [sys.executable, str(SCRIPTS / "render_dial.py"),
-         "--dial", str(tmp_path / "deployment.yaml"),
-         "--out", str(tmp_path / "bootstrap.env")],
-        capture_output=True, text=True, check=False,
+        [
+            sys.executable,
+            str(SCRIPTS / "render_dial.py"),
+            "--dial",
+            str(tmp_path / "deployment.yaml"),
+            "--out",
+            str(tmp_path / "bootstrap.env"),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
     )
     assert result.returncode == 0, result.stderr
     assert "EDGE MODULE (aws) -- on" in result.stderr
-    assert "public hostnames (edge.product.public, edge.admin_uis.public.*): dfe-ui" in result.stderr
+    assert (
+        "public hostnames (edge.product.public, edge.admin_uis.public.*): dfe-ui"
+        in result.stderr
+    )
     assert "fleet tunnel (edge.ingest.tunnel.enabled): off" in result.stderr
-    assert "OTLP ingest from outside the cluster (edge.ingest.otel.enabled): off" in result.stderr
-    assert "tier 2 opt-ins that are ON: edge.groups.ingest: loadbalancer" in result.stderr
+    assert (
+        "OTLP ingest from outside the cluster (edge.ingest.otel.enabled): off"
+        in result.stderr
+    )
+    assert (
+        "tier 2 opt-ins that are ON: edge.groups.ingest: loadbalancer" in result.stderr
+    )
     assert "bucket L" in result.stderr
-    assert ("receiver ingest door (edge.groups.ingest, pasted as exposure.groups.ingest): loadbalancer"
-            in result.stderr)
+    assert (
+        "receiver ingest door (edge.groups.ingest, pasted as exposure.groups.ingest): loadbalancer"
+        in result.stderr
+    )
     assert "admitting 198.51.100.0/24" in result.stderr
 
 
-@pytest.mark.parametrize(("cidrs", "flavour", "said"), [
-    ([], "aws", "every web route answers 403 to every address"),
-    ([], "gcp", "every web route answers 403 to every address"),
-    ([], "azure", "every web route answers 403 to every address"),
-    ([], "onprem", "not internet-facing, so nothing is fenced"),
-    (["203.0.113.7/32", "198.51.100.0/24"], "aws", "203.0.113.7/32, 198.51.100.0/24"),
-])
-def test_the_web_fence_line_says_what_the_gateway_admits(cidrs: list[str], flavour: str, said: str) -> None:
+@pytest.mark.parametrize(
+    ("cidrs", "flavour", "said"),
+    [
+        ([], "aws", "every web route answers 403 to every address"),
+        ([], "gcp", "every web route answers 403 to every address"),
+        ([], "azure", "every web route answers 403 to every address"),
+        ([], "onprem", "not internet-facing, so nothing is fenced"),
+        (
+            ["203.0.113.7/32", "198.51.100.0/24"],
+            "aws",
+            "203.0.113.7/32, 198.51.100.0/24",
+        ),
+    ],
+)
+def test_the_web_fence_line_says_what_the_gateway_admits(
+    cidrs: list[str], flavour: str, said: str
+) -> None:
     line, warnings = render_dial.web_fence(cidrs, flavour)
     assert said in line, line
     assert warnings == []
@@ -400,23 +476,41 @@ def test_a_slash_zero_is_every_address_and_warns(everything: str) -> None:
     assert everything in warnings[0], warnings
 
 
-@pytest.mark.parametrize(("value", "said"), [
-    ('""', "web allow-list (edge.product.allowed_cidrs, pasted as exposure.groups.<group>.allow): "
-           "empty -- the gateway is internet-facing"),
-    ('"0.0.0.0/0"', "render_dial: WARNING -- edge.product.allowed_cidrs carries 0.0.0.0/0"),
-])
+@pytest.mark.parametrize(
+    ("value", "said"),
+    [
+        (
+            '""',
+            "web allow-list (edge.product.allowed_cidrs, pasted as exposure.groups.<group>.allow): "
+            "empty -- the gateway is internet-facing",
+        ),
+        (
+            '"0.0.0.0/0"',
+            "render_dial: WARNING -- edge.product.allowed_cidrs carries 0.0.0.0/0",
+        ),
+    ],
+)
 def test_the_render_prints_the_web_fence(value: str, said: str, tmp_path: Path) -> None:
     text = EXAMPLE.read_text(encoding="utf-8")
     line = '    allowed_cidrs: ""\n'
-    assert text.count(line) == 1, "the example's edge.product.allowed_cidrs moved; this test edits it in place"
+    assert text.count(line) == 1, (
+        "the example's edge.product.allowed_cidrs moved; this test edits it in place"
+    )
     (tmp_path / "deployment.yaml").write_text(
         text.replace(line, f"    allowed_cidrs: {value}\n"), encoding="utf-8"
     )
     result = subprocess.run(
-        [sys.executable, str(SCRIPTS / "render_dial.py"),
-         "--dial", str(tmp_path / "deployment.yaml"),
-         "--out", str(tmp_path / "bootstrap.env")],
-        capture_output=True, text=True, check=False,
+        [
+            sys.executable,
+            str(SCRIPTS / "render_dial.py"),
+            "--dial",
+            str(tmp_path / "deployment.yaml"),
+            "--out",
+            str(tmp_path / "bootstrap.env"),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
     )
     assert result.returncode == 0, result.stderr
     assert said in result.stderr, result.stderr
@@ -424,18 +518,29 @@ def test_the_render_prints_the_web_fence(value: str, said: str, tmp_path: Path) 
 
 def test_the_render_says_where_otel_ingress_takes_its_token(tmp_path: Path) -> None:
     text = EXAMPLE.read_text(encoding="utf-8")
-    block = "    otel:\n      enabled: false\n      port: 4319\n      auth:\n        remoteKey: \"\"\n"
+    block = '    otel:\n      enabled: false\n      port: 4319\n      auth:\n        remoteKey: ""\n'
     assert block in text, "the example's otel block moved; this test edits it in place"
     (tmp_path / "deployment.yaml").write_text(
-        text.replace(block, block.replace("enabled: false", "enabled: true")
-                     .replace('remoteKey: ""', "remoteKey: dfe/prod/otel/ingress")),
+        text.replace(
+            block,
+            block.replace("enabled: false", "enabled: true").replace(
+                'remoteKey: ""', "remoteKey: dfe/prod/otel/ingress"
+            ),
+        ),
         encoding="utf-8",
     )
     result = subprocess.run(
-        [sys.executable, str(SCRIPTS / "render_dial.py"),
-         "--dial", str(tmp_path / "deployment.yaml"),
-         "--out", str(tmp_path / "bootstrap.env")],
-        capture_output=True, text=True, check=False,
+        [
+            sys.executable,
+            str(SCRIPTS / "render_dial.py"),
+            "--dial",
+            str(tmp_path / "deployment.yaml"),
+            "--out",
+            str(tmp_path / "bootstrap.env"),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
     )
     assert result.returncode == 0, result.stderr
     assert (
@@ -451,10 +556,17 @@ def test_a_dial_setting_both_spellings_fails_the_render(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     result = subprocess.run(
-        [sys.executable, str(SCRIPTS / "render_dial.py"),
-         "--dial", str(tmp_path / "deployment.yaml"),
-         "--out", str(tmp_path / "bootstrap.env")],
-        capture_output=True, text=True, check=False,
+        [
+            sys.executable,
+            str(SCRIPTS / "render_dial.py"),
+            "--dial",
+            str(tmp_path / "deployment.yaml"),
+            "--out",
+            str(tmp_path / "bootstrap.env"),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
     )
     assert result.returncode == 1, result.stderr
     assert "edge.product.public and ui.public.dfe_ui" in result.stderr
@@ -463,15 +575,19 @@ def test_a_dial_setting_both_spellings_fails_the_render(tmp_path: Path) -> None:
 # One dial per refusal main() makes after parsing, each built from the shipped
 # example so everything else in it would render.
 REFUSED_DIALS = {
-    "both spellings of one key": lambda text: text + "\nui:\n  public:\n    dfe_ui: false\n",
+    "both spellings of one key": lambda text: (
+        text + "\nui:\n  public:\n    dfe_ui: false\n"
+    ),
     "otel ingress with no token": lambda text: text.replace(
-        "      enabled: false\n      port: 4319", "      enabled: true\n      port: 4319"
+        "      enabled: false\n      port: 4319",
+        "      enabled: true\n      port: 4319",
     ),
     "an unknown controller pool": lambda text: text.replace(
         "  controller_pool: combined", "  controller_pool: nosuchpool"
     ),
     "a trusted proxy range of every address": lambda text: text.replace(
-        '    trusted_proxy_cidrs: ""', "    trusted_proxy_cidrs: 192.0.2.0/25, 0.0.0.0/0"
+        '    trusted_proxy_cidrs: ""',
+        "    trusted_proxy_cidrs: 192.0.2.0/25, 0.0.0.0/0",
     ),
 }
 
@@ -482,10 +598,17 @@ OPERATOR_ENV = '# the operator\'s own\nDFE_ENV="operator-set"\nDFE_NAMESPACE="th
 def _render(dial_text: str, tmp_path: Path) -> subprocess.CompletedProcess:
     (tmp_path / "deployment.yaml").write_text(dial_text, encoding="utf-8")
     return subprocess.run(
-        [sys.executable, str(SCRIPTS / "render_dial.py"),
-         "--dial", str(tmp_path / "deployment.yaml"),
-         "--out", str(tmp_path / "bootstrap.env")],
-        capture_output=True, text=True, check=False,
+        [
+            sys.executable,
+            str(SCRIPTS / "render_dial.py"),
+            "--dial",
+            str(tmp_path / "deployment.yaml"),
+            "--out",
+            str(tmp_path / "bootstrap.env"),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
     )
 
 
@@ -501,19 +624,32 @@ def test_a_refused_dial_writes_no_env_file(refusal: str, tmp_path: Path) -> None
 
 
 @pytest.mark.parametrize("refusal", sorted(REFUSED_DIALS))
-def test_a_refused_dial_leaves_an_existing_env_file_untouched(refusal: str, tmp_path: Path) -> None:
+def test_a_refused_dial_leaves_an_existing_env_file_untouched(
+    refusal: str, tmp_path: Path
+) -> None:
     env = tmp_path / "bootstrap.env"
     env.write_text(OPERATOR_ENV, encoding="utf-8")
-    result = _render(REFUSED_DIALS[refusal](EXAMPLE.read_text(encoding="utf-8")), tmp_path)
+    result = _render(
+        REFUSED_DIALS[refusal](EXAMPLE.read_text(encoding="utf-8")), tmp_path
+    )
     assert result.returncode == 1, result.stderr
     assert env.read_text(encoding="utf-8") == OPERATOR_ENV, result.stderr
 
 
-def test_a_trusted_proxy_range_of_every_address_is_refused_with_its_reason(tmp_path: Path) -> None:
-    result = _render(REFUSED_DIALS["a trusted proxy range of every address"](EXAMPLE.read_text(encoding="utf-8")),
-                     tmp_path)
+def test_a_trusted_proxy_range_of_every_address_is_refused_with_its_reason(
+    tmp_path: Path,
+) -> None:
+    result = _render(
+        REFUSED_DIALS["a trusted proxy range of every address"](
+            EXAMPLE.read_text(encoding="utf-8")
+        ),
+        tmp_path,
+    )
     assert result.returncode == 1, result.stderr
-    assert "edge.product.trusted_proxy_cidrs carries 0.0.0.0/0, which trusts every address" in result.stderr
+    assert (
+        "edge.product.trusted_proxy_cidrs carries 0.0.0.0/0, which trusts every address"
+        in result.stderr
+    )
     assert "a header the client sets" in result.stderr
 
 
@@ -521,26 +657,41 @@ def test_an_accepted_dial_still_writes_the_env_file(tmp_path: Path) -> None:
     """The counterweight: validating first must not stop the write it guards."""
     result = _render(EXAMPLE.read_text(encoding="utf-8"), tmp_path)
     assert result.returncode == 0, result.stderr
-    assert 'DFE_EDGE_ENABLED="true"' in (tmp_path / "bootstrap.env").read_text(encoding="utf-8")
+    assert 'DFE_EDGE_ENABLED="true"' in (tmp_path / "bootstrap.env").read_text(
+        encoding="utf-8"
+    )
 
 
 def test_a_dial_on_the_old_spelling_alone_renders_and_prints_the_deprecation(
-    tmp_path: Path
+    tmp_path: Path,
 ) -> None:
     """_edge_deprecations is tested as a function; this is the line that has to
     reach the operator, and deleting the loop in main() leaves that green."""
-    dial = EXAMPLE.read_text(encoding="utf-8").replace(
-        "  product:\n    public: true", '  product:\n    public: ""'
-    ) + "\nui:\n  public:\n    dfe_ui: false\n"
+    dial = (
+        EXAMPLE.read_text(encoding="utf-8").replace(
+            "  product:\n    public: true", '  product:\n    public: ""'
+        )
+        + "\nui:\n  public:\n    dfe_ui: false\n"
+    )
     (tmp_path / "deployment.yaml").write_text(dial, encoding="utf-8")
     result = subprocess.run(
-        [sys.executable, str(SCRIPTS / "render_dial.py"),
-         "--dial", str(tmp_path / "deployment.yaml"),
-         "--out", str(tmp_path / "bootstrap.env")],
-        capture_output=True, text=True, check=False,
+        [
+            sys.executable,
+            str(SCRIPTS / "render_dial.py"),
+            "--dial",
+            str(tmp_path / "deployment.yaml"),
+            "--out",
+            str(tmp_path / "bootstrap.env"),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
     )
     assert result.returncode == 0, result.stderr
-    assert "render_dial: deprecated -- ui.public.dfe_ui moved to edge.product.public" in result.stderr
+    assert (
+        "render_dial: deprecated -- ui.public.dfe_ui moved to edge.product.public"
+        in result.stderr
+    )
 
 
 def test_the_shipped_example_parses_and_validates() -> None:

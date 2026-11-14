@@ -50,10 +50,14 @@ ADMIN_GROUPS = ["dfe-admins", "dfe-infra"]
 
 # Every key kafbat.oidcIsUsable needs, so the chart renders an effective OAUTH2.
 OIDC = (
-    "--set", "oidc.enabled=true",
-    "--set", "oidc.issuerUri=https://id.example.com",
-    "--set", "oidc.clientId=kafbat",
-    "--set", "oidc.clientSecretName=dfe-kafbat-oidc",
+    "--set",
+    "oidc.enabled=true",
+    "--set",
+    "oidc.issuerUri=https://id.example.com",
+    "--set",
+    "oidc.clientId=kafbat",
+    "--set",
+    "oidc.clientSecretName=dfe-kafbat-oidc",
 )
 CLUSTERS = [{"name": "dfe", "bootstrapServers": "kafka.example.com:9092"}]
 CLUSTER = ("--set-json", f"kafka.clusters={json.dumps(CLUSTERS)}")
@@ -64,9 +68,12 @@ BREAK_GLASS = {
     "chart defaults": (),
     "oidc switch alone": ("--set", "oidc.enabled=true"),
     "aws scale cascade": (
-        "-f", str(VALUES / "common.yaml"),
-        "-f", str(VALUES / "aws.yaml"),
-        "-f", str(VALUES / "profile-scale.yaml"),
+        "-f",
+        str(VALUES / "common.yaml"),
+        "-f",
+        str(VALUES / "aws.yaml"),
+        "-f",
+        str(VALUES / "profile-scale.yaml"),
     ),
 }
 
@@ -83,8 +90,15 @@ def values_file(path: Path) -> dict:
 def helm_configmap(*args: str) -> subprocess.CompletedProcess:
     """helm template of the kafbat ConfigMap alone, whether or not it rendered."""
     return subprocess.run(
-        ["helm", "template", "kafbat", str(KAFBAT), "--show-only", "templates/configmap.yaml",
-         *args],
+        [
+            "helm",
+            "template",
+            "kafbat",
+            str(KAFBAT),
+            "--show-only",
+            "templates/configmap.yaml",
+            *args,
+        ],
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -105,11 +119,14 @@ def app_config(*args: str) -> dict:
     if out.returncode != 0:
         raise SystemExit(f"helm template failed for the kafbat chart:\n{out.stderr}")
     maps = [
-        d for d in yaml.safe_load_all(out.stdout)
+        d
+        for d in yaml.safe_load_all(out.stdout)
         if d and d.get("kind") == "ConfigMap" and CONFIG in (d.get("data") or {})
     ]
     if len(maps) != 1:
-        raise SystemExit(f"the kafbat chart wrote {len(maps)} ConfigMaps carrying {CONFIG}")
+        raise SystemExit(
+            f"the kafbat chart wrote {len(maps)} ConfigMaps carrying {CONFIG}"
+        )
     return yaml.safe_load(maps[0]["data"][CONFIG]) or {}
 
 
@@ -123,24 +140,40 @@ def roles(config: dict) -> dict[str, list[dict]]:
 
 def admin_groups(config: dict) -> list[str]:
     """The OIDC groups the rendered admin role grants."""
-    return [s.get("value") for s in roles(config).get("admin", []) if s.get("type") == "role"]
+    return [
+        s.get("value")
+        for s in roles(config).get("admin", [])
+        if s.get("type") == "role"
+    ]
 
 
 def test_the_admin_groups_are_one_key_in_common_yaml() -> None:
     """One list across the admin UIs, so a group is admin everywhere or nowhere."""
     common = values_file(VALUES / "common.yaml").get("adminGroups")
-    expect("common.yaml's adminGroups is the canonical pair", common == ADMIN_GROUPS,
-           f"got {common!r}")
+    expect(
+        "common.yaml's adminGroups is the canonical pair",
+        common == ADMIN_GROUPS,
+        f"got {common!r}",
+    )
     kafbat = chart_values(KAFBAT)
     gateway = chart_values(GATEWAY)
     for name, values in (("kafbat", kafbat), ("gateway", gateway)):
-        expect(f"the {name} chart names no admin group of its own", not values.get("adminGroups"),
-               f"got {values.get('adminGroups')!r}")
-    expect("the gateway chart carries no oidc.adminGroups", "adminGroups" not in gateway["oidc"],
-           f"got {gateway['oidc'].get('adminGroups')!r}")
+        expect(
+            f"the {name} chart names no admin group of its own",
+            not values.get("adminGroups"),
+            f"got {values.get('adminGroups')!r}",
+        )
+    expect(
+        "the gateway chart carries no oidc.adminGroups",
+        "adminGroups" not in gateway["oidc"],
+        f"got {gateway['oidc'].get('adminGroups')!r}",
+    )
     for name, role in kafbat["rbac"]["roles"].items():
-        expect(f"kafbat's {name} role names no group in the chart", not role["subjects"],
-               f"got {role['subjects']!r}")
+        expect(
+            f"kafbat's {name} role names no group in the chart",
+            not role["subjects"],
+            f"got {role['subjects']!r}",
+        )
 
 
 def test_live_oidc_grants_admin_to_the_admin_groups_and_no_one_else() -> None:
@@ -148,15 +181,23 @@ def test_live_oidc_grants_admin_to_the_admin_groups_and_no_one_else() -> None:
     auth = (config.get("auth") or {}).get("type")
     expect("a filled OIDC block renders OAUTH2", auth == "OAUTH2", f"got {auth!r}")
     by_role = roles(config)
-    expect("the role map is admin, rw and ro", sorted(by_role) == ["admin", "ro", "rw"],
-           f"got {sorted(by_role)}")
+    expect(
+        "the role map is admin, rw and ro",
+        sorted(by_role) == ["admin", "ro", "rw"],
+        f"got {sorted(by_role)}",
+    )
     admin = by_role.get("admin", [])
     groups = admin_groups(config)
-    expect("admin is granted to exactly the admin groups", groups == ADMIN_GROUPS,
-           f"got {groups!r}")
-    expect("every admin group binds to the OIDC provider",
-           all(s.get("provider") == "oauth" for s in admin if s.get("type") == "role"),
-           f"got {admin!r}")
+    expect(
+        "admin is granted to exactly the admin groups",
+        groups == ADMIN_GROUPS,
+        f"got {groups!r}",
+    )
+    expect(
+        "every admin group binds to the OIDC provider",
+        all(s.get("provider") == "oauth" for s in admin if s.get("type") == "role"),
+        f"got {admin!r}",
+    )
     others = [s for s in admin if s.get("type") != "role"]
     account = chart_values(KAFBAT)["breakGlass"]["username"]
     expect(
@@ -173,8 +214,11 @@ def test_an_overlay_can_still_name_its_own_admin_groups() -> None:
     overlay = ("--set-json", 'rbac.roles.admin.subjects=["kafka-ops"]')
     for shape, base in (("with adminGroups", COMMON), ("without adminGroups", ())):
         groups = admin_groups(app_config(*base, *OIDC, *CLUSTER, *overlay))
-        expect(f"an overlay's admin groups replace adminGroups [{shape}]",
-               groups == ["kafka-ops"], f"got {groups!r}")
+        expect(
+            f"an overlay's admin groups replace adminGroups [{shape}]",
+            groups == ["kafka-ops"],
+            f"got {groups!r}",
+        )
 
 
 def test_no_admin_group_under_oidc_rbac_refuses_to_render() -> None:
@@ -187,46 +231,75 @@ def test_no_admin_group_under_oidc_rbac_refuses_to_render() -> None:
     }
     for shape, args in shapes.items():
         error = refusal(*args)
-        expect(f"the chart refuses [{shape}]", "the admin role names no group" in error,
-               f"got {error or 'a render'}")
+        expect(
+            f"the chart refuses [{shape}]",
+            "the admin role names no group" in error,
+            f"got {error or 'a render'}",
+        )
     kept = {
         "rbac off": (*OIDC, *CLUSTER, "--set", "rbac.enabled=false"),
         "login form": (),
     }
     for shape, args in kept.items():
         error = refusal(*args)
-        expect(f"no admin group renders where no role map does [{shape}]", not error,
-               f"got {error}")
+        expect(
+            f"no admin group renders where no role map does [{shape}]",
+            not error,
+            f"got {error}",
+        )
 
 
 def test_the_staged_example_takes_effect_as_a_values_file() -> None:
     """The appsets hand values files to the chart at the top level, so a nested block did nothing."""
     staged = values_file(STAGED_EXAMPLE)
-    expect("the example carries no kafbat: block, which the chart never reads",
-           "kafbat" not in staged, f"got {sorted(staged)}")
+    expect(
+        "the example carries no kafbat: block, which the chart never reads",
+        "kafbat" not in staged,
+        f"got {sorted(staged)}",
+    )
     config = app_config(*COMMON, "-f", str(STAGED_EXAMPLE))
     auth = (config.get("auth") or {}).get("type")
     expect("the example renders OAUTH2", auth == "OAUTH2", f"got {auth!r}")
     oauth = ((config.get("spring") or {}).get("security") or {}).get("oauth2") or {}
     client = ((oauth.get("client") or {}).get("registration") or {}).get("dfe") or {}
     issuer = ((oauth.get("client") or {}).get("provider") or {}).get("dfe") or {}
-    expect("its client id reaches kafbat", client.get("client-id") == staged["oidc"]["clientId"],
-           f"got {client.get('client-id')!r}")
-    expect("its issuer reaches kafbat", issuer.get("issuer-uri") == staged["oidc"]["issuerUri"],
-           f"got {issuer.get('issuer-uri')!r}")
+    expect(
+        "its client id reaches kafbat",
+        client.get("client-id") == staged["oidc"]["clientId"],
+        f"got {client.get('client-id')!r}",
+    )
+    expect(
+        "its issuer reaches kafbat",
+        issuer.get("issuer-uri") == staged["oidc"]["issuerUri"],
+        f"got {issuer.get('issuer-uri')!r}",
+    )
     admins = admin_groups(config)
-    expect("admin is the deployment's adminGroups", admins == ADMIN_GROUPS, f"got {admins!r}")
+    expect(
+        "admin is the deployment's adminGroups",
+        admins == ADMIN_GROUPS,
+        f"got {admins!r}",
+    )
     by_role = roles(config)
     viewers = [s.get("value") for s in by_role.get("ro", []) if s.get("type") == "role"]
-    expect("read-only is the example's viewer group",
-           viewers == staged["rbac"]["roles"]["ro"]["subjects"], f"got {viewers!r}")
-    expect("read-write is granted to nobody", not by_role.get("rw"), f"got {by_role.get('rw')!r}")
+    expect(
+        "read-only is the example's viewer group",
+        viewers == staged["rbac"]["roles"]["ro"]["subjects"],
+        f"got {viewers!r}",
+    )
+    expect(
+        "read-write is granted to nobody",
+        not by_role.get("rw"),
+        f"got {by_role.get('rw')!r}",
+    )
     clusters = {
         role["name"]: role.get("clusters")
         for role in (config.get("rbac") or {}).get("roles") or []
     }
-    expect("every role covers the example's cluster",
-           all(names == ["dfe"] for names in clusters.values()), f"got {clusters}")
+    expect(
+        "every role covers the example's cluster",
+        all(names == ["dfe"] for names in clusters.values()),
+        f"got {clusters}",
+    )
 
 
 def test_without_usable_oidc_the_break_glass_form_renders_no_rbac() -> None:
@@ -234,9 +307,14 @@ def test_without_usable_oidc_the_break_glass_form_renders_no_rbac() -> None:
     for shape, args in BREAK_GLASS.items():
         config = app_config(*args)
         auth = (config.get("auth") or {}).get("type")
-        expect(f"the login form renders [{shape}]", auth == "LOGIN_FORM", f"got {auth!r}")
-        expect(f"no rbac block renders [{shape}]", "rbac" not in config,
-               f"got roles {sorted(roles(config))}")
+        expect(
+            f"the login form renders [{shape}]", auth == "LOGIN_FORM", f"got {auth!r}"
+        )
+        expect(
+            f"no rbac block renders [{shape}]",
+            "rbac" not in config,
+            f"got roles {sorted(roles(config))}",
+        )
 
 
 def main() -> int:

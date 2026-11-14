@@ -36,7 +36,10 @@ def scaled_object(path: Path) -> dict | None:
     if not path.is_file():
         return None
     docs = yaml.safe_load_all(PIN_TOKEN_RE.sub("pin", path.read_text(encoding="utf-8")))
-    return next((d for d in docs if isinstance(d, dict) and d.get("kind") == "ScaledObject"), None)
+    return next(
+        (d for d in docs if isinstance(d, dict) and d.get("kind") == "ScaledObject"),
+        None,
+    )
 
 
 def describe(so: dict | None) -> tuple[str, str, str, str]:
@@ -45,17 +48,27 @@ def describe(so: dict | None) -> tuple[str, str, str, str]:
         return "off", "", "", ""
     spec = so.get("spec", {})
     triggers = spec.get("triggers", [])
-    cpu = next((t["metadata"].get("value", "") for t in triggers if t.get("type") == "cpu"), "")
-    pressure = any(_PRESSURE in str(t.get("metadata", {}).get("url", "")) for t in triggers)
+    cpu = next(
+        (t["metadata"].get("value", "") for t in triggers if t.get("type") == "cpu"), ""
+    )
+    pressure = any(
+        _PRESSURE in str(t.get("metadata", {}).get("url", "")) for t in triggers
+    )
     other = sorted(
         {
             t.get("type", "")
             for t in triggers
-            if t.get("type") != "cpu" and _PRESSURE not in str(t.get("metadata", {}).get("url", ""))
+            if t.get("type") != "cpu"
+            and _PRESSURE not in str(t.get("metadata", {}).get("url", ""))
         }
     )
     replicas = f"{spec.get('minReplicaCount', '?')}-{spec.get('maxReplicaCount', '?')}"
-    return replicas, f"{cpu}%" if cpu else "", "yes" if pressure else "no", ", ".join(other)
+    return (
+        replicas,
+        f"{cpu}%" if cpu else "",
+        "yes" if pressure else "no",
+        ", ".join(other),
+    )
 
 
 def per_profile(values: dict[str, str]) -> str:
@@ -115,8 +128,12 @@ def main(argv: list[str] | None = None) -> int:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     mode = parser.add_mutually_exclusive_group()
-    mode.add_argument("--write", action="store_true", help=f"write {OUT.relative_to(REPO_ROOT)}")
-    mode.add_argument("--check", action="store_true", help="exit 1 when the written table is stale")
+    mode.add_argument(
+        "--write", action="store_true", help=f"write {OUT.relative_to(REPO_ROOT)}"
+    )
+    mode.add_argument(
+        "--check", action="store_true", help="exit 1 when the written table is stale"
+    )
     args = parser.parse_args(argv)
     text = table()
     if args.write:

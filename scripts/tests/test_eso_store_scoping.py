@@ -84,13 +84,24 @@ def test_every_cluster_secret_store_definition_is_covered_here() -> None:
 
 def _run(cmd: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False
+        cmd,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
     )
 
 
 def render(chart: str, *sets: str, namespace: str = "default") -> tuple[dict, ...]:
-    cmd = ["helm", "template", chart, str(REPO_ROOT / "helm" / "charts" / chart),
-           "--namespace", namespace]
+    cmd = [
+        "helm",
+        "template",
+        chart,
+        str(REPO_ROOT / "helm" / "charts" / chart),
+        "--namespace",
+        namespace,
+    ]
     for s in sets:
         cmd += ["--set", s]
     out = _run(cmd)
@@ -101,7 +112,11 @@ def render(chart: str, *sets: str, namespace: str = "default") -> tuple[dict, ..
 
 def one(docs: tuple[dict, ...], kind: str, name: str | None = None) -> dict | None:
     return next(
-        (d for d in docs if d.get("kind") == kind and (name is None or d["metadata"]["name"] == name)),
+        (
+            d
+            for d in docs
+            if d.get("kind") == kind and (name is None or d["metadata"]["name"] == name)
+        ),
         None,
     )
 
@@ -111,19 +126,29 @@ def every(docs: tuple[dict, ...], kind: str) -> list[dict]:
 
 
 def selected(copy: dict) -> set[str]:
-    return {s["matchLabels"]["kubernetes.io/metadata.name"] for s in copy["spec"]["namespaceSelectors"]}
+    return {
+        s["matchLabels"]["kubernetes.io/metadata.name"]
+        for s in copy["spec"]["namespaceSelectors"]
+    }
 
 
 def role_secrets(docs: tuple[dict, ...], role: str) -> set[str]:
     found = one(docs, "Role", role)
-    return {n for rule in (found or {}).get("rules", []) for n in rule.get("resourceNames", [])}
+    return {
+        n
+        for rule in (found or {}).get("rules", [])
+        for n in rule.get("resourceNames", [])
+    }
 
 
 def store_role(docs: tuple[dict, ...], store: dict) -> str | None:
     """The Role bound to the ServiceAccount a store authenticates as."""
     account = store["spec"]["provider"]["kubernetes"]["auth"]["serviceAccount"]["name"]
     for binding in every(docs, "RoleBinding"):
-        if any(s["kind"] == "ServiceAccount" and s["name"] == account for s in binding["subjects"]):
+        if any(
+            s["kind"] == "ServiceAccount" and s["name"] == account
+            for s in binding["subjects"]
+        ):
             return binding["roleRef"]["name"]
     return None
 
@@ -136,11 +161,14 @@ def assert_store_matches_its_copies(docs: tuple[dict, ...], label: str) -> None:
         conditions = store["spec"].get("conditions") or []
         allowed = {n for c in conditions for n in c.get("namespaces", [])}
         copies = [
-            c for c in every(docs, "ClusterExternalSecret")
+            c
+            for c in every(docs, "ClusterExternalSecret")
             if c["spec"]["externalSecretSpec"]["secretStoreRef"]["name"] == name
         ]
         targets = set().union(*(selected(c) for c in copies)) if copies else set()
-        expect(f"{label}: {name} carries namespace conditions", bool(conditions), "none")
+        expect(
+            f"{label}: {name} carries namespace conditions", bool(conditions), "none"
+        )
         expect(
             f"{label}: {name} admits exactly the namespaces its copies land in",
             allowed == targets and bool(targets),
@@ -164,8 +192,11 @@ def test_kafka_single_store_serves_only_its_app_namespace() -> None:
 
 def test_kafka_single_store_grows_with_extra_app_namespaces() -> None:
     docs = render(
-        "kafka", "kafka.mode=single", "appNamespace=dfe",
-        "user.password.extraAppNamespaces={otel,audit}", namespace="kafka",
+        "kafka",
+        "kafka.mode=single",
+        "appNamespace=dfe",
+        "user.password.extraAppNamespaces={otel,audit}",
+        namespace="kafka",
     )
     assert_store_matches_its_copies(docs, "kafka extra namespaces")
     conditions = one(docs, "ClusterSecretStore")["spec"]["conditions"]
@@ -180,13 +211,21 @@ def test_kafka_single_store_grows_with_extra_app_namespaces() -> None:
 def test_kafka_cluster_mode_renders_no_single_tier_store() -> None:
     """cluster mode has its own store (clusterexternalsecret-appns.yaml); this
     file's `if` must not also fire and double up the fence."""
-    docs = render("kafka", "kafka.mode=cluster", "kafka.provider=strimzi",
-                  "appNamespace=dfe", namespace="kafka")
+    docs = render(
+        "kafka",
+        "kafka.mode=cluster",
+        "kafka.provider=strimzi",
+        "appNamespace=dfe",
+        namespace="kafka",
+    )
     stores = [
-        s for s in every(docs, "ClusterSecretStore")
+        s
+        for s in every(docs, "ClusterSecretStore")
         if s["metadata"]["name"].endswith("-broker-ns")
     ]
-    expect("kafka: cluster mode renders no single-tier store", not stores, f"got {stores}")
+    expect(
+        "kafka: cluster mode renders no single-tier store", not stores, f"got {stores}"
+    )
 
 
 # --- documentdb -------------------------------------------------------------
@@ -221,14 +260,23 @@ def test_clickhouse_admin_store_still_serves_only_its_copies() -> None:
     assert_store_matches_its_copies(docs, "clickhouse-cluster")
 
 
-def test_the_clickhouse_ca_store_serves_only_the_extra_namespaces_and_reads_only_the_ca() -> None:
+def test_the_clickhouse_ca_store_serves_only_the_extra_namespaces_and_reads_only_the_ca() -> (
+    None
+):
     docs = render(
-        "clickhouse-cluster", "appNamespace=dfe", "clickhouse.tls.enabled=true",
-        "clickhouse.tls.internalCA.present=true", "clickhouse.tls.ca.extraNamespaces={otel}",
+        "clickhouse-cluster",
+        "appNamespace=dfe",
+        "clickhouse.tls.enabled=true",
+        "clickhouse.tls.internalCA.present=true",
+        "clickhouse.tls.ca.extraNamespaces={otel}",
         namespace="clickhouse",
     )
     assert_store_matches_its_copies(docs, "clickhouse-cluster CA copy")
-    (store,) = [s for s in every(docs, "ClusterSecretStore") if s["metadata"]["name"] == "dfe-clickhouse-ca-source-ns"]
+    (store,) = [
+        s
+        for s in every(docs, "ClusterSecretStore")
+        if s["metadata"]["name"] == "dfe-clickhouse-ca-source-ns"
+    ]
     role = role_secrets(docs, store_role(docs, store) or "")
     expect(
         "clickhouse-cluster: the CA store's Role names only the CA-only Secret, never the keypair or the admin",

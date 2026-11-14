@@ -45,7 +45,11 @@ def test_a_row_that_is_already_there_is_not_waited_for() -> None:
         out.stdout,
     )
     expect("and asks once to pass, once to check", counts.get("otel") == 2, str(counts))
-    expect("and it did not poll", re.search(rf"waited \d+s of {GENEROUS}s", out.stdout) is not None, out.stdout)
+    expect(
+        "and it did not poll",
+        re.search(rf"waited \d+s of {GENEROUS}s", out.stdout) is not None,
+        out.stdout,
+    )
 
 
 def test_a_collector_that_exports_late_still_passes() -> None:
@@ -57,8 +61,14 @@ def test_a_collector_that_exports_late_still_passes() -> None:
         "[PASS] infra OTel logs landing fresh" in out.stdout,
         out.stdout,
     )
-    expect("having polled rather than sampled", (counts.get("otel") or 0) > 2, str(counts))
-    expect("and saying how long it waited", re.search(rf"waited \d+s of {GENEROUS}s", out.stdout) is not None, out.stdout)
+    expect(
+        "having polled rather than sampled", (counts.get("otel") or 0) > 2, str(counts)
+    )
+    expect(
+        "and saying how long it waited",
+        re.search(rf"waited \d+s of {GENEROUS}s", out.stdout) is not None,
+        out.stdout,
+    )
 
 
 def test_the_wait_is_counted_in_elapsed_seconds_not_in_sleeps() -> None:
@@ -73,7 +83,10 @@ def test_the_wait_is_counted_in_elapsed_seconds_not_in_sleeps() -> None:
     query_seconds = 2
     bound = 6
     tolerance = 3
-    out, counts = run_smoke({"otel_zero_answers": 99, "otel_query_seconds": query_seconds}, DFE_OTEL_WAIT=str(bound))
+    out, counts = run_smoke(
+        {"otel_zero_answers": 99, "otel_query_seconds": query_seconds},
+        DFE_OTEL_WAIT=str(bound),
+    )
     reported = re.search(rf"waited (\d+)s of {bound}s for a row", out.stdout)
     expect("it reports a wait", reported is not None, out.stdout)
     starts = counts.get("otel_times") or []
@@ -105,7 +118,9 @@ def test_the_wait_is_bounded_and_the_bound_is_a_dial() -> None:
     """An unbounded poll would hang a deploy; DFE_OTEL_WAIT=0 is one sample."""
     out, counts = run_smoke({"otel_zero_answers": 99}, DFE_OTEL_WAIT="0")
 
-    expect("no poll at all when the bound is zero", counts.get("otel") == 2, str(counts))
+    expect(
+        "no poll at all when the bound is zero", counts.get("otel") == 2, str(counts)
+    )
     expect(
         "and the row still fails rather than hanging",
         "[FAIL] infra OTel logs landing fresh" in out.stdout,
@@ -121,17 +136,32 @@ def test_provider_logs_are_asserted_only_on_the_aws_flavour() -> None:
         DFE_PROVIDER_LOGS_WAIT="0",
         DFE_PROVIDER_LOGS_FLAVOUR="aws",
     )
-    expect("the EKS audit row passes", "[PASS] EKS audit log landing fresh" in out.stdout, out.stdout)
-    expect("a quiet CloudTrail only warns", "[WARN] no CloudTrail row" in out.stdout, out.stdout)
+    expect(
+        "the EKS audit row passes",
+        "[PASS] EKS audit log landing fresh" in out.stdout,
+        out.stdout,
+    )
+    expect(
+        "a quiet CloudTrail only warns",
+        "[WARN] no CloudTrail row" in out.stdout,
+        out.stdout,
+    )
     expect("and fails nothing", "[FAIL] CloudTrail" not in out.stdout, out.stdout)
 
     both, _ = run_smoke(
-        {"otel_zero_answers": 0, "provider_log_rows": {"eks-audit": 7, "cloudtrail": 2}},
+        {
+            "otel_zero_answers": 0,
+            "provider_log_rows": {"eks-audit": 7, "cloudtrail": 2},
+        },
         DFE_OTEL_WAIT="0",
         DFE_PROVIDER_LOGS_WAIT="0",
         DFE_PROVIDER_LOGS_FLAVOUR="aws",
     )
-    expect("CloudTrail rows pass when present", "[PASS] CloudTrail events landing fresh" in both.stdout, both.stdout)
+    expect(
+        "CloudTrail rows pass when present",
+        "[PASS] CloudTrail events landing fresh" in both.stdout,
+        both.stdout,
+    )
 
     dead, _ = run_smoke(
         {"otel_zero_answers": 0, "provider_log_rows": {"cloudtrail": 2}},
@@ -139,7 +169,11 @@ def test_provider_logs_are_asserted_only_on_the_aws_flavour() -> None:
         DFE_PROVIDER_LOGS_WAIT="0",
         DFE_PROVIDER_LOGS_FLAVOUR="aws",
     )
-    expect("no EKS audit row fails the suite", "[FAIL] EKS audit log landing fresh" in dead.stdout, dead.stdout)
+    expect(
+        "no EKS audit row fails the suite",
+        "[FAIL] EKS audit log landing fresh" in dead.stdout,
+        dead.stdout,
+    )
     expect("and the exit code says so", dead.returncode != 0, f"rc={dead.returncode}")
 
     started = time.monotonic()
@@ -152,16 +186,32 @@ def test_provider_logs_are_asserted_only_on_the_aws_flavour() -> None:
     waited = re.search(r"waited (\d+)s of 3s for an EKS audit row", slow.stdout)
     expect(
         "the provider-logs wait is real elapsed seconds, not a count of sleeps",
-        waited is not None and int(waited.group(1)) >= 3 and time.monotonic() - started >= 3,
+        waited is not None
+        and int(waited.group(1)) >= 3
+        and time.monotonic() - started >= 3,
         slow.stdout,
     )
-    expect("and a dead EKS audit feed prints the collector's own log", "provider-logs collector, last lines:" in slow.stdout, slow.stdout)
+    expect(
+        "and a dead EKS audit feed prints the collector's own log",
+        "provider-logs collector, last lines:" in slow.stdout,
+        slow.stdout,
+    )
 
-    rancher, _ = run_smoke({"otel_zero_answers": 0}, DFE_OTEL_WAIT="0", DFE_PROVIDER_LOGS_FLAVOUR="rancher")
-    expect("another flavour is skipped by name", "[SKIP] provider logs (rancher)" in rancher.stdout, rancher.stdout)
+    rancher, _ = run_smoke(
+        {"otel_zero_answers": 0}, DFE_OTEL_WAIT="0", DFE_PROVIDER_LOGS_FLAVOUR="rancher"
+    )
+    expect(
+        "another flavour is skipped by name",
+        "[SKIP] provider logs (rancher)" in rancher.stdout,
+        rancher.stdout,
+    )
 
     none, _ = run_smoke({"otel_zero_answers": 0}, DFE_OTEL_WAIT="0")
-    expect("a deployment reading none skips", "[SKIP] provider logs -- this deployment reads none" in none.stdout, none.stdout)
+    expect(
+        "a deployment reading none skips",
+        "[SKIP] provider logs -- this deployment reads none" in none.stdout,
+        none.stdout,
+    )
 
 
 def main() -> int:

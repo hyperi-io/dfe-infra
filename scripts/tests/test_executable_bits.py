@@ -70,9 +70,13 @@ def test_a_shebang_means_executable() -> None:
     offenders = [
         f"{path} is {mode}"
         for path, mode in sorted(tracked_modes().items())
-        if has_shebang(path) and mode != EXECUTABLE and not path.endswith(NOT_RUN_BY_PATH)
+        if has_shebang(path)
+        and mode != EXECUTABLE
+        and not path.endswith(NOT_RUN_BY_PATH)
     ]
-    expect("every script with a shebang is +x in git", offenders == [], f"got {offenders}")
+    expect(
+        "every script with a shebang is +x in git", offenders == [], f"got {offenders}"
+    )
 
 
 def test_no_shebang_means_not_executable() -> None:

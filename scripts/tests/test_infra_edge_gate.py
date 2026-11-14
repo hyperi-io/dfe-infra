@@ -46,14 +46,22 @@ VALUES = REPO_ROOT / "argocd" / "values"
 # The on-prem cascade on the one profile whose Kafka tier deploys the Cruise
 # Control UI, with the bundled deploy repo, so every infra route can render.
 CASCADE = (
-    "--namespace", "envoy-gateway-system",
-    "-f", str(VALUES / "common.yaml"),
-    "-f", str(VALUES / "local.yaml"),
-    "-f", str(VALUES / "edge-onprem.yaml"),
-    "-f", str(VALUES / "profile-scale.yaml"),
-    "--set", "appNamespace=dfe",
-    "--set", "domain=dfe.example.com",
-    "--set", "deployRepo.bundled=true",
+    "--namespace",
+    "envoy-gateway-system",
+    "-f",
+    str(VALUES / "common.yaml"),
+    "-f",
+    str(VALUES / "local.yaml"),
+    "-f",
+    str(VALUES / "edge-onprem.yaml"),
+    "-f",
+    str(VALUES / "profile-scale.yaml"),
+    "--set",
+    "appNamespace=dfe",
+    "--set",
+    "domain=dfe.example.com",
+    "--set",
+    "deployRepo.bundled=true",
 )
 
 # Two providers, so a rule written for the login provider alone is caught.
@@ -61,7 +69,12 @@ PROVIDERS = [
     {"name": "acme", "issuerUrl": "https://id.example.com", "clientId": "dfe"},
     {"name": "globex", "issuerUrl": "https://sso.example.org", "clientId": "dfe"},
 ]
-OIDC = ("--set", "oidc.enabled=true", "--set-json", f"oidc.providers={json.dumps(PROVIDERS)}")
+OIDC = (
+    "--set",
+    "oidc.enabled=true",
+    "--set-json",
+    f"oidc.providers={json.dumps(PROVIDERS)}",
+)
 
 # The two shapes that leave no edge login: the chart default, and the switch
 # alone with no provider, which is what argocd/values/aws.yaml sets.
@@ -102,7 +115,9 @@ def infra_names() -> set[str]:
 def edge_policy_names() -> list[str]:
     """routeName of every infra route that takes the edge policy."""
     return sorted(
-        route["routeName"] for route in routes_of_class("infra").values() if route.get("edgePolicy")
+        route["routeName"]
+        for route in routes_of_class("infra").values()
+        if route.get("edgePolicy")
     )
 
 
@@ -179,7 +194,11 @@ def admin_policies(*args: str) -> dict[str, dict]:
 
 def expect_every_route_gated(policies: dict[str, dict]) -> None:
     missing = sorted(set(edge_policy_names()) - set(policies))
-    expect("every edge-policy route yields exactly one policy", not missing, f"missing {missing}")
+    expect(
+        "every edge-policy route yields exactly one policy",
+        not missing,
+        f"missing {missing}",
+    )
 
 
 def expect_admin_groups_only(route: str, policy: dict, groups: list[str]) -> None:
@@ -194,19 +213,27 @@ def expect_admin_groups_only(route: str, policy: dict, groups: list[str]) -> Non
         by_provider == sorted(p["name"] for p in PROVIDERS),
         f"got {by_provider}",
     )
-    expect(f"{route}: every rule names a JWT issuer of this policy",
-           set(by_provider) <= set(issuers), f"rules {by_provider}, issuers {issuers}")
+    expect(
+        f"{route}: every rule names a JWT issuer of this policy",
+        set(by_provider) <= set(issuers),
+        f"rules {by_provider}, issuers {issuers}",
+    )
     for rule in rules:
         principal = rule.get("principal") or {}
         provider = principal.get("jwt", {}).get("provider", "")
         wanted = {
             "jwt": {
                 "provider": provider,
-                "claims": [{"name": "groups", "valueType": "StringArray", "values": groups}],
+                "claims": [
+                    {"name": "groups", "valueType": "StringArray", "values": groups}
+                ],
             }
         }
-        expect(f"{route}: the {provider} rule allows", rule.get("action") == "Allow",
-               f"got {rule.get('action')!r}")
+        expect(
+            f"{route}: the {provider} rule allows",
+            rule.get("action") == "Allow",
+            f"got {rule.get('action')!r}",
+        )
         expect(
             f"{route}: the {provider} rule's only principal is the groups claim",
             principal == wanted,
@@ -217,10 +244,19 @@ def expect_admin_groups_only(route: str, policy: dict, groups: list[str]) -> Non
             for claim in principal.get("jwt", {}).get("claims") or []
             for value in claim.get("values") or []
         ]
-        blank = [v for v in values if not isinstance(v, str) or not v.strip() or "*" in v]
-        expect(f"{route}: the {provider} rule names at least one group", bool(values), "none")
-        expect(f"{route}: the {provider} rule names no blank or wildcard group", not blank,
-               f"got {blank}")
+        blank = [
+            v for v in values if not isinstance(v, str) or not v.strip() or "*" in v
+        ]
+        expect(
+            f"{route}: the {provider} rule names at least one group",
+            bool(values),
+            "none",
+        )
+        expect(
+            f"{route}: the {provider} rule names no blank or wildcard group",
+            not blank,
+            f"got {blank}",
+        )
 
 
 # --- the policy on each gated route -------------------------------------------
@@ -229,7 +265,11 @@ def test_every_edge_policy_route_renders_under_the_edge_login() -> None:
     served = http_routes(render(*OIDC))
     expect("the chart declares edge-policy routes", bool(edge_policy_names()), "none")
     for name in edge_policy_names():
-        expect(f"{name} renders under the edge login", name in served, f"got {sorted(served)}")
+        expect(
+            f"{name} renders under the edge login",
+            name in served,
+            f"got {sorted(served)}",
+        )
 
 
 def test_each_gated_route_has_exactly_one_security_policy() -> None:
@@ -240,7 +280,11 @@ def test_each_gated_route_has_exactly_one_security_policy() -> None:
         if name not in served:
             continue
         found = sorted(p["metadata"]["name"] for p in policies_on(docs, served[name]))
-        expect(f"{name} is targeted by exactly one SecurityPolicy", len(found) == 1, f"got {found}")
+        expect(
+            f"{name} is targeted by exactly one SecurityPolicy",
+            len(found) == 1,
+            f"got {found}",
+        )
 
 
 def test_every_gated_route_denies_by_default() -> None:
@@ -279,15 +323,21 @@ def test_no_admin_group_refuses_to_render() -> None:
     for login, base in (("edge login on", OIDC), ("edge login off", ())):
         for shape, args in shapes.items():
             error = refusal(*base, *args)
-            expect(f"adminGroups {shape} is refused [{login}]",
-                   "adminGroups is empty or missing" in error, f"got {error or 'a render'}")
+            expect(
+                f"adminGroups {shape} is refused [{login}]",
+                "adminGroups is empty or missing" in error,
+                f"got {error or 'a render'}",
+            )
 
 
 def test_the_retired_chart_key_is_refused() -> None:
     """An overlay still setting oidc.adminGroups would otherwise be ignored without a word."""
     error = refusal(*OIDC, "--set-json", f"oidc.adminGroups={json.dumps(OTHER_GROUPS)}")
-    expect("oidc.adminGroups is refused by name", "oidc.adminGroups is retired" in error,
-           f"got {error or 'a render'}")
+    expect(
+        "oidc.adminGroups is refused by name",
+        "oidc.adminGroups is retired" in error,
+        f"got {error or 'a render'}",
+    )
 
 
 # --- no edge login, no login-less route ---------------------------------------
@@ -302,14 +352,21 @@ def test_with_no_edge_login_no_login_less_route_renders() -> None:
         bare = [name for name in login_less if name in served]
         expect(f"no login-less route renders [{shape}]", not bare, f"got {bare}")
         missing = [name for name in own_login if name not in served]
-        expect(f"every route with its own login still renders [{shape}]", not missing,
-               f"missing {missing}")
+        expect(
+            f"every route with its own login still renders [{shape}]",
+            not missing,
+            f"missing {missing}",
+        )
         gated = sorted(
             p["metadata"]["name"]
             for p in of_kind(docs, "SecurityPolicy")
             if targets(p) & infra_names()
         )
-        expect(f"no infra route carries an edge policy [{shape}]", not gated, f"got {gated}")
+        expect(
+            f"no infra route carries an edge policy [{shape}]",
+            not gated,
+            f"got {gated}",
+        )
 
 
 # --- the kill switch ------------------------------------------------------------
@@ -318,14 +375,24 @@ def test_the_kill_switch_renders_no_infra_route() -> None:
     docs = render(*OIDC, "--set", "exposure.groups.admin.enabled=false")
     served = http_routes(docs)
     back = sorted(infra_names() & set(served))
-    expect("exposure.groups.admin.enabled: false renders no infra HTTPRoute", not back, f"got {back}")
+    expect(
+        "exposure.groups.admin.enabled: false renders no infra HTTPRoute",
+        not back,
+        f"got {back}",
+    )
     gated = sorted(
-        p["metadata"]["name"] for p in of_kind(docs, "SecurityPolicy") if targets(p) & infra_names()
+        p["metadata"]["name"]
+        for p in of_kind(docs, "SecurityPolicy")
+        if targets(p) & infra_names()
     )
     expect("nor any policy for one", not gated, f"got {gated}")
     product = sorted(r["routeName"] for r in routes_of_class("product").values())
     missing = [name for name in product if name not in served]
-    expect("the product routes still render", bool(product) and not missing, f"missing {missing}")
+    expect(
+        "the product routes still render",
+        bool(product) and not missing,
+        f"missing {missing}",
+    )
 
 
 def main() -> int:

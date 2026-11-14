@@ -79,7 +79,9 @@ DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}")
 # pull names the manifest digest, so a re-pushed tag cannot change what renders.
 LIBRARY_CHART = "oci://ghcr.io/hyperi-io/charts/scalo-service"
 LIBRARY_VERSION = "2.14.28"
-LIBRARY_DIGEST = "sha256:9ce75e073e51e56b3ce52d844e46f62fab7e87e3ee94bac1ca67dbcd0278614c"
+LIBRARY_DIGEST = (
+    "sha256:9ce75e073e51e56b3ce52d844e46f62fab7e87e3ee94bac1ca67dbcd0278614c"
+)
 
 # Where each component's thin chart is published, the registry its images come from.
 CHART_REGISTRY = "oci://ghcr.io/hyperi-io/charts"
@@ -110,7 +112,11 @@ def _anonymous() -> tuple[tempfile.TemporaryDirectory, dict[str, str]]:
     scratch = tempfile.TemporaryDirectory(prefix="dfe-weave-anonymous-")
     config = Path(scratch.name) / "registry.json"
     config.write_text("{}\n", encoding="utf-8", newline="\n")
-    env = {**os.environ, "HELM_REGISTRY_CONFIG": str(config), "DOCKER_CONFIG": scratch.name}
+    env = {
+        **os.environ,
+        "HELM_REGISTRY_CONFIG": str(config),
+        "DOCKER_CONFIG": scratch.name,
+    }
     return scratch, env
 
 
@@ -148,7 +154,10 @@ def _pulled_library() -> tuple[tempfile.TemporaryDirectory | None, Path | str]:
     chart = Path(scratch.name) / "scalo-service"
     meta = yaml.safe_load((chart / "Chart.yaml").read_text(encoding="utf-8")) or {}
     if str(meta.get("version")) != LIBRARY_VERSION:
-        return None, f"{reference} is version {meta.get('version')}, not {LIBRARY_VERSION}"
+        return (
+            None,
+            f"{reference} is version {meta.get('version')}, not {LIBRARY_VERSION}",
+        )
     return scratch, chart
 
 
@@ -175,7 +184,9 @@ def contract(service: str) -> Path:
 
 
 @functools.cache
-def _assembled(service: str, library_dir: Path) -> tuple[tempfile.TemporaryDirectory, Path]:
+def _assembled(
+    service: str, library_dir: Path
+) -> tuple[tempfile.TemporaryDirectory, Path]:
     """One component's thin chart, assembled and built once per run.
 
     Cached with its scratch directory, as _pulled_library is, so every render of a
@@ -186,7 +197,12 @@ def _assembled(service: str, library_dir: Path) -> tuple[tempfile.TemporaryDirec
     tag, digest = w.pinned_image(REPO_ROOT, str(parsed.get("app_name")))
     scratch = tempfile.TemporaryDirectory(prefix=f"dfe-weave-thin-{service}-")
     chart = w.assemble(
-        raw, library_dir, Path(scratch.name), version=tag.removeprefix("v"), tag=tag, digest=digest
+        raw,
+        library_dir,
+        Path(scratch.name),
+        version=tag.removeprefix("v"),
+        tag=tag,
+        digest=digest,
     )
     w.build_dependency(helm(), chart)
     return scratch, chart
@@ -293,7 +309,10 @@ def _routed(given: Path | None) -> Path:
 
 @contextlib.contextmanager
 def deploy_repo(
-    service: str, instance: str = "default", overlay: dict | None = None, infra: dict | None = None
+    service: str,
+    instance: str = "default",
+    overlay: dict | None = None,
+    infra: dict | None = None,
 ) -> Iterator[Path]:
     """A deploy repo holding ``overlay`` as the instance file and ``infra`` as infra/common.yaml.
 
@@ -344,7 +363,9 @@ def _target(service: str, profile: str, cloud: str, options: dict) -> object:
     w = weave()
     annotations = tuple(sorted(options.pop("annotations", {}).items()))
     labels = tuple(sorted(options.pop("labels", {}).items()))
-    return w.Target(service, profile, cloud, annotations=annotations, labels=labels, **options)
+    return w.Target(
+        service, profile, cloud, annotations=annotations, labels=labels, **options
+    )
 
 
 def render_app(service: str, profile: str, cloud: str, **options: object) -> list[dict]:
@@ -393,7 +414,9 @@ def data_application(
         for e in (nested.get("list") or {}).get("elements") or []
         if e["app"] == app
     )
-    target = w.Target(app, profile, cloud, annotations=tuple(sorted((annotations or {}).items())))
+    target = w.Target(
+        app, profile, cloud, annotations=tuple(sorted((annotations or {}).items()))
+    )
     rendered = w.expand_template(
         doc["spec"]["template"], {**w.generator_params(target, None), **element}, helm()
     )
@@ -427,14 +450,23 @@ def render_data(
     with tempfile.TemporaryDirectory(prefix="dfe-weave-extra-") as tmp:
         if extra_values:
             extra = Path(tmp) / "extra-values.yaml"
-            extra.write_text(yaml.safe_dump(extra_values), encoding="utf-8", newline="\n")
+            extra.write_text(
+                yaml.safe_dump(extra_values), encoding="utf-8", newline="\n"
+            )
             chain.append({"written": "extra", "path": extra, "present": True})
         return weave().render_source(
-            source, chart=chart, release=app, namespace=element["namespace"], chain=chain, helm=helm()
+            source,
+            chart=chart,
+            release=app,
+            namespace=element["namespace"],
+            chain=chain,
+            helm=helm(),
         )
 
 
-def render_extras(service: str, profile: str, cloud: str, **options: object) -> list[dict]:
+def render_extras(
+    service: str, profile: str, cloud: str, **options: object
+) -> list[dict]:
     """The dfe-extras objects alone for one app, with render_app's options.
 
     No contract or library is read, so the render runs offline.

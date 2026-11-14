@@ -90,11 +90,21 @@ _TAG = re.compile(r"</?[A-Za-z][^>]*>")
 _ENTITY = re.compile(r"&#?\w+;")
 _INLINE_MATH = re.compile(r"\$[^$\n]+\$")
 _EXTRA_PROCESS = (
-    (re.compile(r"\brc\.\d+\b", re.IGNORECASE), "rc.N", "name the release, not a candidate"),
-    (re.compile(r"\bround \d+\b", re.IGNORECASE), "round N", "describe the product, not the work"),
+    (
+        re.compile(r"\brc\.\d+\b", re.IGNORECASE),
+        "rc.N",
+        "name the release, not a candidate",
+    ),
+    (
+        re.compile(r"\bround \d+\b", re.IGNORECASE),
+        "round N",
+        "describe the product, not the work",
+    ),
     (re.compile(r"\bTBD\b"), "TBD", "write it, or leave it out"),
 )
-_STUB_ADMONITION = re.compile(r"^\s*:::\s*\w*\s*(stub|placeholder|todo)\b", re.IGNORECASE)
+_STUB_ADMONITION = re.compile(
+    r"^\s*:::\s*\w*\s*(stub|placeholder|todo)\b", re.IGNORECASE
+)
 _ELASTICSEARCH = re.compile(r"\bElasticSearch\b")
 
 
@@ -142,9 +152,15 @@ def load_phrases(tree: dict) -> Phrases:
     for rule in PHRASE_RULES:
         section = tree.get(rule)
         if not isinstance(section, dict):
-            raise SystemExit(f"error: {GATE_FILE.name}: `{rule}` is not a map of phrases")
+            raise SystemExit(
+                f"error: {GATE_FILE.name}: `{rule}` is not a map of phrases"
+            )
         phrases[rule] = [
-            (re.compile(rf"(?<![\w-]){re.escape(phrase)}(?![\w-])", re.IGNORECASE), phrase, advice)
+            (
+                re.compile(rf"(?<![\w-]){re.escape(phrase)}(?![\w-])", re.IGNORECASE),
+                phrase,
+                advice,
+            )
             for phrase, advice in section.items()
         ]
     return phrases
@@ -186,7 +202,11 @@ def prose_lines(text: str) -> Iterator[tuple[int, str, str]]:
             yield number, line, ""
             continue
         if in_math or stripped.startswith("$$"):
-            one_line = stripped.startswith("$$") and len(stripped) > 4 and stripped.endswith("$$")
+            one_line = (
+                stripped.startswith("$$")
+                and len(stripped) > 4
+                and stripped.endswith("$$")
+            )
             if stripped.startswith("$$") and not one_line:
                 in_math = not in_math
             elif in_math and stripped.endswith("$$"):
@@ -213,7 +233,9 @@ def prose_lines(text: str) -> Iterator[tuple[int, str, str]]:
 
 
 def _char_names(chars: Iterable[str]) -> str:
-    return ", ".join(f"U+{ord(c):04X} {unicodedata.name(c, '?').lower()}" for c in chars)
+    return ", ".join(
+        f"U+{ord(c):04X} {unicodedata.name(c, '?').lower()}" for c in chars
+    )
 
 
 def check_line(prose: str, phrases: Phrases) -> Iterator[tuple[str, str, str]]:
@@ -239,7 +261,11 @@ def check_line(prose: str, phrases: Phrases) -> Iterator[tuple[str, str, str]]:
         yield "semicolon", ";", "two sentences, or join with and, but or because"
     odd = sorted({char for char in prose if ord(char) > 127})
     if odd:
-        yield "ascii", _char_names(odd), "-- or - for a dash, ' and \" for quotes, -> for an arrow"
+        yield (
+            "ascii",
+            _char_names(odd),
+            "-- or - for a dash, ' and \" for quotes, -> for an arrow",
+        )
     if _ELASTICSEARCH.search(prose):
         yield "elasticsearch", "ElasticSearch", "say Elasticsearch"
 
@@ -275,11 +301,21 @@ def check_page(text: str, phrases: Phrases, *, build: str, page: str) -> list[Fi
         allowed = set(off)
         for marker in _MARKER.finditer(line):
             verb, reason = marker["verb"], (marker["reason"] or "").strip()
-            rules = {rule.strip() for rule in marker["rules"].split(",") if rule.strip()}
+            rules = {
+                rule.strip() for rule in marker["rules"].split(",") if rule.strip()
+            }
             problem = _marker_problem(verb, rules, reason)
             if problem:
                 findings.append(
-                    Finding(build, page, number, MARKER_RULE, problem, "fix it", line.strip())
+                    Finding(
+                        build,
+                        page,
+                        number,
+                        MARKER_RULE,
+                        problem,
+                        "fix it",
+                        line.strip(),
+                    )
                 )
                 continue
             named = set(RULES) if ALL in rules else rules
@@ -297,7 +333,9 @@ def check_page(text: str, phrases: Phrases, *, build: str, page: str) -> list[Fi
         pending = set()
         for rule, term, advice in check_line(prose, phrases):
             if rule not in allowed:
-                findings.append(Finding(build, page, number, rule, term, advice, line.strip()))
+                findings.append(
+                    Finding(build, page, number, rule, term, advice, line.strip())
+                )
     return findings
 
 
@@ -479,10 +517,14 @@ def report(
         builds = ", ".join(f.build for f in same if f.build)
         tag = f" [{builds}]" if builds else ""
         console.append(f"{where}:{line}: {rule}: {term} -> {same[0].advice}{tag}")
-        rows.append(f"| `{where}:{line}` | {rule} | {term.replace('|', '/')} | {same[0].advice} |")
+        rows.append(
+            f"| `{where}:{line}` | {rule} | {term.replace('|', '/')} | {same[0].advice} |"
+        )
     counts = Counter(where[2] for where in grouped)
     label = "new against main" if baselined else "found"
-    headline = f"{len(grouped)} finding(s) {label}, {len(findings)} across every build in all."
+    headline = (
+        f"{len(grouped)} finding(s) {label}, {len(findings)} across every build in all."
+    )
     summary = ["## Docs gate", "", headline, ""]
     if counts:
         summary += ["| rule | count |", "|---|---|"]
@@ -547,13 +589,19 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument("paths", nargs="*", type=Path, help="markdown files or directories")
+    parser.add_argument(
+        "paths", nargs="*", type=Path, help="markdown files or directories"
+    )
     parser.add_argument(
         "--content", type=Path, default=aggregate.DEFAULT_OUT, help="the assembled tree"
     )
-    parser.add_argument("--baseline", type=Path, help="an assembled tree whose findings are old")
+    parser.add_argument(
+        "--baseline", type=Path, help="an assembled tree whose findings are old"
+    )
     parser.add_argument("--summary", type=Path, help="append a markdown summary here")
-    parser.add_argument("--report-only", action="store_true", help="exit 0 unless --fail-on trips")
+    parser.add_argument(
+        "--report-only", action="store_true", help="exit 0 unless --fail-on trips"
+    )
     parser.add_argument(
         "--fail-on",
         default="",
@@ -567,7 +615,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     fail_on = {rule.strip() for rule in args.fail_on.split(",") if rule.strip()}
     if unknown := fail_on - RULES:
-        raise SystemExit(f"error: --fail-on names unknown rule(s): {', '.join(sorted(unknown))}")
+        raise SystemExit(
+            f"error: --fail-on names unknown rule(s): {', '.join(sorted(unknown))}"
+        )
     named = [build.strip() for build in args.fail_on_build.split(",") if build.strip()]
     scope = fail_scope(args.content, named) if named and not args.paths else None
 
@@ -577,7 +627,9 @@ def main(argv: list[str] | None = None) -> int:
         findings, repos = gate_files(args.paths, phrases), {}
     else:
         if not (args.content / aggregate.SITE_FILE).is_file():
-            raise SystemExit(f"error: {args.content} holds no site.json: run aggregate.py first")
+            raise SystemExit(
+                f"error: {args.content} holds no site.json: run aggregate.py first"
+            )
         findings, repos = gate_tree(args.content, phrases), sources(args.content)
         findings += gate_files([COPY_DIR], phrases)
     new = findings

@@ -52,7 +52,9 @@ def render(template: bytes, env: dict[bytes, bytes]) -> bytes:
     Returns:
         The rendered bytes.
     """
-    return REFERENCE.sub(lambda ref: env.get(ref.group(1) or ref.group(2), b""), template)
+    return REFERENCE.sub(
+        lambda ref: env.get(ref.group(1) or ref.group(2), b""), template
+    )
 
 
 def main() -> int:

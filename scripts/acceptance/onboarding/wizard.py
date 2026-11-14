@@ -123,7 +123,9 @@ def pending_steps(status: Mapping) -> tuple[str, ...]:
     return tuple(str(s) for s in initial.get("pending_steps") or ())
 
 
-def expected_slugs(steps: Iterable[str], pending: Iterable[str] | None = None) -> tuple[str, ...]:
+def expected_slugs(
+    steps: Iterable[str], pending: Iterable[str] | None = None
+) -> tuple[str, ...]:
     """The screens this deployment must show, given the engine's steps.
 
     The break-glass reset screen is driven by the engine's ``admin_password``
@@ -191,7 +193,10 @@ def report_table(results: Sequence[StepResult]) -> str:
     width = max((len(r.slug) for r in results), default=4)
     status = max((len(r.status) for r in results), default=6)
     rows = [f"{'at':<{at}}  {'step':<{width}}  {'status':<{status}}  detail"]
-    rows += [f"{r.at:<{at}}  {r.slug:<{width}}  {r.status:<{status}}  {r.detail}" for r in results]
+    rows += [
+        f"{r.at:<{at}}  {r.slug:<{width}}  {r.status:<{status}}  {r.detail}"
+        for r in results
+    ]
     return "\n".join(rows)
 
 

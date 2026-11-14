@@ -117,7 +117,9 @@ CLEANUP_RESERVE = 20.0  # seconds of the budget kept back for the client pod's d
 LOG_MINUTES = 30
 LOG_BYTES = 2 * 1024 * 1024  # newest bytes kept from one container's log
 LOG_TOTAL = 64 * 1024 * 1024  # bytes every log of a bundle may keep together
-LOG_TIMEOUT = 20.0  # seconds one log read may take; a pod on a dead node answers nothing
+LOG_TIMEOUT = (
+    20.0  # seconds one log read may take; a pod on a dead node answers nothing
+)
 PREVIOUS_TAIL = 2000  # lines of a restarted container's previous run
 MAX_LOGGED_PODS = 60
 MAX_EVENT_NAMESPACES = 20
@@ -151,7 +153,7 @@ CLICKHOUSE_CONTAINER = "clickhouse-server"
 CLICKHOUSE_STATE = (
     "jsonpath={range .items[*]}{.metadata.name} restarts={.status.containerStatuses[*].restartCount}"
     " last={.status.containerStatuses[*].lastState.terminated.reason}"
-    " at={.status.containerStatuses[*].lastState.terminated.finishedAt}{\"\\n\"}{end}"
+    ' at={.status.containerStatuses[*].lastState.terminated.finishedAt}{"\\n"}{end}'
 )
 # Each server's own view of the dfe database: its slow or failed part writes, fetches and
 # merges, its replication queue and replica state, its active parts, and the INSERTs it ran.
@@ -265,7 +267,9 @@ STEPWISE_READS = (
 )
 BROKER_LOGS = "kafka/broker-logs/"
 BROKER_LOG_TIMEOUT = 90.0  # seconds for the bucket's download
-BROKER_LOG_TOTAL = 16 * 1024 * 1024  # decompressed bytes every broker log of a bundle may keep
+BROKER_LOG_TOTAL = (
+    16 * 1024 * 1024
+)  # decompressed bytes every broker log of a bundle may keep
 TOFU_TIMEOUT = 30.0  # seconds one `tofu output` may take
 TOPIC_SUFFIXES = ("_land", "_load", "_dlq")
 # The Kafka clients' own waits, so an unreachable broker ends a read before its box does.
@@ -332,7 +336,9 @@ class Bundle:
             return None
         self.runs += 1
         argv = ["kubectl", *self.prefix, *args]
-        outcome = fe.run_bounded(argv, timeout=min(timeout, left), limit=limit, tail=tail)
+        outcome = fe.run_bounded(
+            argv, timeout=min(timeout, left), limit=limit, tail=tail
+        )
         if outcome.ok:
             self.answered += 1
         return outcome
@@ -381,8 +387,10 @@ class Bundle:
         elif outcome and outcome.ok:
             try:
                 body = json.loads(outcome.output)
-                found = [item for item in body.get("items") or [] if isinstance(item, dict)]
-            except (json.JSONDecodeError, AttributeError):
+                found = [
+                    item for item in body.get("items") or [] if isinstance(item, dict)
+                ]
+            except json.JSONDecodeError, AttributeError:
                 how = "answered with no JSON item list"
         self.note(name, how, full)
         return found
@@ -400,7 +408,9 @@ def guarded[T](bundle: Bundle, label: str, run: Callable[[], T]) -> T | None:
     """`run()`, or None when it raised: the exception is one index line and the bundle goes on."""
     try:
         return run()
-    except Exception as exc:  # one capture failing must never stop the rest, or what follows
+    except (
+        Exception
+    ) as exc:  # one capture failing must never stop the rest, or what follows
         bundle.note(label, f"raised {type(exc).__name__}: {exc}")
         return None
 
@@ -412,7 +422,9 @@ def owning_workload(pod: dict) -> str:
     """The Deployment, StatefulSet or DaemonSet a pod belongs to, or empty for a bare pod."""
     meta = pod.get("metadata") or {}
     refs = [ref for ref in meta.get("ownerReferences") or [] if isinstance(ref, dict)]
-    owner = next((ref for ref in refs if ref.get("controller")), refs[0] if refs else {})
+    owner = next(
+        (ref for ref in refs if ref.get("controller")), refs[0] if refs else {}
+    )
     name = str(owner.get("name") or "")
     if owner.get("kind") != "ReplicaSet":
         return name
@@ -443,7 +455,8 @@ def metered(pods: list[dict]) -> list[tuple[str, str, str]]:
     return [
         (*_identity(pod), owning_workload(pod))
         for pod in pods
-        if all(_identity(pod)) and owning_workload(pod) in METERED_APPS
+        if all(_identity(pod))
+        and owning_workload(pod) in METERED_APPS
         and (pod.get("status") or {}).get("phase") == "Running"
     ]
 
@@ -472,14 +485,18 @@ def log_targets(pods: list[dict]) -> list[dict]:
 
 def engine_namespace(pods: list[dict]) -> str:
     """The namespace dfe-engine runs in, or empty when no pod of it is listed."""
-    return next((_identity(pod)[0] for pod in pods if owning_workload(pod) == ENGINE), "")
+    return next(
+        (_identity(pod)[0] for pod in pods if owning_workload(pod) == ENGINE), ""
+    )
 
 
 def dfe_namespaces(apps: list[dict], targets: list[dict]) -> list[str]:
     """argocd, every namespace an Application deploys into, and every logged app's namespace."""
     found = {ARGOCD, *(_identity(pod)[0] for pod in targets)}
     for app in apps:
-        destination = ((app.get("spec") or {}).get("destination") or {}).get("namespace")
+        destination = ((app.get("spec") or {}).get("destination") or {}).get(
+            "namespace"
+        )
         if destination:
             found.add(str(destination))
     return sorted(namespace for namespace in found if namespace)
@@ -492,7 +509,9 @@ def _text(value: object) -> str:
 
 def _appset(app: dict) -> str:
     refs = (app.get("metadata") or {}).get("ownerReferences") or []
-    return next((str(r.get("name")) for r in refs if r.get("kind") == "ApplicationSet"), "-")
+    return next(
+        (str(r.get("name")) for r in refs if r.get("kind") == "ApplicationSet"), "-"
+    )
 
 
 def _by_appset(app: dict) -> tuple[str, str]:
@@ -518,7 +537,9 @@ def application_lines(apps: list[dict]) -> list[str]:
         )
         operation = status.get("operationState") or {}
         if operation:
-            said = f": {_text(operation['message'])}" if operation.get("message") else ""
+            said = (
+                f": {_text(operation['message'])}" if operation.get("message") else ""
+            )
             lines.append(
                 f"  last operation {operation.get('phase') or '-'} started "
                 f"{operation.get('startedAt') or '-'} finished {operation.get('finishedAt') or '-'}"
@@ -538,7 +559,10 @@ def _resource_lines(resources: list[dict]) -> list[str]:
     lines = []
     for resource in resources:
         health = resource.get("health") or {}
-        if resource.get("status") in (None, "Synced") and health.get("status") in (None, "Healthy"):
+        if resource.get("status") in (None, "Synced") and health.get("status") in (
+            None,
+            "Healthy",
+        ):
             continue
         why = f": {_text(health['message'])}" if health.get("message") else ""
         lines.append(
@@ -547,7 +571,10 @@ def _resource_lines(resources: list[dict]) -> list[str]:
             f"health {health.get('status') or '-'}{why}"
         )
     if len(lines) > MAX_RESOURCES:
-        return [*lines[:MAX_RESOURCES], f"  +{len(lines) - MAX_RESOURCES} more resources"]
+        return [
+            *lines[:MAX_RESOURCES],
+            f"  +{len(lines) - MAX_RESOURCES} more resources",
+        ]
     return lines
 
 
@@ -575,7 +602,9 @@ def settings(text: str) -> dict[str, list[str]]:
     return found
 
 
-def kafka_facts(namespace: str, engine: str, configmaps: Iterable[str] = ()) -> KafkaFacts | None:
+def kafka_facts(
+    namespace: str, engine: str, configmaps: Iterable[str] = ()
+) -> KafkaFacts | None:
     """The bus dfe-engine dials, or None when it dials none.
 
     Args:
@@ -631,7 +660,9 @@ def client_manifest(
     mounts: list[dict] = [{"name": "tmp", "mountPath": CLIENT_TMP}]
     volumes: list[dict] = [{"name": "tmp", "emptyDir": {}}]
     if facts.secret:
-        mounts.append({"name": "credential", "mountPath": CREDENTIAL_MOUNT, "readOnly": True})
+        mounts.append(
+            {"name": "credential", "mountPath": CREDENTIAL_MOUNT, "readOnly": True}
+        )
         secret = {"secretName": facts.secret, "defaultMode": 0o440}
         volumes.append({"name": "credential", "secret": secret})
     container = {
@@ -678,7 +709,9 @@ def client_manifest(
         "spec": {
             "podSelector": {"matchLabels": {RUN_LABEL: run_id}},
             "policyTypes": ["Egress"],
-            "egress": [{"ports": [{"port": port, "protocol": "TCP"} for port in ports]}],
+            "egress": [
+                {"ports": [{"port": port, "protocol": "TCP"} for port in ports]}
+            ],
         },
     }
     return {"apiVersion": "v1", "kind": "List", "items": [client, policy]}
@@ -720,7 +753,9 @@ class KafkaClient:
     manifest: Path
 
 
-def start_kafka_client(bundle: Bundle, namespace: str, image: str) -> KafkaClient | None:
+def start_kafka_client(
+    bundle: Bundle, namespace: str, image: str
+) -> KafkaClient | None:
     """Apply the client pod beside dfe-engine, so its image pulls while the other reads run.
 
     Returns:
@@ -728,7 +763,9 @@ def start_kafka_client(bundle: Bundle, namespace: str, image: str) -> KafkaClien
         A failed apply still returns one, since it may have made half the List.
     """
     if not namespace:
-        bundle.note("kafka/", "not run: no dfe-engine pod, so the bus it dials is unknown")
+        bundle.note(
+            "kafka/", "not run: no dfe-engine pod, so the bus it dials is unknown"
+        )
         return None
     read = ["-n", namespace, "get", "deploy", ENGINE, "-o", f"jsonpath={ENGINE_KAFKA}"]
     outcome = bundle.capture("kafka/engine.txt", read)
@@ -738,17 +775,29 @@ def start_kafka_client(bundle: Bundle, namespace: str, image: str) -> KafkaClien
     engine = outcome.output.decode("utf-8", errors="replace")
     loaded = []
     for name in settings(engine).get("configmaps", [])[:MAX_ENGINE_CONFIGMAPS]:
-        args = ["-n", namespace, "get", "configmap", name, "-o", f"jsonpath={CONFIGMAP_KAFKA}"]
+        args = [
+            "-n",
+            namespace,
+            "get",
+            "configmap",
+            name,
+            "-o",
+            f"jsonpath={CONFIGMAP_KAFKA}",
+        ]
         answer = bundle.capture(f"kafka/configmap-{fe.safe_name(name)}.txt", args)
         if answer and answer.ok:
             loaded.append(answer.output.decode("utf-8", errors="replace"))
     facts = kafka_facts(namespace, engine, loaded)
     if facts is None:
-        bundle.note("kafka/", "not run: dfe-engine dials no Kafka bus on this deployment")
+        bundle.note(
+            "kafka/", "not run: dfe-engine dials no Kafka bus on this deployment"
+        )
         return None
     ports = bootstrap_ports(facts.bootstrap)
     if not ports:
-        bundle.note("kafka/", f"not run: the bootstrap list {facts.bootstrap} names no port")
+        bundle.note(
+            "kafka/", f"not run: the bootstrap list {facts.bootstrap} names no port"
+        )
         return None
     if not image:
         why = f"not run: no client image, from {KAFKA_CLI_IMAGE_ENV} or the kafka chart's pin"
@@ -756,7 +805,9 @@ def start_kafka_client(bundle: Bundle, namespace: str, image: str) -> KafkaClien
         return None
     run_id = uuid.uuid4().hex[:8]
     pod = f"{CLIENT_NAME}-kafka-{run_id}"
-    raw = (json.dumps(client_manifest(pod, run_id, facts, image, ports), indent=2) + "\n").encode()
+    raw = (
+        json.dumps(client_manifest(pod, run_id, facts, image, ports), indent=2) + "\n"
+    ).encode()
     # Redaction mangles the JSON (`automountServiceAccountToken`), so kubectl reads its own copy.
     bundle.write(CLIENT_MANIFEST, raw)
     descriptor, name = tempfile.mkstemp(prefix=f"{CLIENT_NAME}-", suffix=".json")
@@ -764,7 +815,9 @@ def start_kafka_client(bundle: Bundle, namespace: str, image: str) -> KafkaClien
     try:
         with os.fdopen(descriptor, "wb") as handle:
             handle.write(raw)
-        applied = bundle.step(f"{CLIENT_MANIFEST}, applied", ["apply", "-f", str(manifest)])
+        applied = bundle.step(
+            f"{CLIENT_MANIFEST}, applied", ["apply", "-f", str(manifest)]
+        )
     except BaseException:
         manifest.unlink(missing_ok=True)
         raise
@@ -776,8 +829,21 @@ def start_kafka_client(bundle: Bundle, namespace: str, image: str) -> KafkaClien
 
 def _exec_args(client: KafkaClient, command: str) -> tuple[list[str], list[str]]:
     """The exec argv for one Kafka tool, and the shorter form the index names it by."""
-    head = ["-n", client.facts.namespace, "exec", client.pod, "-c", "kafka", "--", "sh", "-c"]
-    return [*head, client_script(client.facts, command)], [*head, f"<client script: {command}>"]
+    head = [
+        "-n",
+        client.facts.namespace,
+        "exec",
+        client.pod,
+        "-c",
+        "kafka",
+        "--",
+        "sh",
+        "-c",
+    ]
+    return [*head, client_script(client.facts, command)], [
+        *head,
+        f"<client script: {command}>",
+    ]
 
 
 def _decoded(outcome: fe.Outcome | None) -> str:
@@ -790,7 +856,9 @@ def read_failure(outcome: fe.Outcome | None, budget: float) -> str:
     The Kafka tools print a failure to stdout as an `Error` or `ERROR` line and can still exit 0.
     """
     lines = _decoded(outcome).splitlines()
-    said = next((line.strip() for line in lines if line.startswith(("Error", "ERROR"))), "")
+    said = next(
+        (line.strip() for line in lines if line.startswith(("Error", "ERROR"))), ""
+    )
     if outcome is not None and outcome.ok:
         return said
     return said or fe.verdict(outcome, budget)
@@ -799,12 +867,20 @@ def read_failure(outcome: fe.Outcome | None, budget: float) -> str:
 def read_kafka(bundle: Bundle, client: KafkaClient) -> None:
     """Wait for the client pod, then read the groups, the end offsets and each step alone."""
     wait = [
-        "-n", client.facts.namespace, "wait", "--for=condition=Ready", f"pod/{client.pod}",
+        "-n",
+        client.facts.namespace,
+        "wait",
+        "--for=condition=Ready",
+        f"pod/{client.pod}",
         f"--timeout={int(KAFKA_READY_TIMEOUT)}s",
     ]
-    ready = bundle.step("(the client pod, waited for)", wait, timeout=KAFKA_READY_TIMEOUT + 10)
+    ready = bundle.step(
+        "(the client pod, waited for)", wait, timeout=KAFKA_READY_TIMEOUT + 10
+    )
     if ready is None or not ready.ok:
-        bundle.note("kafka/consumer-groups.txt", "not run: the client pod never became Ready")
+        bundle.note(
+            "kafka/consumer-groups.txt", "not run: the client pod never became Ready"
+        )
         return
     answers: dict[str, fe.Outcome | None] = {}
     for name, command in (
@@ -834,8 +910,14 @@ def stop_kafka_client(bundle: Bundle, client: KafkaClient) -> None:
     The delete runs in the time CLEANUP_RESERVE kept back.
     """
     args = [
-        "-n", client.facts.namespace, "delete", "pod,networkpolicy", "-l",
-        f"{RUN_LABEL}={client.run_id}", "--ignore-not-found", "--wait=false",
+        "-n",
+        client.facts.namespace,
+        "delete",
+        "pod,networkpolicy",
+        "-l",
+        f"{RUN_LABEL}={client.run_id}",
+        "--ignore-not-found",
+        "--wait=false",
     ]
     timeout = min(CLEANUP_RESERVE, max(1.0, bundle.end - time.monotonic()))
     try:
@@ -850,7 +932,9 @@ def stop_kafka_client(bundle: Bundle, client: KafkaClient) -> None:
         client.manifest.unlink(missing_ok=True)
 
 
-def kafka_summary_lines(groups: str, offsets: str, groups_failed: str = "") -> list[str]:
+def kafka_summary_lines(
+    groups: str, offsets: str, groups_failed: str = ""
+) -> list[str]:
     """Per _land, _load and _dlq topic: its end offset, and each group's commit and lag.
 
     Read off kafka-consumer-groups.sh (GROUP TOPIC PARTITION CURRENT-OFFSET LOG-END-OFFSET
@@ -879,7 +963,9 @@ def kafka_summary_lines(groups: str, offsets: str, groups_failed: str = "") -> l
         for slot, raw in enumerate((parts[3], parts[5])):
             if raw.isdigit():
                 sums[slot] = (sums[slot] or 0) + int(raw)
-    topics = sorted(topic for topic in {*ends, *committed} if topic.endswith(TOPIC_SUFFIXES))
+    topics = sorted(
+        topic for topic in {*ends, *committed} if topic.endswith(TOPIC_SUFFIXES)
+    )
     if not topics:
         return [*head, "neither Kafka read answered with a row"]
     lines = head
@@ -973,13 +1059,17 @@ def copy_broker_logs(bundle: Bundle) -> None:
     if provider is None:
         return
     if provider != "msk":
-        bundle.note(BROKER_LOGS, f"not run: the Kafka backend is {provider or 'none'}, not msk")
+        bundle.note(
+            BROKER_LOGS, f"not run: the Kafka backend is {provider or 'none'}, not msk"
+        )
         return
     bucket = tofu_output(bundle, "DFE_KAFKA_BROKER_LOG_BUCKET")
     if bucket is None:
         return
     if not bucket:
-        bundle.note(BROKER_LOGS, "not run: no broker-log bucket, so the logs are in CloudWatch")
+        bundle.note(
+            BROKER_LOGS, "not run: no broker-log bucket, so the logs are in CloudWatch"
+        )
         return
     staging = Path(tempfile.mkdtemp(prefix=f"{CLIENT_NAME}-broker-logs-"))
     try:
@@ -987,7 +1077,11 @@ def copy_broker_logs(bundle: Bundle) -> None:
         argv = ["aws", "s3", "sync", f"s3://{bucket}", str(staging), *quiet]
         outcome = _outside(bundle, argv, timeout=BROKER_LOG_TIMEOUT)
         kept, skipped = keep_broker_logs(bundle, staging)
-        over = f", {skipped} more past the {BROKER_LOG_TOTAL} byte limit" if skipped else ""
+        over = (
+            f", {skipped} more past the {BROKER_LOG_TOTAL} byte limit"
+            if skipped
+            else ""
+        )
         how = fe.verdict(outcome, bundle.budget)
         bundle.note(
             BROKER_LOGS,
@@ -1008,7 +1102,9 @@ def capture_events(bundle: Bundle, namespaces: list[str]) -> None:
         bundle.capture(f"events/{fe.safe_name(namespace)}.txt", args, tail=True)
     skipped = namespaces[MAX_EVENT_NAMESPACES:]
     if skipped:
-        bundle.note("events/", f"+{len(skipped)} namespaces not read: {', '.join(skipped)}")
+        bundle.note(
+            "events/", f"+{len(skipped)} namespaces not read: {', '.join(skipped)}"
+        )
 
 
 def capture_applications(bundle: Bundle) -> list[dict]:
@@ -1025,23 +1121,39 @@ def capture_applications(bundle: Bundle) -> list[dict]:
 def _read_log(bundle: Bundle, name: str, args: list[str], keep: float) -> None:
     limit = min(LOG_BYTES, bundle.log_left)
     if limit <= 0:
-        bundle.note(name, f"not read: the {LOG_TOTAL} byte limit on logs was reached", args)
+        bundle.note(
+            name, f"not read: the {LOG_TOTAL} byte limit on logs was reached", args
+        )
         return
-    outcome = bundle.capture(name, args, limit=limit, tail=True, timeout=LOG_TIMEOUT, keep=keep)
+    outcome = bundle.capture(
+        name, args, limit=limit, tail=True, timeout=LOG_TIMEOUT, keep=keep
+    )
     if outcome:
         bundle.log_left -= len(outcome.output)
 
 
-def capture_logs(bundle: Bundle, targets: list[dict], *, minutes: int, keep: float) -> None:
+def capture_logs(
+    bundle: Bundle, targets: list[dict], *, minutes: int, keep: float
+) -> None:
     """Each logged container's last `minutes`, and its previous run when it restarted."""
     for pod in targets[:MAX_LOGGED_PODS]:
         namespace, name = _identity(pod)
         for container, restarts in fe.containers_of(pod):
             stem = f"logs/{fe.safe_name(namespace)}/{fe.safe_name(name)}.{fe.safe_name(container)}"
             base = ["-n", namespace, "logs", name, "-c", container]
-            _read_log(bundle, f"{stem}.log", [*base, f"--since={minutes}m", "--timestamps"], keep)
+            _read_log(
+                bundle,
+                f"{stem}.log",
+                [*base, f"--since={minutes}m", "--timestamps"],
+                keep,
+            )
             if restarts:
-                previous = [*base, "--previous", f"--tail={PREVIOUS_TAIL}", "--timestamps"]
+                previous = [
+                    *base,
+                    "--previous",
+                    f"--tail={PREVIOUS_TAIL}",
+                    "--timestamps",
+                ]
                 _read_log(bundle, f"{stem}.previous.log", previous, keep)
     skipped = [_identity(pod)[1] for pod in targets[MAX_LOGGED_PODS:]]
     if skipped:
@@ -1051,14 +1163,39 @@ def capture_logs(bundle: Bundle, targets: list[dict], *, minutes: int, keep: flo
 def capture_metrics(bundle: Bundle, pods: list[dict]) -> None:
     """Each receiver and loader pod's /metrics, read with curl inside the pod."""
     for namespace, name, workload in metered(pods):
-        args = ["-n", namespace, "exec", name, "-c", workload, "--", "curl", "-sf", METRICS_URL]
-        bundle.capture(f"metrics/{fe.safe_name(namespace)}/{fe.safe_name(name)}.txt", args)
+        args = [
+            "-n",
+            namespace,
+            "exec",
+            name,
+            "-c",
+            workload,
+            "--",
+            "curl",
+            "-sf",
+            METRICS_URL,
+        ]
+        bundle.capture(
+            f"metrics/{fe.safe_name(namespace)}/{fe.safe_name(name)}.txt", args
+        )
 
 
 def _clickhouse_query(namespace: str, name: str, query: str) -> list[str]:
     """The kubectl argv that runs `query` on one ClickHouse server pod, TSV with names."""
-    return ["-n", namespace, "exec", name, "-c", CLICKHOUSE_CONTAINER, "--",
-            "clickhouse-client", "--format", "TSVWithNames", "-q", query]
+    return [
+        "-n",
+        namespace,
+        "exec",
+        name,
+        "-c",
+        CLICKHOUSE_CONTAINER,
+        "--",
+        "clickhouse-client",
+        "--format",
+        "TSVWithNames",
+        "-q",
+        query,
+    ]
 
 
 def capture_clickhouse(bundle: Bundle, pods: list[dict], *, minutes: int) -> None:
@@ -1075,13 +1212,17 @@ def capture_clickhouse(bundle: Bundle, pods: list[dict], *, minutes: int) -> Non
         bundle.capture(f"clickhouse/{fe.safe_name(namespace)}.pods.txt", args)
         # A part written just before the window still has its fetches inside it.
         lag = CLICKHOUSE_LAG.format(minutes=minutes, window=2 * minutes)
-        bundle.capture(f"clickhouse/{fe.safe_name(namespace)}.replica_lag.tsv",
-                       _clickhouse_query(namespace, name, lag))
+        bundle.capture(
+            f"clickhouse/{fe.safe_name(namespace)}.replica_lag.tsv",
+            _clickhouse_query(namespace, name, lag),
+        )
     for namespace, name in servers:
         for read, sql in CLICKHOUSE_READS.items():
             query = sql.format(minutes=minutes)
-            bundle.capture(f"clickhouse/{fe.safe_name(name)}.{read}.tsv",
-                           _clickhouse_query(namespace, name, query))
+            bundle.capture(
+                f"clickhouse/{fe.safe_name(name)}.{read}.tsv",
+                _clickhouse_query(namespace, name, query),
+            )
 
 
 def _collect_cluster(
@@ -1096,17 +1237,32 @@ def _collect_cluster(
     wide = guarded(
         bundle,
         "workloads.txt",
-        lambda: bundle.capture("workloads.txt", ["get", "pods,deploy,rs", "-A", "-o", "wide"]),
+        lambda: bundle.capture(
+            "workloads.txt", ["get", "pods,deploy,rs", "-A", "-o", "wide"]
+        ),
     )
     if pods is None and not (wide and wide.ok):
         bundle.note("(the rest)", "not run: the API server answered neither read above")
         return
-    apps = guarded(bundle, "argo-applications.txt", lambda: capture_applications(bundle)) or []
-    guarded(bundle, "events/", lambda: capture_events(bundle, dfe_namespaces(apps, targets)))
+    apps = (
+        guarded(bundle, "argo-applications.txt", lambda: capture_applications(bundle))
+        or []
+    )
+    guarded(
+        bundle, "events/", lambda: capture_events(bundle, dfe_namespaces(apps, targets))
+    )
     keep = bundle.budget * KAFKA_SHARE if client and client.started else 0.0
-    guarded(bundle, "logs/", lambda: capture_logs(bundle, targets, minutes=minutes, keep=keep))
+    guarded(
+        bundle,
+        "logs/",
+        lambda: capture_logs(bundle, targets, minutes=minutes, keep=keep),
+    )
     guarded(bundle, "metrics/", lambda: capture_metrics(bundle, pods or []))
-    guarded(bundle, "clickhouse/", lambda: capture_clickhouse(bundle, pods or [], minutes=minutes))
+    guarded(
+        bundle,
+        "clickhouse/",
+        lambda: capture_clickhouse(bundle, pods or [], minutes=minutes),
+    )
     if client and client.started:
         guarded(bundle, "kafka/", lambda: read_kafka(bundle, client))
 
@@ -1120,12 +1276,18 @@ def collect(bundle: Bundle, *, minutes: int, image: str) -> None:
     pods = guarded(bundle, listed, lambda: bundle.items(listed, ["get", "pods", "-A"]))
     targets = log_targets(pods or [])
     namespace = engine_namespace(pods or [])
-    client = guarded(bundle, "kafka/", lambda: start_kafka_client(bundle, namespace, image))
+    client = guarded(
+        bundle, "kafka/", lambda: start_kafka_client(bundle, namespace, image)
+    )
     try:
         _collect_cluster(bundle, pods, targets, client, minutes=minutes)
     finally:
         if client:
-            guarded(bundle, "(the client pod, deleted)", lambda: stop_kafka_client(bundle, client))
+            guarded(
+                bundle,
+                "(the client pod, deleted)",
+                lambda: stop_kafka_client(bundle, client),
+            )
     if bundle.tf_dir:
         guarded(bundle, BROKER_LOGS, lambda: copy_broker_logs(bundle))
 
@@ -1141,7 +1303,10 @@ def cmd_diagnostics(args: argparse.Namespace) -> int:
     """`dfe-ops diagnostics`: write one bundle under --dir, and exit 0 whatever it finds."""
     start = time.monotonic()
     now = time.gmtime()
-    out = Path(args.dir) / f"{time.strftime('%Y%m%dT%H%M%SZ', now)}-{fe.safe_name(args.label)}"
+    out = (
+        Path(args.dir)
+        / f"{time.strftime('%Y%m%dT%H%M%SZ', now)}-{fe.safe_name(args.label)}"
+    )
     try:
         out.mkdir(parents=True, exist_ok=True)
         header = f"diagnostics for {args.label}, read {time.strftime('%Y-%m-%dT%H:%M:%SZ', now)}\n"
@@ -1154,8 +1319,14 @@ def cmd_diagnostics(args: argparse.Namespace) -> int:
     deadline, end = start + args.budget - reserve, start + args.budget
     bundle = Bundle(out, prefix, args.budget, deadline, end, tf_dir=args.from_terraform)
     try:
-        collect(bundle, minutes=args.log_minutes, image=kafka_image(os.environ, _kafka_values()))
-    except Exception as exc:  # the bundle is evidence, never a reason to stop what runs after it
+        collect(
+            bundle,
+            minutes=args.log_minutes,
+            image=kafka_image(os.environ, _kafka_values()),
+        )
+    except (
+        Exception
+    ) as exc:  # the bundle is evidence, never a reason to stop what runs after it
         with contextlib.suppress(OSError):
             bundle.note("(the bundle)", f"raised {type(exc).__name__}: {exc}")
     print(
@@ -1204,11 +1375,17 @@ def add_diagnostics_subparser(sub: argparse._SubParsersAction) -> None:
         "--dir", required=True, help="directory the bundle's own directory goes under"
     )
     diag.add_argument(
-        "--label", default="manual", help="what failed: the end of the bundle's directory name"
+        "--label",
+        default="manual",
+        help="what failed: the end of the bundle's directory name",
     )
-    diag.add_argument("--kubeconfig", default="", help="kubeconfig to read; empty is kubectl's own")
     diag.add_argument(
-        "--context", default="", help="kubeconfig context to read; empty is its current one"
+        "--kubeconfig", default="", help="kubeconfig to read; empty is kubectl's own"
+    )
+    diag.add_argument(
+        "--context",
+        default="",
+        help="kubeconfig context to read; empty is its current one",
     )
     diag.add_argument(
         "--server",
@@ -1222,7 +1399,10 @@ def add_diagnostics_subparser(sub: argparse._SubParsersAction) -> None:
         help="minutes of each app's log to read",
     )
     diag.add_argument(
-        "--budget", type=_positive(float), default=BUDGET, help="seconds the whole bundle may take"
+        "--budget",
+        type=_positive(float),
+        default=BUDGET,
+        help="seconds the whole bundle may take",
     )
     diag.add_argument(
         "--from-terraform",

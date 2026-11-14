@@ -34,21 +34,35 @@ type Pod = tuple[str, dict[str, str], list[dict]]
 
 def counted(selector: dict[str, str], pods: list[Pod]) -> set[str]:
     """The pods a label selector counts, exactly as the scheduler would."""
-    return {n for n, labels, _ in pods if all(labels.get(k) == v for k, v in selector.items())}
+    return {
+        n
+        for n, labels, _ in pods
+        if all(labels.get(k) == v for k, v in selector.items())
+    }
 
 
 def hostname_constraint(label: str, name: str, constraints: list[dict]) -> dict | None:
     """The pod's own hostname-keyed spread constraint, if there is exactly one."""
-    hostname = [c for c in constraints if c.get("topologyKey") == "kubernetes.io/hostname"]
-    expect(f"{label}: {name} has one hostname spread constraint", len(hostname) == 1,
-           f"got {len(hostname)}")
+    hostname = [
+        c for c in constraints if c.get("topologyKey") == "kubernetes.io/hostname"
+    ]
+    expect(
+        f"{label}: {name} has one hostname spread constraint",
+        len(hostname) == 1,
+        f"got {len(hostname)}",
+    )
     return hostname[0] if len(hostname) == 1 else None
 
 
 def assert_constraint_shape(label: str, name: str, constraint: dict) -> None:
     """The two checks every hostname spread constraint must pass."""
-    expect(f"{label}: {name} spread refuses a skewed placement",
-           constraint.get("whenUnsatisfiable") == "DoNotSchedule",
-           f"whenUnsatisfiable is {constraint.get('whenUnsatisfiable')!r}")
-    expect(f"{label}: {name} spread allows a skew of one", constraint.get("maxSkew") == 1,
-           f"maxSkew is {constraint.get('maxSkew')!r}")
+    expect(
+        f"{label}: {name} spread refuses a skewed placement",
+        constraint.get("whenUnsatisfiable") == "DoNotSchedule",
+        f"whenUnsatisfiable is {constraint.get('whenUnsatisfiable')!r}",
+    )
+    expect(
+        f"{label}: {name} spread allows a skew of one",
+        constraint.get("maxSkew") == 1,
+        f"maxSkew is {constraint.get('maxSkew')!r}",
+    )

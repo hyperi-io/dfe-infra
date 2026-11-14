@@ -79,7 +79,10 @@ def findings(node: object, where: str = "") -> Iterator[str]:
             upper = name.upper()
             if upper.endswith(E2E_ENV_SUFFIXES) and _truthy(node["value"]):
                 yield f"{where}: env {name}={node['value']}"
-            if upper == "DFE_ENGINE_ENV" and str(node["value"]).strip().lower() == "test":
+            if (
+                upper == "DFE_ENGINE_ENV"
+                and str(node["value"]).strip().lower() == "test"
+            ):
                 yield f"{where}: env DFE_ENGINE_ENV=test (the e2e posture)"
         for key, value in node.items():
             leaf = str(key).lower().rsplit(".", 1)[-1]
@@ -116,9 +119,17 @@ def doc_findings(doc: dict) -> list[str]:
 CELLS = [(s, p, c) for s in COMPONENTS for p in DEFAULT_PROFILES for c in CLOUDS]
 
 
-@pytest.mark.parametrize(("service", "profile", "cloud"), CELLS, ids=[f"{s}-{p}-{c}" for s, p, c in CELLS])
-def test_the_default_render_carries_no_test_only_keys(service: str, profile: str, cloud: str) -> None:
-    found = [line for doc in golden(service, profile, cloud, DEFAULT) for line in doc_findings(doc)]
+@pytest.mark.parametrize(
+    ("service", "profile", "cloud"), CELLS, ids=[f"{s}-{p}-{c}" for s, p, c in CELLS]
+)
+def test_the_default_render_carries_no_test_only_keys(
+    service: str, profile: str, cloud: str
+) -> None:
+    found = [
+        line
+        for doc in golden(service, profile, cloud, DEFAULT)
+        for line in doc_findings(doc)
+    ]
     assert not found, "\n".join(found)
 
 
@@ -133,9 +144,13 @@ def _values_files() -> list[Path]:
     return list(seen)
 
 
-@pytest.mark.parametrize("path", _values_files(), ids=lambda p: str(p.relative_to(REPO_ROOT)))
+@pytest.mark.parametrize(
+    "path", _values_files(), ids=lambda p: str(p.relative_to(REPO_ROOT))
+)
 def test_the_values_a_deploy_layers_carry_no_test_only_keys(path: Path) -> None:
-    documents = list(yaml.safe_load_all(path.read_text(encoding="utf-8", errors="replace")))
+    documents = list(
+        yaml.safe_load_all(path.read_text(encoding="utf-8", errors="replace"))
+    )
     found = [line for doc in documents for line in findings(doc, path.name)]
     assert not found, "\n".join(found)
 
@@ -143,11 +158,30 @@ def test_the_values_a_deploy_layers_carry_no_test_only_keys(path: Path) -> None:
 @pytest.mark.parametrize(
     ("node", "needle"),
     [
-        ({"config": {"lumberjack": {"accept_unauthenticated": True}}}, "accept_unauthenticated"),
-        ({"config.lumberjack.accept_unauthenticated": "true"}, "unauthenticated listener"),
+        (
+            {"config": {"lumberjack": {"accept_unauthenticated": True}}},
+            "accept_unauthenticated",
+        ),
+        (
+            {"config.lumberjack.accept_unauthenticated": "true"},
+            "unauthenticated listener",
+        ),
         ({"e2eServer": True}, "e2eServer"),
-        ({"env": [{"name": "DFE_ENGINE_E2E_SERVER", "value": "true"}]}, "DFE_ENGINE_E2E_SERVER"),
-        ({"env": [{"name": "DFE_RECEIVER_LUMBERJACK__ACCEPT_UNAUTHENTICATED", "value": "true"}]}, "ACCEPT_UNAUTHENTICATED"),
+        (
+            {"env": [{"name": "DFE_ENGINE_E2E_SERVER", "value": "true"}]},
+            "DFE_ENGINE_E2E_SERVER",
+        ),
+        (
+            {
+                "env": [
+                    {
+                        "name": "DFE_RECEIVER_LUMBERJACK__ACCEPT_UNAUTHENTICATED",
+                        "value": "true",
+                    }
+                ]
+            },
+            "ACCEPT_UNAUTHENTICATED",
+        ),
         ({"env": [{"name": "DFE_ENGINE_ENV", "value": "test"}]}, "DFE_ENGINE_ENV=test"),
         ({"paths": ["/api/e2e/seed"]}, "seed route"),
         ({"topics": ["dfe.fb1a2b3c4d"]}, "harness name"),
@@ -166,7 +200,9 @@ def test_expected_fail_each_test_only_key_is_found(node: object, needle: str) ->
         {"e2eServer": False},
         {"accept_unauthenticated": "false"},
         {"env": [{"name": "DFE_ENGINE_ENV", "value": "dev"}]},
-        {"checksum": "1d0dae2ec7f24825128c3a83bf29294e420daf9e9d8fc1aad15e3f2d35912822"},
+        {
+            "checksum": "1d0dae2ec7f24825128c3a83bf29294e420daf9e9d8fc1aad15e3f2d35912822"
+        },
         {"source": "elastic", "topic": "dfe.land", "name": "fbprod"},
     ],
 )
@@ -177,7 +213,10 @@ def test_an_ordinary_default_is_not_a_finding(node: object) -> None:
 def test_a_golden_carrying_a_test_only_key_is_caught() -> None:
     """The scan reads ConfigMap files, not only env: lumberjack open inside a mounted config fails it."""
     doc = {
-        "kind": "ConfigMap", "metadata": {"name": "dfe-receiver"},
-        "data": {"config.yaml": "lumberjack:\n  enabled: true\n  accept_unauthenticated: true\n"},
+        "kind": "ConfigMap",
+        "metadata": {"name": "dfe-receiver"},
+        "data": {
+            "config.yaml": "lumberjack:\n  enabled: true\n  accept_unauthenticated: true\n"
+        },
     }
     assert any("accept_unauthenticated" in line for line in doc_findings(doc))

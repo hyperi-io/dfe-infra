@@ -49,18 +49,27 @@ EDGE_CA = "-----BEGIN CERTIFICATE-----\nZmFrZQ==\n-----END CERTIFICATE-----\n"
 
 # The cascade layer2-edge.yaml runs for an on-prem kind cluster.
 ON_PREM = (
-    "--namespace", "envoy-gateway-system",
-    "-f", str(VALUES / "common.yaml"),
-    "-f", str(VALUES / "local-dfe.yaml"),
-    "-f", str(VALUES / "edge-onprem.yaml"),
-    "-f", str(VALUES / "profile-slim.yaml"),
-    "--set", "appNamespace=dfe-local",
-    "--set", f"domain={DOMAIN}",
+    "--namespace",
+    "envoy-gateway-system",
+    "-f",
+    str(VALUES / "common.yaml"),
+    "-f",
+    str(VALUES / "local-dfe.yaml"),
+    "-f",
+    str(VALUES / "edge-onprem.yaml"),
+    "-f",
+    str(VALUES / "profile-slim.yaml"),
+    "--set",
+    "appNamespace=dfe-local",
+    "--set",
+    f"domain={DOMAIN}",
 )
 
 
 def _load_login_module():
-    spec = importlib.util.spec_from_file_location("argocd_login", BOOTSTRAP_DIR / "argocd_login.py")
+    spec = importlib.util.spec_from_file_location(
+        "argocd_login", BOOTSTRAP_DIR / "argocd_login.py"
+    )
     module = importlib.util.module_from_spec(spec)
     sys.modules["argocd_login"] = module
     spec.loader.exec_module(module)
@@ -77,7 +86,11 @@ def provider(issuer: str = f"https://dex.{DOMAIN}", **extra: str) -> list[dict]:
 def render(*args: str) -> list[dict]:
     out = subprocess.run(
         ["helm", "template", "envoy-gateway-config", str(GATEWAY), *ON_PREM, *args],
-        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
     )
     assert out.returncode == 0, out.stderr
     return [d for d in yaml.safe_load_all(out.stdout) if d]
@@ -85,14 +98,19 @@ def render(*args: str) -> list[dict]:
 
 def with_provider(providers: list[dict], *args: str) -> list[dict]:
     return render(
-        "--set", "oidc.enabled=true", "--set-json", f"oidc.providers={json.dumps(providers)}", *args
+        "--set",
+        "oidc.enabled=true",
+        "--set-json",
+        f"oidc.providers={json.dumps(providers)}",
+        *args,
     )
 
 
 def argo_policy(docs: list[dict]) -> dict | None:
     return next(
         (
-            d for d in docs
+            d
+            for d in docs
             if d.get("kind") == "SecurityPolicy"
             and d["metadata"]["name"] == argocd_login.POLICY
             and d["metadata"]["namespace"] == argocd_login.NAMESPACE
@@ -106,7 +124,8 @@ def external_secrets(docs: list[dict]) -> dict[str, dict]:
     return {
         d["metadata"]["namespace"]: d
         for d in docs
-        if d.get("kind") == "ExternalSecret" and d["metadata"]["name"].startswith("dfe-oidc-")
+        if d.get("kind") == "ExternalSecret"
+        and d["metadata"]["name"].startswith("dfe-oidc-")
     }
 
 
@@ -116,7 +135,9 @@ def test_the_gateway_renders_the_policy_the_reader_looks_for() -> None:
 
 
 def test_argo_logs_in_through_the_gateways_provider_and_client() -> None:
-    config, why = argocd_login.oidc_config(argo_policy(with_provider(provider())), DOMAIN, "")
+    config, why = argocd_login.oidc_config(
+        argo_policy(with_provider(provider())), DOMAIN, ""
+    )
     assert config is not None, why
     assert config["issuer"] == f"https://dex.{DOMAIN}"
     assert config["clientID"] == "dfe-engine"
@@ -148,7 +169,9 @@ def test_the_login_provider_is_the_one_the_edge_logs_in_with() -> None:
     docs = with_provider(providers, "--set", "oidc.loginProvider=corp")
     config, _ = argocd_login.oidc_config(argo_policy(docs), DOMAIN, "")
     assert (config["name"], config["issuer"], config["clientID"]) == (
-        "corp", "https://login.example.com", "argo",
+        "corp",
+        "https://login.example.com",
+        "argo",
     )
 
 
@@ -175,7 +198,9 @@ def test_a_client_secret_outside_argos_namespace_is_refused() -> None:
 
 # --- trust for an IdP the gateway serves --------------------------------------
 def test_an_issuer_the_gateway_serves_is_verified_against_the_edge_ca() -> None:
-    config, _ = argocd_login.oidc_config(argo_policy(with_provider(provider())), DOMAIN, EDGE_CA)
+    config, _ = argocd_login.oidc_config(
+        argo_policy(with_provider(provider())), DOMAIN, EDGE_CA
+    )
     assert config["rootCA"] == EDGE_CA
 
 
@@ -196,13 +221,17 @@ def test_a_public_issuer_keeps_the_system_roots() -> None:
         (f"https://dex.{DOMAIN}.example.com", False),
     ],
 )
-def test_only_one_label_under_the_domain_is_the_wildcards(issuer: str, served: bool) -> None:
+def test_only_one_label_under_the_domain_is_the_wildcards(
+    issuer: str, served: bool
+) -> None:
     assert argocd_login.served_by_gateway(issuer, DOMAIN) is served
 
 
 # --- the ExternalSecret Argo reads the reference from --------------------------
 def test_the_argocd_copy_of_the_client_secret_is_labelled_for_argo() -> None:
-    target = external_secrets(with_provider(provider()))[argocd_login.NAMESPACE]["spec"]["target"]
+    target = external_secrets(with_provider(provider()))[argocd_login.NAMESPACE][
+        "spec"
+    ]["target"]
     labels = target["template"]["metadata"]["labels"]
     assert labels["app.kubernetes.io/part-of"] == "argocd"
     assert labels["app.kubernetes.io/instance"] == "envoy-gateway-config"
@@ -216,7 +245,9 @@ def test_no_other_copy_claims_to_be_part_of_argo() -> None:
 
 
 # --- the values bootstrap layers on ------------------------------------------
-def test_both_argo_carrying_groups_are_argo_admin_and_the_viewer_group_read_only() -> None:
+def test_both_argo_carrying_groups_are_argo_admin_and_the_viewer_group_read_only() -> (
+    None
+):
     """dfe-infra's engine role, infra_admin, carries argo:*, so it is Argo's admin too."""
     assert argocd_login.policy_csv().splitlines() == [
         "g, dfe-admins, role:admin",
@@ -227,7 +258,9 @@ def test_both_argo_carrying_groups_are_argo_admin_and_the_viewer_group_read_only
 
 def test_argos_admins_are_the_deployments_admin_groups() -> None:
     """Argo keeps its own policy lines, so they are held to adminGroups in common.yaml."""
-    admin_groups = yaml.safe_load((VALUES / "common.yaml").read_text(encoding="utf-8"))["adminGroups"]
+    admin_groups = yaml.safe_load((VALUES / "common.yaml").read_text(encoding="utf-8"))[
+        "adminGroups"
+    ]
     argo_admins = [
         line.split(", ")[1]
         for line in argocd_login.policy_csv().splitlines()
@@ -240,8 +273,15 @@ def test_argos_admins_are_the_deployments_admin_groups() -> None:
 
 
 def test_the_mapped_groups_are_ones_the_fixture_idp_serves() -> None:
-    groups = {g["name"] for g in tomllib.loads(USERS_FIXTURE.read_text(encoding="utf-8"))["groups"]}
-    mapped = {argocd_login.ADMIN_GROUP, argocd_login.INFRA_GROUP, argocd_login.VIEWER_GROUP}
+    groups = {
+        g["name"]
+        for g in tomllib.loads(USERS_FIXTURE.read_text(encoding="utf-8"))["groups"]
+    }
+    mapped = {
+        argocd_login.ADMIN_GROUP,
+        argocd_login.INFRA_GROUP,
+        argocd_login.VIEWER_GROUP,
+    }
     assert mapped <= groups
 
 
@@ -251,7 +291,9 @@ OFFLINE_KUBECONFIG = {
     "current-context": "offline",
     "clusters": [{"name": "offline", "cluster": {"server": "https://127.0.0.1:1"}}],
     "users": [{"name": "offline", "user": {"token": "offline"}}],
-    "contexts": [{"name": "offline", "context": {"cluster": "offline", "user": "offline"}}],
+    "contexts": [
+        {"name": "offline", "context": {"cluster": "offline", "user": "offline"}}
+    ],
 }
 
 
@@ -285,15 +327,32 @@ def test_argos_own_rbac_engine_grants_what_the_mapping_says(
     policy = tmp_path / "policy.csv"
     policy.write_text(argocd_login.policy_csv(), encoding="utf-8")
     out = subprocess.run(
-        ["argocd", "admin", "settings", "rbac", "can", group, action, resource, target,
-         "--policy-file", str(policy)],
-        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
+        [
+            "argocd",
+            "admin",
+            "settings",
+            "rbac",
+            "can",
+            group,
+            action,
+            resource,
+            target,
+            "--policy-file",
+            str(policy),
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
     )
     assert out.stdout.strip() == ("Yes" if allowed else "No"), out.stderr
 
 
 def test_a_provider_turns_dex_off_and_sets_oidc_config() -> None:
-    config, _ = argocd_login.oidc_config(argo_policy(with_provider(provider())), DOMAIN, "")
+    config, _ = argocd_login.oidc_config(
+        argo_policy(with_provider(provider())), DOMAIN, ""
+    )
     values = argocd_login.helm_values(config)
     assert values["dex"] == {"enabled": False}
     assert yaml.safe_load(values["configs"]["cm"]["oidc.config"]) == config
@@ -308,7 +367,9 @@ def test_no_provider_leaves_dex_and_argo_cm_alone() -> None:
 
 # --- the access summary says which login Argo offers ---------------------------
 def test_the_summary_names_the_provider_and_the_roles() -> None:
-    config, _ = argocd_login.oidc_config(argo_policy(with_provider(provider())), DOMAIN, "")
+    config, _ = argocd_login.oidc_config(
+        argo_policy(with_provider(provider())), DOMAIN, ""
+    )
     cm = {"data": argocd_login.helm_values(config)["configs"]["cm"]}
     text = argocd_login.summary(cm)
     assert f"https://dex.{DOMAIN}" in text
@@ -375,7 +436,10 @@ def _between(lines: list[str], start: str, end: str) -> list[str]:
 
 HELPERS = ("run", "dfe_release_values", "dfe_have_crd", "dfe_should_install")
 STEP = ('echo "==> [6/7] ArgoCD', "# argocd-secret exists only once Argo")
-REREAD = ("# The gateway's policy on the argocd route exists", 'if [ "${POST_INTEGRATION}"')
+REREAD = (
+    "# The gateway's policy on the argocd route exists",
+    'if [ "${POST_INTEGRATION}"',
+)
 
 type BootstrapRun = tuple[subprocess.CompletedProcess, list[str], list[dict]]
 
@@ -385,7 +449,10 @@ def step_script() -> str:
     lines = BOOTSTRAP.read_text(encoding="utf-8").splitlines()
     helpers = [line for name in HELPERS for line in function_lines(lines, name)]
     step, reread = _between(lines, *STEP), _between(lines, *REREAD)
-    return "\n".join(["set -euo pipefail", *helpers, *step, "switch_cluster", *reread]) + "\n"
+    return (
+        "\n".join(["set -euo pipefail", *helpers, *step, "switch_cluster", *reread])
+        + "\n"
+    )
 
 
 def run_bootstrap(tmp_path: Path, before: dict, after: dict) -> BootstrapRun:
@@ -420,8 +487,13 @@ def run_bootstrap(tmp_path: Path, before: dict, after: dict) -> BootstrapRun:
         "POST_READINESS": "true",
     }
     out = subprocess.run(
-        ["bash", "-c", switch + step_script()], env=env,
-        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
+        ["bash", "-c", switch + step_script()],
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
     )
     calls = log.read_text(encoding="utf-8").splitlines()
     upgrades = [call for call in calls if call.startswith("helm upgrade")]
@@ -433,7 +505,9 @@ def rendered_policy() -> dict:
     return argo_policy(with_provider(provider()))
 
 
-def test_our_argo_signs_in_through_the_provider_the_gateway_already_carries(tmp_path: Path) -> None:
+def test_our_argo_signs_in_through_the_provider_the_gateway_already_carries(
+    tmp_path: Path,
+) -> None:
     fixture = {**OUR_RELEASE, "policy": rendered_policy()}
     out, calls, values = run_bootstrap(tmp_path, fixture, fixture)
     assert out.returncode == 0, out.stderr
@@ -445,7 +519,9 @@ def test_our_argo_signs_in_through_the_provider_the_gateway_already_carries(tmp_
     assert "login unchanged since [6/7]" in out.stdout
 
 
-def test_a_first_bootstrap_wires_the_login_once_the_gateway_has_synced(tmp_path: Path) -> None:
+def test_a_first_bootstrap_wires_the_login_once_the_gateway_has_synced(
+    tmp_path: Path,
+) -> None:
     """No policy at [6/7]; the gateway's policy exists by the time readiness passes."""
     synced = {**OUR_RELEASE, "policy": rendered_policy()}
     out, calls, values = run_bootstrap(tmp_path, OUR_RELEASE, synced)
@@ -496,8 +572,16 @@ def test_the_access_summary_carries_argos_login(tmp_path: Path) -> None:
         "FAKE_ARGOCD_CM": json.dumps({"data": {}}),
     }
     out = subprocess.run(
-        ["bash", str(ACCESS_SUMMARY), "", str(tmp_path / "access.md")], env=env,
-        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
+        ["bash", str(ACCESS_SUMMARY), "", str(tmp_path / "access.md")],
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
     )
     assert out.returncode == 0, out.stderr
-    assert "Argo CD has no OIDC provider, so it keeps its local `admin` login" in out.stdout
+    assert (
+        "Argo CD has no OIDC provider, so it keeps its local `admin` login"
+        in out.stdout
+    )

@@ -31,7 +31,9 @@ sys.path.insert(0, str(REPO_ROOT / "scripts"))
 # The CLI has no .py suffix, so it is loaded by path; it imports scalo only when it runs.
 _CLI = REPO_ROOT / "scripts" / "dfe-sweep"
 _SPEC = importlib.util.spec_from_file_location(
-    "dfe_sweep_defaults_cli", _CLI, loader=SourceFileLoader("dfe_sweep_defaults_cli", str(_CLI))
+    "dfe_sweep_defaults_cli",
+    _CLI,
+    loader=SourceFileLoader("dfe_sweep_defaults_cli", str(_CLI)),
 )
 cli = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(cli)
@@ -63,7 +65,11 @@ def test_the_defaults_name_a_pinned_label_standard_the_cli_accepts() -> None:
     settings = yaml.safe_load(DEFAULTS.read_text(encoding="utf-8"))[cli.SECTION]
     options = cli.effective(settings, cli.build_parser().parse_args([]))
     assert options.labels_command[0] == "uvx"
-    pins = [p for p in options.labels_command if re.fullmatch(r"hyperi-ci==\d+\.\d+\.\d+", p)]
+    pins = [
+        p
+        for p in options.labels_command
+        if re.fullmatch(r"hyperi-ci==\d+\.\d+\.\d+", p)
+    ]
     assert len(pins) == 1, options.labels_command
     assert options.labels_blocker == "release-blocker"
     assert options.labels_timeout >= 60, "a first run downloads hyperi-ci"

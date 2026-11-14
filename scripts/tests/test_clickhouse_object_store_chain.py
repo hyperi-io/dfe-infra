@@ -105,7 +105,11 @@ def resolved(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 
 def _storage(out: Path) -> str:
-    return (out / "sizing" / "scale.clickhouse-storage.json").read_text(encoding="utf-8").strip()
+    return (
+        (out / "sizing" / "scale.clickhouse-storage.json")
+        .read_text(encoding="utf-8")
+        .strip()
+    )
 
 
 def _cache_share() -> float:
@@ -131,7 +135,9 @@ def test_the_resolver_writes_the_cache_placement_it_decided(resolved: Path) -> N
 def test_the_cache_leaves_room_on_the_array_it_shares(resolved: Path) -> None:
     """RAID0 carries containerd and the kubelet too, which evicts at 10% free."""
     shapes = json.loads(
-        (resolved / "shapes" / "resolved" / "aws-us-west-2.json").read_text(encoding="utf-8")
+        (resolved / "shapes" / "resolved" / "aws-us-west-2.json").read_text(
+            encoding="utf-8"
+        )
     )
     device_gib = shapes["clickhouse"]["volumes"]["cache"]["size_gib"]
     want = math.floor(device_gib * _cache_share())
@@ -141,10 +147,12 @@ def test_the_cache_leaves_room_on_the_array_it_shares(resolved: Path) -> None:
 
 def test_the_clickhouse_shape_asks_its_node_group_for_raid0(resolved: Path) -> None:
     """The managed node group and the Karpenter pool assemble the NVMe the same way."""
-    tfvars = json.loads((resolved / "sizing.auto.tfvars.json").read_text(encoding="utf-8"))
-    pools = json.loads((resolved / "sizing" / "scale.pools.json").read_text(encoding="utf-8"))[
-        "classes"
-    ]
+    tfvars = json.loads(
+        (resolved / "sizing.auto.tfvars.json").read_text(encoding="utf-8")
+    )
+    pools = json.loads(
+        (resolved / "sizing" / "scale.pools.json").read_text(encoding="utf-8")
+    )["classes"]
     assert tfvars["resolved_shapes"]["clickhouse"]["instance_store_policy"] == "RAID0"
     assert pools["clickhouse"]["aws"]["nodeClass"]["instanceStorePolicy"] == "RAID0"
     assert "instance_store_policy" not in tfvars["resolved_shapes"]["kafka-broker"]
@@ -155,7 +163,9 @@ def test_the_clickhouse_shape_asks_its_node_group_for_raid0(resolved: Path) -> N
 
 def test_the_aws_root_outputs_the_bucket_the_cluster_module_creates() -> None:
     outputs = AWS_ROOT_OUTPUTS.read_text(encoding="utf-8")
-    block = outputs.split('output "DFE_CLICKHOUSE_OBJECT_STORE_ENDPOINT"')[1].split("output ")[0]
+    block = outputs.split('output "DFE_CLICKHOUSE_OBJECT_STORE_ENDPOINT"')[1].split(
+        "output "
+    )[0]
     assert "module.cluster.clickhouse_object_store_endpoint" in block
 
 
@@ -163,7 +173,9 @@ def _bootstrap_block() -> str:
     """bootstrap.sh's own storage block, run on its own rather than copied here."""
     lines = BOOTSTRAP.read_text(encoding="utf-8").splitlines()
     start = next(
-        i for i, line in enumerate(lines) if line.startswith("DFE_CLICKHOUSE_STORAGE_FILE=")
+        i
+        for i, line in enumerate(lines)
+        if line.startswith("DFE_CLICKHOUSE_STORAGE_FILE=")
     )
     end = next(
         i
@@ -174,7 +186,9 @@ def _bootstrap_block() -> str:
 
 
 def _run_block(**env: str) -> subprocess.CompletedProcess:
-    script = _bootstrap_block() + '\nprintf "\\n%s" "$DFE_CLICKHOUSE_STORAGE_ANNOTATION"'
+    script = (
+        _bootstrap_block() + '\nprintf "\\n%s" "$DFE_CLICKHOUSE_STORAGE_ANNOTATION"'
+    )
     return subprocess.run(
         ["bash", "-euo", "pipefail", "-c", script],
         env={"PATH": "/usr/bin:/bin", **env},
@@ -192,7 +206,9 @@ def test_bootstrap_carries_the_resolve_onto_the_annotation(resolved: Path) -> No
     assert done.stdout.splitlines()[-1] == f"{STORAGE_KEY}: '{_storage(resolved)}'"
 
 
-def test_a_profile_the_resolver_never_sized_writes_no_annotation(resolved: Path) -> None:
+def test_a_profile_the_resolver_never_sized_writes_no_annotation(
+    resolved: Path,
+) -> None:
     done = _run_block(DFE_SIZING_DIR=str(resolved), DFE_PROFILE="single")
     assert done.returncode == 0, done.stderr
     assert done.stdout == "\n"
@@ -219,7 +235,9 @@ def test_the_cluster_secret_carries_the_storage_as_json(resolved: Path) -> None:
 # --------------------------------------------------------------------- the render
 
 
-def clickhouse_docs(cloud: str, facts: dict[str, str], overlay: str | None = None) -> list[dict]:
+def clickhouse_docs(
+    cloud: str, facts: dict[str, str], overlay: str | None = None
+) -> list[dict]:
     """clickhouse-cluster as layer2-data's Application renders it.
 
     ``overlay`` is the deploy repo's infra/clickhouse-cluster.yaml. None leaves
@@ -234,7 +252,9 @@ def clickhouse_docs(cloud: str, facts: dict[str, str], overlay: str | None = Non
         for e in (nested.get("list") or {}).get("elements") or []
         if e["app"] == "clickhouse-cluster"
     )
-    target = w.Target(element["app"], "scale", cloud, annotations=tuple(sorted(facts.items())))
+    target = w.Target(
+        element["app"], "scale", cloud, annotations=tuple(sorted(facts.items()))
+    )
     app = w.expand_template(
         doc["spec"]["template"], {**w.generator_params(target, None), **element}, helm()
     )
@@ -244,7 +264,9 @@ def clickhouse_docs(cloud: str, facts: dict[str, str], overlay: str | None = Non
         deploy = Path(tmp)
         (deploy / "infra").mkdir()
         if overlay is not None:
-            (deploy / "infra" / "clickhouse-cluster.yaml").write_text(overlay, encoding="utf-8")
+            (deploy / "infra" / "clickhouse-cluster.yaml").write_text(
+                overlay, encoding="utf-8"
+            )
         chain = []
         for raw in source["helm"].get("valueFiles") or []:
             path = (
@@ -276,10 +298,16 @@ def disks(docs: list[dict]) -> dict:
 
 
 def aws_facts(resolved: Path) -> dict[str, str]:
-    return {ENDPOINT_KEY: ENDPOINT, "dfe.hyperi.io/region": REGION, STORAGE_KEY: _storage(resolved)}
+    return {
+        ENDPOINT_KEY: ENDPOINT,
+        "dfe.hyperi.io/region": REGION,
+        STORAGE_KEY: _storage(resolved),
+    }
 
 
-def test_a_fresh_aws_deploy_runs_cached_object_on_its_instance_store(resolved: Path) -> None:
+def test_a_fresh_aws_deploy_runs_cached_object_on_its_instance_store(
+    resolved: Path,
+) -> None:
     """No deploy-repo file at all: everything arrives on the cluster secret."""
     docs = clickhouse_docs("aws", aws_facts(resolved))
     cache_size = json.loads(_storage(resolved))["objectStore"]["cacheSize"]
@@ -289,7 +317,9 @@ def test_a_fresh_aws_deploy_runs_cached_object_on_its_instance_store(resolved: P
     assert found["s3_object"]["region"] == REGION
     assert 0 < _bytes(found["s3_object_cache"]["max_size"]) < _bytes(cache_size)
     pod = cluster(docs)["spec"]["podTemplate"]
-    assert pod["volumes"] == [{"name": "object-cache", "emptyDir": {"sizeLimit": cache_size}}]
+    assert pod["volumes"] == [
+        {"name": "object-cache", "emptyDir": {"sizeLimit": cache_size}}
+    ]
     assert pod["nodeSelector"]["dfe.hyperi.io/workload"] == "clickhouse"
 
 
@@ -300,15 +330,22 @@ def test_the_aws_bucket_is_reached_through_pod_identity(resolved: Path) -> None:
     assert not [
         d
         for d in docs
-        if d.get("kind") == "ExternalSecret" and d["metadata"]["name"] == "dfe-clickhouse-s3"
+        if d.get("kind") == "ExternalSecret"
+        and d["metadata"]["name"] == "dfe-clickhouse-s3"
     ]
 
 
-def test_a_deploy_repo_overlay_cannot_move_what_the_first_sync_fixed(resolved: Path) -> None:
+def test_a_deploy_repo_overlay_cannot_move_what_the_first_sync_fixed(
+    resolved: Path,
+) -> None:
     overlay = yaml.safe_dump(
         {
             "clickhouse": {
-                "objectStore": {"endpoint": MINIO, "cacheSize": "10Gi", "cache": {"volume": "pvc"}}
+                "objectStore": {
+                    "endpoint": MINIO,
+                    "cacheSize": "10Gi",
+                    "cache": {"volume": "pvc"},
+                }
             }
         }
     )
@@ -352,7 +389,10 @@ def test_the_cache_mount_sits_outside_the_data_volume(resolved: Path) -> None:
     nested = [
         m["mountPath"]
         for m in mounts
-        if any(PurePosixPath(m["mountPath"]).is_relative_to(d) for d in OPERATOR_DATA_MOUNTS)
+        if any(
+            PurePosixPath(m["mountPath"]).is_relative_to(d)
+            for d in OPERATOR_DATA_MOUNTS
+        )
     ]
     assert nested == [], nested
     cache = PurePosixPath(disks(docs)["s3_object_cache"]["path"])
@@ -361,7 +401,9 @@ def test_the_cache_mount_sits_outside_the_data_volume(resolved: Path) -> None:
 
 
 @pytest.mark.parametrize("cloud", ["aws", "gcp", "azure"])
-def test_a_deploy_repo_storage_model_cannot_strand_the_cache(cloud: str, resolved: Path) -> None:
+def test_a_deploy_repo_storage_model_cannot_strand_the_cache(
+    cloud: str, resolved: Path
+) -> None:
     """The secret carries the model with the cache placement it decided, so an overlay's
     `local` cannot leave an instance-store cache with no object store to front."""
     overlay = yaml.safe_dump({"clickhouse": {"storageModel": "local"}})

@@ -45,7 +45,15 @@ from pathlib import Path
 import yaml
 
 from _expect import expect, standalone, summary
-from _gate import APPSETS, INSTANCE, WORKLOAD_KINDS, effective_env, goldens, pod_spec, references
+from _gate import (
+    APPSETS,
+    INSTANCE,
+    WORKLOAD_KINDS,
+    effective_env,
+    goldens,
+    pod_spec,
+    references,
+)
 from _weave import contract, render_app, weave
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -87,7 +95,9 @@ def pod_specs(docs: list[dict]) -> list[dict]:
 
 def unnamed_refs(docs: list[dict]) -> list[str]:
     """Each Secret or ConfigMap reference whose name renders empty."""
-    return [f"{kind} at {where}" for kind, name, _, where in references(docs) if not name]
+    return [
+        f"{kind} at {where}" for kind, name, _, where in references(docs) if not name
+    ]
 
 
 # --- #181 and #66: the elastic deployment's env surface -----------------------
@@ -97,19 +107,31 @@ def test_the_elastic_chart_offers_no_routing_dials() -> None:
     for where, docs in goldens(ELASTIC):
         env = effective_env(docs, f"Deployment/{ELASTIC}")
         for name in INERT_ELASTIC_ENV:
-            expect(f"the elastic deployment renders no {name} [{label(where)}]", name not in env,
-                   f"got {env.get(name)!r}")
+            expect(
+                f"the elastic deployment renders no {name} [{label(where)}]",
+                name not in env,
+                f"got {env.get(name)!r}",
+            )
 
 
 def test_the_inert_elastic_values_went_with_them() -> None:
     """A dial left in an app's values is still an offer, even with nothing reading it."""
     files = sorted((APP_VALUES / ELASTIC).glob("*.yaml"))
-    expect("the elastic integration values were found", bool(files), f"none in {APP_VALUES}")
+    expect(
+        "the elastic integration values were found",
+        bool(files),
+        f"none in {APP_VALUES}",
+    )
     for path in files:
-        kafka = (yaml.safe_load(path.read_text(encoding="utf-8")) or {}).get("kafka") or {}
+        kafka = (yaml.safe_load(path.read_text(encoding="utf-8")) or {}).get(
+            "kafka"
+        ) or {}
         for key in INERT_ELASTIC_VALUES:
-            expect(f"kafka.{key} is absent from {path.name}", key not in kafka,
-                   f"got {kafka.get(key)!r}")
+            expect(
+                f"kafka.{key} is absent from {path.name}",
+                key not in kafka,
+                f"got {kafka.get(key)!r}",
+            )
 
 
 def test_the_elastic_chart_keeps_the_name_from_env_does_read() -> None:
@@ -136,16 +158,22 @@ def test_the_vector_chart_mounts_no_binary_cache() -> None:
             f"got {env.get('DFE_TRANSFORM_VECTOR_VECTOR_CACHE_DIR')!r}",
         )
         volumes = {v["name"] for pod in pod_specs(docs) for v in pod.get("volumes", [])}
-        expect(f"and no cache volume is created [{at}]", "vector-cache" not in volumes,
-               f"got {sorted(volumes)}")
+        expect(
+            f"and no cache volume is created [{at}]",
+            "vector-cache" not in volumes,
+            f"got {sorted(volumes)}",
+        )
         mounts = {
             m["mountPath"]
             for pod in pod_specs(docs)
             for c in pod.get("containers", [])
             for m in c.get("volumeMounts", [])
         }
-        expect(f"and nothing mounts {VECTOR_CACHE_DIR} [{at}]", VECTOR_CACHE_DIR not in mounts,
-               f"got {sorted(mounts)}")
+        expect(
+            f"and nothing mounts {VECTOR_CACHE_DIR} [{at}]",
+            VECTOR_CACHE_DIR not in mounts,
+            f"got {sorted(mounts)}",
+        )
 
 
 def test_the_data_dir_survived_the_removal() -> None:
@@ -160,21 +188,42 @@ def test_the_data_dir_survived_the_removal() -> None:
         )
         (pod,) = pod_specs(docs)
         mount = next(
-            (m for m in pod["containers"][0]["volumeMounts"] if m["mountPath"] == VECTOR_DATA_DIR),
+            (
+                m
+                for m in pod["containers"][0]["volumeMounts"]
+                if m["mountPath"] == VECTOR_DATA_DIR
+            ),
             None,
         )
         volume = next(
-            (v for v in pod["volumes"] if mount is not None and v["name"] == mount["name"]), None
+            (
+                v
+                for v in pod["volumes"]
+                if mount is not None and v["name"] == mount["name"]
+            ),
+            None,
         )
-        expect(f"with a writable volume mounted there [{at}]",
-               volume is not None and "emptyDir" in volume, f"got {volume!r}")
+        expect(
+            f"with a writable volume mounted there [{at}]",
+            volume is not None and "emptyDir" in volume,
+            f"got {volume!r}",
+        )
 
 
 def test_a_cronjobs_pod_is_read_from_its_job_template() -> None:
-    pod = {"containers": [{"name": "main"}], "volumes": [{"name": "data", "emptyDir": {}}]}
-    cronjob = {"kind": "CronJob", "spec": {"jobTemplate": {"spec": {"template": {"spec": pod}}}}}
-    expect("the CronJob's pod is the one its jobTemplate runs", pod_specs([cronjob]) == [pod],
-           f"got {pod_specs([cronjob])!r}")
+    pod = {
+        "containers": [{"name": "main"}],
+        "volumes": [{"name": "data", "emptyDir": {}}],
+    }
+    cronjob = {
+        "kind": "CronJob",
+        "spec": {"jobTemplate": {"spec": {"template": {"spec": pod}}}},
+    }
+    expect(
+        "the CronJob's pod is the one its jobTemplate runs",
+        pod_specs([cronjob]) == [pod],
+        f"got {pod_specs([cronjob])!r}",
+    )
 
 
 # --- #79: the residue ---------------------------------------------------------
@@ -191,11 +240,18 @@ def test_no_declared_app_renders_an_unnamed_secret_reference() -> None:
         cells = goldens(app)
         # Loud, not skipped: an app that dropped out of the render matrix would
         # otherwise drop out of this sweep silently, the class this file catches.
-        expect(f"{app} has goldens to read", bool(cells), "none under fixtures/thin-renders")
+        expect(
+            f"{app} has goldens to read",
+            bool(cells),
+            "none under fixtures/thin-renders",
+        )
         for where, docs in cells:
             offenders = unnamed_refs(docs)
-            expect(f"{app} names every Secret it reads [{label(where)}]", offenders == [],
-                   f"got {offenders}")
+            expect(
+                f"{app} names every Secret it reads [{label(where)}]",
+                offenders == [],
+                f"got {offenders}",
+            )
 
 
 def reads_kafka_credential(app: str) -> bool:
@@ -228,19 +284,29 @@ def test_a_cleared_kafka_secret_name_renders_no_unnamed_reference() -> None:
             overlay = {**INSTANCE.get(app, {}).get("local", {}), **clearing}
             if reads_kafka_credential(app):
                 refused = refusal(app, overlay, options)
-                expect(f"{app} refuses {clearing} and names the switch",
-                       "secrets.kafka.enabled: false" in refused, f"refusal={refused[-300:]!r}")
+                expect(
+                    f"{app} refuses {clearing} and names the switch",
+                    "secrets.kafka.enabled: false" in refused,
+                    f"refusal={refused[-300:]!r}",
+                )
                 overlay = {**overlay, "secrets": {"kafka": {"enabled": False}}}
             docs = render_app(app, "single", "local", overlay=overlay, **options)
             offenders = unnamed_refs(docs)
-            expect(f"{app} names every Secret it reads {clearing}", offenders == [],
-                   f"got {offenders}")
+            expect(
+                f"{app} names every Secret it reads {clearing}",
+                offenders == [],
+                f"got {offenders}",
+            )
 
 
 def test_the_common_overlay_carries_no_unread_sasl_block() -> None:
     """It fanned out to every app and nothing read either key."""
     kafka = yaml.safe_load(COMMON_VALUES.read_text(encoding="utf-8"))["kafka"]
-    expect("common.yaml has no kafka.sasl block", "sasl" not in kafka, f"got {kafka.get('sasl')!r}")
+    expect(
+        "common.yaml has no kafka.sasl block",
+        "sasl" not in kafka,
+        f"got {kafka.get('sasl')!r}",
+    )
     expect(
         "and still carries the protocol the apps do read",
         kafka.get("securityProtocol") == "SASL_PLAINTEXT",
@@ -260,9 +326,14 @@ def test_the_archiver_cell_answers_for_the_writes_the_engine_makes() -> None:
     archive destination, both snapshotted at startup, so the one bit stays false.
     """
     archiver = manifest()["apps"]["dfe-archiver"]
-    expect("the archiver cell is false", archiver["hot_reload"] is False,
-           f"got {archiver['hot_reload']!r}")
-    written = set(archiver["routing"]["values_paths"].values()) | set(archiver["idle_when"])
+    expect(
+        "the archiver cell is false",
+        archiver["hot_reload"] is False,
+        f"got {archiver['hot_reload']!r}",
+    )
+    written = set(archiver["routing"]["values_paths"].values()) | set(
+        archiver["idle_when"]
+    )
     expect(
         "and the keys it answers for are the governed ones",
         "config.kafka.topics" in written and "config.archive.destination" in written,
@@ -279,8 +350,11 @@ def test_the_vrl_enrichment_cell_reports_the_roll_it_needs() -> None:
     is materialised once and needs the pod roll.
     """
     files = {f["name"]: f for f in manifest()["apps"]["dfe-transform-vrl"]["files"]}
-    expect("the vrl enrichment set rolls", files["enrichment"]["reload"] == "roll",
-           f"got {files['enrichment']['reload']!r}")
+    expect(
+        "the vrl enrichment set rolls",
+        files["enrichment"]["reload"] == "roll",
+        f"got {files['enrichment']['reload']!r}",
+    )
 
 
 def main() -> int:

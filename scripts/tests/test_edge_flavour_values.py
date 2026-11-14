@@ -118,7 +118,10 @@ def readers(path: tuple[str, ...]) -> set[str]:
 def render(chart: str, *args: str) -> str:
     out = subprocess.run(
         ["helm", "template", chart, str(chart_dir(chart)), *args],
-        capture_output=True, text=True, check=False, cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=REPO_ROOT,
     )
     assert out.returncode == 0, f"helm template {chart} {args} failed:\n{out.stderr}"
     return out.stdout
@@ -156,7 +159,9 @@ def test_no_key_in_a_flavour_overlay_is_read_outside_the_edge(flavour: str) -> N
         outside = {c for c in readers(path) if not c.startswith("edge/")}
         if outside:
             strays[".".join(path)] = outside
-    assert not strays, f"edge-{flavour}.yaml carries keys a non-edge chart reads: {strays}"
+    assert not strays, (
+        f"edge-{flavour}.yaml carries keys a non-edge chart reads: {strays}"
+    )
 
 
 @pytest.mark.parametrize("flavour", sorted(FLAVOURS))
@@ -171,10 +176,21 @@ def test_every_key_in_a_flavour_overlay_is_read_by_an_edge_chart(flavour: str) -
 # cluster's own compute, and the group (e) surfaces offered no door on any
 # flavour. Each name is matched against a key path, never against the prose,
 # because naming one in a comment is how the tier table documents the refusal.
-TIER_3_NAMES = frozenset({
-    "shield", "shield_advanced", "global_accelerator", "globalaccelerator",
-    "kafka", "clickhouse", "keeper", "postgres", "postgresql", "openbao", "kubernetes",
-})
+TIER_3_NAMES = frozenset(
+    {
+        "shield",
+        "shield_advanced",
+        "global_accelerator",
+        "globalaccelerator",
+        "kafka",
+        "clickhouse",
+        "keeper",
+        "postgres",
+        "postgresql",
+        "openbao",
+        "kubernetes",
+    }
+)
 
 
 def _own_keys(path: tuple[str, ...]) -> list[str]:
@@ -188,7 +204,8 @@ def test_no_tier_3_mechanism_has_a_key_in_a_flavour_overlay(flavour: str) -> Non
     KEY -- a default of false is a switch, and a switch gets flipped."""
     tree = yaml.safe_load(flavour_file(flavour).read_text(encoding="utf-8")) or {}
     named = [
-        ".".join(path) for path in leaf_paths(tree)
+        ".".join(path)
+        for path in leaf_paths(tree)
         if TIER_3_NAMES & set(_own_keys(path))
     ]
     assert not named, f"edge-{flavour}.yaml carries a tier-3 key: {named}"
@@ -199,9 +216,13 @@ def test_no_tier_3_mechanism_has_a_key_in_the_dial() -> None:
     as an offer rather than as the refusal the tier table states."""
     body = (REPO_ROOT / "deployment.example.yaml").read_text(encoding="utf-8")
     offered = [
-        line for line in body.splitlines()
+        line
+        for line in body.splitlines()
         if not line.lstrip().startswith("#")
-        and any(f"{name}:" in line.lower() for name in ("shield_advanced", "global_accelerator"))
+        and any(
+            f"{name}:" in line.lower()
+            for name in ("shield_advanced", "global_accelerator")
+        )
     ]
     assert not offered, f"deployment.example.yaml offers a tier-3 key: {offered}"
 
@@ -214,17 +235,25 @@ def test_the_receivers_door_stayed_where_the_receiver_reads_it() -> None:
     so it lives in common.yaml with the on-prem door in local.yaml, and no edge
     flavour file sets it.
     """
-    assert {"charts/dfe-extras", "edge/gateway"} <= readers(("exposure", "groups", "ingest"))
+    assert {"charts/dfe-extras", "edge/gateway"} <= readers(
+        ("exposure", "groups", "ingest")
+    )
     common = yaml.safe_load((VALUES / "common.yaml").read_text(encoding="utf-8"))
     assert common["exposure"]["groups"]["ingest"]["door"] == "loadbalancer"
     for cloud in ("local", "local-dfe", "rancher"):
         tree = yaml.safe_load((VALUES / f"{cloud}.yaml").read_text(encoding="utf-8"))
         assert tree["exposure"]["groups"]["ingest"]["door"] == "gateway", cloud
     for flavour in ("aws", "gcp", "azure", "onprem"):
-        tree = yaml.safe_load((VALUES / f"edge-{flavour}.yaml").read_text(encoding="utf-8"))
-        assert "ingest" not in ((tree.get("exposure") or {}).get("groups") or {}), flavour
+        tree = yaml.safe_load(
+            (VALUES / f"edge-{flavour}.yaml").read_text(encoding="utf-8")
+        )
+        assert "ingest" not in ((tree.get("exposure") or {}).get("groups") or {}), (
+            flavour
+        )
     for cloud in ("aws", "gcp", "azure", "local"):
-        tree = yaml.safe_load((VALUES / f"{cloud}.yaml").read_text(encoding="utf-8")) or {}
+        tree = (
+            yaml.safe_load((VALUES / f"{cloud}.yaml").read_text(encoding="utf-8")) or {}
+        )
         assert "mode" not in (tree.get("exposure") or {}), cloud
     policy = {
         cloud: any(
@@ -256,7 +285,8 @@ def test_the_tunnels_pki_mode_is_external_on_every_cloud_flavour() -> None:
 def test_both_edge_applications_layer_the_flavour_overlay() -> None:
     """One tier table serves both doors, or the tunnel reads a different one."""
     appsets = [
-        d for d in yaml.safe_load_all(APPSET.read_text(encoding="utf-8"))
+        d
+        for d in yaml.safe_load_all(APPSET.read_text(encoding="utf-8"))
         if d and d.get("kind") == "ApplicationSet"
     ]
     assert len(appsets) == 2
@@ -264,15 +294,23 @@ def test_both_edge_applications_layer_the_flavour_overlay() -> None:
         files = appset["spec"]["template"]["spec"]["sources"][0]["helm"]["valueFiles"]
         edge = [f for f in files if "/edge-" in f]
         assert len(edge) == 1, files
-        cloud = next(i for i, f in enumerate(files) if f.endswith('/{{ index .metadata.annotations "dfe.hyperi.io/cloud" }}.yaml'))
-        assert files.index(edge[0]) > cloud, "the flavour file must beat the cloud overlay"
+        cloud = next(
+            i
+            for i, f in enumerate(files)
+            if f.endswith(
+                '/{{ index .metadata.annotations "dfe.hyperi.io/cloud" }}.yaml'
+            )
+        )
+        assert files.index(edge[0]) > cloud, (
+            "the flavour file must beat the cloud overlay"
+        )
         assert files.index(edge[0]) < files.index("$values/infra/common.yaml")
 
 
 ASSIGN = '{{ $c := index .metadata.annotations "dfe.hyperi.io/cloud" }}'
 BRANCH = re.compile(
     r'\{\{ if or ((?:\(eq \$c "[^"]+"\) ?)+)\}\}'
-    r'([^{]*)\{\{ else \}\}\{\{ \$c \}\}\{\{ end \}\}'
+    r"([^{]*)\{\{ else \}\}\{\{ \$c \}\}\{\{ end \}\}"
 )
 MAPPED_CLOUD = re.compile(r'\(eq \$c "([^"]+)"\)')
 
@@ -288,16 +326,25 @@ def resolve(expression: str, cloud: str) -> str:
     assert branch, body
     clauses, mapped = branch.groups()
     chosen = mapped if cloud in MAPPED_CLOUD.findall(clauses) else cloud
-    return body[: branch.start()] + chosen + body[branch.end():]
+    return body[: branch.start()] + chosen + body[branch.end() :]
 
 
-@pytest.mark.parametrize(("cloud", "flavour"),
-                         [("aws", "aws"), ("gcp", "gcp"), ("azure", "azure"),
-                          ("local", "onprem"), ("local-dfe", "onprem"), ("rancher", "onprem")])
+@pytest.mark.parametrize(
+    ("cloud", "flavour"),
+    [
+        ("aws", "aws"),
+        ("gcp", "gcp"),
+        ("azure", "azure"),
+        ("local", "onprem"),
+        ("local-dfe", "onprem"),
+        ("rancher", "onprem"),
+    ],
+)
 def test_the_cloud_fact_selects_the_flavour_file(cloud: str, flavour: str) -> None:
     """local, local-dfe and rancher are one flavour; every other cloud names its own."""
     appsets = [
-        d for d in yaml.safe_load_all(APPSET.read_text(encoding="utf-8"))
+        d
+        for d in yaml.safe_load_all(APPSET.read_text(encoding="utf-8"))
         if d and d.get("kind") == "ApplicationSet"
     ]
     assert len(appsets) == 2
@@ -313,19 +360,27 @@ def test_the_cloud_fact_selects_the_flavour_file(cloud: str, flavour: str) -> No
 def test_the_gateway_renders_under_every_flavour_cascade(flavour: str) -> None:
     text = render(
         "envoy-gateway-config",
-        "--namespace", "envoy-gateway-system",
-        "-f", str(VALUES / "common.yaml"),
-        "-f", str(VALUES / f"{FLAVOURS[flavour]}.yaml"),
-        "-f", str(flavour_file(flavour)),
-        "--set", "appNamespace=dfe",
-        "--set", "domain=dfe.example.com",
+        "--namespace",
+        "envoy-gateway-system",
+        "-f",
+        str(VALUES / "common.yaml"),
+        "-f",
+        str(VALUES / f"{FLAVOURS[flavour]}.yaml"),
+        "-f",
+        str(flavour_file(flavour)),
+        "--set",
+        "appNamespace=dfe",
+        "--set",
+        "domain=dfe.example.com",
     )
     assert ("Gateway", "dfe-gateway") in objects(text), sorted(objects(text))
 
 
 def tunnel(cloud: str, overlay: dict) -> list[dict]:
     """culvert on scale through the edge appset, whose cloud fact picks the flavour file."""
-    return render_app("culvert", "scale", cloud, appset=APPSETS["culvert"], overlay=overlay)
+    return render_app(
+        "culvert", "scale", cloud, appset=APPSETS["culvert"], overlay=overlay
+    )
 
 
 @pytest.mark.parametrize("flavour", sorted(FLAVOURS))
@@ -336,7 +391,9 @@ def test_the_tunnel_renders_under_every_flavour_cascade(flavour: str) -> None:
     if flavour != "onprem":
         overlay |= EXTERNAL_PKI
     docs = tunnel(FLAVOURS[flavour], overlay)
-    assert "Deployment/dfe-culvert" in {object_id(d) for d in docs}, sorted(map(object_id, docs))
+    assert "Deployment/dfe-culvert" in {object_id(d) for d in docs}, sorted(
+        map(object_id, docs)
+    )
 
 
 def test_external_pki_with_no_secret_is_refused_by_name() -> None:
@@ -351,7 +408,8 @@ def test_the_tunnel_takes_no_load_balancer_on_aws(profile: str) -> None:
     """A NodePort carries no per-byte charge, which is the whole AWS default."""
     kinds = {
         d["metadata"]["name"]: d["spec"].get("type", "ClusterIP")
-        for d in golden("culvert", profile, "aws") if d.get("kind") == "Service"
+        for d in golden("culvert", profile, "aws")
+        if d.get("kind") == "Service"
     }
     assert kinds["dfe-culvert-public-udp"] == "NodePort", kinds
 
@@ -361,6 +419,7 @@ def test_the_receiver_still_renders_no_load_balancer_on_aws(profile: str) -> Non
     """The receiver is not an edge component and reads no flavour file at all."""
     types = {
         d["spec"].get("type", "ClusterIP")
-        for d in golden("dfe-receiver", profile, "aws") if d.get("kind") == "Service"
+        for d in golden("dfe-receiver", profile, "aws")
+        if d.get("kind") == "Service"
     }
     assert types == {"ClusterIP"}, types

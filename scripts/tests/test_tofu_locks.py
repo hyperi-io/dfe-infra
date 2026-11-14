@@ -69,9 +69,13 @@ def test_the_roots_are_found() -> None:
 
 @pytest.mark.parametrize("root", _roots(), ids=lambda root: root.name)
 def test_every_root_commits_its_lock_file(root: Path) -> None:
-    assert (root / LOCK).is_file(), f"{root.relative_to(REPO_ROOT)} has no {LOCK}: run tofu init, then commit it"
+    assert (root / LOCK).is_file(), (
+        f"{root.relative_to(REPO_ROOT)} has no {LOCK}: run tofu init, then commit it"
+    )
     ignored = _git("check-ignore", "-q", str((root / LOCK).relative_to(REPO_ROOT)))
-    assert ignored.returncode == 1, f"{LOCK} of {root.name} is ignored by .gitignore, so it can never be committed"
+    assert ignored.returncode == 1, (
+        f"{LOCK} of {root.name} is ignored by .gitignore, so it can never be committed"
+    )
 
 
 def test_a_modules_lock_file_stays_ignored() -> None:
@@ -81,16 +85,22 @@ def test_a_modules_lock_file_stays_ignored() -> None:
 
 
 @pytest.mark.parametrize("root", _roots(), ids=lambda root: root.name)
-def test_a_lock_pins_every_provider_to_one_version_with_hashes_for_each_platform(root: Path) -> None:
+def test_a_lock_pins_every_provider_to_one_version_with_hashes_for_each_platform(
+    root: Path,
+) -> None:
     providers = _providers(root)
     assert providers, f"{root.name}'s lock names no provider"
     for source, body in providers.items():
         assert source.split("/")[0] == REGISTRY, source
         version = re.search(r'(?m)^\s*version\s*=\s*"([^"]+)"', body)
         assert version, f"{source} names no version"
-        assert re.fullmatch(r"\d+\.\d+\.\d+", version[1]), f"{source} is not pinned to one version"
+        assert re.fullmatch(r"\d+\.\d+\.\d+", version[1]), (
+            f"{source} is not pinned to one version"
+        )
         # linux_amd64, linux_arm64 and darwin_arm64 each carry an h1 hash, and zh is the registry's own checksum.
-        assert len(re.findall(r'"h1:', body)) >= 3, f"{source} has fewer than three platform hashes"
+        assert len(re.findall(r'"h1:', body)) >= 3, (
+            f"{source} has fewer than three platform hashes"
+        )
         assert '"zh:' in body, f"{source} has no registry checksum"
 
 
@@ -122,7 +132,11 @@ def test_no_run_refreshes_the_providers() -> None:
 def test_ci_initialises_each_root_against_the_committed_lock() -> None:
     text = TF_VALIDATE.read_text(encoding="utf-8")
     roots_job = text.split("validate-roots:", 1)[1]
-    inits = [line for line in roots_job.splitlines() if " init " in line and "tofu" in line]
+    inits = [
+        line for line in roots_job.splitlines() if " init " in line and "tofu" in line
+    ]
     assert inits, "validate-roots runs no tofu init"
     for line in inits:
-        assert "-lockfile=readonly" in line, f"CI would write a fresh lock instead of failing on a stale one: {line.strip()}"
+        assert "-lockfile=readonly" in line, (
+            f"CI would write a fresh lock instead of failing on a stale one: {line.strip()}"
+        )

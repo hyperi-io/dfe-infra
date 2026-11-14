@@ -83,8 +83,12 @@ def _gh(args: list[str]) -> object:
         check=False,
     )
     if proc.returncode != 0:
-        stderr_lines = [line for line in proc.stderr.strip().splitlines() if line.strip()]
-        reason = stderr_lines[-1] if stderr_lines else (proc.stdout.strip() or "gh failed")
+        stderr_lines = [
+            line for line in proc.stderr.strip().splitlines() if line.strip()
+        ]
+        reason = (
+            stderr_lines[-1] if stderr_lines else (proc.stdout.strip() or "gh failed")
+        )
         raise GhError(reason.removeprefix("gh: "))
     text = proc.stdout.strip()
     if not text:
@@ -120,7 +124,9 @@ def parse_simple_yaml(text: str) -> dict:
         if not raw.strip() or raw.lstrip().startswith("#"):
             continue
         indent = len(raw) - len(raw.lstrip())
-        m = re.match(r'^([A-Za-z0-9_.-]+):\s*(?:"([^"]*)"|([^#]*?))?\s*(?:#.*)?$', raw.strip())
+        m = re.match(
+            r'^([A-Za-z0-9_.-]+):\s*(?:"([^"]*)"|([^#]*?))?\s*(?:#.*)?$', raw.strip()
+        )
         if not m:
             continue
         key = m.group(1)
@@ -239,7 +245,9 @@ class RepoReport:
 # ---------------------------------------------------------------------------
 
 
-def select_targets(graph: dict, lane: str | None, extra_repos: list[str]) -> list[RepoTarget]:
+def select_targets(
+    graph: dict, lane: str | None, extra_repos: list[str]
+) -> list[RepoTarget]:
     """suite.yaml members (in file order, optionally limited to one lane) plus
     any --repo extras, in the order they were given."""
     nodes = graph.get("nodes", {})
@@ -267,7 +275,13 @@ def select_targets(graph: dict, lane: str | None, extra_repos: list[str]) -> lis
 # CI fold
 # ---------------------------------------------------------------------------
 
-_FAIL_CONCLUSIONS = {"FAILURE", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE"}
+_FAIL_CONCLUSIONS = {
+    "FAILURE",
+    "CANCELLED",
+    "TIMED_OUT",
+    "ACTION_REQUIRED",
+    "STARTUP_FAILURE",
+}
 _FAIL_STATES = {"FAILURE", "ERROR"}
 _PENDING_STATUSES = {"QUEUED", "IN_PROGRESS", "PENDING", "REQUESTED", "WAITING"}
 _PENDING_STATES = {"PENDING", "EXPECTED"}
@@ -289,8 +303,10 @@ def fold_ci(rollup: list[dict]) -> str:
         status = (check.get("status") or "").upper()
         if conclusion in _FAIL_CONCLUSIONS or state in _FAIL_STATES:
             failed = True
-        elif status in _PENDING_STATUSES or state in _PENDING_STATES or (
-            status and status != "COMPLETED"
+        elif (
+            status in _PENDING_STATUSES
+            or state in _PENDING_STATES
+            or (status and status != "COMPLETED")
         ):
             pending = True
     if failed:
@@ -316,9 +332,17 @@ def _age_days(timestamp: str, now: datetime.datetime) -> int:
 def fetch_prs(repo: str, now: datetime.datetime) -> list[PrRow]:
     raw = _gh(
         [
-            "pr", "list", "--repo", repo, "--state", "open", "--limit", "100",
-            "--json", "number,title,author,isDraft,updatedAt,labels,headRefName,"
-                      "statusCheckRollup,baseRefName",
+            "pr",
+            "list",
+            "--repo",
+            repo,
+            "--state",
+            "open",
+            "--limit",
+            "100",
+            "--json",
+            "number,title,author,isDraft,updatedAt,labels,headRefName,"
+            "statusCheckRollup,baseRefName",
         ]
     )
     rows = []
@@ -340,19 +364,44 @@ def fetch_prs(repo: str, now: datetime.datetime) -> list[PrRow]:
 
 
 def fetch_release(repo: str, app_name: str, apps_pin: dict) -> ReleaseInfo | None:
-    raw = _gh(["release", "list", "--repo", repo, "--limit", "1", "--json", "tagName,publishedAt"])
+    raw = _gh(
+        [
+            "release",
+            "list",
+            "--repo",
+            repo,
+            "--limit",
+            "1",
+            "--json",
+            "tagName,publishedAt",
+        ]
+    )
     if not raw:
         return None
     tag = raw[0]["tagName"]
     published = raw[0]["publishedAt"]
-    return ReleaseInfo(tag=tag, published_at=published, pin_status=pin_status(app_name, tag, apps_pin))
+    return ReleaseInfo(
+        tag=tag, published_at=published, pin_status=pin_status(app_name, tag, apps_pin)
+    )
 
 
-def fetch_issues(repo: str, label: str, stale_days: int, now: datetime.datetime) -> list[IssueRow]:
+def fetch_issues(
+    repo: str, label: str, stale_days: int, now: datetime.datetime
+) -> list[IssueRow]:
     raw = _gh(
         [
-            "issue", "list", "--repo", repo, "--state", "open", "--label", label,
-            "--limit", "100", "--json", "number,title,assignees,updatedAt",
+            "issue",
+            "list",
+            "--repo",
+            repo,
+            "--state",
+            "open",
+            "--label",
+            label,
+            "--limit",
+            "100",
+            "--json",
+            "number,title,assignees,updatedAt",
         ]
     )
     rows = []
@@ -361,21 +410,28 @@ def fetch_issues(repo: str, label: str, stale_days: int, now: datetime.datetime)
         assignee = ", ".join(a["login"] for a in item.get("assignees", [])) or "-"
         rows.append(
             IssueRow(
-                number=item["number"], title=item["title"], assignee=assignee,
-                age_days=age, stale=age > stale_days,
+                number=item["number"],
+                title=item["title"],
+                assignee=assignee,
+                age_days=age,
+                stale=age > stale_days,
             )
         )
     return rows
 
 
-def fetch_branches(repo: str, pr_heads: set[str], now: datetime.datetime) -> list[BranchRow]:
+def fetch_branches(
+    repo: str, pr_heads: set[str], now: datetime.datetime
+) -> list[BranchRow]:
     meta = _gh(["api", f"repos/{repo}"]) or {}
     default_branch = meta.get("default_branch", "main")
     # --paginate with --jq prints one value per line; a repo with exactly one
     # branch still parses as a single bare string rather than a one-item
     # list, so both shapes are normalised here.
     raw_names = _gh(["api", f"repos/{repo}/branches", "--paginate", "--jq", ".[].name"])
-    names = raw_names if isinstance(raw_names, list) else ([raw_names] if raw_names else [])
+    names = (
+        raw_names if isinstance(raw_names, list) else ([raw_names] if raw_names else [])
+    )
     candidates = [n for n in names if n != default_branch and n not in pr_heads]
     rows = []
     for name in candidates:
@@ -384,10 +440,14 @@ def fetch_branches(repo: str, pr_heads: set[str], now: datetime.datetime) -> lis
         if not ahead:
             continue
         commits = cmp_data.get("commits") or []
-        commit_date = commits[-1]["commit"]["committer"]["date"] if commits else now.isoformat()
+        commit_date = (
+            commits[-1]["commit"]["committer"]["date"] if commits else now.isoformat()
+        )
         rows.append(
             BranchRow(
-                name=name, ahead_by=ahead, behind_by=cmp_data.get("behind_by", 0),
+                name=name,
+                ahead_by=ahead,
+                behind_by=cmp_data.get("behind_by", 0),
                 age_days=_age_days(commit_date, now),
             )
         )
@@ -407,13 +467,19 @@ def gather_repo(
         prs = fetch_prs(target.repo, now)
         release = fetch_release(target.repo, target.name, apps_pin)
         issues = fetch_issues(target.repo, args.label, args.stale_days, now)
-        branches = None if args.no_branches else fetch_branches(
-            target.repo, {pr.head for pr in prs}, now
+        branches = (
+            None
+            if args.no_branches
+            else fetch_branches(target.repo, {pr.head for pr in prs}, now)
         )
     except GhError as exc:
         return RepoReport(name=target.name, repo=target.repo, unreachable=str(exc))
     return RepoReport(
-        name=target.name, repo=target.repo, release=release, prs=prs, branches=branches,
+        name=target.name,
+        repo=target.repo,
+        release=release,
+        prs=prs,
+        branches=branches,
         issues=issues,
     )
 
@@ -429,7 +495,9 @@ def summarize(reports: list[RepoReport]) -> dict:
         "prs": sum(len(r.prs) for r in reports),
         "branches": sum(len(r.branches or []) for r in reports),
         "issues": sum(len(r.issues) for r in reports),
-        "unpinned": sum(1 for r in reports if r.release and r.release.pin_status == "unpinned"),
+        "unpinned": sum(
+            1 for r in reports if r.release and r.release.pin_status == "unpinned"
+        ),
         "stale_issues": sum(sum(1 for i in r.issues if i.stale) for r in reports),
         "unreachable": sum(1 for r in reports if r.unreachable),
     }
@@ -440,27 +508,45 @@ def to_dict(r: RepoReport) -> dict:
         "name": r.name,
         "repo": r.repo,
         "unreachable": r.unreachable,
-        "release": None if r.release is None else {
+        "release": None
+        if r.release is None
+        else {
             "tag": r.release.tag,
             "published_at": r.release.published_at,
             "pin_status": r.release.pin_status,
         },
         "prs": [
             {
-                "number": p.number, "title": p.title, "author": p.author, "draft": p.draft,
-                "base": p.base, "head": p.head, "age_days": p.age_days, "labels": p.labels,
+                "number": p.number,
+                "title": p.title,
+                "author": p.author,
+                "draft": p.draft,
+                "base": p.base,
+                "head": p.head,
+                "age_days": p.age_days,
+                "labels": p.labels,
                 "ci": p.ci,
             }
             for p in r.prs
         ],
-        "branches": None if r.branches is None else [
-            {"name": b.name, "ahead_by": b.ahead_by, "behind_by": b.behind_by, "age_days": b.age_days}
+        "branches": None
+        if r.branches is None
+        else [
+            {
+                "name": b.name,
+                "ahead_by": b.ahead_by,
+                "behind_by": b.behind_by,
+                "age_days": b.age_days,
+            }
             for b in r.branches
         ],
         "issues": [
             {
-                "number": i.number, "title": i.title, "assignee": i.assignee,
-                "age_days": i.age_days, "stale": i.stale,
+                "number": i.number,
+                "title": i.title,
+                "assignee": i.assignee,
+                "age_days": i.age_days,
+                "stale": i.stale,
             }
             for i in r.issues
         ],
@@ -531,7 +617,11 @@ def render_text(reports: list[RepoReport], summary: dict, quiet: bool) -> str:
 
 
 def run(
-    args: argparse.Namespace, graph: dict, versions_root: dict, out, *,
+    args: argparse.Namespace,
+    graph: dict,
+    versions_root: dict,
+    out,
+    *,
     now: datetime.datetime | None = None,
 ) -> int:
     """The sweep, over data the caller supplies -- no file or network I/O of
@@ -567,32 +657,49 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     ap.add_argument(
-        "--repo", action="append", default=[], metavar="OWNER/NAME",
+        "--repo",
+        action="append",
+        default=[],
+        metavar="OWNER/NAME",
         help="sweep this repo too, beyond suite.yaml (repeatable)",
     )
     ap.add_argument(
-        "--lane", default=None, metavar="NAME",
+        "--lane",
+        default=None,
+        metavar="NAME",
         help="limit the sweep to one suite.yaml lane's members",
     )
     ap.add_argument(
-        "--label", default="rc14", metavar="LABEL",
+        "--label",
+        default="rc14",
+        metavar="LABEL",
         help="open-issue label to report",
     )
     ap.add_argument(
-        "--stale-days", type=int, default=3, metavar="N",
+        "--stale-days",
+        type=int,
+        default=3,
+        metavar="N",
         help="an issue not updated in this many days is flagged stale",
     )
     ap.add_argument(
-        "--stack", default=None, metavar="VERSION",
+        "--stack",
+        default=None,
+        metavar="VERSION",
         help="compare app pins against this versions.yaml stack instead of `current`",
     )
     ap.add_argument(
-        "--no-branches", action="store_true",
+        "--no-branches",
+        action="store_true",
         help="skip the branches-without-a-PR sweep (the expensive half)",
     )
-    ap.add_argument("--json", action="store_true", help="print one JSON object instead of text")
     ap.add_argument(
-        "--quiet", action="store_true", help="print only repos that have something to show",
+        "--json", action="store_true", help="print one JSON object instead of text"
+    )
+    ap.add_argument(
+        "--quiet",
+        action="store_true",
+        help="print only repos that have something to show",
     )
     return ap
 

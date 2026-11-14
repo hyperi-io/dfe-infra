@@ -41,14 +41,24 @@ APPSET = REPO_ROOT / "argocd" / "appsets" / "layer2-platform.yaml"
 
 # (chart field, DFE_* env key, cluster-secret annotation, bootstrap default)
 FIELDS = (
-    ("enabled", "DFE_TOOLBOX_POD_ENABLED", "dfe.hyperi.io/toolbox_pod_enabled", "false"),
+    (
+        "enabled",
+        "DFE_TOOLBOX_POD_ENABLED",
+        "dfe.hyperi.io/toolbox_pod_enabled",
+        "false",
+    ),
     (
         "kubeApiAccess",
         "DFE_TOOLBOX_POD_KUBE_API_ACCESS",
         "dfe.hyperi.io/toolbox_pod_kube_api_access",
         "false",
     ),
-    ("ttlSeconds", "DFE_TOOLBOX_POD_TTL_SECONDS", "dfe.hyperi.io/toolbox_pod_ttl_seconds", ""),
+    (
+        "ttlSeconds",
+        "DFE_TOOLBOX_POD_TTL_SECONDS",
+        "dfe.hyperi.io/toolbox_pod_ttl_seconds",
+        "",
+    ),
 )
 
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
@@ -56,7 +66,14 @@ import render_dial  # noqa: E402
 
 
 def render(*sets: str) -> list[dict]:
-    cmd = ["helm", "template", "dfe-toolbox", str(CHART), "--set", "global.registry=ghcr.io/example"]
+    cmd = [
+        "helm",
+        "template",
+        "dfe-toolbox",
+        str(CHART),
+        "--set",
+        "global.registry=ghcr.io/example",
+    ]
     for s in sets:
         cmd += ["--set", s]
     out = subprocess.run(cmd, capture_output=True, text=True, check=False)
@@ -137,7 +154,15 @@ def test_the_dial_renders_every_key() -> None:
         f"got {updates.get('DFE_TOOLBOX_POD_ENABLED')}",
     )
     turned_on = render_dial._env_updates(
-        {"toolbox": {"pod": {"enabled": "true", "kubeApiAccess": "true", "ttlSeconds": "3600"}}}
+        {
+            "toolbox": {
+                "pod": {
+                    "enabled": "true",
+                    "kubeApiAccess": "true",
+                    "ttlSeconds": "3600",
+                }
+            }
+        }
     )
     expect(
         "a dial turning the pod on renders true",
@@ -167,7 +192,11 @@ def test_the_params_argocd_would_pass_render_a_real_bool_and_string() -> None:
         "toolbox.pod.kubeApiAccess=true",
     )
     deployment = next(d for d in docs if d["kind"] == "Deployment")
-    expect("enabled=true renders replicas: 1", deployment["spec"]["replicas"] == 1, "did not render 1")
+    expect(
+        "enabled=true renders replicas: 1",
+        deployment["spec"]["replicas"] == 1,
+        "did not render 1",
+    )
     service_accounts = [d for d in docs if d["kind"] == "ServiceAccount"]
     expect(
         "kubeApiAccess=true renders a dedicated ServiceAccount",
@@ -196,7 +225,11 @@ def test_a_force_stringed_numeric_ttl_still_renders_the_cronjob() -> None:
         raise SystemExit(f"helm template failed:\n{out.stderr}")
     docs = [d for d in yaml.safe_load_all(out.stdout) if d]
     cronjobs = [d for d in docs if d["kind"] == "CronJob"]
-    expect("ttlSeconds set renders the TTL CronJob", len(cronjobs) == 1, f"got {len(cronjobs)}")
+    expect(
+        "ttlSeconds set renders the TTL CronJob",
+        len(cronjobs) == 1,
+        f"got {len(cronjobs)}",
+    )
 
 
 def main() -> int:

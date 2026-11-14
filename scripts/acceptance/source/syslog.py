@@ -33,7 +33,9 @@ SYSLOG_SWITCHES = {
     "config.syslog.enabled": True,
     "config.syslog.accept_unauthenticated": True,
 }
-SYSLOG_ENV = "DFE_RECEIVER_SYSLOG__ENABLED=true DFE_RECEIVER_SYSLOG__ACCEPT_UNAUTHENTICATED=true"
+SYSLOG_ENV = (
+    "DFE_RECEIVER_SYSLOG__ENABLED=true DFE_RECEIVER_SYSLOG__ACCEPT_UNAUTHENTICATED=true"
+)
 #: The largest message the receiver's TCP decoder takes: the default of its
 #: ``syslog.max_message_size``. A longer one, line or octet counted, is discarded and
 #: counted under reason ``oversize`` and the connection carries on. ``max_frame_size``
@@ -54,9 +56,7 @@ SEND_TIMEOUT = 120
 
 #: For a host with no python, bash opens the socket itself. $0 and $1 are host and port.
 TCP_SCRIPT = 'exec 3<>"/dev/tcp/$0/$1" && cat >&3'
-UDP_SCRIPT = (
-    "while IFS= read -r -d '' datagram; do printf '%s' \"$datagram\" > \"/dev/udp/$0/$1\"; done"
-)
+UDP_SCRIPT = "while IFS= read -r -d '' datagram; do printf '%s' \"$datagram\" > \"/dev/udp/$0/$1\"; done"
 
 METRIC_ACCEPTED = "receiver_requests_total"
 METRIC_DROPPED = "receiver_records_dropped_total"
@@ -131,7 +131,11 @@ def _exec(argv: list[str], payload: bytes) -> str:
 
 
 def send_tcp(
-    host: str, port: int, frames: Sequence[bytes], prefix: Sequence[str] = (), watch: int = -1
+    host: str,
+    port: int,
+    frames: Sequence[bytes],
+    prefix: Sequence[str] = (),
+    watch: int = -1,
 ) -> str:
     """Write *frames* down one connection, in order.
 
@@ -148,7 +152,9 @@ def send_tcp(
         What the sender saw of the connection ending early, empty when it did not.
     """
     if prefix:
-        return _exec([*prefix, "bash", "-c", TCP_SCRIPT, host, str(port)], b"".join(frames))
+        return _exec(
+            [*prefix, "bash", "-c", TCP_SCRIPT, host, str(port)], b"".join(frames)
+        )
     note = ""
     with socket.create_connection((host, port), timeout=10) as sock:
         for index, piece in enumerate(frames):
@@ -161,11 +167,14 @@ def send_tcp(
     return note.strip()
 
 
-def send_udp(host: str, port: int, datagrams: Sequence[bytes], prefix: Sequence[str] = ()) -> str:
+def send_udp(
+    host: str, port: int, datagrams: Sequence[bytes], prefix: Sequence[str] = ()
+) -> str:
     """Send each of *datagrams* as its own UDP packet, through *prefix* when one is given."""
     if prefix:
         return _exec(
-            [*prefix, "bash", "-c", UDP_SCRIPT, host, str(port)], b"\0".join(datagrams) + b"\0"
+            [*prefix, "bash", "-c", UDP_SCRIPT, host, str(port)],
+            b"\0".join(datagrams) + b"\0",
         )
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
         for datagram in datagrams:
@@ -176,7 +185,9 @@ def send_udp(host: str, port: int, datagrams: Sequence[bytes], prefix: Sequence[
 
 # --- the receiver's counters -------------------------------------------------
 
-_SERIES = re.compile(r"^(?P<name>[A-Za-z_:][\w:]*)(?:\{(?P<labels>[^}]*)\})?\s+(?P<value>\S+)$")
+_SERIES = re.compile(
+    r"^(?P<name>[A-Za-z_:][\w:]*)(?:\{(?P<labels>[^}]*)\})?\s+(?P<value>\S+)$"
+)
 _LABEL = re.compile(r'(\w+)="((?:[^"\\]|\\.)*)"')
 
 
@@ -189,7 +200,9 @@ def counter(exposition: str, name: str, **labels: str) -> int:
     total = 0.0
     for line in exposition.splitlines():
         found = _SERIES.match(line.strip())
-        if not found or not (found["name"] == name or found["name"].endswith(f"_{name}")):
+        if not found or not (
+            found["name"] == name or found["name"].endswith(f"_{name}")
+        ):
             continue
         held = dict(_LABEL.findall(found["labels"] or ""))
         if all(held.get(key) == value for key, value in labels.items()):
@@ -221,11 +234,15 @@ def read_counters(url: str) -> dict[str, int]:
         with urllib.request.urlopen(url, timeout=15) as response:
             body = response.read().decode("utf-8", errors="replace")
     except OSError as exc:
-        raise RuntimeError(f"the receiver's metrics at {url} did not answer: {exc}") from exc
+        raise RuntimeError(
+            f"the receiver's metrics at {url} did not answer: {exc}"
+        ) from exc
     return counters_of([body])
 
 
-def read_pod_counters(kube: Sequence[str], namespace: str, selector: str) -> dict[str, int]:
+def read_pod_counters(
+    kube: Sequence[str], namespace: str, selector: str
+) -> dict[str, int]:
     """The syslog counters summed over every running receiver pod.
 
     A pod counts only the connections kube-proxy sent it, so one pod's counters fall
@@ -235,9 +252,24 @@ def read_pod_counters(kube: Sequence[str], namespace: str, selector: str) -> dic
         RuntimeError: No pod matched, or one did not answer.
     """
     listed = subprocess.run(
-        [*kube, "-n", namespace, "get", "pods", "-l", selector,
-         "--field-selector", "status.phase=Running", "-o", "name"],
-        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
+        [
+            *kube,
+            "-n",
+            namespace,
+            "get",
+            "pods",
+            "-l",
+            selector,
+            "--field-selector",
+            "status.phase=Running",
+            "-o",
+            "name",
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
     )
     pods = listed.stdout.split() if listed.returncode == 0 else []
     if not pods:
@@ -245,13 +277,28 @@ def read_pod_counters(kube: Sequence[str], namespace: str, selector: str) -> dic
     bodies = []
     for pod in pods:
         read = subprocess.run(
-            [*kube, "-n", namespace, "exec", pod, "--",
-             "curl", "-sf", f"http://localhost:{METRICS_PORT}/metrics"],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
+            [
+                *kube,
+                "-n",
+                namespace,
+                "exec",
+                pod,
+                "--",
+                "curl",
+                "-sf",
+                f"http://localhost:{METRICS_PORT}/metrics",
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
             timeout=30,
         )
         if read.returncode != 0:
-            raise RuntimeError(f"the receiver's metrics in {pod} did not answer: {read.stderr.strip()}")
+            raise RuntimeError(
+                f"the receiver's metrics in {pod} did not answer: {read.stderr.strip()}"
+            )
         bodies.append(read.stdout)
     return counters_of(bodies)
 
@@ -282,7 +329,9 @@ def phase_outcome(
     return ("done" if exact and not note else "failed"), f"{counts}{tail}; {hops}"
 
 
-def hop_report(sent: int, accepted: int | None, landed: int, intake: int, strayed: int) -> str:
+def hop_report(
+    sent: int, accepted: int | None, landed: int, intake: int, strayed: int
+) -> str:
     """Where a line is after each hop, so a short count names the hop that lost it.
 
     Args:

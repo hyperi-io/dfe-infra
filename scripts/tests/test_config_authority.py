@@ -96,7 +96,9 @@ def test_the_archiver_ships_no_s3_env_at_chart_defaults() -> None:
 
 
 def test_an_overlay_authored_destination_reaches_the_config_file() -> None:
-    written = mounted_config(render_app(ARCHIVER, *DIAL_CELL, overlay=overlay_destination()))
+    written = mounted_config(
+        render_app(ARCHIVER, *DIAL_CELL, overlay=overlay_destination())
+    )
     s3 = written.get("archive", {}).get("s3", {})
     for key in sorted(SHADOWING_ENV.values()):
         expect(
@@ -150,20 +152,30 @@ def test_the_s3_group_switched_off_renders_no_static_keys() -> None:
     overlay = {"secrets": {"s3": {"enabled": False}}}
     refs = env_refs(render_app(ARCHIVER, *DIAL_CELL, overlay=overlay))
     for name in sorted(ARCHIVER_S3_REFS):
-        expect(f"secrets.s3.enabled=false renders no {name}", name not in refs, "still rendered")
+        expect(
+            f"secrets.s3.enabled=false renders no {name}",
+            name not in refs,
+            "still rendered",
+        )
 
 
 def test_a_cleared_s3_secret_name_renders_no_unnamed_reference() -> None:
     """An empty name falls back to the library's own, which the optional reference
     reads only where that Secret exists, so the SDK's credential chain still runs."""
-    refs = env_refs(render_app(ARCHIVER, *DIAL_CELL, overlay={"s3": {"secretName": ""}}))
+    refs = env_refs(
+        render_app(ARCHIVER, *DIAL_CELL, overlay={"s3": {"secretName": ""}})
+    )
     unnamed = sorted(name for name, ref in refs.items() if not ref.get("name"))
-    expect("an empty s3.secretName names no empty Secret", not unnamed, f"got {unnamed}")
+    expect(
+        "an empty s3.secretName names no empty Secret", not unnamed, f"got {unnamed}"
+    )
     for name in sorted(ARCHIVER_S3_REFS):
         ref = refs.get(name, {})
-        expect(f"{name} reads {ARCHIVER}-s3, optional",
-               ref.get("name") == f"{ARCHIVER}-s3" and ref.get("optional") is True,
-               "missing, pointed elsewhere, or not optional")
+        expect(
+            f"{name} reads {ARCHIVER}-s3, optional",
+            ref.get("name") == f"{ARCHIVER}-s3" and ref.get("optional") is True,
+            "missing, pointed elsewhere, or not optional",
+        )
 
 
 def main() -> int:

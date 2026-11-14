@@ -89,12 +89,21 @@ def test_only_the_held_ports_are_named() -> None:
         assert dfeops._taken_ports([free, port]) == [port]
 
 
-def test_the_ui_stage_refuses_a_taken_engine_port(monkeypatch, capsys, tmp_path: Path) -> None:
+def test_the_ui_stage_refuses_a_taken_engine_port(
+    monkeypatch, capsys, tmp_path: Path
+) -> None:
     started = _no_forwards(monkeypatch, tmp_path)
     with _held_port() as port:
         args = dfeops.build_parser().parse_args(
-            ["ui", "--ui-repo", "/nonexistent/dfe-ui", "--ui-url", "https://dfe.example",
-             "--engine-port", str(port)]
+            [
+                "ui",
+                "--ui-repo",
+                "/nonexistent/dfe-ui",
+                "--ui-url",
+                "https://dfe.example",
+                "--engine-port",
+                str(port),
+            ]
         )
         assert dfeops.cmd_ui(args) == 1
 
@@ -108,9 +117,21 @@ def test_the_acceptance_stage_refuses_a_taken_datastore_port(
     started = _no_forwards(monkeypatch, tmp_path)
     with _held_port() as port:
         args = dfeops.build_parser().parse_args(
-            ["acceptance", "--repo", "/nonexistent/dfe-engine", "--suite", "flows", "--mode", "single",
-             "--receiver-port", str(_free_port()), "--ch-port", str(port),
-             "--engine-port", str(_free_port())]
+            [
+                "acceptance",
+                "--repo",
+                "/nonexistent/dfe-engine",
+                "--suite",
+                "flows",
+                "--mode",
+                "single",
+                "--receiver-port",
+                str(_free_port()),
+                "--ch-port",
+                str(port),
+                "--engine-port",
+                str(_free_port()),
+            ]
         )
         assert dfeops.cmd_acceptance(args) == 1
 
@@ -118,7 +139,9 @@ def test_the_acceptance_stage_refuses_a_taken_datastore_port(
     assert str(port) in capsys.readouterr().err
 
 
-def test_the_idle_check_refuses_a_taken_port(monkeypatch, capsys, tmp_path: Path) -> None:
+def test_the_idle_check_refuses_a_taken_port(
+    monkeypatch, capsys, tmp_path: Path
+) -> None:
     started = _no_forwards(monkeypatch, tmp_path)
     monkeypatch.setattr(dfeops.composition, "default_apps", lambda _profile: ())
     with _held_port() as port:

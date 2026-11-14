@@ -51,7 +51,9 @@ _loader.exec_module(dfeops)
 
 TRACKED = "https://git.example.com/dfe/deploy.git"
 # The dfe-cluster secret a normal deploy carries; None makes the fake read fail.
-TRACKED_SECRET = {"metadata": {"annotations": {"dfe.hyperi.io/config_repo_url": TRACKED}}}
+TRACKED_SECRET = {
+    "metadata": {"annotations": {"dfe.hyperi.io/config_repo_url": TRACKED}}
+}
 
 # Records every invocation, and serves Application JSON that flips to Synced on
 # the call named by FAKE_KUBECTL_FLIP_AT.
@@ -83,7 +85,11 @@ print(json.dumps({"items": fixture[key]}))
 
 
 def app(
-    name: str, repo: str, sync: str = "Synced", health: str = "Healthy", phase: str = "Succeeded"
+    name: str,
+    repo: str,
+    sync: str = "Synced",
+    health: str = "Healthy",
+    phase: str = "Succeeded",
 ) -> dict:
     return {
         "metadata": {"name": name},
@@ -161,7 +167,9 @@ def refresh_args(**overrides) -> argparse.Namespace:
     return args
 
 
-def run_refresh(cluster: FakeCluster, args: argparse.Namespace) -> tuple[int, list[str]]:
+def run_refresh(
+    cluster: FakeCluster, args: argparse.Namespace
+) -> tuple[int, list[str]]:
     """cmd_refresh with the two shell-out stages recorded rather than run.
 
     The gate and the smoke suite have their own tests; running them here would
@@ -199,14 +207,22 @@ def test_a_namespaceless_refresh_is_refused_before_anything_is_annotated() -> No
     with FakeCluster([app("dfe-engine", TRACKED)]) as cluster:
         rc, stages = run_refresh(cluster, refresh_args(readiness_timeout=1))
         expect("it refuses", rc == 2, f"rc={rc}")
-        expect("and ran no kubectl at all", cluster.called() == [], f"{cluster.called()}")
-        expect("and reached neither the gate nor the smoke suite", stages == [], f"{stages}")
+        expect(
+            "and ran no kubectl at all", cluster.called() == [], f"{cluster.called()}"
+        )
+        expect(
+            "and reached neither the gate nor the smoke suite",
+            stages == [],
+            f"{stages}",
+        )
 
 
 def test_skip_verify_needs_no_namespace() -> None:
     """The gate alone is namespace-free, so the refusal must not reach it."""
     with FakeCluster([app("dfe-engine", TRACKED)]) as cluster:
-        rc, stages = run_refresh(cluster, refresh_args(readiness_timeout=1, skip_verify=True))
+        rc, stages = run_refresh(
+            cluster, refresh_args(readiness_timeout=1, skip_verify=True)
+        )
         expect("the refresh runs", rc == 0, f"rc={rc}")
         expect(
             "the gate ran and the smoke suite did not",
@@ -218,30 +234,50 @@ def test_skip_verify_needs_no_namespace() -> None:
 def test_a_named_namespace_satisfies_the_check() -> None:
     """--namespace is the other half of the message the refusal prints."""
     with FakeCluster([app("dfe-engine", TRACKED)]) as cluster:
-        rc, stages = run_refresh(cluster, refresh_args(readiness_timeout=1, namespace="dfe-local"))
+        rc, stages = run_refresh(
+            cluster, refresh_args(readiness_timeout=1, namespace="dfe-local")
+        )
         expect("the refresh runs", rc == 0, f"rc={rc}")
-        expect("both stages ran", stages == ["smoke-test-readiness.sh", "smoke"], f"{stages}")
+        expect(
+            "both stages ran",
+            stages == ["smoke-test-readiness.sh", "smoke"],
+            f"{stages}",
+        )
 
 
 def test_the_gate_does_not_start_before_the_sync_finishes() -> None:
     """The gate exits on its first clean poll, so it must not see the old pods."""
     before = [app("dfe-engine", TRACKED, sync="OutOfSync", phase="Running")]
-    with FakeCluster(before, [app("dfe-engine", TRACKED)], flip_at=2) as cluster, no_poll_wait():
-        rc, stages = run_refresh(cluster, refresh_args(readiness_timeout=30, namespace="dfe-local"))
+    with (
+        FakeCluster(before, [app("dfe-engine", TRACKED)], flip_at=2) as cluster,
+        no_poll_wait(),
+    ):
+        rc, stages = run_refresh(
+            cluster, refresh_args(readiness_timeout=30, namespace="dfe-local")
+        )
         reads = [
-            c for c in cluster.called() if "applications.argoproj.io" in c and "annotate" not in c
+            c
+            for c in cluster.called()
+            if "applications.argoproj.io" in c and "annotate" not in c
         ]
         expect("the refresh succeeds", rc == 0, f"rc={rc}")
         expect("after two readings of the Applications", len(reads) == 2, f"{reads}")
         expect(
-            "and the gate still ran", stages == ["smoke-test-readiness.sh", "smoke"], f"{stages}"
+            "and the gate still ran",
+            stages == ["smoke-test-readiness.sh", "smoke"],
+            f"{stages}",
         )
 
 
 def test_a_sync_that_never_lands_stops_the_refresh() -> None:
     """Annotated-and-hoped is the failure the wait exists to turn into a red run."""
-    with FakeCluster([app("dfe-engine", TRACKED, sync="OutOfSync")]) as cluster, no_poll_wait():
-        rc, stages = run_refresh(cluster, refresh_args(readiness_timeout=0, namespace="dfe-local"))
+    with (
+        FakeCluster([app("dfe-engine", TRACKED, sync="OutOfSync")]) as cluster,
+        no_poll_wait(),
+    ):
+        rc, stages = run_refresh(
+            cluster, refresh_args(readiness_timeout=0, namespace="dfe-local")
+        )
         expect("the refresh fails", rc != 0, f"rc={rc}")
         expect("and neither later stage ran", stages == [], f"{stages}")
 
@@ -291,14 +327,18 @@ def test_a_running_operation_is_not_settled() -> None:
         running == ["dfe-engine (operation Running)"],
         f"{running}",
     )
-    degraded = dfeops._converging([app("dfe-engine", TRACKED, health="Degraded")], tracked)
+    degraded = dfeops._converging(
+        [app("dfe-engine", TRACKED, health="Degraded")], tracked
+    )
     expect(
         "a Degraded Application is still converging",
         degraded == ["dfe-engine (health Degraded)"],
         f"{degraded}",
     )
     settled = dfeops._converging([app("dfe-engine", TRACKED)], tracked)
-    expect("a Synced, Healthy, idle Application is settled", settled == [], f"{settled}")
+    expect(
+        "a Synced, Healthy, idle Application is settled", settled == [], f"{settled}"
+    )
 
 
 def test_a_multi_source_application_matches_on_any_of_its_repos() -> None:
@@ -352,7 +392,9 @@ def test_an_unreadable_cluster_secret_is_an_error_not_an_empty_list() -> None:
         repos, err = dfeops._tracked_repos(["kubectl"], "argocd", cluster.env)
         expect("no repos come back", repos == [], f"{repos}")
         expect("and kubectl's own message does", "forbidden" in err, f"{err}")
-        rc, stages = run_refresh(cluster, refresh_args(readiness_timeout=1, namespace="dfe-local"))
+        rc, stages = run_refresh(
+            cluster, refresh_args(readiness_timeout=1, namespace="dfe-local")
+        )
         expect("the refresh stops", rc != 0, f"rc={rc}")
         expect("before the gate or the smoke suite", stages == [], f"{stages}")
 
@@ -362,9 +404,15 @@ def test_a_secret_with_no_annotations_only_warns() -> None:
     with FakeCluster([app("dfe-engine", TRACKED)], secret={"metadata": {}}) as cluster:
         repos, err = dfeops._tracked_repos(["kubectl"], "argocd", cluster.env)
         expect("no repos and no error", repos == [] and err == "", f"{repos} / {err}")
-        rc, stages = run_refresh(cluster, refresh_args(readiness_timeout=1, namespace="dfe-local"))
+        rc, stages = run_refresh(
+            cluster, refresh_args(readiness_timeout=1, namespace="dfe-local")
+        )
         expect("the refresh still runs", rc == 0, f"rc={rc}")
-        expect("both stages ran", stages == ["smoke-test-readiness.sh", "smoke"], f"{stages}")
+        expect(
+            "both stages ran",
+            stages == ["smoke-test-readiness.sh", "smoke"],
+            f"{stages}",
+        )
 
 
 def test_the_cli_still_parses() -> None:

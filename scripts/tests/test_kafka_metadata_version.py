@@ -35,13 +35,27 @@ VALUES = REPO_ROOT / "argocd" / "values"
 @cache
 def kafka_cr(sets: tuple[str, ...] = ()) -> dict:
     """The Kafka CR under the scale profile's value cascade, the one that runs Strimzi."""
-    cmd = ["helm", "template", "kafka", str(chart_dir("kafka")), "--show-only", "templates/kafka.yaml"]
+    cmd = [
+        "helm",
+        "template",
+        "kafka",
+        str(chart_dir("kafka")),
+        "--show-only",
+        "templates/kafka.yaml",
+    ]
     for name in ("common.yaml", "local.yaml", "profile-scale.yaml"):
         cmd += ["-f", str(VALUES / name)]
     cmd += ["--set", "appNamespace=dfe-local"]
     for s in sets:
         cmd += ["--set-string", s]
-    out = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
+    out = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
     assert out.returncode == 0, out.stderr
     (doc,) = [d for d in yaml.safe_load_all(out.stdout) if d]
     return doc
@@ -58,4 +72,7 @@ def test_a_hold_renders_as_a_string() -> None:
 
 
 def test_a_short_hold_stays_a_string() -> None:
-    assert kafka_cr(("kafka.metadataVersion=4.2",))["spec"]["kafka"]["metadataVersion"] == "4.2"
+    assert (
+        kafka_cr(("kafka.metadataVersion=4.2",))["spec"]["kafka"]["metadataVersion"]
+        == "4.2"
+    )

@@ -62,7 +62,9 @@ def _container_images(node: object) -> list[str]:
     elif isinstance(node, dict):
         for key, value in node.items():
             if key in CONTAINER_LISTS and isinstance(value, list):
-                found += [c["image"] for c in value if isinstance(c, dict) and c.get("image")]
+                found += [
+                    c["image"] for c in value if isinstance(c, dict) and c.get("image")
+                ]
             found += _container_images(value)
     return found
 
@@ -87,18 +89,28 @@ def _client_pod_repositories() -> list[str]:
     """The repository each of the two managed-broker Kafka client pods runs."""
     values = smoke_client.KAFKA_VALUES.read_text(encoding="utf-8")
     smoke = smoke_client._image(smoke_client.KAFKA_VALUES).stdout.strip()
-    return [_repository(smoke), _repository(dfe_ops_diagnostics.kafka_image({}, values))]
+    return [
+        _repository(smoke),
+        _repository(dfe_ops_diagnostics.kafka_image({}, values)),
+    ]
 
 
 def _stack_repositories() -> list[str]:
-    repositories = [arch.dfe_stack.DEFAULT_REGISTRY + "/dfe-engine", arch.STRIMZI_KAFKA_IMAGE]
-    repositories += [repository for _key, _var, repository in arch.dfe_stack._DOCKER_THIRDPARTY]
+    repositories = [
+        arch.dfe_stack.DEFAULT_REGISTRY + "/dfe-engine",
+        arch.STRIMZI_KAFKA_IMAGE,
+    ]
+    repositories += [
+        repository for _key, _var, repository in arch.dfe_stack._DOCKER_THIRDPARTY
+    ]
     repositories += list(arch.DIGEST_PINNED.values())
     repositories += [
         repo for repos, _prefix in arch.OPERATOR_TAG_IS_CHART.values() for repo in repos
     ]
     repositories += [
-        repo for _chart, _url, repos, _prefix in arch.OPERATOR_VIA_CHART.values() for repo in repos
+        repo
+        for _chart, _url, repos, _prefix in arch.OPERATOR_VIA_CHART.values()
+        for repo in repos
     ]
     repositories += _rendered_repositories()
     repositories += _client_pod_repositories()
@@ -130,7 +142,9 @@ def test_every_stack_image_host_is_cached_cacheable_or_named_uncacheable() -> No
         | set(UNCACHEABLE)
     )
     missing = _stack_hosts() - known
-    assert missing == set(), f"images from {sorted(missing)} would bypass the registry cache"
+    assert missing == set(), (
+        f"images from {sorted(missing)} would bypass the registry cache"
+    )
 
 
 def test_every_cached_host_is_one_the_stack_pulls_from() -> None:
@@ -178,14 +192,19 @@ def test_the_inventory_reaches_every_chart_render_and_both_client_pods() -> None
     assert "otel/opentelemetry-collector-contrib" in rendered
     assert "apache/kafka" in rendered
     assert not [repository for repository in rendered if repository.startswith("dfe-")]
-    assert _client_pod_repositories() == ["quay.io/strimzi/kafka", "quay.io/strimzi/kafka"]
+    assert _client_pod_repositories() == [
+        "quay.io/strimzi/kafka",
+        "quay.io/strimzi/kafka",
+    ]
 
 
 def test_the_kafka_cli_pulls_through_the_default_cache() -> None:
     """A deploy that names no registry credential still caches the Kafka CLI image."""
     default = _hosts(render_dial._REGISTRY_CACHE_UPSTREAMS)
     hosts = {_host(repository) for repository in _client_pod_repositories()}
-    assert hosts <= default, f"Kafka CLI images from {sorted(hosts - default)} need a credential to cache"
+    assert hosts <= default, (
+        f"Kafka CLI images from {sorted(hosts - default)} need a credential to cache"
+    )
 
 
 def test_an_image_reference_loses_its_tag_and_digest_but_keeps_its_host() -> None:

@@ -124,7 +124,9 @@ def _thin_layers(service: str) -> list[dict]:
         apps / "_common.yaml",
         *sorted((apps / service).glob("*.yaml")),
     ]
-    layers = [doc for f in files if f.is_file() and isinstance(doc := _load_yaml(f), dict)]
+    layers = [
+        doc for f in files if f.is_file() and isinstance(doc := _load_yaml(f), dict)
+    ]
     extras = _load_yaml(EXTRAS_VALUES) if EXTRAS_VALUES.is_file() else None
     defaults = ((extras or {}).get("extras") or {}).get("defaults") or {}
     return [*layers, defaults.get(service) or {}]
@@ -207,7 +209,9 @@ def main(argv: list[str] | None = None) -> int:
     import os
 
     deploy_root = Path(
-        args.deploy_root or os.environ.get("DFE_DEPLOY_ROOT") or (REPO_ROOT.parent / "dfe-deploy")
+        args.deploy_root
+        or os.environ.get("DFE_DEPLOY_ROOT")
+        or (REPO_ROOT.parent / "dfe-deploy")
     )
     actions_dir = deploy_root / "governance" / "actions"
     if not actions_dir.is_dir():
@@ -223,7 +227,9 @@ def main(argv: list[str] | None = None) -> int:
 
     charts = _chart_values(*(Path(root) for root in args.charts_dir))
     if not charts:
-        print(f"FAIL: no charts found under {' '.join(args.charts_dir)}", file=sys.stderr)
+        print(
+            f"FAIL: no charts found under {' '.join(args.charts_dir)}", file=sys.stderr
+        )
         return 1
 
     thin_services = _thin_services()
@@ -279,7 +285,10 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 declared_by = None
             if declared_by:
-                print(f"  [ok]   {where}: {path} is declared by {declared_by}", file=sys.stderr)
+                print(
+                    f"  [ok]   {where}: {path} is declared by {declared_by}",
+                    file=sys.stderr,
+                )
             else:
                 print(
                     f"  [FAIL] {where}: no values layer, dfe-extras default or chart for "

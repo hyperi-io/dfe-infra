@@ -53,7 +53,9 @@ CH_ENV = {
 
 def _external(root_dir: Path) -> None:
     tfvars = {**TFVARS, "clickhouse": {"mode": "external"}}
-    (root_dir / "dial.auto.tfvars.json").write_text(json.dumps(tfvars), encoding="utf-8")
+    (root_dir / "dial.auto.tfvars.json").write_text(
+        json.dumps(tfvars), encoding="utf-8"
+    )
 
 
 def _verbs(runner: FakeRunner) -> list[str]:
@@ -65,8 +67,13 @@ def _verbs(runner: FakeRunner) -> list[str]:
     return found
 
 
-def _cycle(root_dir: Path, monkeypatch: pytest.MonkeyPatch, runner: FakeRunner, env: dict[str, str],
-           **overrides: object) -> int:
+def _cycle(
+    root_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    runner: FakeRunner,
+    env: dict[str, str],
+    **overrides: object,
+) -> int:
     for name in CH_ENV:
         monkeypatch.delenv(name, raising=False)
     for name, value in env.items():
@@ -84,7 +91,9 @@ def _command(runner: FakeRunner, verb: str) -> tuple[list[str], dict]:
     return runner.commands[index], runner.envs[index] or {}
 
 
-def test_an_in_cluster_run_never_touches_an_access_list(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_an_in_cluster_run_never_touches_an_access_list(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     runner = FakeRunner()
     assert _cycle(root, monkeypatch, runner, {}) == 0
     assert _verbs(runner) == ["init", "apply", "cycle", "destroy"]
@@ -111,12 +120,16 @@ def test_the_run_opens_its_nat_egress_and_its_runner_described_by_its_expiry(
     assert command[command.index("--expires-at") + 1] == str(int(NOW) + window)
     # The addresses travel in the child's environment, so the echoed command line carries none.
     assert env["DFE_CH_ACCESS_CIDRS"] == f"{EGRESS},{RUNNER}"
-    assert not any("198.51.100" in part or RUNNER.split("/")[0] in part for part in command)
+    assert not any(
+        "198.51.100" in part or RUNNER.split("/")[0] in part for part in command
+    )
     close, _ = _command(runner, "close")
     assert close[close.index("--run-id") + 1] == "run-1"
 
 
-def test_with_no_runner_address_the_run_opens_its_nat_egress_alone(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_with_no_runner_address_the_run_opens_its_nat_egress_alone(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     _external(root)
     runner = FakeRunner()
     _cycle(root, monkeypatch, runner, CH_ENV)
@@ -126,7 +139,10 @@ def test_with_no_runner_address_the_run_opens_its_nat_egress_alone(root: Path, m
 
 @pytest.mark.parametrize("missing", sorted(CH_ENV))
 def test_expected_fail_an_external_run_missing_a_setting_creates_nothing(
-    root: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture, missing: str
+    root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+    missing: str,
 ) -> None:
     _external(root)
     runner = FakeRunner()
@@ -147,7 +163,9 @@ def test_a_failed_open_skips_the_cycle_and_still_closes_and_destroys(
     assert _verbs(runner) == ["init", "apply", "open", "close", "teardown", "destroy"]
 
 
-def test_a_failed_apply_opens_nothing_and_closes_nothing(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_failed_apply_opens_nothing_and_closes_nothing(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     _external(root)
     runner = FakeRunner(codes={"apply": 1})
     assert _cycle(root, monkeypatch, runner, CH_ENV) == 1
@@ -164,11 +182,21 @@ def test_expected_fail_a_close_that_fails_fails_the_run_after_the_destroy(
     assert "ACCESS LIST NOT CLOSED" in capsys.readouterr().err
 
 
-def test_sigterm_during_the_cycle_still_closes_the_access_list(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_sigterm_during_the_cycle_still_closes_the_access_list(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     _external(root)
     runner = FakeRunner(on_run={"cycle": lambda: os.kill(os.getpid(), signal.SIGTERM)})
     assert _cycle(root, monkeypatch, runner, CH_ENV) == 143
-    assert _verbs(runner) == ["init", "apply", "open", "cycle", "close", "teardown", "destroy"]
+    assert _verbs(runner) == [
+        "init",
+        "apply",
+        "open",
+        "cycle",
+        "close",
+        "teardown",
+        "destroy",
+    ]
 
 
 # --- the reaper ----------------------------------------------------------------------------
@@ -191,8 +219,14 @@ def test_the_reaper_sweeps_expired_run_entries_and_spares_the_rest(
     monkeypatch: pytest.MonkeyPatch, cloud: tuple[FakeCloud, str]
 ) -> None:
     state, url = cloud
-    live = {"source": "198.51.100.3/32", "description": f"dfe-run:run-live:{API_NOW + 60}"}
-    state.entries += [{"source": "198.51.100.1/32", "description": f"dfe-run:run-old:{API_NOW - 60}"}, live]
+    live = {
+        "source": "198.51.100.3/32",
+        "description": f"dfe-run:run-live:{API_NOW + 60}",
+    }
+    state.entries += [
+        {"source": "198.51.100.1/32", "description": f"dfe-run:run-old:{API_NOW - 60}"},
+        live,
+    ]
     assert _reap(monkeypatch, _env(url)) == 0
     assert state.entries == [OPERATOR, live]
 
@@ -214,7 +248,9 @@ def test_expected_fail_a_half_configured_clickhouse_sweep_fails_the_reap(
 
 
 def test_expected_fail_an_api_failure_fails_the_reap_without_naming_the_service(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture, cloud: tuple[FakeCloud, str]
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+    cloud: tuple[FakeCloud, str],
 ) -> None:
     state, url = cloud
     state.fail_status = 503
@@ -225,8 +261,16 @@ def test_expected_fail_an_api_failure_fails_the_reap_without_naming_the_service(
 
 
 def _record(clickhouse_mode: str) -> dict:
-    state = {"bucket": "example-state", "region": "us-west-2", "key": cloud_run.state_key("dfe-e2e-runs", "run-x")}
-    tfvars = {"state": state, "kafka": {"provider": "strimzi"}, "clickhouse": {"mode": clickhouse_mode}}
+    state = {
+        "bucket": "example-state",
+        "region": "us-west-2",
+        "key": cloud_run.state_key("dfe-e2e-runs", "run-x"),
+    }
+    tfvars = {
+        "state": state,
+        "kafka": {"provider": "strimzi"},
+        "clickhouse": {"mode": clickhouse_mode},
+    }
     return {"run_id": "run-x", "tfvars": tfvars}
 
 
@@ -239,12 +283,18 @@ def test_an_external_runs_destroy_gets_a_placeholder_password_when_the_runner_ha
     assert env["TF_VAR_clickhouse_external_password"] == cloud_reaper.PLACEHOLDER_VALUE
 
 
-def test_an_external_runs_destroy_keeps_the_runners_own_password(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_an_external_runs_destroy_keeps_the_runners_own_password(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("TF_VAR_clickhouse_external_password", "placeholder-password")
     env = cloud_reaper.destroy_env(_record("external"))
     assert env["TF_VAR_clickhouse_external_password"] == "placeholder-password"
 
 
-def test_an_in_cluster_runs_destroy_gets_no_clickhouse_password(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_an_in_cluster_runs_destroy_gets_no_clickhouse_password(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.delenv("TF_VAR_clickhouse_external_password", raising=False)
-    assert "TF_VAR_clickhouse_external_password" not in cloud_reaper.destroy_env(_record("in_cluster"))
+    assert "TF_VAR_clickhouse_external_password" not in cloud_reaper.destroy_env(
+        _record("in_cluster")
+    )

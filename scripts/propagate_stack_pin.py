@@ -89,14 +89,18 @@ def rewrite(dial_text: str, version: str) -> str:
     return (
         dial_text[: found.start()]
         + f"{found.group('lead')}{version}{found.group('rest')}"
-        + dial_text[found.end():]
+        + dial_text[found.end() :]
     )
 
 
 def _gh(args: list[str]) -> str:
     result = subprocess.run(
-        ["gh", *args], capture_output=True, text=True, encoding="utf-8",
-        errors="replace", check=False,
+        ["gh", *args],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
     )
     if result.returncode != 0:
         raise PropagateError(result.stderr.strip() or f"gh {' '.join(args)} failed")
@@ -104,14 +108,24 @@ def _gh(args: list[str]) -> str:
 
 
 def read_remote(org: str, repo: str, path: str, ref: str) -> str:
-    return _gh(["api", f"/repos/{org}/{repo}/contents/{path}?ref={ref}",
-                "--header", "Accept: application/vnd.github.raw"])
+    return _gh(
+        [
+            "api",
+            f"/repos/{org}/{repo}/contents/{path}?ref={ref}",
+            "--header",
+            "Accept: application/vnd.github.raw",
+        ]
+    )
 
 
 def _git(args: list[str]) -> subprocess.CompletedProcess:
     return subprocess.run(
-        ["git", "-C", str(REPO_ROOT), *args], capture_output=True, text=True,
-        encoding="utf-8", errors="replace", check=False,
+        ["git", "-C", str(REPO_ROOT), *args],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
     )
 
 
@@ -129,7 +143,9 @@ def tag_exists(tag: str) -> bool:
     raise PropagateError(result.stderr.strip() or f"git ls-remote for tag {tag} failed")
 
 
-def open_pr(org: str, repo: str, path: str, base: str, text: str, version: str) -> str | None:
+def open_pr(
+    org: str, repo: str, path: str, base: str, text: str, version: str
+) -> str | None:
     """Land the rewritten dial on a branch and open (or update) the PR.
 
     Returns None when the commit left the branch identical to *base*, since a
@@ -137,27 +153,69 @@ def open_pr(org: str, repo: str, path: str, base: str, text: str, version: str) 
     """
     head = _gh(["api", f"/repos/{org}/{repo}/commits/{base}", "--jq", ".sha"]).strip()
     try:
-        _gh(["api", "--method", "POST", f"/repos/{org}/{repo}/git/refs",
-             "-f", f"ref=refs/heads/{BRANCH}", "-f", f"sha={head}"])
+        _gh(
+            [
+                "api",
+                "--method",
+                "POST",
+                f"/repos/{org}/{repo}/git/refs",
+                "-f",
+                f"ref=refs/heads/{BRANCH}",
+                "-f",
+                f"sha={head}",
+            ]
+        )
     except PropagateError as exc:
         # The branch survives a closed PR, so an existing one is reused rather
         # than opening a second PR for the same dial.
         if "already exists" not in str(exc).lower():
             raise
-        _gh(["api", "--method", "PATCH", f"/repos/{org}/{repo}/git/refs/heads/{BRANCH}",
-             "-f", f"sha={head}", "-F", "force=true"])
+        _gh(
+            [
+                "api",
+                "--method",
+                "PATCH",
+                f"/repos/{org}/{repo}/git/refs/heads/{BRANCH}",
+                "-f",
+                f"sha={head}",
+                "-F",
+                "force=true",
+            ]
+        )
 
     import base64
 
-    existing = json.loads(_gh(["api", f"/repos/{org}/{repo}/contents/{path}?ref={BRANCH}"]))
-    _gh(["api", "--method", "PUT", f"/repos/{org}/{repo}/contents/{path}",
-         "-f", f"branch={BRANCH}",
-         "-f", f"message=fix(stack): pin the stack dial at {version}",
-         "-f", f"sha={existing['sha']}",
-         "-f", f"content={base64.b64encode(text.encode()).decode()}"])
+    existing = json.loads(
+        _gh(["api", f"/repos/{org}/{repo}/contents/{path}?ref={BRANCH}"])
+    )
+    _gh(
+        [
+            "api",
+            "--method",
+            "PUT",
+            f"/repos/{org}/{repo}/contents/{path}",
+            "-f",
+            f"branch={BRANCH}",
+            "-f",
+            f"message=fix(stack): pin the stack dial at {version}",
+            "-f",
+            f"sha={existing['sha']}",
+            "-f",
+            f"content={base64.b64encode(text.encode()).decode()}",
+        ]
+    )
 
-    changed = int(_gh(["api", f"/repos/{org}/{repo}/compare/{base}...{BRANCH}",
-                       "--jq", ".files | length"]).strip() or "0")
+    changed = int(
+        _gh(
+            [
+                "api",
+                f"/repos/{org}/{repo}/compare/{base}...{BRANCH}",
+                "--jq",
+                ".files | length",
+            ]
+        ).strip()
+        or "0"
+    )
     if changed == 0:
         return None
 
@@ -170,14 +228,29 @@ def open_pr(org: str, repo: str, path: str, base: str, text: str, version: str) 
         f"topologies is deliberate and is not touched.\n\n"
         f"Opened by dfe-infra's `propagate_stack_pin.py` (dfe-infra#116)."
     )
-    open_prs = json.loads(_gh(["api", f"/repos/{org}/{repo}/pulls?head={org}:{BRANCH}&state=open"]))
+    open_prs = json.loads(
+        _gh(["api", f"/repos/{org}/{repo}/pulls?head={org}:{BRANCH}&state=open"])
+    )
     if open_prs:
         return open_prs[0]["html_url"]
-    created = json.loads(_gh([
-        "api", "--method", "POST", f"/repos/{org}/{repo}/pulls",
-        "-f", f"title=fix(stack): move the stack dial to {version}",
-        "-f", f"head={BRANCH}", "-f", f"base={base}", "-f", f"body={body}",
-    ]))
+    created = json.loads(
+        _gh(
+            [
+                "api",
+                "--method",
+                "POST",
+                f"/repos/{org}/{repo}/pulls",
+                "-f",
+                f"title=fix(stack): move the stack dial to {version}",
+                "-f",
+                f"head={BRANCH}",
+                "-f",
+                f"base={base}",
+                "-f",
+                f"body={body}",
+            ]
+        )
+    )
     return created["html_url"]
 
 
@@ -213,12 +286,18 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         if not tag_exists(version):
-            print(f"SKIP -- {version} is not cut yet (no tag on origin), "
-                  f"and the consumer pulls that tag's stack manifest; no PR opened")
+            print(
+                f"SKIP -- {version} is not cut yet (no tag on origin), "
+                f"and the consumer pulls that tag's stack manifest; no PR opened"
+            )
             return 0
-        url = open_pr(args.org, args.repo, args.path, args.base, rewrite(dial, version), version)
+        url = open_pr(
+            args.org, args.repo, args.path, args.base, rewrite(dial, version), version
+        )
         if url is None:
-            print(f"SKIP -- the bump left {BRANCH} identical to {args.base}; no PR opened")
+            print(
+                f"SKIP -- the bump left {BRANCH} identical to {args.base}; no PR opened"
+            )
             return 0
         print(f"PR: {url}")
     except PropagateError as exc:

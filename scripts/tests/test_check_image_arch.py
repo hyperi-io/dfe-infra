@@ -83,8 +83,12 @@ NOT_AN_IMAGE = {
 }
 
 
-def _refs(third_party_only: bool = False) -> tuple[set[tuple[str, str]], list[str], list[str]]:
-    refs, skipped, broken = arch.image_refs(_PINS, resolve_charts=False, third_party_only=third_party_only)
+def _refs(
+    third_party_only: bool = False,
+) -> tuple[set[tuple[str, str]], list[str], list[str]]:
+    refs, skipped, broken = arch.image_refs(
+        _PINS, resolve_charts=False, third_party_only=third_party_only
+    )
     return set(refs), skipped, broken
 
 
@@ -97,33 +101,56 @@ def test_dfe_images_are_read_by_their_pinned_digest() -> None:
     )
     expect(
         "the toolbox base image takes the family tag",
-        ("digests.dfe-toolbox-base", "ghcr.io/hyperi-io/dfe-toolbox-base:v2.0.0@sha256:bbb") in refs,
+        (
+            "digests.dfe-toolbox-base",
+            "ghcr.io/hyperi-io/dfe-toolbox-base:v2.0.0@sha256:bbb",
+        )
+        in refs,
         f"{refs}",
     )
 
 
 def test_an_unpublished_app_is_noted_not_failed() -> None:
     refs, skipped, broken = _refs()
-    expect("the unpublished app is not read", not any("unshipped" in r for _, r in refs), f"{refs}")
-    expect("it is named in the skip notes", any("apps.unshipped" in s for s in skipped), f"{skipped}")
-    expect("and is not a failure", not any("unshipped" in b for b in broken), f"{broken}")
+    expect(
+        "the unpublished app is not read",
+        not any("unshipped" in r for _, r in refs),
+        f"{refs}",
+    )
+    expect(
+        "it is named in the skip notes",
+        any("apps.unshipped" in s for s in skipped),
+        f"{skipped}",
+    )
+    expect(
+        "and is not a failure", not any("unshipped" in b for b in broken), f"{broken}"
+    )
 
 
 def test_a_digest_with_no_tag_fails() -> None:
     _, _, broken = _refs()
-    expect("an untagged digest is a failure, not a silent drop", any("digests.orphan" in b for b in broken), f"{broken}")
+    expect(
+        "an untagged digest is a failure, not a silent drop",
+        any("digests.orphan" in b for b in broken),
+        f"{broken}",
+    )
 
 
 def test_third_party_images_come_from_the_shared_tables() -> None:
     refs, _, _ = _refs()
     expect(
         "a docker-path service, by the digest a deploy pulls",
-        ("services.kafbat", f"ghcr.io/kafbat/kafka-ui:v1.5.0@{_digest('kafbat')}") in refs,
+        ("services.kafbat", f"ghcr.io/kafbat/kafka-ui:v1.5.0@{_digest('kafbat')}")
+        in refs,
         f"{refs}",
     )
     expect(
         "a k8s-only service, by its digest",
-        ("services.git-sync", f"registry.k8s.io/git-sync/git-sync:v4.7.1@{_digest('git-sync')}") in refs,
+        (
+            "services.git-sync",
+            f"registry.k8s.io/git-sync/git-sync:v4.7.1@{_digest('git-sync')}",
+        )
+        in refs,
         f"{refs}",
     )
     expect(
@@ -133,7 +160,8 @@ def test_third_party_images_come_from_the_shared_tables() -> None:
     )
     expect(
         "a bootstrap chart already carrying its v prefix keeps one, under its own section",
-        ("bootstrap.cert-manager", "quay.io/jetstack/cert-manager-controller:v1.21.2") in refs,
+        ("bootstrap.cert-manager", "quay.io/jetstack/cert-manager-controller:v1.21.2")
+        in refs,
         f"{refs}",
     )
 
@@ -158,8 +186,12 @@ def test_bootstrap_manifest_images_are_read_by_their_digest() -> None:
 
 def test_a_docker_path_service_with_no_digest_fails() -> None:
     """A deploy pulls these by digest, so a tag alone is not what runs."""
-    digests = {k: v for k, v in _PINS["services-digests"].items() if k != "kafka-version"}
-    refs, _, broken = arch.image_refs({**_PINS, "services-digests": digests}, resolve_charts=False)
+    digests = {
+        k: v for k, v in _PINS["services-digests"].items() if k != "kafka-version"
+    }
+    refs, _, broken = arch.image_refs(
+        {**_PINS, "services-digests": digests}, resolve_charts=False
+    )
     expect(
         "the tag alone is not read",
         not any(label == "services.kafka-version" for label, _ in refs),
@@ -174,7 +206,9 @@ def test_a_docker_path_service_with_no_digest_fails() -> None:
 
 def test_one_pin_tags_every_image_its_chart_runs() -> None:
     refs, _, _ = _refs()
-    clickhouse = sorted(r for label, r in refs if label.startswith("services.clickhouse-"))
+    clickhouse = sorted(
+        r for label, r in refs if label.startswith("services.clickhouse-")
+    )
     expect(
         "the ClickHouse server and Keeper are each read by their own pin",
         clickhouse
@@ -200,42 +234,75 @@ def test_the_strimzi_broker_tag_joins_the_operator_and_kafka_pins() -> None:
     refs, _, _ = _refs()
     expect(
         "the broker image Strimzi picks for the pinned Kafka",
-        ("operators.strimzi-kafka-operator+services.kafka-version", "quay.io/strimzi/kafka:1.2.0-kafka-4.3.1")
+        (
+            "operators.strimzi-kafka-operator+services.kafka-version",
+            "quay.io/strimzi/kafka:1.2.0-kafka-4.3.1",
+        )
         in refs,
         f"{refs}",
     )
     no_kafka = {**_PINS, "services": {"kafbat": "v1.5.0"}}
     refs, _, _ = arch.image_refs(no_kafka, resolve_charts=False)
     # The Kafka CLI shares the repository but is its own chart-values pin, read either way.
-    brokers = [r for label, r in refs if r.startswith(f"{arch.STRIMZI_KAFKA_IMAGE}:") and "(kafka CLI)" not in label]
+    brokers = [
+        r
+        for label, r in refs
+        if r.startswith(f"{arch.STRIMZI_KAFKA_IMAGE}:") and "(kafka CLI)" not in label
+    ]
     expect("no broker image is guessed without a Kafka pin", brokers == [], f"{refs}")
 
 
 def test_prefixed_adds_a_missing_prefix_only() -> None:
-    expect("an appVersion without the prefix gets it", arch.prefixed("0.21.0", "v") == "v0.21.0")
-    expect("one already carrying it is unchanged", arch.prefixed("v1.4.19", "v") == "v1.4.19")
+    expect(
+        "an appVersion without the prefix gets it",
+        arch.prefixed("0.21.0", "v") == "v0.21.0",
+    )
+    expect(
+        "one already carrying it is unchanged",
+        arch.prefixed("v1.4.19", "v") == "v1.4.19",
+    )
     expect("no prefix leaves the tag alone", arch.prefixed("2.20.1", "") == "2.20.1")
 
 
 def test_a_chart_resolved_operator_waits_for_resolve_charts() -> None:
     refs, skipped, broken = _refs()
     labels = {label for label, _ in refs}
-    expect("keda is not read without --resolve-charts", "operators.keda" not in labels, f"{refs}")
-    expect("and says how to read it", any("operators.keda" in s and "--resolve-charts" in s for s in skipped), f"{skipped}")
+    expect(
+        "keda is not read without --resolve-charts",
+        "operators.keda" not in labels,
+        f"{refs}",
+    )
+    expect(
+        "and says how to read it",
+        any("operators.keda" in s and "--resolve-charts" in s for s in skipped),
+        f"{skipped}",
+    )
     expect(
         "a bootstrap chart is named under its own section",
         any(s.startswith("bootstrap.argocd: chart 10.9.0") for s in skipped),
         f"{skipped}",
     )
-    expect("and is not a failure", broken == ["digests.orphan: digest pinned with no tag to read it by"], f"{broken}")
+    expect(
+        "and is not a failure",
+        broken == ["digests.orphan: digest pinned with no tag to read it by"],
+        f"{broken}",
+    )
 
 
 def test_third_party_only_reads_nothing_under_the_dfe_registry() -> None:
     refs, skipped, broken = _refs(third_party_only=True)
     dfe = sorted(r for _, r in refs if r.startswith("ghcr.io/hyperi-io/"))
     expect("no DFE image is read", dfe == [], f"{dfe}")
-    expect("the third-party images still are", any(label == "services.kafbat" for label, _ in refs), f"{refs}")
-    expect("the skip is said, with the count", any(s.startswith("2 DFE image(s)") for s in skipped), f"{skipped}")
+    expect(
+        "the third-party images still are",
+        any(label == "services.kafbat" for label, _ in refs),
+        f"{refs}",
+    )
+    expect(
+        "the skip is said, with the count",
+        any(s.startswith("2 DFE image(s)") for s in skipped),
+        f"{skipped}",
+    )
     expect("and a DFE pin problem is left to dfe-stack", broken == [], f"{broken}")
 
 
@@ -243,13 +310,18 @@ def test_every_committed_image_pin_is_read() -> None:
     """A pin added under bootstrap:, operators: or services: with no table entry
     would ship unchecked, so every such key is read or named in NOT_AN_IMAGE."""
     _, pins = arch.dfe_stack.stack_pins(arch.dfe_stack.load_root(), None)
-    refs, skipped, _ = arch.image_refs(pins, resolve_charts=False, third_party_only=True)
+    refs, skipped, _ = arch.image_refs(
+        pins, resolve_charts=False, third_party_only=True
+    )
     read = {path for label, _ in refs for path in label.split("+")}
     read |= {note.split(":", 1)[0] for note in skipped}
     for section in ("bootstrap", "operators", "services"):
         for key in pins.get(section, {}):
             path = f"{section}.{key}"
-            expect(f"{path} is checked or named as not an image", path in read or path in NOT_AN_IMAGE)
+            expect(
+                f"{path} is checked or named as not an image",
+                path in read or path in NOT_AN_IMAGE,
+            )
     for path in NOT_AN_IMAGE:
         section, key = path.split(".", 1)
         expect(f"{path} is still pinned", key in pins.get(section, {}))
@@ -261,10 +333,18 @@ def test_the_committed_stack_needs_no_credential_in_third_party_mode() -> None:
     pins must not put a private package in that set."""
     _, pins = arch.dfe_stack.stack_pins(arch.dfe_stack.load_root(), None)
     refs, _, broken = arch.image_refs(pins, resolve_charts=False, third_party_only=True)
-    dfe = sorted(ref for _, ref in refs if ref.startswith(f"{arch.dfe_stack.DEFAULT_REGISTRY}/"))
+    dfe = sorted(
+        ref for _, ref in refs if ref.startswith(f"{arch.dfe_stack.DEFAULT_REGISTRY}/")
+    )
     expect("no ghcr.io/hyperi-io image is read", dfe == [], f"{dfe}")
-    expect("the current stack lists third-party images to read", len(refs) > 0, f"{refs}")
-    expect("and nothing is unreadable before the registry is asked", broken == [], f"{broken}")
+    expect(
+        "the current stack lists third-party images to read", len(refs) > 0, f"{refs}"
+    )
+    expect(
+        "and nothing is unreadable before the registry is asked",
+        broken == [],
+        f"{broken}",
+    )
 
 
 _BUSYBOX_DIGEST = "sha256:" + "b" * 64
@@ -279,7 +359,10 @@ def test_a_digest_pinned_image_is_read_by_its_digest() -> None:
     refs, _, broken = arch.image_refs(pins, resolve_charts=False, third_party_only=True)
     expect(
         "the deployed tag@digest is what the registry is asked about",
-        ("services.busybox", f"public.ecr.aws/docker/library/busybox:1.38.0@{_BUSYBOX_DIGEST}")
+        (
+            "services.busybox",
+            f"public.ecr.aws/docker/library/busybox:1.38.0@{_BUSYBOX_DIGEST}",
+        )
         in refs,
         f"{refs}",
     )
@@ -287,7 +370,10 @@ def test_a_digest_pinned_image_is_read_by_its_digest() -> None:
 
 
 def test_a_digest_pinned_tag_with_no_digest_fails() -> None:
-    pins = {**_PINS, "services": {**_PINS["services"], "envoy-gateway-proxy": "distroless-v1.39.1"}}
+    pins = {
+        **_PINS,
+        "services": {**_PINS["services"], "envoy-gateway-proxy": "distroless-v1.39.1"},
+    }
     refs, _, broken = arch.image_refs(pins, resolve_charts=False, third_party_only=True)
     expect(
         "the tag alone is not read",
@@ -329,7 +415,9 @@ def test_the_kafka_cli_is_read_from_its_chart_values() -> None:
     expect("one Kafka CLI reference is read", len(cli) == 1, f"{refs}")
     expect(
         "by the Strimzi tag@digest the values pin",
-        bool(cli) and cli[0].startswith(f"{arch.STRIMZI_KAFKA_IMAGE}:") and "@sha256:" in cli[0],
+        bool(cli)
+        and cli[0].startswith(f"{arch.STRIMZI_KAFKA_IMAGE}:")
+        and "@sha256:" in cli[0],
         f"{cli}",
     )
     expect("and nothing is broken", broken == [], f"{broken}")
@@ -346,18 +434,30 @@ def test_every_image_a_chart_renders_is_read() -> None:
     _, pins = arch.dfe_stack.stack_pins(arch.dfe_stack.load_root(), None)
     refs, _, _ = arch.image_refs(pins, resolve_charts=False, third_party_only=True)
     rendered = inventory._rendered_images()
-    expect("the charts render third-party images to check", len(rendered) > 0, f"{rendered}")
+    expect(
+        "the charts render third-party images to check",
+        len(rendered) > 0,
+        f"{rendered}",
+    )
     unread = _unread(rendered, refs)
-    expect("each is read by the tag@digest the chart renders", unread == [], f"unread: {unread}")
+    expect(
+        "each is read by the tag@digest the chart renders",
+        unread == [],
+        f"unread: {unread}",
+    )
 
 
 def test_expected_fail_a_rendered_image_missing_from_the_tables_is_caught() -> None:
     kafbat = f"ghcr.io/kafbat/kafka-ui:v1.5.0@{_digest('kafbat')}"
     curl = f"curlimages/curl:8.22.0@{_digest('curl')}"
     refs = [("services.kafbat", kafbat)]
-    expect("an image no table names is reported", _unread([kafbat, curl], refs) == [curl])
+    expect(
+        "an image no table names is reported", _unread([kafbat, curl], refs) == [curl]
+    )
     other = f"ghcr.io/kafbat/kafka-ui:v1.5.0@{_digest('other')}"
-    expect("so is one the gate reads at another digest", _unread([other], refs) == [other])
+    expect(
+        "so is one the gate reads at another digest", _unread([other], refs) == [other]
+    )
 
 
 def test_default_image_ref_reads_repository_and_tag() -> None:
@@ -365,7 +465,11 @@ def test_default_image_ref_reads_repository_and_tag() -> None:
         "dex:\n  enabled: true\n  image:\n    repository: ghcr.io/dexidp/dex\n    tag: v2.45.1\n"
     )
     ref = arch.default_image_ref([values], ("dex", "image"), None)
-    expect("repository:tag as the chart renders it", ref == "ghcr.io/dexidp/dex:v2.45.1", ref)
+    expect(
+        "repository:tag as the chart renders it",
+        ref == "ghcr.io/dexidp/dex:v2.45.1",
+        ref,
+    )
 
 
 def test_an_unset_tag_takes_the_app_version_where_the_template_does() -> None:
@@ -374,7 +478,11 @@ def test_an_unset_tag_takes_the_app_version_where_the_template_does() -> None:
         "frrk8s:\n  image:\n    repository: quay.io/metallb/frr-k8s\n    tag:\n    pullPolicy:\n"
     )
     ref = arch.default_image_ref([values], ("frrk8s", "image"), "v0.0.25")
-    expect("the chart's appVersion fills the tag", ref == "quay.io/metallb/frr-k8s:v0.0.25", ref)
+    expect(
+        "the chart's appVersion fills the tag",
+        ref == "quay.io/metallb/frr-k8s:v0.0.25",
+        ref,
+    )
 
 
 def test_an_unset_tag_with_no_fallback_fails() -> None:
@@ -384,7 +492,11 @@ def test_an_unset_tag_with_no_fallback_fails() -> None:
         raised = ""
     except ValueError as err:
         raised = str(err)
-    expect("it raises rather than reading a bare repository", "dex.image.tag" in raised, raised)
+    expect(
+        "it raises rather than reading a bare repository",
+        "dex.image.tag" in raised,
+        raised,
+    )
 
 
 def test_a_missing_repository_fails() -> None:
@@ -393,14 +505,26 @@ def test_a_missing_repository_fails() -> None:
         raised = ""
     except ValueError as err:
         raised = str(err)
-    expect("a path that names no image is an error", "dex.image.repository" in raised, raised)
+    expect(
+        "a path that names no image is an error",
+        "dex.image.repository" in raised,
+        raised,
+    )
 
 
 def test_a_parent_chart_value_wins_over_the_subchart_default() -> None:
     parent = {"frrk8s": {"frr": {"image": {"tag": "10.5.3"}}}}
-    own = {"frrk8s": {"frr": {"image": {"repository": "quay.io/frrouting/frr", "tag": "10.4.3"}}}}
+    own = {
+        "frrk8s": {
+            "frr": {"image": {"repository": "quay.io/frrouting/frr", "tag": "10.4.3"}}
+        }
+    }
     ref = arch.default_image_ref([parent, own], ("frrk8s", "frr", "image"), "v0.0.25")
-    expect("the parent's tag, the subchart's repo", ref == "quay.io/frrouting/frr:10.5.3", ref)
+    expect(
+        "the parent's tag, the subchart's repo",
+        ref == "quay.io/frrouting/frr:10.5.3",
+        ref,
+    )
 
 
 def _write(path: Path, text: str) -> None:
@@ -415,7 +539,9 @@ def test_chart_dir_refs_read_a_vendored_subchart() -> None:
         chart = Path(tmp) / "metallb"
         _write(chart / "Chart.yaml", "name: metallb\nappVersion: v0.16.1\n")
         _write(chart / "values.yaml", "frr-k8s:\n  prometheus:\n    enabled: false\n")
-        _write(chart / "charts/frr-k8s/Chart.yaml", "name: frr-k8s\nappVersion: v0.0.25\n")
+        _write(
+            chart / "charts/frr-k8s/Chart.yaml", "name: frr-k8s\nappVersion: v0.0.25\n"
+        )
         _write(
             chart / "charts/frr-k8s/values.yaml",
             "frrk8s:\n  image:\n    repository: quay.io/metallb/frr-k8s\n    tag:\n"
@@ -436,18 +562,34 @@ def test_chart_dir_refs_read_a_vendored_subchart() -> None:
             raised = ""
         except RuntimeError as err:
             raised = str(err)
-        expect("a subchart the archive does not vendor is an error", "absent" in raised, raised)
+        expect(
+            "a subchart the archive does not vendor is an error",
+            "absent" in raised,
+            raised,
+        )
 
 
 def test_every_chart_default_image_names_a_chart_the_checker_resolves() -> None:
-    for name, (key, _sub, _path, _fallback, _digest) in arch.CHART_DEFAULT_IMAGES.items():
-        expect(f"{name}'s chart is in OPERATOR_VIA_CHART", key in arch.OPERATOR_VIA_CHART)
+    for name, (
+        key,
+        _sub,
+        _path,
+        _fallback,
+        _digest,
+    ) in arch.CHART_DEFAULT_IMAGES.items():
+        expect(
+            f"{name}'s chart is in OPERATOR_VIA_CHART", key in arch.OPERATOR_VIA_CHART
+        )
 
 
 def test_values_image_ref_reads_a_full_reference() -> None:
     values = {"setup": {"image": "curlimages/curl:8.22.0@sha256:" + "a" * 64}}
     ref = arch.values_image_ref(values, ("setup", "image"))
-    expect("the reference is read whole", ref.startswith("curlimages/curl:8.22.0@sha256:"), ref)
+    expect(
+        "the reference is read whole",
+        ref.startswith("curlimages/curl:8.22.0@sha256:"),
+        ref,
+    )
     for bad in ({"setup": {"image": "curlimages/curl"}}, {"setup": {}}, {}):
         try:
             arch.values_image_ref(bad, ("setup", "image"))
@@ -458,7 +600,9 @@ def test_values_image_ref_reads_a_full_reference() -> None:
 
 
 def test_verdict_passes_an_image_carrying_every_platform() -> None:
-    status, _ = arch.verdict({"linux/amd64", "linux/arm64"}, "", {"linux/amd64", "linux/arm64"})
+    status, _ = arch.verdict(
+        {"linux/amd64", "linux/arm64"}, "", {"linux/amd64", "linux/arm64"}
+    )
     expect("both platforms pass", status == "ok", status)
 
 
@@ -469,7 +613,9 @@ def test_verdict_names_the_missing_platform() -> None:
 
 
 def test_an_unreadable_registry_is_an_error_not_a_pass() -> None:
-    status, detail = arch.verdict(None, "401 Unauthorized", {"linux/amd64", "linux/arm64"})
+    status, detail = arch.verdict(
+        None, "401 Unauthorized", {"linux/amd64", "linux/arm64"}
+    )
     expect("an unread image is an ERROR", status == "ERROR", status)
     expect("carrying the registry's own words", "401" in detail, detail)
 

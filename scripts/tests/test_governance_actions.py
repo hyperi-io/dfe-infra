@@ -92,7 +92,9 @@ def apply_actions(actions: list[dict]) -> dict[str, dict]:
                 trail.append(node)
             if change["value"] == UNSET:
                 node.pop(leaf, None)
-                for parent, key in zip(reversed(trail[:-1]), reversed(parents), strict=True):
+                for parent, key in zip(
+                    reversed(trail[:-1]), reversed(parents), strict=True
+                ):
                     if parent[key]:
                         break
                     del parent[key]
@@ -106,12 +108,16 @@ def instance_of(name: str) -> tuple[str, str]:
     stem = name.removesuffix("-values")
     services = [s for s in COMPONENTS if stem == s or stem.startswith(f"{s}-")]
     if not services:
-        pytest.fail(f"{name} names no service the gate renders: {', '.join(COMPONENTS)}")
+        pytest.fail(
+            f"{name} names no service the gate renders: {', '.join(COMPONENTS)}"
+        )
     service = max(services, key=len)
     return service, stem[len(service) + 1 :] or "default"
 
 
-def render_with(service: str, instance: str, profile: str, cloud: str, values: dict) -> list[dict]:
+def render_with(
+    service: str, instance: str, profile: str, cloud: str, values: dict
+) -> list[dict]:
     """The thin path of one instance with ``values`` in its deploy repo file."""
     return render_app(service, profile, cloud, overlay=values, instance=instance)
 
@@ -172,7 +178,9 @@ def required_reads(docs: list[dict]) -> Iterator[tuple[str, str, str]]:
     """(workload, where, Secret name) for every Secret a pod cannot start without."""
     for doc in docs:
         pod = pod_of(doc)
-        for container in (pod.get("initContainers") or []) + (pod.get("containers") or []):
+        for container in (pod.get("initContainers") or []) + (
+            pod.get("containers") or []
+        ):
             for where, secret in container_reads(container):
                 yield object_id(doc), where, secret
         for volume in pod.get("volumes") or []:
@@ -188,7 +196,11 @@ def orphaned(before: list[dict], after: list[dict]) -> list[str]:
     """
     lost = minted(before) - minted(after)
     reads = required_reads(after)
-    return sorted(f"{who} {where} reads {secret}" for who, where, secret in reads if secret in lost)
+    return sorted(
+        f"{who} {where} reads {secret}"
+        for who, where, secret in reads
+        if secret in lost
+    )
 
 
 # ---------------------------------------------------------------------- the checks
@@ -241,7 +253,10 @@ def shipped() -> dict[str, dict]:
 def test_no_shipped_action_leaves_a_pod_waiting_on_a_secret(
     shipped: dict[str, dict], profile: str, cloud: str
 ) -> None:
-    found = {name: action_problems(doc, profile, cloud) for name, doc in sorted(shipped.items())}
+    found = {
+        name: action_problems(doc, profile, cloud)
+        for name, doc in sorted(shipped.items())
+    }
     assert {name: problems for name, problems in found.items() if problems} == {}
 
 
@@ -250,7 +265,12 @@ def test_hunts_resume_renders_what_hunts_pause_started_from(
     shipped: dict[str, dict], profile: str, cloud: str
 ) -> None:
     assert {"hunts-pause", "hunts-resume"} <= set(shipped), sorted(shipped)
-    assert restore_problems(shipped["hunts-pause"], shipped["hunts-resume"], profile, cloud) == []
+    assert (
+        restore_problems(
+            shipped["hunts-pause"], shipped["hunts-resume"], profile, cloud
+        )
+        == []
+    )
 
 
 def receiver_ceiling(values: dict, profile: str, cloud: str) -> int:
@@ -261,7 +281,9 @@ def receiver_ceiling(values: dict, profile: str, cloud: str) -> int:
     )
 
 
-@pytest.mark.parametrize(("profile", "cloud", "tier_ceiling"), [("slim", "local", 2), ("scale", "aws", 12)])
+@pytest.mark.parametrize(
+    ("profile", "cloud", "tier_ceiling"), [("slim", "local", 2), ("scale", "aws", 12)]
+)
 def test_receiver_normal_returns_the_receiver_to_its_tiers_ceiling(
     shipped: dict[str, dict], profile: str, cloud: str, tier_ceiling: int
 ) -> None:
@@ -276,7 +298,13 @@ def test_receiver_normal_returns_the_receiver_to_its_tiers_ceiling(
 @pytest.mark.parametrize(
     ("changes", "expected"),
     [
-        ([{"path": "keda.maxReplicaCount", "value": 20}, {"path": "keda.maxReplicaCount", "value": UNSET}], {}),
+        (
+            [
+                {"path": "keda.maxReplicaCount", "value": 20},
+                {"path": "keda.maxReplicaCount", "value": UNSET},
+            ],
+            {},
+        ),
         (
             [
                 {"path": "keda.maxReplicaCount", "value": 20},
@@ -287,13 +315,22 @@ def test_receiver_normal_returns_the_receiver_to_its_tiers_ceiling(
         ),
         ([{"path": "keda.pressure.targetValue", "value": UNSET}], {}),
     ],
-    ids=["emptied parent is pruned", "a sibling keeps its parent", "unsetting an absent path adds nothing"],
+    ids=[
+        "emptied parent is pruned",
+        "a sibling keeps its parent",
+        "unsetting an absent path adds nothing",
+    ],
 )
 def test_an_unset_value_deletes_its_path_and_prunes_the_parents_it_empties(
     changes: list[dict], expected: dict
 ) -> None:
-    named = [{"cls": "helmvars", "name": "dfe-receiver-default-values", **change} for change in changes]
-    assert apply_actions([action("x", *named)]) == {"dfe-receiver-default-values": expected}
+    named = [
+        {"cls": "helmvars", "name": "dfe-receiver-default-values", **change}
+        for change in changes
+    ]
+    assert apply_actions([action("x", *named)]) == {
+        "dfe-receiver-default-values": expected
+    }
 
 
 # ------------------------------------------------------------- written here, no checkout
@@ -324,7 +361,9 @@ def test_a_resume_that_leaves_the_secret_group_off_is_caught() -> None:
     pause = action("hunts-pause", PAUSE_THE_RUNNER, PAUSE_THE_SECRET)
     resume = action("hunts-resume", RESUME_THE_RUNNER)
     problems = restore_problems(pause, resume, *SLIM)
-    assert any("DFE_ENGINE_CLICKHOUSE_HUNT_RUNNER_PASSWORD" in found for found in problems), problems
+    assert any(
+        "DFE_ENGINE_CLICKHOUSE_HUNT_RUNNER_PASSWORD" in found for found in problems
+    ), problems
 
 
 def test_a_resume_that_turns_the_secret_group_on_too_restores_the_render() -> None:

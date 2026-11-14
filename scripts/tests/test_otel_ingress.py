@@ -48,11 +48,22 @@ GATEWAY = "envoy-gateway-config"
 COLLECTOR = "otel-collector"
 
 # Every cloud overlay, and the edge flavour layer2-edge.yaml layers after it.
-FLAVOURS = {"local": "onprem", "local-dfe": "onprem", "aws": "aws", "gcp": "gcp", "azure": "azure"}
+FLAVOURS = {
+    "local": "onprem",
+    "local-dfe": "onprem",
+    "aws": "aws",
+    "gcp": "gcp",
+    "azure": "azure",
+}
 PROFILES = ("slim", "single", "scale", "mesh")
 
 STORE_PATH = "dfe/local/otel/ingress"
-ON = ("--set", "otel.ingress.enabled=true", "--set", f"otel.ingress.auth.remoteKey={STORE_PATH}")
+ON = (
+    "--set",
+    "otel.ingress.enabled=true",
+    "--set",
+    f"otel.ingress.auth.remoteKey={STORE_PATH}",
+)
 ON_NO_TOKEN = ("--set", "otel.ingress.enabled=true")
 NO_TOKEN = "otel.ingress.auth.remoteKey is empty"
 NOT_A_BOOL = "otel.ingress.enabled is"
@@ -74,9 +85,12 @@ def cascade(chart: str, cloud: str = "local", profile: str = "slim") -> tuple[st
         args += ["-f", str(path)]
     return (
         *args,
-        "--set", "appNamespace=dfe",
-        "--set", "domain=dfe.example.com",
-        "--set", "global.registry=ghcr.io/hyperi-io",
+        "--set",
+        "appNamespace=dfe",
+        "--set",
+        "domain=dfe.example.com",
+        "--set",
+        "global.registry=ghcr.io/hyperi-io",
     )
 
 
@@ -85,7 +99,15 @@ def helm(chart: str, *args: str) -> subprocess.CompletedProcess:
     """helm template of one chart with these args, rendered or not."""
     namespace = "envoy-gateway-system" if chart == GATEWAY else "otel"
     return subprocess.run(
-        ["helm", "template", chart, str(chart_dir(chart)), "--namespace", namespace, *args],
+        [
+            "helm",
+            "template",
+            chart,
+            str(chart_dir(chart)),
+            "--namespace",
+            namespace,
+            *args,
+        ],
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -119,15 +141,23 @@ def named(docs: Iterable[dict], kind: str, name: str) -> dict | None:
 
 def collector_config(docs: Iterable[dict]) -> dict:
     """The gateway collector's own config, as the chart writes it into its ConfigMap."""
-    maps = [d for d in of_kind(docs, "ConfigMap") if "gateway-config.yaml" in (d.get("data") or {})]
+    maps = [
+        d
+        for d in of_kind(docs, "ConfigMap")
+        if "gateway-config.yaml" in (d.get("data") or {})
+    ]
     if len(maps) != 1:
-        raise SystemExit(f"the collector wrote {len(maps)} ConfigMaps carrying gateway-config.yaml")
+        raise SystemExit(
+            f"the collector wrote {len(maps)} ConfigMaps carrying gateway-config.yaml"
+        )
     return yaml.safe_load(maps[0]["data"]["gateway-config.yaml"])
 
 
 def gateway_object(docs: Iterable[dict], kind: str) -> dict:
     """The collector gateway's one object of this kind (the daemonset has its own)."""
-    found = [d for d in of_kind(docs, kind) if d["metadata"]["name"].endswith("-gateway")]
+    found = [
+        d for d in of_kind(docs, kind) if d["metadata"]["name"].endswith("-gateway")
+    ]
     if len(found) != 1:
         raise SystemExit(f"the collector rendered {len(found)} gateway {kind}s")
     return found[0]
@@ -161,7 +191,11 @@ def test_no_tracked_cascade_publishes_the_otel_route() -> None:
         for profile in PROFILES:
             out = helm(GATEWAY, *cascade(GATEWAY, cloud, profile))
             if out.returncode != 0:
-                expect(f"the gateway renders [{cloud} {profile}]", False, out.stderr.strip())
+                expect(
+                    f"the gateway renders [{cloud} {profile}]",
+                    False,
+                    out.stderr.strip(),
+                )
                 continue
             served = routes(d for d in yaml.safe_load_all(out.stdout) if d)
             detail = f"got {sorted(served)}"
@@ -173,16 +207,31 @@ def test_off_the_collector_carries_no_ingress_plumbing() -> None:
         out = helm(COLLECTOR, *cascade(COLLECTOR, "local", profile))
         docs = tuple(d for d in yaml.safe_load_all(out.stdout) if d)
         config = collector_config(docs)
-        expect(f"no token extension [{profile}]", EXTENSION not in (config.get("extensions") or {}),
-               f"got {sorted(config.get('extensions') or {})}")
-        expect(f"no ingress receiver [{profile}]", RECEIVER not in config["receivers"],
-               f"got {sorted(config['receivers'])}")
-        expect(f"no ExternalSecret [{profile}]", not of_kind(docs, "ExternalSecret"),
-               f"got {[d['metadata']['name'] for d in of_kind(docs, 'ExternalSecret')]}")
-        expect(f"no ingress port on the Service [{profile}]", PORT_NAME not in service_ports(docs),
-               f"got {sorted(service_ports(docs))}")
-        expect(f"no ingress port on the pod [{profile}]", PORT_NAME not in container_ports(docs),
-               f"got {sorted(container_ports(docs))}")
+        expect(
+            f"no token extension [{profile}]",
+            EXTENSION not in (config.get("extensions") or {}),
+            f"got {sorted(config.get('extensions') or {})}",
+        )
+        expect(
+            f"no ingress receiver [{profile}]",
+            RECEIVER not in config["receivers"],
+            f"got {sorted(config['receivers'])}",
+        )
+        expect(
+            f"no ExternalSecret [{profile}]",
+            not of_kind(docs, "ExternalSecret"),
+            f"got {[d['metadata']['name'] for d in of_kind(docs, 'ExternalSecret')]}",
+        )
+        expect(
+            f"no ingress port on the Service [{profile}]",
+            PORT_NAME not in service_ports(docs),
+            f"got {sorted(service_ports(docs))}",
+        )
+        expect(
+            f"no ingress port on the pod [{profile}]",
+            PORT_NAME not in container_ports(docs),
+            f"got {sorted(container_ports(docs))}",
+        )
 
 
 # --- the in-cluster receiver does not move --------------------------------------
@@ -191,23 +240,36 @@ def test_the_in_cluster_receiver_is_the_same_on_or_off() -> None:
     off, on = render(COLLECTOR), render(COLLECTOR, *ON)
     otlp_off = collector_config(off)["receivers"]["otlp"]
     otlp_on = collector_config(on)["receivers"]["otlp"]
-    expect("the otlp receiver is identical with the switch on", otlp_off == otlp_on,
-           f"off {otlp_off} / on {otlp_on}")
+    expect(
+        "the otlp receiver is identical with the switch on",
+        otlp_off == otlp_on,
+        f"off {otlp_off} / on {otlp_on}",
+    )
     protocols = otlp_on.get("protocols") or {}
-    expect("it still serves gRPC on 4317 and HTTP on 4318",
-           (protocols.get("grpc") or {}).get("endpoint") == "0.0.0.0:4317"
-           and (protocols.get("http") or {}).get("endpoint") == "0.0.0.0:4318",
-           f"got {protocols}")
-    expect("and neither protocol asks a sender for a token",
-           all("auth" not in (p or {}) for p in protocols.values()), f"got {protocols}")
+    expect(
+        "it still serves gRPC on 4317 and HTTP on 4318",
+        (protocols.get("grpc") or {}).get("endpoint") == "0.0.0.0:4317"
+        and (protocols.get("http") or {}).get("endpoint") == "0.0.0.0:4318",
+        f"got {protocols}",
+    )
+    expect(
+        "and neither protocol asks a sender for a token",
+        all("auth" not in (p or {}) for p in protocols.values()),
+        f"got {protocols}",
+    )
     for name in ("otlp-grpc", "otlp-http"):
-        expect(f"the Service's {name} port is the same with the switch on",
-               service_ports(off).get(name) == service_ports(on).get(name),
-               f"off {service_ports(off).get(name)} / on {service_ports(on).get(name)}")
+        expect(
+            f"the Service's {name} port is the same with the switch on",
+            service_ports(off).get(name) == service_ports(on).get(name),
+            f"off {service_ports(off).get(name)} / on {service_ports(on).get(name)}",
+        )
     pipelines = collector_config(on)["service"]["pipelines"]
     for signal in ("traces", "metrics", "logs"):
-        expect(f"the {signal} pipeline still takes the otlp receiver",
-               "otlp" in pipelines[signal]["receivers"], f"got {pipelines[signal]['receivers']}")
+        expect(
+            f"the {signal} pipeline still takes the otlp receiver",
+            "otlp" in pipelines[signal]["receivers"],
+            f"got {pipelines[signal]['receivers']}",
+        )
 
 
 # --- on: the route, and the receiver behind it -----------------------------------
@@ -216,91 +278,158 @@ def test_the_switch_publishes_the_route_onto_the_authenticated_port() -> None:
     expect("the otel route renders with the switch on", route is not None, "absent")
     if route is None:
         return
-    expect("it lives in the collector's namespace", route["metadata"]["namespace"] == "otel",
-           f"got {route['metadata']['namespace']}")
-    expect("on otel.<domain>", route["spec"]["hostnames"] == ["otel.dfe.example.com"],
-           f"got {route['spec']['hostnames']}")
-    expect("pinned to the https listener",
-           [p.get("sectionName") for p in route["spec"]["parentRefs"]] == ["https"],
-           f"got {route['spec']['parentRefs']}")
+    expect(
+        "it lives in the collector's namespace",
+        route["metadata"]["namespace"] == "otel",
+        f"got {route['metadata']['namespace']}",
+    )
+    expect(
+        "on otel.<domain>",
+        route["spec"]["hostnames"] == ["otel.dfe.example.com"],
+        f"got {route['spec']['hostnames']}",
+    )
+    expect(
+        "pinned to the https listener",
+        [p.get("sectionName") for p in route["spec"]["parentRefs"]] == ["https"],
+        f"got {route['spec']['parentRefs']}",
+    )
     backends = [b for rule in route["spec"]["rules"] for b in rule["backendRefs"]]
     ingress = service_ports(render(COLLECTOR, *ON)).get(PORT_NAME) or {}
-    expect("its one backend is the collector Service's authenticated port",
-           [(b["name"], b["port"]) for b in backends]
-           == [(gateway_service(render(COLLECTOR, *ON))["metadata"]["name"], ingress.get("port"))],
-           f"route {backends} / collector {ingress}")
-    expect("which is not the in-cluster OTLP/HTTP port",
-           all(b["port"] != 4318 for b in backends), f"got {backends}")
+    expect(
+        "its one backend is the collector Service's authenticated port",
+        [(b["name"], b["port"]) for b in backends]
+        == [
+            (
+                gateway_service(render(COLLECTOR, *ON))["metadata"]["name"],
+                ingress.get("port"),
+            )
+        ],
+        f"route {backends} / collector {ingress}",
+    )
+    expect(
+        "which is not the in-cluster OTLP/HTTP port",
+        all(b["port"] != 4318 for b in backends),
+        f"got {backends}",
+    )
 
 
 def test_the_route_and_the_receiver_share_one_port() -> None:
     """One key, otel.ingress.port, so the route cannot aim at a port nobody serves."""
     moved = (*ON, "--set", "otel.ingress.port=4400")
-    route = named(render(GATEWAY, *moved), "HTTPRoute", ROUTE) or {"spec": {"rules": []}}
+    route = named(render(GATEWAY, *moved), "HTTPRoute", ROUTE) or {
+        "spec": {"rules": []}
+    }
     ports = [b["port"] for rule in route["spec"]["rules"] for b in rule["backendRefs"]]
     docs = render(COLLECTOR, *moved)
     receiver = collector_config(docs)["receivers"].get(RECEIVER) or {}
     endpoint = ((receiver.get("protocols") or {}).get("http") or {}).get("endpoint")
     expect("the route follows the port", ports == [4400], f"got {ports}")
     expect("the receiver listens on it", endpoint == "0.0.0.0:4400", f"got {endpoint}")
-    expect("the pod exposes it", container_ports(docs).get(PORT_NAME) == 4400,
-           f"got {container_ports(docs)}")
-    expect("the Service carries it", (service_ports(docs).get(PORT_NAME) or {}).get("port") == 4400,
-           f"got {service_ports(docs)}")
+    expect(
+        "the pod exposes it",
+        container_ports(docs).get(PORT_NAME) == 4400,
+        f"got {container_ports(docs)}",
+    )
+    expect(
+        "the Service carries it",
+        (service_ports(docs).get(PORT_NAME) or {}).get("port") == 4400,
+        f"got {service_ports(docs)}",
+    )
 
 
 def test_on_the_ingress_receiver_admits_only_a_bearer_token() -> None:
     config = collector_config(render(COLLECTOR, *ON))
     extension = (config.get("extensions") or {}).get(EXTENSION) or {}
-    expect("the bearer-token extension renders, reading a file",
-           set(extension) == {"filename"} and str(extension.get("filename", "")).startswith("/"),
-           f"got {extension}")
+    expect(
+        "the bearer-token extension renders, reading a file",
+        set(extension) == {"filename"}
+        and str(extension.get("filename", "")).startswith("/"),
+        f"got {extension}",
+    )
     receiver = config["receivers"].get(RECEIVER) or {}
     expect(
         "the ingress receiver is OTLP/HTTP alone, and every request goes through the extension",
-        receiver == {"protocols": {"http": {
-            "endpoint": "0.0.0.0:4319", "auth": {"authenticator": EXTENSION},
-        }}},
+        receiver
+        == {
+            "protocols": {
+                "http": {
+                    "endpoint": "0.0.0.0:4319",
+                    "auth": {"authenticator": EXTENSION},
+                }
+            }
+        },
         f"got {receiver}",
     )
-    expect("the extension is started", EXTENSION in config["service"]["extensions"],
-           f"got {config['service']['extensions']}")
+    expect(
+        "the extension is started",
+        EXTENSION in config["service"]["extensions"],
+        f"got {config['service']['extensions']}",
+    )
     pipelines = config["service"]["pipelines"]
     for signal in ("traces", "metrics", "logs"):
-        expect(f"the {signal} pipeline takes the ingress receiver",
-               RECEIVER in pipelines[signal]["receivers"], f"got {pipelines[signal]['receivers']}")
+        expect(
+            f"the {signal} pipeline takes the ingress receiver",
+            RECEIVER in pipelines[signal]["receivers"],
+            f"got {pipelines[signal]['receivers']}",
+        )
 
 
-def test_on_the_token_comes_from_the_secret_store_into_the_file_the_receiver_reads() -> None:
+def test_on_the_token_comes_from_the_secret_store_into_the_file_the_receiver_reads() -> (
+    None
+):
     docs = render(COLLECTOR, *ON)
     pulls = of_kind(docs, "ExternalSecret")
     expect("one ExternalSecret renders", len(pulls) == 1, f"got {len(pulls)}")
     if len(pulls) != 1:
         return
     spec = pulls[0]["spec"]
-    expect("it reads the deployment's ClusterSecretStore",
-           spec["secretStoreRef"] == {"name": "dfe-secret-store", "kind": "ClusterSecretStore"},
-           f"got {spec['secretStoreRef']}")
-    expect("at the configured path, into the key the file is named after",
-           spec["data"] == [{"secretKey": "token",
-                             "remoteRef": {"key": STORE_PATH, "property": "token"}}],
-           f"got {spec['data']}")
+    expect(
+        "it reads the deployment's ClusterSecretStore",
+        spec["secretStoreRef"]
+        == {"name": "dfe-secret-store", "kind": "ClusterSecretStore"},
+        f"got {spec['secretStoreRef']}",
+    )
+    expect(
+        "at the configured path, into the key the file is named after",
+        spec["data"]
+        == [
+            {
+                "secretKey": "token",
+                "remoteRef": {"key": STORE_PATH, "property": "token"},
+            }
+        ],
+        f"got {spec['data']}",
+    )
     target = spec["target"]["name"]
     pod = gateway_pod(docs)
     volumes = [
-        v["name"] for v in pod.get("volumes") or []
+        v["name"]
+        for v in pod.get("volumes") or []
         if (v.get("secret") or {}).get("secretName") == target
     ]
-    expect("the gateway pod mounts that Secret", len(volumes) == 1, f"got {pod.get('volumes')}")
+    expect(
+        "the gateway pod mounts that Secret",
+        len(volumes) == 1,
+        f"got {pod.get('volumes')}",
+    )
     if len(volumes) != 1:
         return
-    mounts = [m for m in pod["containers"][0].get("volumeMounts") or [] if m["name"] == volumes[0]]
-    filename = PurePosixPath(collector_config(docs)["extensions"][EXTENSION]["filename"])
-    expect("read-only, at the directory the extension reads its token file from",
-           len(mounts) == 1 and mounts[0].get("readOnly") is True
-           and PurePosixPath(mounts[0]["mountPath"]) == filename.parent
-           and filename.name == "token",
-           f"mounts {mounts}, filename {filename}")
+    mounts = [
+        m
+        for m in pod["containers"][0].get("volumeMounts") or []
+        if m["name"] == volumes[0]
+    ]
+    filename = PurePosixPath(
+        collector_config(docs)["extensions"][EXTENSION]["filename"]
+    )
+    expect(
+        "read-only, at the directory the extension reads its token file from",
+        len(mounts) == 1
+        and mounts[0].get("readOnly") is True
+        and PurePosixPath(mounts[0]["mountPath"]) == filename.parent
+        and filename.name == "token",
+        f"mounts {mounts}, filename {filename}",
+    )
 
 
 # --- on with no token: refused ---------------------------------------------------
@@ -311,7 +440,11 @@ def test_on_with_no_token_path_refuses_in_both_charts() -> None:
             ("empty", (*ON_NO_TOKEN, "--set", "otel.ingress.auth.remoteKey=")),
         ):
             error = refusal(chart, *args)
-            expect(f"{chart} refuses [{shape}]", NO_TOKEN in error, f"got {error or 'a render'}")
+            expect(
+                f"{chart} refuses [{shape}]",
+                NO_TOKEN in error,
+                f"got {error or 'a render'}",
+            )
 
 
 def test_a_quoted_switch_is_refused_in_both_charts() -> None:
@@ -320,7 +453,11 @@ def test_a_quoted_switch_is_refused_in_both_charts() -> None:
         for value in ("false", "true"):
             error = refusal(chart, "--set-string", f"otel.ingress.enabled={value}")
             refused = NOT_A_BOOL in error and "not a bool" in error
-            expect(f"{chart} refuses a quoted {value}", refused, f"got {error or 'a render'}")
+            expect(
+                f"{chart} refuses a quoted {value}",
+                refused,
+                f"got {error or 'a render'}",
+            )
 
 
 # --- one key, both charts --------------------------------------------------------
@@ -329,15 +466,29 @@ def test_one_switch_reaches_both_charts() -> None:
     ingress = (common.get("otel") or {}).get("ingress") or {}
     path = (ingress.get("auth") or {}).get("remoteKey")
     detail = f"got {ingress}"
-    expect("common.yaml declares the switch, off", ingress.get("enabled") is False, detail)
-    expect("and the shared port and token path",
-           isinstance(ingress.get("port"), int) and path == "", detail)
+    expect(
+        "common.yaml declares the switch, off", ingress.get("enabled") is False, detail
+    )
+    expect(
+        "and the shared port and token path",
+        isinstance(ingress.get("port"), int) and path == "",
+        detail,
+    )
     for chart in (GATEWAY, COLLECTOR):
-        values = yaml.safe_load((chart_dir(chart) / "values.yaml").read_text(encoding="utf-8"))
+        values = yaml.safe_load(
+            (chart_dir(chart) / "values.yaml").read_text(encoding="utf-8")
+        )
         own = (values.get("otel") or {}).get("ingress") or {}
-        expect(f"{chart} defaults the switch off", own.get("enabled") is False, f"got {own}")
-        expect(f"{chart} defaults the same port", own.get("port") == ingress.get("port"),
-               f"got {own.get('port')}")
+        expect(
+            f"{chart} defaults the switch off",
+            own.get("enabled") is False,
+            f"got {own}",
+        )
+        expect(
+            f"{chart} defaults the same port",
+            own.get("port") == ingress.get("port"),
+            f"got {own.get('port')}",
+        )
 
 
 def test_every_appset_rendering_either_chart_layers_the_deployers_common_yaml() -> None:
@@ -349,7 +500,9 @@ def test_every_appset_rendering_either_chart_layers_the_deployers_common_yaml() 
     for app, files in wanted.items():
         for filename in files:
             found = False
-            for doc in yaml.safe_load_all((APPSETS / filename).read_text(encoding="utf-8")):
+            for doc in yaml.safe_load_all(
+                (APPSETS / filename).read_text(encoding="utf-8")
+            ):
                 if not doc or doc.get("kind") != "ApplicationSet":
                     continue
                 apps = {
@@ -366,15 +519,20 @@ def test_every_appset_rendering_either_chart_layers_the_deployers_common_yaml() 
                     for source in doc["spec"]["template"]["spec"]["sources"]
                     for f in (source.get("helm") or {}).get("valueFiles") or []
                 ]
-                expect(f"{filename} layers infra/common.yaml onto {app}",
-                       "$values/infra/common.yaml" in value_files, f"got {value_files}")
+                expect(
+                    f"{filename} layers infra/common.yaml onto {app}",
+                    "$values/infra/common.yaml" in value_files,
+                    f"got {value_files}",
+                )
             expect(f"{filename} generates {app}", found, "no ApplicationSet lists it")
 
 
 def _load_dfe_ops():
     """Import dfe-ops as a module -- it has no .py extension, so no import finds it."""
     sys.path.insert(0, str(REPO_ROOT / "scripts"))
-    loader = importlib.machinery.SourceFileLoader("dfe_ops", str(REPO_ROOT / "scripts" / "dfe-ops"))
+    loader = importlib.machinery.SourceFileLoader(
+        "dfe_ops", str(REPO_ROOT / "scripts" / "dfe-ops")
+    )
     spec = importlib.util.spec_from_loader("dfe_ops", loader)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -392,15 +550,19 @@ def test_the_token_counts_among_what_reads_the_secret_store() -> None:
             values["otel"]["ingress"]["enabled"] = True
         return values
 
-    expect("off, the token is not a store consumer",
-           not [u for u in ops._store_consumers("slim", {}) if "OTLP" in u],
-           f"got {ops._store_consumers('slim', {})}")
+    expect(
+        "off, the token is not a store consumer",
+        not [u for u in ops._store_consumers("slim", {}) if "OTLP" in u],
+        f"got {ops._store_consumers('slim', {})}",
+    )
     ops._chart_values = switched_on
     try:
         uses = ops._store_consumers("slim", {})
     finally:
         ops._chart_values = tracked
-    expect("on, it is", any("OTLP ingress bearer token" in u for u in uses), f"got {uses}")
+    expect(
+        "on, it is", any("OTLP ingress bearer token" in u for u in uses), f"got {uses}"
+    )
 
 
 def main() -> int:

@@ -48,7 +48,8 @@ def baseline_policies(docs: list[dict]) -> list[dict]:
     return [
         d
         for d in docs
-        if d.get("kind") == "NetworkPolicy" and d["metadata"]["name"] == "allow-baseline-egress"
+        if d.get("kind") == "NetworkPolicy"
+        and d["metadata"]["name"] == "allow-baseline-egress"
     ]
 
 
@@ -65,27 +66,44 @@ def pod_identity_rules(policy: dict) -> list[dict]:
 
 def test_baseline_admits_pod_identity_everywhere() -> None:
     policies = baseline_policies(render())
-    expect("a baseline policy renders in at least one namespace", len(policies) >= 1,
-           f"got {len(policies)}")
+    expect(
+        "a baseline policy renders in at least one namespace",
+        len(policies) >= 1,
+        f"got {len(policies)}",
+    )
     for policy in policies:
         ns = policy["metadata"]["namespace"]
         rules = pod_identity_rules(policy)
-        expect(f"{ns} baseline egress admits the Pod Identity agent /32",
-               len(rules) == 1, f"got {rules}")
-        ports = {(p["port"], p.get("protocol", "TCP")) for p in rules[0].get("ports", [])}
-        expect(f"{ns} Pod Identity rule opens only TCP {POD_IDENTITY_PORT}",
-               ports == {(POD_IDENTITY_PORT, "TCP")}, f"got {ports}")
+        expect(
+            f"{ns} baseline egress admits the Pod Identity agent /32",
+            len(rules) == 1,
+            f"got {rules}",
+        )
+        ports = {
+            (p["port"], p.get("protocol", "TCP")) for p in rules[0].get("ports", [])
+        }
+        expect(
+            f"{ns} Pod Identity rule opens only TCP {POD_IDENTITY_PORT}",
+            ports == {(POD_IDENTITY_PORT, "TCP")},
+            f"got {ports}",
+        )
 
 
 def test_disabling_removes_the_rule() -> None:
     policies = baseline_policies(render("podIdentityAgent.enabled=false"))
-    expect("disabling still renders the baseline policy itself", len(policies) >= 1,
-           f"got {len(policies)}")
+    expect(
+        "disabling still renders the baseline policy itself",
+        len(policies) >= 1,
+        f"got {len(policies)}",
+    )
     for policy in policies:
         ns = policy["metadata"]["namespace"]
         rules = pod_identity_rules(policy)
-        expect(f"{ns} drops the Pod Identity rule when disabled", rules == [],
-               f"got {rules}")
+        expect(
+            f"{ns} drops the Pod Identity rule when disabled",
+            rules == [],
+            f"got {rules}",
+        )
 
 
 def refused(*sets: str) -> str:
@@ -104,15 +122,21 @@ def test_the_metadata_service_cannot_be_opened_to_every_namespace() -> None:
     additive -- so every pod in every DFE namespace would hold it and no later
     policy could take it back. One character from the agent's own address."""
     err = refused("podIdentityAgent.address=169.254.169.254")
-    expect("the metadata service address is refused by name",
-           "169.254.169.254 is the instance metadata service" in err, err.strip()[-300:])
+    expect(
+        "the metadata service address is refused by name",
+        "169.254.169.254 is the instance metadata service" in err,
+        err.strip()[-300:],
+    )
 
 
 def test_only_the_credentials_port_may_be_opened() -> None:
     """2703 is the agent's own webhook port; no application pod calls it."""
     err = refused("podIdentityAgent.port=2703")
-    expect("a port other than 80 is refused by name",
-           "only 80, the credentials endpoint" in err, err.strip()[-300:])
+    expect(
+        "a port other than 80 is refused by name",
+        "only 80, the credentials endpoint" in err,
+        err.strip()[-300:],
+    )
 
 
 def main() -> int:

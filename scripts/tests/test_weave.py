@@ -43,7 +43,8 @@ def _library(root: Path) -> Path:
     (lib / "schema").mkdir(parents=True)
     (lib / "skeleton" / "templates").mkdir(parents=True)
     (lib / "Chart.yaml").write_text(
-        "apiVersion: v2\nname: scalo-service\ntype: library\nversion: 9.9.9\n", encoding="utf-8"
+        "apiVersion: v2\nname: scalo-service\ntype: library\nversion: 9.9.9\n",
+        encoding="utf-8",
     )
     (lib / "schema" / "deployment-contract.v4.schema.json").write_text(
         json.dumps(
@@ -51,7 +52,10 @@ def _library(root: Path) -> Path:
                 "$schema": "https://json-schema.org/draft/2020-12/schema",
                 "type": "object",
                 "required": ["schema_version", "app_name"],
-                "properties": {"schema_version": {"const": 4}, "app_name": {"type": "string"}},
+                "properties": {
+                    "schema_version": {"const": 4},
+                    "app_name": {"type": "string"},
+                },
             }
         ),
         encoding="utf-8",
@@ -88,7 +92,12 @@ CONFIG_SCHEMA = {
         "Batch": {
             "type": "object",
             "properties": {
-                "size": {"type": "integer", "minimum": 1, "default": 500, "x-scalo-dial": "big"}
+                "size": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "default": 500,
+                    "x-scalo-dial": "big",
+                }
             },
         },
         "Level": {"type": "string", "enum": ["info", "debug"]},
@@ -97,13 +106,21 @@ CONFIG_SCHEMA = {
         "batch": {"$ref": "#/$defs/Batch"},
         "log": {
             "properties": {
-                "level": {"$ref": "#/$defs/Level", "default": "info", "x-scalo-dial": "small"}
+                "level": {
+                    "$ref": "#/$defs/Level",
+                    "default": "info",
+                    "x-scalo-dial": "small",
+                }
             }
         },
         "plain": {"type": "string"},
     },
     "allOf": [
-        {"properties": {"workers": {"type": "integer", "default": 4, "x-scalo-dial": "big"}}}
+        {
+            "properties": {
+                "workers": {"type": "integer", "default": 4, "x-scalo-dial": "big"}
+            }
+        }
     ],
 }
 
@@ -170,15 +187,25 @@ def test_assemble_fills_in_chart_yaml(tmp_path: Path) -> None:
     chart = _assemble(tmp_path, "out", tag="v4.5.6", version="4.5.6")
     meta = yaml.safe_load((chart / "Chart.yaml").read_text(encoding="utf-8"))
     assert chart.name == "demo-app"
-    assert (meta["name"], meta["version"], meta["appVersion"]) == ("demo-app", "4.5.6", "v4.5.6")
+    assert (meta["name"], meta["version"], meta["appVersion"]) == (
+        "demo-app",
+        "4.5.6",
+        "v4.5.6",
+    )
     assert meta["description"] == "A demo service"
     library_dir = (tmp_path / "scalo-service").resolve()
     assert meta["dependencies"] == [
-        {"name": "scalo-service", "repository": f"file://{library_dir}", "version": "9.9.9"}
+        {
+            "name": "scalo-service",
+            "repository": f"file://{library_dir}",
+            "version": "9.9.9",
+        }
     ]
 
 
-def test_assemble_nests_each_dial_under_config_with_its_refs_inlined(tmp_path: Path) -> None:
+def test_assemble_nests_each_dial_under_config_with_its_refs_inlined(
+    tmp_path: Path,
+) -> None:
     schema = json.loads(
         (_assemble(tmp_path, "out") / "values.schema.json").read_text(encoding="utf-8")
     )
@@ -212,7 +239,10 @@ def test_assemble_carries_the_lint_skips_outside_the_package(tmp_path: Path) -> 
     chart = _assemble(tmp_path, "out")
     config = yaml.safe_load((chart / ".hyperi-ci.yaml").read_text(encoding="utf-8"))
     assert config == {"quality": {"checkov": {"skip": ["CKV_K8S_40"]}}}
-    assert ".hyperi-ci.yaml" in (chart / ".helmignore").read_text(encoding="utf-8").splitlines()
+    assert (
+        ".hyperi-ci.yaml"
+        in (chart / ".helmignore").read_text(encoding="utf-8").splitlines()
+    )
 
 
 @pytest.mark.parametrize(
@@ -220,13 +250,21 @@ def test_assemble_carries_the_lint_skips_outside_the_package(tmp_path: Path) -> 
     [
         ({"app_name": "Bad_Name"}, {}, "not a Kubernetes Service name"),
         ({"schema_version": 5}, {}, "cannot render schema_version 5"),
-        ({"config_schema": {"properties": {"x": {"x-scalo-dial": "huge"}}}}, {}, "is 'huge'"),
+        (
+            {"config_schema": {"properties": {"x": {"x-scalo-dial": "huge"}}}},
+            {},
+            "is 'huge'",
+        ),
         (
             {"config_schema": {"properties": {"x": {"$ref": "#/$defs/none"}}}},
             {},
             "points at nothing",
         ),
-        ({"config_schema": {"properties": {"x": {"$ref": "http://x/y"}}}}, {}, "not local"),
+        (
+            {"config_schema": {"properties": {"x": {"$ref": "http://x/y"}}}},
+            {},
+            "not local",
+        ),
         ({}, {"digest": "sha256:short"}, "is not sha256"),
         ({}, {"tag": "bad tag"}, "is not a tag"),
     ],
@@ -246,7 +284,9 @@ def test_assemble_refuses_to_overwrite_a_chart(tmp_path: Path) -> None:
 
 def test_the_committed_contracts_are_the_apps_own() -> None:
     for service, app in (("dfe-ui", "dfe-ui"), ("dfe-hyperdx", "dfe-hyperdx")):
-        contract = json.loads((CONTRACTS / f"{service}.json").read_text(encoding="utf-8"))
+        contract = json.loads(
+            (CONTRACTS / f"{service}.json").read_text(encoding="utf-8")
+        )
         assert (contract["schema_version"], contract["app_name"]) == (4, app)
 
 
@@ -258,7 +298,8 @@ def _values_chart(root: Path, name: str) -> Path:
     chart = root / name
     (chart / "templates").mkdir(parents=True)
     (chart / "Chart.yaml").write_text(
-        f"apiVersion: v2\nname: {name}\nversion: 0.0.0\ntype: application\n", encoding="utf-8"
+        f"apiVersion: v2\nname: {name}\nversion: 0.0.0\ntype: application\n",
+        encoding="utf-8",
     )
     (chart / "templates" / "values.yaml").write_text(
         "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: values\n"
@@ -269,7 +310,9 @@ def _values_chart(root: Path, name: str) -> Path:
 
 
 def _merged(docs: list[dict]) -> dict:
-    return json.loads(next(d for d in docs if d["metadata"]["name"] == "values")["data"]["values"])
+    return json.loads(
+        next(d for d in docs if d["metadata"]["name"] == "values")["data"]["values"]
+    )
 
 
 def _target(
@@ -297,12 +340,19 @@ def test_the_render_puts_the_app_layers_after_the_profile_and_before_the_deploy_
         "dfe-ui/aws.yaml",
         "dfe-ui/profile-scale.yaml",
     ):
-        _write(apps / rel, {"layer": rel, rel.replace("/", "_").removesuffix(".yaml"): True})
+        _write(
+            apps / rel,
+            {"layer": rel, rel.replace("/", "_").removesuffix(".yaml"): True},
+        )
     deploy = tmp_path / "deploy"
     _write(deploy / "infra" / "common.yaml", {"layer": "infra", "infraOnly": True})
     _write(
         deploy / "values" / "dfe-ui-default-values.yaml",
-        {"deploy": {"service": "dfe-ui", "instance": "default"}, "layer": "overlay", "env": "prod"},
+        {
+            "deploy": {"service": "dfe-ui", "instance": "default"},
+            "layer": "overlay",
+            "env": "prod",
+        },
     )
     rendered = w.render_app(
         _target(annotations=(("dfe.hyperi.io/image_pull_secret", "ghcr-pull-secret"),)),
@@ -313,7 +363,10 @@ def test_the_render_puts_the_app_layers_after_the_profile_and_before_the_deploy_
             deploy_repo=deploy,
         ),
     )
-    assert (rendered.release, rendered.namespace) == ("dfe-ui-default-in-cluster", "dfe")
+    assert (rendered.release, rendered.namespace) == (
+        "dfe-ui-default-in-cluster",
+        "dfe",
+    )
     assert [c["file"] for c in rendered.chain[0]] == [
         "argocd/values/common.yaml",
         "argocd/values/aws.yaml",
@@ -328,7 +381,8 @@ def test_the_render_puts_the_app_layers_after_the_profile_and_before_the_deploy_
     values = _merged(rendered.docs)
     assert values["layer"] == "overlay"
     assert all(
-        values[k] for k in ("_common", "dfe-ui_values", "dfe-ui_aws", "dfe-ui_profile-scale")
+        values[k]
+        for k in ("_common", "dfe-ui_values", "dfe-ui_aws", "dfe-ui_profile-scale")
     )
     assert values["infraOnly"] is True
     # Parameters beat every values file, as Argo passes them with --set.
@@ -341,7 +395,9 @@ def test_a_missing_app_layer_is_skipped_as_the_appset_skips_it(tmp_path: Path) -
     rendered = w.render_app(
         _target(profile="slim", cloud="local"),
         _inputs(
-            appset=appset(), chart=_values_chart(tmp_path, "dfe-ui"), apps_dir=tmp_path / "empty"
+            appset=appset(),
+            chart=_values_chart(tmp_path, "dfe-ui"),
+            apps_dir=tmp_path / "empty",
         ),
     )
     present = [c["file"] for c in rendered.chain[0] if c["present"]]
@@ -356,9 +412,14 @@ def test_the_render_carries_dfe_extras_as_its_second_source(tmp_path: Path) -> N
     chart = _values_chart(tmp_path, "dfe-ui")
     rendered = w.render_app(_target(), _inputs(appset=appset(), chart=chart))
     assert len(rendered.chain) == 2
-    assert [c["file"] for c in rendered.chain[1]] == [c["file"] for c in rendered.chain[0]]
+    assert [c["file"] for c in rendered.chain[1]] == [
+        c["file"] for c in rendered.chain[0]
+    ]
     ids = {(d["kind"], d["metadata"]["name"]) for d in rendered.docs}
-    assert {("ExternalSecret", "dfe-ui-nextauth"), ("Password", "dfe-ui-nextauth-gen")} <= ids
+    assert {
+        ("ExternalSecret", "dfe-ui-nextauth"),
+        ("Password", "dfe-ui-nextauth-gen"),
+    } <= ids
     alone = w.render_app(_target(), _inputs(appset=appset(), chart=chart, extras=False))
     assert len(alone.chain) == 1
     assert ("ExternalSecret", "dfe-ui-nextauth") not in {
@@ -370,7 +431,10 @@ def test_an_extras_only_render_needs_no_thin_chart() -> None:
     rendered = w.render_app(_target(), _inputs(appset=appset(), thin=False))
     assert len(rendered.chain) == 1
     ids = {(d["kind"], d["metadata"]["name"]) for d in rendered.docs}
-    assert ids == {("ExternalSecret", "dfe-ui-nextauth"), ("Password", "dfe-ui-nextauth-gen")}
+    assert ids == {
+        ("ExternalSecret", "dfe-ui-nextauth"),
+        ("Password", "dfe-ui-nextauth-gen"),
+    }
 
 
 def test_a_render_of_neither_source_is_refused() -> None:
@@ -378,9 +442,13 @@ def test_a_render_of_neither_source_is_refused() -> None:
         w.render_app(_target(), _inputs(appset=appset(), thin=False, extras=False))
 
 
-def test_the_dfe_extras_source_reads_the_chart_sources_layers_with_its_chart_name() -> None:
+def test_the_dfe_extras_source_reads_the_chart_sources_layers_with_its_chart_name() -> (
+    None
+):
     """Both helm sources take the same value files and parameters, plus chartName."""
-    app = w.application(REPO_ROOT, appset(), _target(service="dfe-hyperdx"), None, helm())
+    app = w.application(
+        REPO_ROOT, appset(), _target(service="dfe-hyperdx"), None, helm()
+    )
     chart, extras = (s for s in app["spec"]["sources"] if "helm" in s)
     params = {p["name"]: p["value"] for p in extras["helm"]["parameters"]}
     assert (extras["repoURL"], extras["path"]) == (w.INFRA_REPO_URL, w.EXTRAS_PATH)
@@ -390,10 +458,16 @@ def test_the_dfe_extras_source_reads_the_chart_sources_layers_with_its_chart_nam
     assert {k: v for k, v in params.items() if k != "chartName"} == chart_params
     # An empty release name, which Argo drops: its objects carry the Application's
     # app.kubernetes.io/instance, as the chart's do.
-    assert extras["helm"].get("releaseName", "") == chart["helm"].get("releaseName", "") == ""
+    assert (
+        extras["helm"].get("releaseName", "")
+        == chart["helm"].get("releaseName", "")
+        == ""
+    )
 
 
-def _reworked_tree(root: Path, ignore_missing: bool = True, extra_file: str | None = None) -> Path:
+def _reworked_tree(
+    root: Path, ignore_missing: bool = True, extra_file: str | None = None
+) -> Path:
     """A tree whose appset already lists the app layers and pulls the chart over OCI."""
     tree = root / "tree"
     files = [
@@ -404,7 +478,9 @@ def _reworked_tree(root: Path, ignore_missing: bool = True, extra_file: str | No
     if extra_file:
         files.append(extra_file)
     template = {
-        "metadata": {"name": "{{ .deploy.service }}-{{ .deploy.instance }}-{{ .name }}"},
+        "metadata": {
+            "name": "{{ .deploy.service }}-{{ .deploy.instance }}-{{ .name }}"
+        },
         "spec": {
             "sources": [
                 {
@@ -439,7 +515,10 @@ def _reworked_tree(root: Path, ignore_missing: bool = True, extra_file: str | No
         {"kind": "ApplicationSet", "spec": {"goTemplate": True, "template": template}},
     )
     _write(tree / "argocd/values/common.yaml", {"layer": "common"})
-    _write(tree / "argocd/values/apps/dfe-ui/values.yaml", {"layer": "app", "appOnly": True})
+    _write(
+        tree / "argocd/values/apps/dfe-ui/values.yaml",
+        {"layer": "app", "appOnly": True},
+    )
     return tree
 
 
@@ -460,7 +539,11 @@ def test_a_reworked_appset_is_followed_as_written(tmp_path: Path) -> None:
         ("$values/infra/common.yaml", False),
     ]
     values = _merged(rendered.docs)
-    assert (values["layer"], values["appOnly"], values["fromParameter"]) == ("app", True, "default")
+    assert (values["layer"], values["appOnly"], values["fromParameter"]) == (
+        "app",
+        True,
+        "default",
+    )
 
 
 def test_an_oci_source_must_name_the_thin_chart(tmp_path: Path) -> None:
@@ -524,13 +607,17 @@ def test_the_application_takes_name_namespace_and_parameters_from_the_appset() -
     assert params["profile"] == "scale"
     # The receiver address annotation is unset here, and reads empty as Argo's string map gives it.
     assert "<no value>" not in json.dumps(app)
-    engine = w.application(REPO_ROOT, appset(), _target(service="dfe-engine"), None, helm())
+    engine = w.application(
+        REPO_ROOT, appset(), _target(service="dfe-engine"), None, helm()
+    )
     assert engine["metadata"]["annotations"]["argocd.argoproj.io/sync-wave"] == "5"
 
 
 def test_the_appset_refuses_a_cluster_with_no_registry() -> None:
     target = _target(annotations=(("dfe.hyperi.io/registry", ""),))
-    with pytest.raises(w.WeaveError, match=re.escape("carries no dfe.hyperi.io/registry")):
+    with pytest.raises(
+        w.WeaveError, match=re.escape("carries no dfe.hyperi.io/registry")
+    ):
         w.application(REPO_ROOT, appset(), target, None, helm())
 
 
@@ -544,7 +631,9 @@ def test_an_instance_file_for_another_service_is_refused(tmp_path: Path) -> None
         w.generator_params(_target(), deploy)
 
 
-def test_application_runs_from_the_command_line(capsys: pytest.CaptureFixture[str]) -> None:
+def test_application_runs_from_the_command_line(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     code = w.main(
         [
             "application",
@@ -589,17 +678,38 @@ def test_render_runs_from_the_command_line(
     ]
     thin = ["--contract", str(CONTRACTS / "dfe-ui.json"), "--library", str(library())]
     assert w.main([*base, *thin, "--out", str(out)]) == 0
-    ids = {(d["kind"], d["metadata"]["name"]) for d in w.documents(out.read_text("utf-8"))}
+    ids = {
+        (d["kind"], d["metadata"]["name"]) for d in w.documents(out.read_text("utf-8"))
+    }
     assert {("Deployment", "dfe-ui"), ("ExternalSecret", "dfe-ui-nextauth")} <= ids
-    assert "dfe-weave: values used    argocd/values/common.yaml" in capsys.readouterr().err
+    assert (
+        "dfe-weave: values used    argocd/values/common.yaml" in capsys.readouterr().err
+    )
     assert w.main([*base, "--extras-only", "--out", str(out)]) == 0
-    alone = {(d["kind"], d["metadata"]["name"]) for d in w.documents(out.read_text("utf-8"))}
-    assert alone == {("ExternalSecret", "dfe-ui-nextauth"), ("Password", "dfe-ui-nextauth-gen")}
+    alone = {
+        (d["kind"], d["metadata"]["name"]) for d in w.documents(out.read_text("utf-8"))
+    }
+    assert alone == {
+        ("ExternalSecret", "dfe-ui-nextauth"),
+        ("Password", "dfe-ui-nextauth-gen"),
+    }
 
 
-def test_a_render_with_no_thin_chart_input_cannot_run(capsys: pytest.CaptureFixture[str]) -> None:
+def test_a_render_with_no_thin_chart_input_cannot_run(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     code = w.main(
-        ["render", "--service", "dfe-ui", "--profile", "slim", "--cloud", "local", "--library", ""]
+        [
+            "render",
+            "--service",
+            "dfe-ui",
+            "--profile",
+            "slim",
+            "--cloud",
+            "local",
+            "--library",
+            "",
+        ]
     )
     assert code == 2
     assert "needs --chart, or --contract with --library" in capsys.readouterr().err
@@ -611,7 +721,12 @@ def test_assembling_the_committed_contracts_is_deterministic(tmp_path: Path) -> 
         raw = (CONTRACTS / f"{service}.json").read_bytes()
         charts = [
             w.assemble(
-                raw, lib, tmp_path / f"{service}-{n}", version="1.0.0", tag="v1.0.0", digest=DIGEST
+                raw,
+                lib,
+                tmp_path / f"{service}-{n}",
+                version="1.0.0",
+                tag="v1.0.0",
+                digest=DIGEST,
             )
             for n in (1, 2)
         ]

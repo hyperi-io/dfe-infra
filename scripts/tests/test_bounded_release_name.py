@@ -79,7 +79,9 @@ def generated(
 
 def release_names(app: dict) -> list[str]:
     """Each helm source's releaseName, empty where it sets none."""
-    return [s["helm"].get("releaseName", "") for s in app["spec"]["sources"] if "helm" in s]
+    return [
+        s["helm"].get("releaseName", "") for s in app["spec"]["sources"] if "helm" in s
+    ]
 
 
 def identity(service: str, instance: str) -> dict:
@@ -101,7 +103,9 @@ def rendered(
     options: dict = {"instance": instance, "cluster": cluster}
     if source is not None:
         options["appset"] = source
-    return render_app(service, profile, "local", overlay=identity(service, instance), **options)
+    return render_app(
+        service, profile, "local", overlay=identity(service, instance), **options
+    )
 
 
 def instance_labels(docs: list[dict]) -> set[str]:
@@ -118,7 +122,11 @@ def _label_maps(doc: dict) -> list[dict]:
     spec = doc.get("spec") or {}
     template = (spec.get("template") or {}).get("metadata") or {}
     selector = (spec.get("selector") or {}).get("matchLabels") or {}
-    return [(doc.get("metadata") or {}).get("labels") or {}, template.get("labels") or {}, selector]
+    return [
+        (doc.get("metadata") or {}).get("labels") or {},
+        template.get("labels") or {},
+        selector,
+    ]
 
 
 def over_limit(docs: list[dict]) -> list[str]:
@@ -133,7 +141,9 @@ def over_limit(docs: list[dict]) -> list[str]:
         for labels in _label_maps(doc):
             for key, value in labels.items():
                 if len(str(value)) > LABEL_VALUE_MAX:
-                    found.append(f"{kind}/{name} label {key}: {len(str(value))} characters")
+                    found.append(
+                        f"{kind}/{name} label {key}: {len(str(value))} characters"
+                    )
     return found
 
 
@@ -193,7 +203,9 @@ def test_a_long_name_takes_its_first_44_characters_and_8_of_its_hash() -> None:
 
 
 def test_the_release_name_is_the_same_on_every_render() -> None:
-    assert release_names(generated(ELASTIC, LONG)) == release_names(generated(ELASTIC, LONG))
+    assert release_names(generated(ELASTIC, LONG)) == release_names(
+        generated(ELASTIC, LONG)
+    )
 
 
 def test_a_cut_landing_on_a_hyphen_drops_it() -> None:
@@ -209,7 +221,10 @@ def test_a_cut_landing_on_a_hyphen_drops_it() -> None:
 def test_two_names_that_differ_past_the_cut_get_different_releases() -> None:
     first = release_names(generated(ELASTIC, LONG))[0]
     second = release_names(generated(ELASTIC, LONG_TWIN))[0]
-    assert application_name(ELASTIC, LONG)[:44] == application_name(ELASTIC, LONG_TWIN)[:44]
+    assert (
+        application_name(ELASTIC, LONG)[:44]
+        == application_name(ELASTIC, LONG_TWIN)[:44]
+    )
     assert first[:44] == second[:44]
     assert first != second
 
@@ -242,5 +257,10 @@ def test_an_over_long_service_name_is_seen() -> None:
 
 
 def test_an_over_long_label_value_is_seen() -> None:
-    docs = [{"kind": "ConfigMap", "metadata": {"name": "c", "labels": {INSTANCE_LABEL: "i" * 64}}}]
+    docs = [
+        {
+            "kind": "ConfigMap",
+            "metadata": {"name": "c", "labels": {INSTANCE_LABEL: "i" * 64}},
+        }
+    ]
     assert over_limit(docs) == [f"ConfigMap/c label {INSTANCE_LABEL}: 64 characters"]

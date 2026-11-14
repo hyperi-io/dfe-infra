@@ -62,7 +62,9 @@ AWS_FACTS = {
     "dfe.hyperi.io/service_cidr": "172.20.0.0/16",
 }
 # The same cluster before this fact existed: every cloud but AWS, and an older AWS secret.
-NO_STORE = {k: v for k, v in AWS_FACTS.items() if k != "dfe.hyperi.io/engine_secrets_prefix"}
+NO_STORE = {
+    k: v for k, v in AWS_FACTS.items() if k != "dfe.hyperi.io/engine_secrets_prefix"
+}
 NO_KEY = {k: v for k, v in AWS_FACTS.items() if k != "dfe.hyperi.io/kms_key_arn"}
 
 POD_IDENTITY = ipaddress.ip_address("169.254.170.23")
@@ -81,15 +83,21 @@ def engine_env(docs: list[dict]) -> dict[str, str]:
 
 
 def service_account(docs: list[dict], deployment: str) -> str:
-    return keyed(docs)[("Deployment", deployment)]["spec"]["template"]["spec"]["serviceAccountName"]
+    return keyed(docs)[("Deployment", deployment)]["spec"]["template"]["spec"][
+        "serviceAccountName"
+    ]
 
 
 # ---------------------------------------------------------------- tofu + bootstrap
 
 
 def test_the_aws_root_hands_bootstrap_the_prefix_and_the_key() -> None:
-    outputs = (REPO_ROOT / "terraform" / "environments" / "aws" / "outputs.tf").read_text(encoding="utf-8")
-    prefix = outputs.split('output "DFE_ENGINE_SECRETS_PREFIX"')[1].split("\noutput ")[0]
+    outputs = (
+        REPO_ROOT / "terraform" / "environments" / "aws" / "outputs.tf"
+    ).read_text(encoding="utf-8")
+    prefix = outputs.split('output "DFE_ENGINE_SECRETS_PREFIX"')[1].split("\noutput ")[
+        0
+    ]
     key = outputs.split('output "DFE_KMS_KEY_ARN"')[1].split("\noutput ")[0]
     assert "module.secrets.engine_name_prefix" in prefix
     assert "module.cluster.kms_key_arn" in key
@@ -98,20 +106,34 @@ def test_the_aws_root_hands_bootstrap_the_prefix_and_the_key() -> None:
 def _annotations(**env: str) -> list[str]:
     """bootstrap.sh's own two lines, run on their own rather than copied here."""
     lines = BOOTSTRAP.read_text(encoding="utf-8").splitlines()
-    start = lines.index('export DFE_ENGINE_SECRETS_PREFIX="${DFE_ENGINE_SECRETS_PREFIX:-}"')
-    end = next(i for i, line in enumerate(lines) if line.startswith("export DFE_KMS_KEY_ARN_ANNOTATION="))
+    start = lines.index(
+        'export DFE_ENGINE_SECRETS_PREFIX="${DFE_ENGINE_SECRETS_PREFIX:-}"'
+    )
+    end = next(
+        i
+        for i, line in enumerate(lines)
+        if line.startswith("export DFE_KMS_KEY_ARN_ANNOTATION=")
+    )
     script = "\n".join(lines[start : end + 1])
     script += '\nprintf "%s\\n%s\\n" "$DFE_ENGINE_SECRETS_PREFIX_ANNOTATION" "$DFE_KMS_KEY_ARN_ANNOTATION"'
     done = subprocess.run(
-        ["bash", "-euo", "pipefail", "-c", script], env={"PATH": "/usr/bin:/bin", **env},
-        capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
+        ["bash", "-euo", "pipefail", "-c", script],
+        env={"PATH": "/usr/bin:/bin", **env},
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=True,
     )
     return done.stdout.splitlines()
 
 
 def test_bootstrap_writes_both_annotations_from_the_roots_outputs() -> None:
     lines = _annotations(DFE_ENGINE_SECRETS_PREFIX=PREFIX, DFE_KMS_KEY_ARN=KEY)
-    assert lines == [f'dfe.hyperi.io/engine_secrets_prefix: "{PREFIX}"', f'dfe.hyperi.io/kms_key_arn: "{KEY}"']
+    assert lines == [
+        f'dfe.hyperi.io/engine_secrets_prefix: "{PREFIX}"',
+        f'dfe.hyperi.io/kms_key_arn: "{KEY}"',
+    ]
 
 
 def test_a_root_that_names_neither_writes_neither() -> None:
@@ -122,11 +144,24 @@ def test_the_cluster_secret_carries_both() -> None:
     rendered = subprocess.run(
         [sys.executable, str(RENDER_ENV)],
         input=CLUSTER_SECRET.read_text(encoding="utf-8"),
-        env={"PATH": "/usr/bin:/bin", **dict(zip(
-            ("DFE_ENGINE_SECRETS_PREFIX_ANNOTATION", "DFE_KMS_KEY_ARN_ANNOTATION"),
-            _annotations(DFE_ENGINE_SECRETS_PREFIX=PREFIX, DFE_KMS_KEY_ARN=KEY), strict=True,
-        ))},
-        capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
+        env={
+            "PATH": "/usr/bin:/bin",
+            **dict(
+                zip(
+                    (
+                        "DFE_ENGINE_SECRETS_PREFIX_ANNOTATION",
+                        "DFE_KMS_KEY_ARN_ANNOTATION",
+                    ),
+                    _annotations(DFE_ENGINE_SECRETS_PREFIX=PREFIX, DFE_KMS_KEY_ARN=KEY),
+                    strict=True,
+                )
+            ),
+        },
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=True,
     ).stdout
     annotations = yaml.safe_load(rendered)["metadata"]["annotations"]
     assert annotations["dfe.hyperi.io/engine_secrets_prefix"] == PREFIX
@@ -136,7 +171,9 @@ def test_the_cluster_secret_carries_both() -> None:
 # ---------------------------------------------------------------- the engine
 
 
-def test_the_engine_writes_secrets_manager_under_its_prefix_region_key_and_tags() -> None:
+def test_the_engine_writes_secrets_manager_under_its_prefix_region_key_and_tags() -> (
+    None
+):
     env = engine_env(render_extras("dfe-engine", "scale", "aws", annotations=AWS_FACTS))
     assert {k: v for k, v in env.items() if k.startswith("DFE_ENGINE_SECRETS_")} == {
         "DFE_ENGINE_SECRETS_PROVIDER": "aws",
@@ -152,19 +189,37 @@ def _resource_tags_annotation(tags: str) -> str:
     """bootstrap.sh's own annotation lines, then the cluster secret, as Argo reads it back."""
     lines = BOOTSTRAP.read_text(encoding="utf-8").splitlines()
     start = lines.index('export DFE_RESOURCE_TAGS="${DFE_RESOURCE_TAGS:-}"')
-    end = next(i for i, line in enumerate(lines) if line.startswith("export DFE_RESOURCE_TAGS_ANNOTATION="))
-    script = "\n".join(lines[start : end + 1]) + '\nprintf "%s\\n" "$DFE_RESOURCE_TAGS_ANNOTATION"'
+    end = next(
+        i
+        for i, line in enumerate(lines)
+        if line.startswith("export DFE_RESOURCE_TAGS_ANNOTATION=")
+    )
+    script = (
+        "\n".join(lines[start : end + 1])
+        + '\nprintf "%s\\n" "$DFE_RESOURCE_TAGS_ANNOTATION"'
+    )
     annotation = subprocess.run(
-        ["bash", "-euo", "pipefail", "-c", script], env={"PATH": "/usr/bin:/bin", "DFE_RESOURCE_TAGS": tags},
-        capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
+        ["bash", "-euo", "pipefail", "-c", script],
+        env={"PATH": "/usr/bin:/bin", "DFE_RESOURCE_TAGS": tags},
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=True,
     ).stdout.strip()
     rendered = subprocess.run(
         [sys.executable, str(RENDER_ENV)],
         input=CLUSTER_SECRET.read_text(encoding="utf-8"),
         env={"PATH": "/usr/bin:/bin", "DFE_RESOURCE_TAGS_ANNOTATION": annotation},
-        capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=True,
     ).stdout
-    return yaml.safe_load(rendered)["metadata"]["annotations"]["dfe.hyperi.io/resource_tags"]
+    return yaml.safe_load(rendered)["metadata"]["annotations"][
+        "dfe.hyperi.io/resource_tags"
+    ]
 
 
 def test_a_cycles_run_tags_reach_every_secret_the_engine_creates() -> None:
@@ -175,8 +230,15 @@ def test_a_cycles_run_tags_reach_every_secret_the_engine_creates() -> None:
     """
     run = cloud_run.run_tags("r20261008t000000z-0a1b2c", 1791460800)
     resource_tags = json.dumps({"service-name": "dfe", **run}, separators=(",", ":"))
-    facts = {**AWS_FACTS, "dfe.hyperi.io/resource_tags": _resource_tags_annotation(resource_tags)}
-    tags = json.loads(engine_env(render_extras("dfe-engine", "scale", "aws", annotations=facts))["DFE_ENGINE_SECRETS_TAGS"])
+    facts = {
+        **AWS_FACTS,
+        "dfe.hyperi.io/resource_tags": _resource_tags_annotation(resource_tags),
+    }
+    tags = json.loads(
+        engine_env(render_extras("dfe-engine", "scale", "aws", annotations=facts))[
+            "DFE_ENGINE_SECRETS_TAGS"
+        ]
+    )
     assert tags["dfe-e2e"] == "r20261008t000000z-0a1b2c"
     assert tags["expires-at"] == "2026-10-08T12:00:00Z"
     assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", tags["expires-at"])
@@ -184,7 +246,9 @@ def test_a_cycles_run_tags_reach_every_secret_the_engine_creates() -> None:
 
 def test_expected_fail_a_store_without_the_deployment_key_fails_the_render() -> None:
     """An empty key id would encrypt under the account's aws/secretsmanager key instead."""
-    with pytest.raises(RenderError, match=re.escape("dfe.hyperi.io/kms_key_arn annotation")):
+    with pytest.raises(
+        RenderError, match=re.escape("dfe.hyperi.io/kms_key_arn annotation")
+    ):
         render_extras("dfe-engine", "scale", "aws", annotations=NO_KEY)
 
 
@@ -197,14 +261,16 @@ def test_without_the_prefix_the_engine_keeps_its_files() -> None:
 @pytest.mark.parametrize("service", ["dfe-loader", "dfe-hyperdx", "dfe-ui"])
 def test_no_other_app_moves_with_the_engines_store(service: str) -> None:
     """layer2-apps hands the store to dfe-engine, and its region to dfe-receiver."""
-    assert render_extras(service, "scale", "aws", annotations=AWS_FACTS) == render_extras(
-        service, "scale", "aws", annotations=NO_STORE
-    )
+    assert render_extras(
+        service, "scale", "aws", annotations=AWS_FACTS
+    ) == render_extras(service, "scale", "aws", annotations=NO_STORE)
 
 
 def test_the_receiver_takes_the_stores_region_and_nothing_else() -> None:
     """An aws: secret_source resolves no region on its own, and Pod Identity injects none."""
-    with_store = keyed(render_extras("dfe-receiver", "scale", "aws", annotations=AWS_FACTS))
+    with_store = keyed(
+        render_extras("dfe-receiver", "scale", "aws", annotations=AWS_FACTS)
+    )
     without = keyed(render_extras("dfe-receiver", "scale", "aws", annotations=NO_STORE))
     env = ("ConfigMap", "dfe-receiver-env")
     assert "AWS_REGION" not in without[env]["data"]
@@ -214,22 +280,46 @@ def test_the_receiver_takes_the_stores_region_and_nothing_else() -> None:
 
 def test_expected_fail_a_receiver_store_with_no_region_fails_the_render() -> None:
     with pytest.raises(RenderError, match=re.escape("secrets.region is empty")):
-        render_extras("dfe-receiver", "single", "aws", overlay={"secrets": {"provider": "aws", "region": ""}})
+        render_extras(
+            "dfe-receiver",
+            "single",
+            "aws",
+            overlay={"secrets": {"provider": "aws", "region": ""}},
+        )
 
 
 @pytest.mark.parametrize(
     ("store", "said"),
     [
-        ({"provider": "aws", "region": "", "namePrefix": PREFIX}, "secrets.region is empty"),
-        ({"provider": "aws", "region": "us-west-2", "namePrefix": ""}, "secrets.namePrefix is empty"),
-        ({"provider": "aws", "region": "us-west-2", "namePrefix": PREFIX}, "secrets.kmsKeyId is empty"),
-        ({"provider": "aws", "region": "us-west-2", "namePrefix": PREFIX, "kmsKeyId": KEY, "recoveryWindowDays": 3},
-         "takes 0 (no window) or 7-30"),
+        (
+            {"provider": "aws", "region": "", "namePrefix": PREFIX},
+            "secrets.region is empty",
+        ),
+        (
+            {"provider": "aws", "region": "us-west-2", "namePrefix": ""},
+            "secrets.namePrefix is empty",
+        ),
+        (
+            {"provider": "aws", "region": "us-west-2", "namePrefix": PREFIX},
+            "secrets.kmsKeyId is empty",
+        ),
+        (
+            {
+                "provider": "aws",
+                "region": "us-west-2",
+                "namePrefix": PREFIX,
+                "kmsKeyId": KEY,
+                "recoveryWindowDays": 3,
+            },
+            "takes 0 (no window) or 7-30",
+        ),
         ({"provider": "openbao"}, 'secrets.provider is "openbao"'),
     ],
     ids=["no-region", "no-prefix", "no-key", "window-out-of-range", "unwired-provider"],
 )
-def test_expected_fail_a_store_the_engine_cannot_start_on_fails_the_render(store: dict, said: str) -> None:
+def test_expected_fail_a_store_the_engine_cannot_start_on_fails_the_render(
+    store: dict, said: str
+) -> None:
     with pytest.raises(RenderError, match=re.escape(said)):
         render_extras("dfe-engine", "single", "aws", overlay={"secrets": store})
 
@@ -252,15 +342,22 @@ def test_on_aws_the_runner_and_the_shim_run_as_accounts_of_their_own() -> None:
     assert service_account(docs, "dfe-keda-shim") == "dfe-keda-shim"
     accounts = keyed(docs)
     for name in ("dfe-hunt-runner", "dfe-keda-shim"):
-        assert accounts[("ServiceAccount", name)]["automountServiceAccountToken"] is False
-        assert "automountServiceAccountToken" not in accounts[("Deployment", name)]["spec"]["template"]["spec"]
+        assert (
+            accounts[("ServiceAccount", name)]["automountServiceAccountToken"] is False
+        )
+        assert (
+            "automountServiceAccountToken"
+            not in accounts[("Deployment", name)]["spec"]["template"]["spec"]
+        )
     # The engine's own account is the thin chart's; dfe-extras renders none by that name.
     assert ("ServiceAccount", "dfe-engine") not in accounts
 
 
 def test_the_runner_still_reads_the_shared_signing_key() -> None:
     docs = render_extras("dfe-engine", "scale", "aws", annotations=AWS_FACTS)
-    container = keyed(docs)[("Deployment", "dfe-hunt-runner")]["spec"]["template"]["spec"]["containers"][0]
+    container = keyed(docs)[("Deployment", "dfe-hunt-runner")]["spec"]["template"][
+        "spec"
+    ]["containers"][0]
     jwt = next(e for e in container["env"] if e["name"] == "DFE_ENGINE_API_JWT_SECRET")
     assert jwt["valueFrom"]["secretKeyRef"]["name"] == "dfe-engine-jwt"
 
@@ -271,7 +368,11 @@ def test_without_the_store_the_sidecars_still_run_as_their_own_accounts() -> Non
     assert service_account(docs, "dfe-hunt-runner") == "dfe-hunt-runner"
     assert service_account(docs, "dfe-keda-shim") == "dfe-keda-shim"
     accounts = sorted(k[1] for k in keyed(docs) if k[0] == "ServiceAccount")
-    assert accounts == ["dfe-hunt-runner", "dfe-keda-shim", "otel-writer-clickhouse-reader"]
+    assert accounts == [
+        "dfe-hunt-runner",
+        "dfe-keda-shim",
+        "otel-writer-clickhouse-reader",
+    ]
 
 
 # ---------------------------------------------------------------- the egress
@@ -288,18 +389,31 @@ def network_policies(facts: dict[str, str]) -> list[dict]:
         for e in (nested.get("list") or {}).get("elements") or []
         if e["app"] == "network-policies"
     )
-    target = w.Target(element["app"], "scale", "aws", annotations=tuple(sorted(facts.items())))
-    app = w.expand_template(doc["spec"]["template"], {**w.generator_params(target, None), **element}, helm())
+    target = w.Target(
+        element["app"], "scale", "aws", annotations=tuple(sorted(facts.items()))
+    )
+    app = w.expand_template(
+        doc["spec"]["template"], {**w.generator_params(target, None), **element}, helm()
+    )
     source = app["spec"]["sources"][0]
     chart = REPO_ROOT / source["path"]
     with tempfile.TemporaryDirectory() as tmp:
         deploy = Path(tmp)
         chain = []
         for raw in source["helm"].get("valueFiles") or []:
-            path = deploy / raw.removeprefix("$values/") if raw.startswith("$values/") else (chart / raw).resolve()
+            path = (
+                deploy / raw.removeprefix("$values/")
+                if raw.startswith("$values/")
+                else (chart / raw).resolve()
+            )
             chain.append({"written": raw, "path": path, "present": path.is_file()})
         docs = w.render_source(
-            source, chart=chart, release=element["app"], namespace=element["namespace"], chain=chain, helm=helm()
+            source,
+            chart=chart,
+            release=element["app"],
+            namespace=element["namespace"],
+            chain=chain,
+            helm=helm(),
         )
     return [d for d in docs if d.get("kind") == "NetworkPolicy"]
 
@@ -309,7 +423,11 @@ def _selects(selector: dict, labels: dict[str, str]) -> bool:
     if any(labels.get(k) != v for k, v in (selector.get("matchLabels") or {}).items()):
         return False
     for expression in selector.get("matchExpressions") or []:
-        key, operator, values = expression["key"], expression["operator"], expression.get("values") or []
+        key, operator, values = (
+            expression["key"],
+            expression["operator"],
+            expression.get("values") or [],
+        )
         held = key in labels
         if (operator == "DoesNotExist" and held) or (operator == "Exists" and not held):
             return False
@@ -334,24 +452,41 @@ def app_egress(facts: dict[str, str], labels: dict[str, str]) -> list[dict]:
 
 def test_the_store_opens_the_engines_secrets_egress_on_443_alone() -> None:
     """The engine writes the store, and the receiver reads the bearer tokens the engine writes there."""
-    policies = [p for p in network_policies(AWS_FACTS) if p["metadata"]["name"].startswith("allow-external-secrets-")]
+    policies = [
+        p
+        for p in network_policies(AWS_FACTS)
+        if p["metadata"]["name"].startswith("allow-external-secrets-")
+    ]
     assert [p["spec"]["podSelector"] for p in policies] == [
         {"matchLabels": ENGINE_LABELS},
         {"matchLabels": {"dfe.hyperi.io/app": "dfe-engine"}},
         {"matchLabels": RECEIVER_LABELS},
         {"matchLabels": {"dfe.hyperi.io/app": "dfe-receiver"}},
     ]
-    ports = {(port["port"], port["protocol"]) for p in policies for r in p["spec"]["egress"] for port in r["ports"]}
+    ports = {
+        (port["port"], port["protocol"])
+        for p in policies
+        for r in p["spec"]["egress"]
+        for port in r["ports"]
+    }
     assert ports == {(443, "TCP")}
 
 
 def test_without_the_store_no_secrets_egress_renders() -> None:
-    assert not [p for p in network_policies(NO_STORE) if p["metadata"]["name"].startswith("allow-external-secrets-")]
+    assert not [
+        p
+        for p in network_policies(NO_STORE)
+        if p["metadata"]["name"].startswith("allow-external-secrets-")
+    ]
 
 
 @pytest.mark.parametrize(
     ("facts", "labels"),
-    [(AWS_FACTS, ENGINE_LABELS), (NO_STORE, ENGINE_LABELS), (AWS_FACTS, RECEIVER_LABELS)],
+    [
+        (AWS_FACTS, ENGINE_LABELS),
+        (NO_STORE, ENGINE_LABELS),
+        (AWS_FACTS, RECEIVER_LABELS),
+    ],
     # The receiver calls the agent only to read the store, so it has no carve-out to keep without one.
     ids=["store-engine", "no-store-engine", "store-receiver"],
 )
@@ -372,14 +507,20 @@ def test_the_app_reaches_the_pod_identity_agent_through_every_except(
         (ipaddress.ip_network(peer["ipBlock"]["cidr"]), rule)
         for rule in rules
         for peer in rule.get("to") or []
-        if "ipBlock" in peer and POD_IDENTITY in ipaddress.ip_network(peer["ipBlock"]["cidr"])
+        if "ipBlock" in peer
+        and POD_IDENTITY in ipaddress.ip_network(peer["ipBlock"]["cidr"])
     ]
     agent = [
-        (net, rule) for net, rule in allows
-        if net.prefixlen == 32 and {(p["port"], p.get("protocol", "TCP")) for p in rule["ports"]} == {(80, "TCP")}
+        (net, rule)
+        for net, rule in allows
+        if net.prefixlen == 32
+        and {(p["port"], p.get("protocol", "TCP")) for p in rule["ports"]}
+        == {(80, "TCP")}
     ]
     assert agent, f"no rule selecting {labels} allows {POD_IDENTITY}/32 on TCP 80"
-    assert all("except" not in peer["ipBlock"] for _net, rule in agent for peer in rule["to"])
+    assert all(
+        "except" not in peer["ipBlock"] for _net, rule in agent for peer in rule["to"]
+    )
     excepts = [
         ipaddress.ip_network(cidr)
         for rule in rules
@@ -389,4 +530,6 @@ def test_the_app_reaches_the_pod_identity_agent_through_every_except(
     covering = [net for net in excepts if POD_IDENTITY in net]
     assert all(net.prefixlen < 32 for net in covering), covering
     # The carve-out reaches the app on aws, so the longest-prefix rule is what keeps the agent.
-    assert covering, "no except covers the agent, so this test no longer exercises the carve-out"
+    assert covering, (
+        "no except covers the agent, so this test no longer exercises the carve-out"
+    )

@@ -50,7 +50,9 @@ def test_destroy_forgets_only_the_persistent_key(name: str, forgotten: bool) -> 
 
 
 def test_no_other_key_resource_escapes_the_split() -> None:
-    names = re.findall(r'(?m)^resource "aws_kms_key" "([^"]+)"', KMS_TF.read_text(encoding="utf-8"))
+    names = re.findall(
+        r'(?m)^resource "aws_kms_key" "([^"]+)"', KMS_TF.read_text(encoding="utf-8")
+    )
     assert sorted(names) == ["ephemeral", "retained"]
 
 
@@ -58,23 +60,33 @@ def test_every_bucket_resource_comes_as_a_forgotten_and_a_deleted_pair() -> None
     """A retained bucket that lost its public-access block or encryption on destroy is not kept."""
     found = _RESOURCE.findall(BUCKET_TF.read_text(encoding="utf-8"))
     kinds = sorted({kind for kind, _name in found})
-    assert sorted(found) == sorted((kind, name) for kind in kinds for name in ("ephemeral", "retained"))
+    assert sorted(found) == sorted(
+        (kind, name) for kind in kinds for name in ("ephemeral", "retained")
+    )
     for kind in kinds:
         assert _DESTROY_FALSE.search(_block(BUCKET_TF, kind, "retained")), kind
         assert not _DESTROY_FALSE.search(_block(BUCKET_TF, kind, "ephemeral")), kind
 
 
 def test_the_bucket_module_reports_the_address_it_forgets() -> None:
-    outputs = (TERRAFORM / "modules" / "s3-bucket" / "outputs.tf").read_text(encoding="utf-8")
+    outputs = (TERRAFORM / "modules" / "s3-bucket" / "outputs.tf").read_text(
+        encoding="utf-8"
+    )
     assert '"aws_s3_bucket.retained[0]"' in outputs
 
 
 def test_the_cluster_reports_the_key_it_forgets() -> None:
-    outputs = (TERRAFORM / "modules" / "kubernetes-cluster" / "aws" / "outputs.tf").read_text(encoding="utf-8")
+    outputs = (
+        TERRAFORM / "modules" / "kubernetes-cluster" / "aws" / "outputs.tf"
+    ).read_text(encoding="utf-8")
     assert '"aws_kms_key.retained[0]"' in outputs
 
 
 def test_bastion_down_cannot_reach_the_session_log_bucket() -> None:
     """`bastion down` is a destroy targeted at module.toolbox, so no bucket may live in it."""
-    found = [m for path in sorted(TOOLBOX.glob("*.tf")) for m in _RESOURCE.findall(path.read_text(encoding="utf-8"))]
+    found = [
+        m
+        for path in sorted(TOOLBOX.glob("*.tf"))
+        for m in _RESOURCE.findall(path.read_text(encoding="utf-8"))
+    ]
     assert not [kind for kind, _name in found if kind.startswith("aws_s3_bucket")]

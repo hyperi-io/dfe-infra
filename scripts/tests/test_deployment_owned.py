@@ -98,7 +98,10 @@ def _config_apps() -> list[str]:
 
 
 def _integration_files(service: str) -> list[Path]:
-    return [APPS_VALUES / "_common.yaml", *sorted((APPS_VALUES / service).glob("*.yaml"))]
+    return [
+        APPS_VALUES / "_common.yaml",
+        *sorted((APPS_VALUES / service).glob("*.yaml")),
+    ]
 
 
 def _dig(doc: object, path: str) -> object:
@@ -153,7 +156,9 @@ def _contract(service: str) -> dict:
 def _bound_ports(service: str) -> dict[str, str]:
     """Each contract port with a listener address, by name, and the config path it binds."""
     ports = _contract(service).get("extra_ports") or []
-    return {port["name"]: port["bound_from"] for port in ports if port.get("bound_from")}
+    return {
+        port["name"]: port["bound_from"] for port in ports if port.get("bound_from")
+    }
 
 
 def _secret_env(service: str, *, required_only: bool) -> set[str]:
@@ -181,7 +186,9 @@ def _env_configmap(service: str) -> frozenset[str]:
         for cloud in CLOUDS:
             for infra in INFRA_VARIANTS:
                 for doc in render_extras(service, profile, cloud, infra=infra):
-                    if doc["kind"] == "ConfigMap" and doc["metadata"]["name"].endswith("-env"):
+                    if doc["kind"] == "ConfigMap" and doc["metadata"]["name"].endswith(
+                        "-env"
+                    ):
                         found |= set(doc.get("data") or {})
     return frozenset(found)
 
@@ -209,7 +216,9 @@ def test_every_config_override_the_deployment_sets_is_listed(service: str) -> No
 def test_every_env_var_reaching_the_config_is_listed(service: str) -> None:
     suppliers = set((_apps()[service].get("deployment_owned") or {}).values())
     set_here = (
-        _extra_env(service) | _env_configmap(service) | _secret_env(service, required_only=True)
+        _extra_env(service)
+        | _env_configmap(service)
+        | _secret_env(service, required_only=True)
     )
     yields = set(YIELDS_TO_THE_OVERLAY.get(service, {}))
     missing = sorted(set_here - suppliers - set(_not_app_config(service)) - yields)
@@ -221,11 +230,15 @@ def test_every_env_var_reaching_the_config_is_listed(service: str) -> None:
 
 
 @pytest.mark.parametrize("service", sorted(YIELDS_TO_THE_OVERLAY))
-def test_a_variable_that_yields_to_the_overlay_leaves_its_path_writable(service: str) -> None:
+def test_a_variable_that_yields_to_the_overlay_leaves_its_path_writable(
+    service: str,
+) -> None:
     owned = set(_apps()[service].get("deployment_owned") or {})
     for name, path in YIELDS_TO_THE_OVERLAY[service].items():
         assert name in _extra_env(service), f"{service}: nothing sets {name} any more"
-        assert path not in owned, f"{service}: {path} is listed, so its write is refused"
+        assert path not in owned, (
+            f"{service}: {path} is listed, so its write is refused"
+        )
 
 
 # ----------------------------------------------------------- direction two
@@ -240,7 +253,11 @@ def _unset_supplier(service: str, path: str, supplier: str) -> str:
             | _env_configmap(service)
             | _secret_env(service, required_only=False)
         )
-        return "" if supplier in env else "no integration file, env ConfigMap or contract sets it"
+        return (
+            ""
+            if supplier in env
+            else "no integration file, env ConfigMap or contract sets it"
+        )
     port = CONTRACT_PORT.fullmatch(supplier)
     if port:
         bound = _bound_ports(service).get(port["name"])
@@ -263,13 +280,18 @@ def test_every_supplier_is_one_the_deployment_sets(service: str) -> None:
         for path, supplier in sorted(owned.items())
         if (why := _unset_supplier(service, path, supplier))
     ]
-    assert unset == [], f"{service}: apps.yaml deployment_owned names suppliers that decide nothing: {unset}"
+    assert unset == [], (
+        f"{service}: apps.yaml deployment_owned names suppliers that decide nothing: {unset}"
+    )
 
 
 @pytest.mark.parametrize("service", _config_apps())
 def test_every_gate_is_a_value_the_deployment_holds(service: str) -> None:
     gates = _apps()[service].get("deployment_owned_when") or {}
-    documents = [_load(path) for path in [*_integration_files(service), *SHARED_VALUES.glob("*.yaml")]]
+    documents = [
+        _load(path)
+        for path in [*_integration_files(service), *SHARED_VALUES.glob("*.yaml")]
+    ]
     unknown = sorted(
         f"{path}: {gate}"
         for path, gate in gates.items()
@@ -287,7 +309,9 @@ def test_every_listener_address_the_contract_binds_is_listed(service: str) -> No
 
 
 @pytest.mark.parametrize("service", _config_apps())
-def test_every_app_whose_config_the_engine_writes_has_integration_values(service: str) -> None:
+def test_every_app_whose_config_the_engine_writes_has_integration_values(
+    service: str,
+) -> None:
     """A missing directory would make every check above pass on nothing."""
     assert (APPS_VALUES / service / "values.yaml").is_file()
     assert (CONTRACTS / f"{service}.json").is_file()
@@ -306,7 +330,9 @@ def test_only_an_app_whose_config_the_engine_writes_owns_config_paths() -> None:
 
 
 def _file_sets() -> list[tuple[str, dict]]:
-    return [(name, fs) for name, app in _apps().items() for fs in app.get("files") or []]
+    return [
+        (name, fs) for name, app in _apps().items() for fs in app.get("files") or []
+    ]
 
 
 @pytest.mark.parametrize(
@@ -314,14 +340,18 @@ def _file_sets() -> list[tuple[str, dict]]:
     _file_sets(),
     ids=[f"{name}-{fs['name']}" for name, fs in _file_sets()],
 )
-def test_a_file_set_is_the_thin_chart_s_mounted_set(service: str, file_set: dict) -> None:
+def test_a_file_set_is_the_thin_chart_s_mounted_set(
+    service: str, file_set: dict
+) -> None:
     name = file_set["name"]
     assert file_set["values_path"] == f"fileSets.{name}.files"
     mounts = {
         path.name: _dig(_load(path), f"fileSets.{name}.mountPath")
         for path in _integration_files(service)
     }
-    declared = {where: mount for where, mount in mounts.items() if mount is not _MISSING}
+    declared = {
+        where: mount for where, mount in mounts.items() if mount is not _MISSING
+    }
     assert declared, f"{service}: no integration file mounts fileSets.{name}"
     assert set(declared.values()) == {file_set["mount_path"]}, declared
 

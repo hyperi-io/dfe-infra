@@ -54,7 +54,9 @@ def _local_number(blocks: list[check_tofu_literals.Block], name: str) -> int:
 
 def _max_retries(blocks: list[check_tofu_literals.Block]) -> int | None:
     """The confluent provider's max_retries, read through one named local, or None when it is left unset."""
-    provider = next((b for b in blocks if b.kind == "provider" and b.labels == ["confluent"]), None)
+    provider = next(
+        (b for b in blocks if b.kind == "provider" and b.labels == ["confluent"]), None
+    )
     setting = (
         None
         if provider is None

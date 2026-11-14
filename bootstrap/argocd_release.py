@@ -48,7 +48,9 @@ def chart_name(chart: str) -> str:
     return name or chart
 
 
-def verdict(releases: list[dict], values: dict | None, cache_service: str) -> tuple[bool, str]:
+def verdict(
+    releases: list[dict], values: dict | None, cache_service: str
+) -> tuple[bool, str]:
     """(ours, why) from `helm list -o json` and `helm get values -o json`.
 
     Args:
@@ -64,7 +66,10 @@ def verdict(releases: list[dict], values: dict | None, cache_service: str) -> tu
         return False, f"no helm release {RELEASE} in namespace {NAMESPACE}"
     chart = str(release.get("chart", ""))
     if chart_name(chart) != CHART:
-        return False, f"helm release {NAMESPACE}/{RELEASE} runs chart {chart or '<unknown>'}, not {CHART}"
+        return (
+            False,
+            f"helm release {NAMESPACE}/{RELEASE} runs chart {chart or '<unknown>'}, not {CHART}",
+        )
     values = values or {}
     redis = values.get("redis") or {}
     host = (values.get("externalRedis") or {}).get("host", "")
@@ -74,7 +79,10 @@ def verdict(releases: list[dict], values: dict | None, cache_service: str) -> tu
             f"helm release {NAMESPACE}/{RELEASE} ({chart}) is not wired to {want} with the "
             "bundled Redis off, so this bootstrap did not install it"
         )
-    return True, f"helm release {NAMESPACE}/{RELEASE} ({chart}) is wired to {want}, as this bootstrap installs it"
+    return (
+        True,
+        f"helm release {NAMESPACE}/{RELEASE} ({chart}) is wired to {want}, as this bootstrap installs it",
+    )
 
 
 def _helm_json(argv: list[str]) -> tuple[object, str]:
@@ -99,7 +107,9 @@ def _helm_json(argv: list[str]) -> tuple[object, str]:
         return None, f"helm {argv[0]} printed no JSON: {exc}"
 
 
-def read(cache_service: str, kubeconfig: str = "", context: str = "") -> tuple[bool, str]:
+def read(
+    cache_service: str, kubeconfig: str = "", context: str = ""
+) -> tuple[bool, str]:
     """verdict() against the cluster helm is pointed at. Reads only."""
     scope = ["--namespace", NAMESPACE]
     if kubeconfig:
@@ -115,8 +125,13 @@ def read(cache_service: str, kubeconfig: str = "", context: str = "") -> tuple[b
         return verdict([], None, cache_service)
     values, error = _helm_json(["get", "values", RELEASE, *scope])
     if error:
-        return False, f"cannot read the values of helm release {NAMESPACE}/{RELEASE}: {error}"
-    return verdict(releases, values if isinstance(values, dict) else None, cache_service)
+        return (
+            False,
+            f"cannot read the values of helm release {NAMESPACE}/{RELEASE}: {error}",
+        )
+    return verdict(
+        releases, values if isinstance(values, dict) else None, cache_service
+    )
 
 
 def main() -> int:
@@ -126,8 +141,12 @@ def main() -> int:
         default=DEFAULT_CACHE_SERVICE,
         help="the Valkey Service in the argocd namespace this bootstrap wires Argo to",
     )
-    parser.add_argument("--kubeconfig", default="", help="kubeconfig helm reads (default: helm's own)")
-    parser.add_argument("--kube-context", default="", help="kubeconfig context helm reads")
+    parser.add_argument(
+        "--kubeconfig", default="", help="kubeconfig helm reads (default: helm's own)"
+    )
+    parser.add_argument(
+        "--kube-context", default="", help="kubeconfig context helm reads"
+    )
     args = parser.parse_args()
     ours, why = read(args.cache_service, args.kubeconfig, args.kube_context)
     print(f"  [argocd] {why}")

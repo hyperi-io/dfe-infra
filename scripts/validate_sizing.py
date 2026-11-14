@@ -50,7 +50,15 @@ SHAPES_FILE = REPO_ROOT / "shapes" / "compute-shapes.yaml"
 
 # A map carrying ANY of these is a ratio, and then it must carry all of them.
 # That is what makes a half-written entry an error rather than a silent default.
-RATIO_FIELDS = ("value", "unit", "applies_to", "source", "read", "confidence", "spot_test")
+RATIO_FIELDS = (
+    "value",
+    "unit",
+    "applies_to",
+    "source",
+    "read",
+    "confidence",
+    "spot_test",
+)
 
 CONFIDENCE = (
     "vendor-documented",
@@ -204,24 +212,38 @@ class Ratio:
         found: list[str] = []
         if self.unit in STRING_UNITS:
             if not self.value:
-                found.append(f"{self.path}: unit {self.unit} needs an expression as its value")
+                found.append(
+                    f"{self.path}: unit {self.unit} needs an expression as its value"
+                )
         elif self.confidence == "measure-only":
             if self.value != UNMEASURED:
-                found.append(f"{self.path}: confidence measure-only carries value {UNMEASURED!r}")
+                found.append(
+                    f"{self.path}: confidence measure-only carries value {UNMEASURED!r}"
+                )
         elif not _is_number(self.value):
             found.append(f"{self.path}: value {self.value!r} is not a number")
         if self.value == UNMEASURED and self.confidence != "measure-only":
-            found.append(f"{self.path}: value {UNMEASURED!r} needs confidence measure-only")
+            found.append(
+                f"{self.path}: value {UNMEASURED!r} needs confidence measure-only"
+            )
         if not self.unit:
             found.append(f"{self.path}: no unit")
         if self.confidence not in CONFIDENCE:
-            found.append(f"{self.path}: confidence {self.confidence!r} is not one of {'/'.join(CONFIDENCE)}")
-        if not SOURCE_URL.match(self.source) and not SOURCE_REPO_PATH.match(self.source):
-            found.append(f"{self.path}: source {self.source!r} is neither a URL nor a repo path")
+            found.append(
+                f"{self.path}: confidence {self.confidence!r} is not one of {'/'.join(CONFIDENCE)}"
+            )
+        if not SOURCE_URL.match(self.source) and not SOURCE_REPO_PATH.match(
+            self.source
+        ):
+            found.append(
+                f"{self.path}: source {self.source!r} is neither a URL nor a repo path"
+            )
         found.extend(self._date_problems(today))
         for token in split_list(self.applies_to) or ("",):
             if token not in APPLIES_TO:
-                found.append(f"{self.path}: applies_to {token!r} is not a known provider or workload")
+                found.append(
+                    f"{self.path}: applies_to {token!r} is not a known provider or workload"
+                )
         if len(self.spot_test.split()) < 3:
             found.append(f"{self.path}: spot_test must say what would measure it")
         return found
@@ -244,7 +266,7 @@ def _is_number(value: str) -> bool:
     """Whether the scalar parses as a number the resolver can do arithmetic on."""
     try:
         float(value)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return False
     return True
 
@@ -284,7 +306,9 @@ def _walk_ratios(node: object, path: str, today: date, found: list[str]) -> int:
     return seen
 
 
-def _require_keys(node: object, path: str, keys: tuple[str, ...], found: list[str]) -> bool:
+def _require_keys(
+    node: object, path: str, keys: tuple[str, ...], found: list[str]
+) -> bool:
     """Report every key missing from a map, and whether the map was one at all."""
     if not isinstance(node, dict):
         found.append(f"{path}: expected a map")
@@ -301,30 +325,45 @@ def validate_sizing(tree: dict[str, object], today: date) -> tuple[list[str], in
     _require_keys(tree, "sizing", ("schema_version", *SIZING_SECTIONS), found)
 
     kafka = tree.get("kafka")
-    if _require_keys(kafka, "sizing.kafka", KAFKA_PROVIDERS, found) and isinstance(kafka, dict):
+    if _require_keys(kafka, "sizing.kafka", KAFKA_PROVIDERS, found) and isinstance(
+        kafka, dict
+    ):
         for provider in KAFKA_PROVIDERS:
-            _require_keys(kafka[provider], f"sizing.kafka.{provider}", KAFKA_PER_PROVIDER, found)
+            _require_keys(
+                kafka[provider], f"sizing.kafka.{provider}", KAFKA_PER_PROVIDER, found
+            )
 
     focus = tree.get("focus")
-    if _require_keys(focus, "sizing.focus", (*FOCUS_LEVELS, "invariants"), found) and isinstance(
-        focus, dict
-    ):
+    if _require_keys(
+        focus, "sizing.focus", (*FOCUS_LEVELS, "invariants"), found
+    ) and isinstance(focus, dict):
         for level in FOCUS_LEVELS:
             _require_keys(focus[level], f"sizing.focus.{level}", FOCUS_FIELDS, found)
-        _require_keys(focus["invariants"], "sizing.focus.invariants", FOCUS_INVARIANTS, found)
+        _require_keys(
+            focus["invariants"], "sizing.focus.invariants", FOCUS_INVARIANTS, found
+        )
 
     ceilings = tree.get("ceilings")
     _require_keys(
-        ceilings, "sizing.ceilings", ("generator_cap", "professional_services_message"), found
+        ceilings,
+        "sizing.ceilings",
+        ("generator_cap", "professional_services_message"),
+        found,
     )
-    if isinstance(ceilings, dict) and not str(ceilings.get("professional_services_message", "")):
+    if isinstance(ceilings, dict) and not str(
+        ceilings.get("professional_services_message", "")
+    ):
         found.append("sizing.ceilings.professional_services_message: empty")
 
     locked = tree.get("locked")
-    if _require_keys(locked, "sizing.locked", LOCKED_FIELDS, found) and isinstance(locked, dict):
+    if _require_keys(locked, "sizing.locked", LOCKED_FIELDS, found) and isinstance(
+        locked, dict
+    ):
         for field in LOCKED_FIELDS:
             if not str(locked[field]).strip():
-                found.append(f"sizing.locked.{field}: a locked field carries the reason it is locked")
+                found.append(
+                    f"sizing.locked.{field}: a locked field carries the reason it is locked"
+                )
 
     ratios = _walk_ratios(tree, "", today, found)
     return found, ratios
@@ -333,21 +372,33 @@ def validate_sizing(tree: dict[str, object], today: date) -> tuple[list[str], in
 def _volume_problems(path: str, volume: object, populated: bool) -> list[str]:
     """Validate one volume profile, including its silent-cap placeholders."""
     found: list[str] = []
-    if not _require_keys(volume, path, VOLUME_FIELDS, found) or not isinstance(volume, dict):
+    if not _require_keys(volume, path, VOLUME_FIELDS, found) or not isinstance(
+        volume, dict
+    ):
         return found
     disk_type = str(volume["type"])
     if populated and not disk_type:
         found.append(f"{path}.type: a populated cloud names the volume class")
-    if populated and str(volume["size_formula"]) == "fixed" and not _is_number(str(volume["size_gib"])):
+    if (
+        populated
+        and str(volume["size_formula"]) == "fixed"
+        and not _is_number(str(volume["size_gib"]))
+    ):
         found.append(f"{path}.size_gib: a fixed-size volume states its size")
     policy = str(volume.get("throughput_policy", ""))
     if policy and policy not in THROUGHPUT_POLICIES:
-        found.append(f"{path}.throughput_policy: {policy!r} is not one of {'/'.join(THROUGHPUT_POLICIES)}")
+        found.append(
+            f"{path}.throughput_policy: {policy!r} is not one of {'/'.join(THROUGHPUT_POLICIES)}"
+        )
     if populated and disk_type not in PROVIDER_SIZED_VOLUMES:
         if not _is_number(str(volume["iops"])):
             found.append(f"{path}.iops: provision it, or the cloud default bites")
-        if policy != "instance-baseline" and not _is_number(str(volume["throughput_mib_s"])):
-            found.append(f"{path}.throughput_mib_s: provision it, or the cloud default bites")
+        if policy != "instance-baseline" and not _is_number(
+            str(volume["throughput_mib_s"])
+        ):
+            found.append(
+                f"{path}.throughput_mib_s: provision it, or the cloud default bites"
+            )
     if str(volume["instance_store"]) not in INSTANCE_STORE:
         found.append(f"{path}.instance_store: not one of {'/'.join(INSTANCE_STORE)}")
     found.extend(_ceiling_problems(path, volume))
@@ -362,14 +413,20 @@ def _ceiling_problems(path: str, node: dict[str, object]) -> list[str]:
             continue
         raw = str(node[field]).strip()
         if raw and not _is_number(raw):
-            found.append(f"{path}.{field}: a cap is a number read from the provider, or empty")
+            found.append(
+                f"{path}.{field}: a cap is a number read from the provider, or empty"
+            )
     return found
 
 
-def _use_case_problems(path: str, entry: object, cloud_arch: str, populated: bool) -> list[str]:
+def _use_case_problems(
+    path: str, entry: object, cloud_arch: str, populated: bool
+) -> list[str]:
     """Validate one use case: the policies, the architecture and its volumes."""
     found: list[str] = []
-    if not _require_keys(entry, path, USE_CASE_FIELDS, found) or not isinstance(entry, dict):
+    if not _require_keys(entry, path, USE_CASE_FIELDS, found) or not isinstance(
+        entry, dict
+    ):
         return found
 
     arch = str(entry["arch"])
@@ -383,7 +440,9 @@ def _use_case_problems(path: str, entry: object, cloud_arch: str, populated: boo
     if generation_policy not in GENERATION_POLICIES:
         found.append(f"{path}.generation_policy: {generation_policy!r} is not a policy")
     elif generation_policy in GENERATION_PINNED and not _is_number(pin):
-        found.append(f"{path}.generation_pin: {generation_policy} needs the generation it holds")
+        found.append(
+            f"{path}.generation_pin: {generation_policy} needs the generation it holds"
+        )
     elif generation_policy == "newest" and pin:
         found.append(f"{path}.generation_pin: always-newest carries no pin")
 
@@ -393,9 +452,13 @@ def _use_case_problems(path: str, entry: object, cloud_arch: str, populated: boo
     if price_policy not in PRICE_POLICIES:
         found.append(f"{path}.price_policy: {price_policy!r} is not a policy")
     elif price_policy == "newest-within" and not _is_number(step):
-        found.append(f"{path}.price_step_max_pct: newest-within needs the step it stays inside")
+        found.append(
+            f"{path}.price_step_max_pct: newest-within needs the step it stays inside"
+        )
     elif price_policy == "cheapest-of" and not _is_number(generations):
-        found.append(f"{path}.price_generations: cheapest-of needs how many generations to compare")
+        found.append(
+            f"{path}.price_generations: cheapest-of needs how many generations to compare"
+        )
 
     if populated:
         for field in ("family", "size", "source"):
@@ -419,13 +482,17 @@ def validate_shapes(tree: dict[str, object]) -> tuple[list[str], int]:
     _require_keys(tree, "shapes", ("schema_version", "use_cases", "clouds"), found)
 
     declared = tree.get("use_cases")
-    if _require_keys(declared, "shapes.use_cases", USE_CASES, found) and isinstance(declared, dict):
+    if _require_keys(declared, "shapes.use_cases", USE_CASES, found) and isinstance(
+        declared, dict
+    ):
         for name, description in declared.items():
             if not str(description).strip():
                 found.append(f"shapes.use_cases.{name}: say what the workload is")
 
     clouds = tree.get("clouds")
-    if not _require_keys(clouds, "shapes.clouds", CLOUDS, found) or not isinstance(clouds, dict):
+    if not _require_keys(clouds, "shapes.clouds", CLOUDS, found) or not isinstance(
+        clouds, dict
+    ):
         return found, 0
 
     entries = 0
@@ -438,7 +505,9 @@ def validate_shapes(tree: dict[str, object]) -> tuple[list[str], int]:
         status = str(body["status"])
         arch = str(body["arch"])
         if status not in STATUSES:
-            found.append(f"{path}.status: {status!r} is not one of {'/'.join(STATUSES)}")
+            found.append(
+                f"{path}.status: {status!r} is not one of {'/'.join(STATUSES)}"
+            )
         if arch not in ARCHES:
             found.append(f"{path}.arch: {arch!r} is not one of {'/'.join(ARCHES)}")
         # On-prem nodes are x86_64; the clouds are ARM by default, which is the
@@ -484,8 +553,12 @@ def main(argv: list[str] | None = None) -> int:
         prog="validate_sizing.py",
         description="Refuse the sizing and shape SSoT files unless every entry carries its provenance.",
     )
-    parser.add_argument("--sizing", type=Path, default=SIZING_FILE, help="sizing.yaml to check")
-    parser.add_argument("--shapes", type=Path, default=SHAPES_FILE, help="compute-shapes.yaml to check")
+    parser.add_argument(
+        "--sizing", type=Path, default=SIZING_FILE, help="sizing.yaml to check"
+    )
+    parser.add_argument(
+        "--shapes", type=Path, default=SHAPES_FILE, help="compute-shapes.yaml to check"
+    )
     args = parser.parse_args(argv)
 
     today = date.today()

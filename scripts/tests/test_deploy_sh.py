@@ -47,11 +47,22 @@ def _deploy(tmp_path: Path, env_file: str | None, **env: str) -> tuple[int, list
     if env_file is not None:
         (tf_dir / ".env").write_text(env_file, encoding="utf-8", newline="\n")
     log = tmp_path / "tofu.log"
-    base = {k: v for k, v in os.environ.items() if not k.startswith(("DFE_", "TF_VAR_"))}
+    base = {
+        k: v for k, v in os.environ.items() if not k.startswith(("DFE_", "TF_VAR_"))
+    }
     done = subprocess.run(
         ["bash", str(DEPLOY), "--tf-dir", str(tf_dir), "--dry-run"],
-        env={**base, "PATH": f"{bin_dir}:{base.get('PATH', '')}", "STUB_LOG": str(log), **env},
-        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
+        env={
+            **base,
+            "PATH": f"{bin_dir}:{base.get('PATH', '')}",
+            "STUB_LOG": str(log),
+            **env,
+        },
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
     )
     lines = log.read_text(encoding="utf-8").splitlines() if log.exists() else []
     return done.returncode, lines

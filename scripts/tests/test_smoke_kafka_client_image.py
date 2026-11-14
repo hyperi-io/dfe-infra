@@ -42,7 +42,11 @@ def _reader() -> str:
 def _image(values: Path) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["bash", "-uc", _reader() + '\nkafka_chart_image "$1"', "reader", str(values)],
-        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
     )
 
 
@@ -59,7 +63,9 @@ def test_the_cli_image_is_digest_pinned_at_the_brokers_kafka_version() -> None:
         r"quay\.io/strimzi/kafka:\d+\.\d+\.\d+-kafka-(?P<kafka>[^@]+)@sha256:[0-9a-f]{64}",
         kafka["cliImage"],
     )
-    assert found, f"kafka.cliImage {kafka['cliImage']!r} is not a digest-pinned Strimzi Kafka tag"
+    assert found, (
+        f"kafka.cliImage {kafka['cliImage']!r} is not a digest-pinned Strimzi Kafka tag"
+    )
     assert found["kafka"] == kafka["version"], (
         f"kafka.cliImage carries Kafka {found['kafka']}, the brokers run {kafka['version']}: "
         "move cliImage to the Strimzi tag for the new version, and its digest with it"

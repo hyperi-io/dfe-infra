@@ -42,7 +42,7 @@ def days_ago(n: float) -> str:
     return ts.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-SUITE = '''
+SUITE = """
 schema: "1"
 verified: "2026-09-03"
 tags:
@@ -103,15 +103,15 @@ lanes:
   - name: consumers
     members: [dfe-engine]
     why: "test lane"
-'''
+"""
 
-VERSIONS = '''
+VERSIONS = """
 current: "2.2.0-rc.12"
 stacks:
   2.2.0-rc.12:
     apps:
       dfe-engine: "v1.20.4"
-'''
+"""
 
 
 def build_graph() -> dict:
@@ -152,10 +152,10 @@ def label_for(args: list[str]) -> str:
     if args[0] == "api":
         endpoint = args[1]
         if endpoint.endswith("/branches"):
-            return f"branches:{endpoint[len('repos/'):-len('/branches')]}"
+            return f"branches:{endpoint[len('repos/') : -len('/branches')]}"
         if "/compare/" in endpoint:
-            return f"compare:{endpoint[len('repos/'):]}"
-        return f"repometa:{endpoint[len('repos/'):]}"
+            return f"compare:{endpoint[len('repos/') :]}"
+        return f"repometa:{endpoint[len('repos/') :]}"
     raise AssertionError(f"unrecognised gh args: {args}")
 
 
@@ -218,11 +218,16 @@ def test_gh_parses_raw_scalar_lines_from_paginated_jq() -> None:
     orig_run = subprocess.run
     subprocess.run = fake_run
     try:
-        result = suite_watch._gh(["api", "repos/o/r/branches", "--paginate", "--jq", ".[].name"])
+        result = suite_watch._gh(
+            ["api", "repos/o/r/branches", "--paginate", "--jq", ".[].name"]
+        )
     finally:
         subprocess.run = orig_run
-    expect("raw unquoted lines come back as plain strings, one per branch",
-           result == ["main", "fix/x", "renovate/github-actions"], str(result))
+    expect(
+        "raw unquoted lines come back as plain strings, one per branch",
+        result == ["main", "fix/x", "renovate/github-actions"],
+        str(result),
+    )
 
 
 def test_gh_still_reads_real_json_lines() -> None:
@@ -236,23 +241,33 @@ def test_gh_still_reads_real_json_lines() -> None:
     orig_run = subprocess.run
     subprocess.run = fake_run
     try:
-        result = suite_watch._gh(["api", "repos/o/r/branches", "--paginate", "--jq", ".[]"])
+        result = suite_watch._gh(
+            ["api", "repos/o/r/branches", "--paginate", "--jq", ".[]"]
+        )
     finally:
         subprocess.run = orig_run
-    expect("JSON objects per line still parse as objects",
-           result == [{"name": "main"}, {"name": "fix/x"}], str(result))
+    expect(
+        "JSON objects per line still parse as objects",
+        result == [{"name": "main"}, {"name": "fix/x"}],
+        str(result),
+    )
 
 
 def test_gh_raises_gh_error_on_nonzero_exit() -> None:
     def fake_run(cmd, **kwargs):
-        return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="gh: Not Found (HTTP 404)\n")
+        return subprocess.CompletedProcess(
+            cmd, 1, stdout="", stderr="gh: Not Found (HTTP 404)\n"
+        )
 
     orig_run = subprocess.run
     subprocess.run = fake_run
     try:
         suite_watch._gh(["api", "repos/o/r"])
     except suite_watch.GhError as exc:
-        expect("the gh: prefix is stripped from the reason", str(exc) == "Not Found (HTTP 404)")
+        expect(
+            "the gh: prefix is stripped from the reason",
+            str(exc) == "Not Found (HTTP 404)",
+        )
     else:
         expect("a non-zero exit raises GhError", False, "did not raise")
     finally:
@@ -263,7 +278,8 @@ def test_ci_fold() -> None:
     expect("no checks at all is none", suite_watch.fold_ci([]) == "none")
     expect(
         "every check completed and successful is pass",
-        suite_watch.fold_ci([{"status": "COMPLETED", "conclusion": "SUCCESS"}]) == "pass",
+        suite_watch.fold_ci([{"status": "COMPLETED", "conclusion": "SUCCESS"}])
+        == "pass",
     )
     expect(
         "a skipped check alongside a success still folds to pass",
@@ -277,7 +293,8 @@ def test_ci_fold() -> None:
     )
     expect(
         "an in-progress check with no others is pending",
-        suite_watch.fold_ci([{"status": "IN_PROGRESS", "conclusion": None}]) == "pending",
+        suite_watch.fold_ci([{"status": "IN_PROGRESS", "conclusion": None}])
+        == "pending",
     )
     expect(
         "a failure wins over a pending check",
@@ -297,23 +314,37 @@ def test_ci_fold() -> None:
 
 def test_pin_status() -> None:
     apps = {"dfe-engine": "v1.20.4"}
-    expect("equal tags (v-prefix both) is pinned",
-           suite_watch.pin_status("dfe-engine", "v1.20.4", apps) == "pinned")
-    expect("a newer release is unpinned",
-           suite_watch.pin_status("dfe-engine", "v1.20.5", apps) == "unpinned")
-    expect("a member with no app pin is n/a",
-           suite_watch.pin_status("scalo-rs", "v0.5.0", {}) == "n/a")
-    expect("no release at all is n/a",
-           suite_watch.pin_status("dfe-engine", None, apps) == "n/a")
-    expect("a bare pin without its v matches a v-prefixed release",
-           suite_watch.pin_status("dfe-engine", "v1.20.4", {"dfe-engine": "1.20.4"}) == "pinned")
+    expect(
+        "equal tags (v-prefix both) is pinned",
+        suite_watch.pin_status("dfe-engine", "v1.20.4", apps) == "pinned",
+    )
+    expect(
+        "a newer release is unpinned",
+        suite_watch.pin_status("dfe-engine", "v1.20.5", apps) == "unpinned",
+    )
+    expect(
+        "a member with no app pin is n/a",
+        suite_watch.pin_status("scalo-rs", "v0.5.0", {}) == "n/a",
+    )
+    expect(
+        "no release at all is n/a",
+        suite_watch.pin_status("dfe-engine", None, apps) == "n/a",
+    )
+    expect(
+        "a bare pin without its v matches a v-prefixed release",
+        suite_watch.pin_status("dfe-engine", "v1.20.4", {"dfe-engine": "1.20.4"})
+        == "pinned",
+    )
 
 
 def test_resolve_stack_missing_is_graceful() -> None:
     root = build_versions()
     name, pins = suite_watch.resolve_stack(root, None)
     expect("default resolves `current`", name == "2.2.0-rc.12")
-    expect("current stack's pins are found", pins is not None and pins["apps"]["dfe-engine"] == "v1.20.4")
+    expect(
+        "current stack's pins are found",
+        pins is not None and pins["apps"]["dfe-engine"] == "v1.20.4",
+    )
     name, pins = suite_watch.resolve_stack(root, "2.2.0-rc.14")
     expect("an rc still being cut resolves by name", name == "2.2.0-rc.14")
     expect("...with no pin-set, rather than raising", pins is None)
@@ -322,14 +353,23 @@ def test_resolve_stack_missing_is_graceful() -> None:
 def test_select_targets_lane_and_repo() -> None:
     graph = build_graph()
     all_targets = suite_watch.select_targets(graph, None, [])
-    expect("no lane keeps every suite.yaml member, in file order",
-           [t.name for t in all_targets] == ["dfe-engine", "scalo-rs", "ghost-repo"])
+    expect(
+        "no lane keeps every suite.yaml member, in file order",
+        [t.name for t in all_targets] == ["dfe-engine", "scalo-rs", "ghost-repo"],
+    )
     lane_targets = suite_watch.select_targets(graph, "consumers", [])
-    expect("a lane limits to its own members",
-           [t.name for t in lane_targets] == ["dfe-engine"])
-    extra_targets = suite_watch.select_targets(graph, "consumers", ["hyperi-io/dfe-vpn"])
-    expect("a --repo extra is appended after the lane's members",
-           [t.repo for t in extra_targets] == ["hyperi-io/dfe-engine", "hyperi-io/dfe-vpn"])
+    expect(
+        "a lane limits to its own members",
+        [t.name for t in lane_targets] == ["dfe-engine"],
+    )
+    extra_targets = suite_watch.select_targets(
+        graph, "consumers", ["hyperi-io/dfe-vpn"]
+    )
+    expect(
+        "a --repo extra is appended after the lane's members",
+        [t.repo for t in extra_targets]
+        == ["hyperi-io/dfe-engine", "hyperi-io/dfe-vpn"],
+    )
     try:
         suite_watch.select_targets(graph, "no-such-lane", [])
     except SystemExit as exc:
@@ -364,8 +404,11 @@ def test_pr_shaping_and_labels() -> None:
         prs = suite_watch.fetch_prs(repo, NOW)
     expect("one PR shaped", len(prs) == 1)
     pr = prs[0]
-    expect("number/title/author carried through",
-           (pr.number, pr.title, pr.author) == (42, "fix(loader): honour @source", "octocat"))
+    expect(
+        "number/title/author carried through",
+        (pr.number, pr.title, pr.author)
+        == (42, "fix(loader): honour @source", "octocat"),
+    )
     expect("draft flag carried through", pr.draft is True)
     expect("head/base carried through", (pr.head, pr.base) == ("fix/source", "main"))
     expect("age in whole days", pr.age_days == 2)
@@ -377,9 +420,16 @@ def test_branch_filtering() -> None:
     """The default branch, every open PR head, and any ahead_by==0 branch drop out."""
     repo = "hyperi-io/dfe-engine"
     table = base_table(repo)
-    table[f"branches:{repo}"] = ["main", "fix/has-a-pr", "fix/merged-already", "fix/needs-a-pr"]
+    table[f"branches:{repo}"] = [
+        "main",
+        "fix/has-a-pr",
+        "fix/merged-already",
+        "fix/needs-a-pr",
+    ]
     table[f"compare:{repo}/compare/main...fix/merged-already"] = {
-        "ahead_by": 0, "behind_by": 4, "commits": [],
+        "ahead_by": 0,
+        "behind_by": 4,
+        "commits": [],
     }
     table[f"compare:{repo}/compare/main...fix/needs-a-pr"] = {
         "ahead_by": 3,
@@ -388,7 +438,10 @@ def test_branch_filtering() -> None:
     }
     with patched(table):
         rows = suite_watch.fetch_branches(repo, {"fix/has-a-pr"}, NOW)
-    expect("only the branch genuinely ahead survives", [b.name for b in rows] == ["fix/needs-a-pr"])
+    expect(
+        "only the branch genuinely ahead survives",
+        [b.name for b in rows] == ["fix/needs-a-pr"],
+    )
     row = rows[0]
     expect("ahead/behind carried through", (row.ahead_by, row.behind_by) == (3, 1))
     expect("age is the head commit's age", row.age_days == 5)
@@ -398,8 +451,18 @@ def test_stale_flag_both_sides() -> None:
     repo = "hyperi-io/dfe-engine"
     table = base_table(repo)
     table[f"issue:{repo}"] = [
-        {"number": 1, "title": "just inside", "assignees": [], "updatedAt": days_ago(2)},
-        {"number": 2, "title": "just outside", "assignees": [{"login": "hubot"}], "updatedAt": days_ago(4)},
+        {
+            "number": 1,
+            "title": "just inside",
+            "assignees": [],
+            "updatedAt": days_ago(2),
+        },
+        {
+            "number": 2,
+            "title": "just outside",
+            "assignees": [{"login": "hubot"}],
+            "updatedAt": days_ago(4),
+        },
     ]
     with patched(table):
         rows = suite_watch.fetch_issues(repo, "rc14", 3, NOW)
@@ -413,16 +476,24 @@ def test_stale_flag_both_sides() -> None:
 def test_release_and_pin_in_context() -> None:
     repo = "hyperi-io/dfe-engine"
     apps = {"dfe-engine": "v1.20.4"}
-    with patched({f"release:{repo}": [{"tagName": "v1.20.4", "publishedAt": days_ago(1)}]}):
+    with patched(
+        {f"release:{repo}": [{"tagName": "v1.20.4", "publishedAt": days_ago(1)}]}
+    ):
         info = suite_watch.fetch_release(repo, "dfe-engine", apps)
-    expect("a matching release is pinned", info is not None and info.pin_status == "pinned")
-    with patched({f"release:{repo}": [{"tagName": "v1.20.9", "publishedAt": days_ago(1)}]}):
+    expect(
+        "a matching release is pinned", info is not None and info.pin_status == "pinned"
+    )
+    with patched(
+        {f"release:{repo}": [{"tagName": "v1.20.9", "publishedAt": days_ago(1)}]}
+    ):
         info = suite_watch.fetch_release(repo, "dfe-engine", apps)
     expect("a moved-on release is unpinned", info.pin_status == "unpinned")
     with patched({f"release:{repo}": []}):
         info = suite_watch.fetch_release(repo, "dfe-engine", apps)
     expect("no release at all is None", info is None)
-    with patched({f"release:{repo}": [{"tagName": "v0.1.0", "publishedAt": days_ago(1)}]}):
+    with patched(
+        {f"release:{repo}": [{"tagName": "v0.1.0", "publishedAt": days_ago(1)}]}
+    ):
         info = suite_watch.fetch_release(repo, "scalo-rs", {})
     expect("a library with no app pin is n/a", info.pin_status == "n/a")
 
@@ -441,10 +512,14 @@ def test_unreachable_repo_does_not_abort_the_sweep() -> None:
         ]
     by_name = {r.name: r for r in reports}
     expect("the good repo gathered normally", by_name["dfe-engine"].unreachable is None)
-    expect("the bad repo is marked unreachable, not raised",
-           by_name["ghost-repo"].unreachable == "Not Found (HTTP 404)")
-    expect("an unreachable repo carries no partial data",
-           by_name["ghost-repo"].prs == [] and by_name["ghost-repo"].release is None)
+    expect(
+        "the bad repo is marked unreachable, not raised",
+        by_name["ghost-repo"].unreachable == "Not Found (HTTP 404)",
+    )
+    expect(
+        "an unreachable repo carries no partial data",
+        by_name["ghost-repo"].prs == [] and by_name["ghost-repo"].release is None,
+    )
 
 
 def test_json_shape() -> None:
@@ -464,28 +539,44 @@ def test_json_shape() -> None:
     expect("stack is the resolved name", payload["stack"] == "2.2.0-rc.12")
     expect("one entry per swept repo", len(payload["repos"]) == 3)
     engine = next(r for r in payload["repos"] if r["name"] == "dfe-engine")
-    expect("release is typed as an object with pin_status",
-           engine["release"] == {"tag": "v1.20.4", "published_at": days_ago(10), "pin_status": "pinned"})
+    expect(
+        "release is typed as an object with pin_status",
+        engine["release"]
+        == {"tag": "v1.20.4", "published_at": days_ago(10), "pin_status": "pinned"},
+    )
     expect("branches is null when --no-branches was passed", engine["branches"] is None)
     scalo = next(r for r in payload["repos"] if r["name"] == "scalo-rs")
-    expect("a library's release is n/a with no app pin", scalo["release"]["pin_status"] == "n/a")
+    expect(
+        "a library's release is n/a with no app pin",
+        scalo["release"]["pin_status"] == "n/a",
+    )
 
 
 def test_quiet_hides_uneventful_repos() -> None:
     reports = [
-        suite_watch.RepoReport(name="quiet-one", repo="hyperi-io/quiet-one",
-                                release=suite_watch.ReleaseInfo("v1.0.0", days_ago(1), "pinned")),
-        suite_watch.RepoReport(name="loud-one", repo="hyperi-io/loud-one",
-                                prs=[suite_watch.PrRow(1, "t", "a", False, "main", "b", 1, [], "pass")]),
+        suite_watch.RepoReport(
+            name="quiet-one",
+            repo="hyperi-io/quiet-one",
+            release=suite_watch.ReleaseInfo("v1.0.0", days_ago(1), "pinned"),
+        ),
+        suite_watch.RepoReport(
+            name="loud-one",
+            repo="hyperi-io/loud-one",
+            prs=[suite_watch.PrRow(1, "t", "a", False, "main", "b", 1, [], "pass")],
+        ),
     ]
     summary_counts = suite_watch.summarize(reports)
     loud_text = suite_watch.render_text(reports, summary_counts, quiet=False)
     quiet_text = suite_watch.render_text(reports, summary_counts, quiet=True)
-    expect("non-quiet text mentions both repos",
-           "quiet-one" in loud_text and "loud-one" in loud_text)
+    expect(
+        "non-quiet text mentions both repos",
+        "quiet-one" in loud_text and "loud-one" in loud_text,
+    )
     expect("quiet text drops the uneventful repo", "quiet-one" not in quiet_text)
     expect("quiet text keeps the repo with something to show", "loud-one" in quiet_text)
-    expect("the summary line always carries the true repo count", "2 repos" in quiet_text)
+    expect(
+        "the summary line always carries the true repo count", "2 repos" in quiet_text
+    )
 
 
 def main() -> int:

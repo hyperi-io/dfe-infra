@@ -102,9 +102,16 @@ class FakeRegistry:
             platform = self._manifest(repository, _encode(image))
             unknown = {"os": "unknown", "architecture": "unknown"}
             attestation = {"digest": _digest(b"attestation"), "platform": unknown}
-            entry = {"digest": platform, "platform": {"os": "linux", "architecture": "amd64"}}
+            entry = {
+                "digest": platform,
+                "platform": {"os": "linux", "architecture": "amd64"},
+            }
             entries = [attestation, entry]
-            document = {"mediaType": INDEX, "manifests": entries, "annotations": annotations}
+            document = {
+                "mediaType": INDEX,
+                "manifests": entries,
+                "annotations": annotations,
+            }
         self._manifests.setdefault(repository, {})[tag] = (digest, _encode(document))
         self._tags.setdefault(repository, {})[tag] = digest
 
@@ -138,11 +145,15 @@ class FakeRegistry:
             The registry's base URL.
         """
         store = ThreadingHTTPServer(("127.0.0.1", 0), _store_handler(self))
-        registry = ThreadingHTTPServer(("127.0.0.1", 0), _registry_handler(self, store.server_port))
+        registry = ThreadingHTTPServer(
+            ("127.0.0.1", 0), _registry_handler(self, store.server_port)
+        )
         servers = (store, registry)
         # A short poll, because shutdown() waits out the serve loop's current one.
         threads = [
-            threading.Thread(target=s.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
+            threading.Thread(
+                target=s.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True
+            )
             for s in servers
         ]
         for thread in threads:
@@ -172,7 +183,9 @@ class _Quiet(BaseHTTPRequestHandler):
     def log_message(self, *_args) -> None:
         return
 
-    def _send(self, status: int, body: bytes = b"", headers: dict[str, str] | None = None) -> None:
+    def _send(
+        self, status: int, body: bytes = b"", headers: dict[str, str] | None = None
+    ) -> None:
         self.send_response(status)
         for name, value in (headers or {}).items():
             self.send_header(name, value)
@@ -181,14 +194,22 @@ class _Quiet(BaseHTTPRequestHandler):
         if self.command != "HEAD":
             self.wfile.write(body)
 
-    def _error(self, status: int, code: str, headers: dict[str, str] | None = None) -> None:
-        self._send(status, _encode({"errors": [{"code": code, "message": code.lower()}]}), headers)
+    def _error(
+        self, status: int, code: str, headers: dict[str, str] | None = None
+    ) -> None:
+        self._send(
+            status,
+            _encode({"errors": [{"code": code, "message": code.lower()}]}),
+            headers,
+        )
 
 
 def _store_handler(fake: FakeRegistry) -> type[BaseHTTPRequestHandler]:
     class Store(_Quiet):
         def do_GET(self) -> None:
-            fake.requests.append(Request("GET", self.path, self.headers.get("Authorization", "")))
+            fake.requests.append(
+                Request("GET", self.path, self.headers.get("Authorization", ""))
+            )
             if self.headers.get("Authorization"):
                 self._error(400, "INVALID_ARGUMENT")
                 return
@@ -201,11 +222,15 @@ def _store_handler(fake: FakeRegistry) -> type[BaseHTTPRequestHandler]:
     return Store
 
 
-def _registry_handler(fake: FakeRegistry, store_port: int) -> type[BaseHTTPRequestHandler]:
+def _registry_handler(
+    fake: FakeRegistry, store_port: int
+) -> type[BaseHTTPRequestHandler]:
     class Registry(_Quiet):
         def do_GET(self) -> None:
             url = urlsplit(self.path)
-            fake.requests.append(Request("GET", self.path, self.headers.get("Authorization", "")))
+            fake.requests.append(
+                Request("GET", self.path, self.headers.get("Authorization", ""))
+            )
             if fake.fail:
                 self._error(fake.fail.pop(0), "BUSY")
                 return
@@ -228,13 +253,21 @@ def _registry_handler(fake: FakeRegistry, store_port: int) -> type[BaseHTTPReque
                     return
                 digest, body = found
                 media = json.loads(body).get("mediaType", MANIFEST)
-                self._send(200, body, {"Content-Type": media, "Docker-Content-Digest": digest})
+                self._send(
+                    200, body, {"Content-Type": media, "Docker-Content-Digest": digest}
+                )
             else:
-                self._send(307, b"", {"Location": f"http://localhost:{store_port}/{rest}"})
+                self._send(
+                    307, b"", {"Location": f"http://localhost:{store_port}/{rest}"}
+                )
 
         @staticmethod
         def _split(path: str) -> tuple[str | None, str, str]:
-            markers = (("/tags/list", "tags"), ("/manifests/", "manifests"), ("/blobs/", "blobs"))
+            markers = (
+                ("/tags/list", "tags"),
+                ("/manifests/", "manifests"),
+                ("/blobs/", "blobs"),
+            )
             for marker, action in markers:
                 head, found, rest = path.partition(marker)
                 if found and head.startswith("/v2/"):
@@ -264,7 +297,9 @@ def _registry_handler(fake: FakeRegistry, store_port: int) -> type[BaseHTTPReque
             page = tags[start : start + fake.page_size]
             headers = {"Content-Type": "application/json"}
             if start + fake.page_size < len(tags):
-                following = f"/v2/{repository}/tags/list?last={page[-1]}&n={fake.page_size}"
+                following = (
+                    f"/v2/{repository}/tags/list?last={page[-1]}&n={fake.page_size}"
+                )
                 headers["Link"] = f'<{following}>; rel="next"'
             self._send(200, _encode({"name": repository, "tags": page}), headers)
 

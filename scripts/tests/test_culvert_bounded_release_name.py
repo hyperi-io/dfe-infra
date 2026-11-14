@@ -66,7 +66,11 @@ def edge_app(instance: str, cluster: str = CLUSTER) -> dict:
 
 
 def rendered(
-    profile: str, cloud: str, instance: str, cluster: str = CLUSTER, source: Path | None = None
+    profile: str,
+    cloud: str,
+    instance: str,
+    cluster: str = CLUSTER,
+    source: Path | None = None,
 ) -> list[dict]:
     """culvert's objects as the edge Application deploys them, with the instance values it needs."""
     options: dict = {
@@ -74,7 +78,9 @@ def rendered(
         "cluster": cluster,
         "appset": source or appset(APPSETS[CULVERT]),
     }
-    return render_app(CULVERT, profile, cloud, overlay=INSTANCE[CULVERT][cloud], **options)
+    return render_app(
+        CULVERT, profile, cloud, overlay=INSTANCE[CULVERT][cloud], **options
+    )
 
 
 @pytest.fixture(scope="module")
@@ -83,7 +89,9 @@ def unbounded(tmp_path_factory: pytest.TempPathFactory) -> Path:
     source = appset(APPSETS[CULVERT])
     lines = source.read_text(encoding="utf-8").splitlines(keepends=True)
     kept = [line for line in lines if not line.lstrip().startswith("releaseName:")]
-    assert len(lines) - len(kept) == 2, "expected one releaseName per culvert helm source"
+    assert len(lines) - len(kept) == 2, (
+        "expected one releaseName per culvert helm source"
+    )
     path = tmp_path_factory.mktemp("unbounded") / source.name
     path.write_text("".join(kept), encoding="utf-8", newline="\n")
     return path
@@ -116,7 +124,9 @@ def test_the_cap_falls_between_53_and_54_characters() -> None:
     assert len(at_cap["metadata"]["name"]) == HELM_RELEASE_MAX
     assert release_names(at_cap) == ["", ""]
     assert len(past_cap["metadata"]["name"]) == HELM_RELEASE_MAX + 1
-    assert all(name and len(name) <= HELM_RELEASE_MAX for name in release_names(past_cap))
+    assert all(
+        name and len(name) <= HELM_RELEASE_MAX for name in release_names(past_cap)
+    )
 
 
 # ------------------------------------------------------------ a name past the cap
@@ -149,13 +159,18 @@ def test_a_cut_landing_on_a_hyphen_drops_it() -> None:
 def test_two_names_that_differ_past_the_cut_get_different_releases() -> None:
     first = release_names(edge_app(LONG))[0]
     second = release_names(edge_app(LONG_TWIN))[0]
-    assert application_name(CULVERT, LONG)[:44] == application_name(CULVERT, LONG_TWIN)[:44]
+    assert (
+        application_name(CULVERT, LONG)[:44]
+        == application_name(CULVERT, LONG_TWIN)[:44]
+    )
     assert first[:44] == second[:44]
     assert first != second
 
 
 @pytest.mark.parametrize("instance", [LONG, HYPHEN_AT_CUT, "e" * 26, "default"])
-def test_the_bridge_and_the_edge_module_hand_helm_the_same_release(instance: str) -> None:
+def test_the_bridge_and_the_edge_module_hand_helm_the_same_release(
+    instance: str,
+) -> None:
     """A cluster moving between them keeps the release, and its objects their instance label."""
     bridge = generated(CULVERT, instance)
     edge = edge_app(instance)
@@ -165,7 +180,9 @@ def test_the_bridge_and_the_edge_module_hand_helm_the_same_release(instance: str
 
 @pytest.mark.parametrize("profile", PROFILES)
 @pytest.mark.parametrize("cloud", CLOUDS)
-def test_a_40_character_instance_renders_within_kubernetes_limits(cloud: str, profile: str) -> None:
+def test_a_40_character_instance_renders_within_kubernetes_limits(
+    cloud: str, profile: str
+) -> None:
     """The objects carry the release the Application names, and fit every name limit."""
     release = release_names(edge_app(LONG))[0]
     docs = rendered(profile, cloud, LONG)

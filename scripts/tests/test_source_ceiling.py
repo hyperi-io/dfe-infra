@@ -110,7 +110,9 @@ def landed(door: Door) -> LocalClickHouse:
 
 
 class TestTheCeilingBody:
-    @pytest.mark.parametrize("size", [128, 4096, DOOR - steps.CEILING_MARGIN, 1024 * 1024])
+    @pytest.mark.parametrize(
+        "size", [128, 4096, DOOR - steps.CEILING_MARGIN, 1024 * 1024]
+    )
     def test_a_record_is_exactly_the_size_asked_for(self, size: int) -> None:
         assert len(steps.ceiling_body(RUN, steps.CEILING_UNDER, size)) == size
 
@@ -119,7 +121,9 @@ class TestTheCeilingBody:
         assert body[steps.MARKER] == {"run": RUN, "kind": steps.CEILING_OVER}
 
     def test_a_record_carries_no_dataset_so_no_source_routes_it(self) -> None:
-        assert "data_stream" not in json.loads(steps.ceiling_body(RUN, steps.CEILING_UNDER, 256))
+        assert "data_stream" not in json.loads(
+            steps.ceiling_body(RUN, steps.CEILING_UNDER, 256)
+        )
 
     def test_a_size_smaller_than_the_framing_is_refused(self) -> None:
         with pytest.raises(ValueError, match="framing"):
@@ -148,14 +152,18 @@ class TestTheCeilingVerdict:
     def test_anything_else_fails(
         self, over_status: int, under_status: int, under_landed: int, over_landed: int
     ) -> None:
-        verdict = steps.ceiling_outcome(DOOR, over_status, under_status, under_landed, over_landed)
+        verdict = steps.ceiling_outcome(
+            DOOR, over_status, under_status, under_landed, over_landed
+        )
         assert verdict[0] == "failed"
 
 
 class TestTheStepWithoutADoor:
     def test_no_door_named_is_a_skip_that_says_so(self) -> None:
         driver = FakeDriver(FakePage())
-        steps.record_ceiling(driver, None, "http://receiver.invalid/ingest", True, RUN, 0)
+        steps.record_ceiling(
+            driver, None, "http://receiver.invalid/ingest", True, RUN, 0
+        )
         assert driver.status("record-ceiling") == "skipped"
         assert "--receiver-door-bytes" in driver.detail("record-ceiling")
 
@@ -179,7 +187,9 @@ class TestThePost:
         """A multi-MiB body the door never reads: the 413 must arrive, not a reset."""
         limit = 4 * 1024 * 1024
         for early in serve(Door(limit, early=True)):
-            status = steps.post_body(early.url, True, b"x" * (limit + steps.CEILING_MARGIN))
+            status = steps.post_body(
+                early.url, True, b"x" * (limit + steps.CEILING_MARGIN)
+            )
             assert early.bodies_read == 0
         assert status == 413
 
@@ -192,12 +202,16 @@ class TestThePost:
 class TestTheStepAgainstADoor:
     def _walk(self, door: Door, declared: int = DOOR) -> FakeDriver:
         driver = FakeDriver(FakePage())
-        steps.record_ceiling(driver, landed(door), door.url, True, RUN, declared, deadline=0)
+        steps.record_ceiling(
+            driver, landed(door), door.url, True, RUN, declared, deadline=0
+        )
         return driver
 
     def test_a_door_at_the_declared_size_passes(self, door: Door) -> None:
         driver = self._walk(door)
-        assert driver.status("record-ceiling") == "done", driver.detail("record-ceiling")
+        assert driver.status("record-ceiling") == "done", driver.detail(
+            "record-ceiling"
+        )
         kinds = [record[steps.MARKER]["kind"] for record in door.accepted]
         assert kinds == [steps.CEILING_UNDER]
 
@@ -219,7 +233,13 @@ class TestTheStepAgainstADoor:
         assert "answered 200, 0 landed in dfe.main" in driver.detail("record-ceiling")
 
 
-CHART_VALUES = Path(__file__).resolve().parents[2] / "helm" / "charts" / "dfe-extras" / "values.yaml"
+CHART_VALUES = (
+    Path(__file__).resolve().parents[2]
+    / "helm"
+    / "charts"
+    / "dfe-extras"
+    / "values.yaml"
+)
 
 
 class TestTheRecordCap:
@@ -230,7 +250,10 @@ class TestTheRecordCap:
 
     def test_the_step_and_the_chart_name_the_same_cap(self) -> None:
         values = yaml.safe_load(CHART_VALUES.read_text(encoding="utf-8"))
-        assert values["extras"]["defaults"]["dfe-receiver"]["maxBodySize"] == steps.RECORD_CAP
+        assert (
+            values["extras"]["defaults"]["dfe-receiver"]["maxBodySize"]
+            == steps.RECORD_CAP
+        )
 
     def test_both_ceiling_records_fit_an_8_mib_broker(self) -> None:
         assert steps.RECORD_CAP + steps.CEILING_MARGIN < 8 * 1024 * 1024

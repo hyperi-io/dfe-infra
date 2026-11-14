@@ -39,17 +39,31 @@ def render(flavour: str, *args: str) -> list[dict]:
     """The gateway chart through the value files layer2-edge.yaml layers for one flavour."""
     out = subprocess.run(
         [
-            "helm", "template", "envoy-gateway-config", str(GATEWAY),
-            "--namespace", "envoy-gateway-system",
-            "-f", str(VALUES / "common.yaml"),
-            "-f", str(VALUES / f"{FLAVOURS[flavour]}.yaml"),
-            "-f", str(VALUES / f"edge-{flavour}.yaml"),
-            "-f", str(VALUES / "profile-scale.yaml"),
-            "--set", "appNamespace=dfe",
-            "--set", "domain=dfe.example.com",
+            "helm",
+            "template",
+            "envoy-gateway-config",
+            str(GATEWAY),
+            "--namespace",
+            "envoy-gateway-system",
+            "-f",
+            str(VALUES / "common.yaml"),
+            "-f",
+            str(VALUES / f"{FLAVOURS[flavour]}.yaml"),
+            "-f",
+            str(VALUES / f"edge-{flavour}.yaml"),
+            "-f",
+            str(VALUES / "profile-scale.yaml"),
+            "--set",
+            "appNamespace=dfe",
+            "--set",
+            "domain=dfe.example.com",
             *args,
         ],
-        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
     )
     assert out.returncode == 0, out.stderr
     return [d for d in yaml.safe_load_all(out.stdout) if d]
@@ -58,10 +72,15 @@ def render(flavour: str, *args: str) -> list[dict]:
 def wildcard_issuer(docs: list[dict]) -> str:
     """The ClusterIssuer dfe-wildcard-tls is requested from, by annotation or by Certificate."""
     for doc in docs:
-        if doc.get("kind") == "Certificate" and doc["spec"].get("secretName") == "dfe-wildcard-tls":
+        if (
+            doc.get("kind") == "Certificate"
+            and doc["spec"].get("secretName") == "dfe-wildcard-tls"
+        ):
             return doc["spec"]["issuerRef"]["name"]
     gateway = next(d for d in docs if d.get("kind") == "Gateway")
-    return (gateway["metadata"].get("annotations") or {}).get("cert-manager.io/cluster-issuer", "")
+    return (gateway["metadata"].get("annotations") or {}).get(
+        "cert-manager.io/cluster-issuer", ""
+    )
 
 
 def rendered_issuers(docs: list[dict]) -> set[str]:
@@ -79,7 +98,9 @@ def test_every_flavour_names_a_wildcard_issuer_the_chart_renders(flavour: str) -
     )
 
 
-def test_expected_fail_the_chart_default_issuer_with_no_acme_or_vault_renders_none() -> None:
+def test_expected_fail_the_chart_default_issuer_with_no_acme_or_vault_renders_none() -> (
+    None
+):
     """The shape a cloud flavour had: dfe-letsencrypt named, nothing configured to back it."""
     docs = render("aws", "--set", "tls.issuerName=dfe-letsencrypt")
     assert wildcard_issuer(docs) == "dfe-letsencrypt"
@@ -87,6 +108,12 @@ def test_expected_fail_the_chart_default_issuer_with_no_acme_or_vault_renders_no
 
 
 def test_a_deployment_that_configures_acme_gets_its_issuer_rendered() -> None:
-    docs = render("aws", "--set", "tls.issuerName=dfe-letsencrypt", "--set", "tls.acme.email=ops@example.com")
+    docs = render(
+        "aws",
+        "--set",
+        "tls.issuerName=dfe-letsencrypt",
+        "--set",
+        "tls.acme.email=ops@example.com",
+    )
     assert wildcard_issuer(docs) == "dfe-letsencrypt"
     assert "dfe-letsencrypt" in rendered_issuers(docs)

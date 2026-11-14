@@ -53,7 +53,9 @@ def _templates() -> list[Path]:
     found: list[Path] = []
     for tree in CHART_TREES:
         for path in sorted(tree.rglob("templates/*")):
-            if path.suffix in (".yaml", ".tpl") and "/charts/" not in str(path.relative_to(tree)):
+            if path.suffix in (".yaml", ".tpl") and "/charts/" not in str(
+                path.relative_to(tree)
+            ):
                 found.append(path)
     return found
 
@@ -63,7 +65,11 @@ def _values_for(template: Path) -> dict:
     for parent in template.parents:
         if (parent / "Chart.yaml").exists():
             file = parent / "values.yaml"
-            return yaml.safe_load(file.read_text(encoding="utf-8")) or {} if file.exists() else {}
+            return (
+                yaml.safe_load(file.read_text(encoding="utf-8")) or {}
+                if file.exists()
+                else {}
+            )
     return {}
 
 
@@ -92,7 +98,9 @@ def _boolean_keys(node, found: set[str]) -> set[str]:
 def test_the_sweep_reads_a_real_tree() -> None:
     """A sweep whose globs stopped matching reports the same clean as a clean tree."""
     templates = _templates()
-    expect("the sweep reaches every chart tree", len(templates) > 100, f"{len(templates)}")
+    expect(
+        "the sweep reaches every chart tree", len(templates) > 100, f"{len(templates)}"
+    )
     expect(
         "and finds the `with` blocks that are there",
         sum(len(_WITH.findall(t.read_text(encoding="utf-8"))) for t in templates) > 50,
@@ -122,12 +130,17 @@ def test_the_check_fires_on_a_boolean_dial() -> None:
         "            {{- end }}\n",
         {"clickhouse": {"verify": False}},
     )
-    expect("the boolean dial is reported", found == ["1: with .Values.clickhouse.verify"], f"{found}")
+    expect(
+        "the boolean dial is reported",
+        found == ["1: with .Values.clickhouse.verify"],
+        f"{found}",
+    )
     expect(
         "and a string dial beside it is not",
         gated_booleans(
             "{{- with .Values.clickhouse.user }}\n", {"clickhouse": {"user": "default"}}
-        ) == [],
+        )
+        == [],
     )
 
 
@@ -135,7 +148,9 @@ def test_no_with_block_gates_a_values_boolean() -> None:
     """The direct form: `with .Values.x.y` where values.yaml declares y a bool."""
     offenders = []
     for template in _templates():
-        found = gated_booleans(template.read_text(encoding="utf-8"), _values_for(template))
+        found = gated_booleans(
+            template.read_text(encoding="utf-8"), _values_for(template)
+        )
         rel = template.relative_to(Path(_charts_root()))
         offenders += [f"{rel}:{line}" for line in found]
     expect(
@@ -153,17 +168,27 @@ def test_no_with_block_ranges_over_a_boolean_named_elsewhere() -> None:
         for file in tree.rglob("values*.yaml"):
             if "/charts/" in str(file.relative_to(tree)):
                 continue
-            _boolean_keys(yaml.safe_load(file.read_text(encoding="utf-8")) or {}, booleans)
-    expect("the values sweep found boolean keys to check against", booleans, "none found")
+            _boolean_keys(
+                yaml.safe_load(file.read_text(encoding="utf-8")) or {}, booleans
+            )
+    expect(
+        "the values sweep found boolean keys to check against", booleans, "none found"
+    )
 
     offenders = []
     for template in _templates():
-        for number, line in enumerate(template.read_text(encoding="utf-8").splitlines(), 1):
+        for number, line in enumerate(
+            template.read_text(encoding="utf-8").splitlines(), 1
+        ):
             for expr in _WITH.findall(line):
                 if ".Values." in expr:
                     continue  # covered by the direct check above
                 leaf = _LEAF.search(expr)
-                if leaf and leaf.group("leaf") in booleans and not _ranges_over_a_map(expr):
+                if (
+                    leaf
+                    and leaf.group("leaf") in booleans
+                    and not _ranges_over_a_map(expr)
+                ):
                     rel = template.relative_to(Path(_charts_root()))
                     offenders.append(f"{rel}:{number} with {expr}")
     expect(
