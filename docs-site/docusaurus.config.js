@@ -36,9 +36,26 @@ const releaseNotes = site.newest
   ? `https://github.com/hyperi-io/dfe-infra/releases/tag/${site.newest}`
   : null;
 const GRAPHICS = 'https://graphics.hyperi.io';
-const ARROW_SVG =
-  '<svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="2" ' +
-  'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="M13 6l6 6-6 6"/></svg>';
+
+// The navbar label beside the version picker: Latest on the newest release, a warning elsewhere.
+// A warning stays in the bar on a phone (custom.css), where Latest moves into the menu.
+function releaseLabel() {
+  const copy = siteCopy.release_label;
+  if (!copy || !site.newest) {
+    return [];
+  }
+  const kind = build.name === site.newest ? 'latest' : build.name === 'next' ? 'next' : 'older';
+  const href = kind === 'latest' ? releaseNotes : `/v/${site.newest}/`;
+  const tone = kind === 'latest' ? 'latest' : 'warn';
+  return [
+    {
+      type: 'html',
+      position: 'right',
+      className: `release-item release-item--${tone}`,
+      value: `<a class="release-label release-label--${tone}" href="${href}" title="${copy[`${kind}_title`]}">${copy[kind]}</a>`,
+    },
+  ];
+}
 
 // gen-api-docs names the spec's introduction page after its title, lowercased and hyphenated.
 function apiIntroPath(openapi) {
@@ -376,18 +393,6 @@ module.exports = {
   themeConfig: {
     // The toggle cycles system, light and dark. Every surface reads the mode through the roles in custom.css.
     colorMode: {respectPrefersColorScheme: true, disableSwitch: true},
-    announcementBar: siteCopy.announcement && releaseNotes
-      ? {
-          // Keyed on the release, so a reader who closed one sees the next.
-          id: `release-${site.newest}`,
-          content:
-            `<span class="announcement-tag">${siteCopy.announcement.tag}</span>${siteCopy.announcement.text} ` +
-            `<a href="${releaseNotes}">${siteCopy.announcement.link}${ARROW_SVG}</a>`,
-          backgroundColor: 'var(--role-raised)',
-          textColor: 'var(--role-body)',
-          isCloseable: true,
-        }
-      : undefined,
     navbar: {
       title: siteCopy.navbar.title,
       // hyperi-graphics public/hyperi-hound/tertiary: the one hound colour that reads on both modes.
@@ -405,6 +410,7 @@ module.exports = {
           position: 'right',
           items: versionItems,
         },
+        ...releaseLabel(),
         {...siteCopy.navbar.github, position: 'right'},
       ],
     },
