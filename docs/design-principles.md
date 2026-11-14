@@ -89,7 +89,7 @@ It's never the normal input to a transform, and never on in a demo.
 | fetcher: M365, Entra, Okta, GitHub, CloudWatch | no | The APIs return JSON with no vendor digest to check bytes against. | |
 | fetcher: CloudTrail | not per event | Integrity validation hashes the whole log file, so evidence lives at file level in the S3 trail. | |
 
-Where the table comes from, checked 2026-11-03:
+Where the table comes from:
 
 - RFC 3164: https://www.rfc-editor.org/rfc/rfc3164.html
 - Google SecOps re-parse from raw: https://docs.cloud.google.com/chronicle/docs/event-processing/reparse-historical-data

@@ -5,7 +5,7 @@ sidebar_label: The demo
 
 # Quickstart: the demo
 
-Raw firewall syslog in, one parsed ClickHouse table per vendor out, on one host. The fetcher pulls two live API feeds beside it: Wikipedia's recent changes, and the latest GitHub release of each public DFE component.
+Raw firewall syslog in, one parsed ClickHouse table per product out, on one host. The fetcher pulls two live API feeds beside it: Wikipedia's recent changes, and the latest GitHub release of each public DFE component.
 
 <!-- docker-quickstart: demo -->
 You need Docker with Compose v2, Python 3, git and make. It runs the newest DFE release, and `VERSION=` on the make line pins another.
@@ -29,9 +29,9 @@ make demo DEMO_RATE=200         # a faster stream
 make demo DEMO_PROTOCOL=udp     # syslog over UDP
 ```
 
-When no stack is running, `make demo` starts one and runs its self test, which prints `PASS` per check. Then it replays Cisco ASA and FortiGate logs as raw syslog. dfe-transform-elastic works out which device sent each line, parses it, and lands it in `dfe.cisco-asa` or `dfe.fortinet`. A line no vendor claims goes to `dfe.demo-syslog`.
+When no stack is running, `make demo` starts one and runs its self test, which prints `PASS` per check. Then it replays Cisco ASA and FortiGate logs as raw syslog. dfe-transform-elastic works out which device sent each line, parses it, and lands it in `dfe.cisco-asa` or `dfe.fortinet`. A line no product parser claims goes to `dfe.demo-syslog`.
 
-It returns once every vendor table has gained rows, and the stream keeps going. Each vendor has about 6,000 sample lines, so it runs roughly ten minutes before a line repeats. On a stack already running the demo, run `make demo-stop` before `make up`.
+It returns once every product table has gained rows, and the stream keeps going. Each product has about 6,000 sample lines, so it runs roughly ten minutes before a line repeats. On a stack already running the demo, run `make demo-stop` before `make up`.
 
 When you're done:
 

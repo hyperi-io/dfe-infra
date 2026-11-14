@@ -12,7 +12,7 @@ If you've run Splunk, Elastic or OpenSearch, or several of them, you'll bring as
 
 Index engines will take a field you never mapped, but it has a cost. Unplanned fields grow the index, and the hardware under it grows with them. DFE lands every field from day one, and a field with no mapping yet lands in automatic typed columns.
 
-We built it that way because you rarely control your sources. Vendors change formats in an update, and partners change feeds without telling you. So there's no data contract to negotiate or police upstream, and a supplier adding or renaming a field doesn't cost you events.
+We built it that way because you rarely control your sources. Suppliers change formats in an update, and partners change feeds without telling you. So there's no data contract to negotiate or police upstream, and a supplier adding or renaming a field doesn't cost you events.
 
 That gives you a two-step approach:
 
@@ -53,7 +53,7 @@ That changes what you can ask. A newly disclosed vulnerability (a CVE) may have 
 
 ## Parsed once, at the edge
 
-Splunk extracts many fields at search time, so every search pays that cost again. DFE parses once, as data arrives. dfe-receiver and dfe-fetcher turn the transport (syslog headers, beats and HEC envelopes, OTLP) into JSON at the first hop, and the transforms parse vendor message bodies after that. Searches and dashboards then read fields that already exist.
+Splunk extracts many fields at search time, so every search pays that cost again. DFE parses once, as data arrives. dfe-receiver and dfe-fetcher turn the transport (syslog headers, beats and HEC envelopes, OTLP) into JSON at the first hop, and the transforms parse the message body each product writes after that. Searches and dashboards then read fields that already exist.
 
 ## Sources join
 

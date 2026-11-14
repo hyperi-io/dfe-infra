@@ -402,4 +402,4 @@ dfe-toolbox and dfe-extras are charts this repo builds itself, so neither is a m
 
 ## Swept but not in the graph
 
-`scripts/dfe-sweep` reads every unarchived repo in the org that carries one of its `member_topics` (`dfe-suite`, `hyperi-common`, `hyperi-tools`), whether or not suite.yaml has a node for it. A repo with a topic and no node is swept for open findings and work items, and that's all. It has no edge, no lane and no place in a release pass. macbash, which checks and fixes bash scripts for macOS, is the one as of 2026-10, tagged `hyperi-tools`. The sweep prints every reason a repo is in, so the topic says why.
+`scripts/dfe-sweep` reads every unarchived repo in the org that carries one of its `member_topics` (`dfe-suite`, `hyperi-common`, `hyperi-tools`), whether or not suite.yaml has a node for it. A repo with a topic and no node is swept for open findings and work items, and that's all. It has no edge, no lane and no place in a release pass. macbash, which checks and fixes bash scripts for macOS, is one, tagged `hyperi-tools`. The sweep prints every reason a repo is in, so the topic says why.
