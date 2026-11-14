@@ -55,7 +55,9 @@ HELD = (
         "vpc-cni v1.23.3 carries the fix, pinned once its 7-day cooldown ends 2026-11-17",
     ),
 )
-PGP_BLOCK = re.compile(r"-----BEGIN PGP PUBLIC KEY BLOCK-----.*?-----END PGP PUBLIC KEY BLOCK-----", re.S)
+PGP_BLOCK = re.compile(
+    r"-----BEGIN PGP PUBLIC KEY BLOCK-----.*?-----END PGP PUBLIC KEY BLOCK-----", re.S
+)
 TAG = re.compile(r"<[^>]+>")
 
 
@@ -222,7 +224,10 @@ def main(argv: list[str] | None = None) -> int:
             print(f"FAIL {finding}")
             failing += 1
     if not findings:
-        print("ok: signing keys valid past the warning window" + (", upstream holds unchanged" if args.online else ""))
+        print(
+            "ok: signing keys valid past the warning window"
+            + (", upstream holds unchanged" if args.online else "")
+        )
     return 1 if failing else 0
 
 

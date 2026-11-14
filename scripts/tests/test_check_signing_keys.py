@@ -107,12 +107,26 @@ NPA = f"{watch.NPA_ISSUE} is closed: check the pinned vpc-cni carries the fix"
         (KUBE, datetime.date(2026, 11, 15), True),
         (KUBE, datetime.date(2026, 12, 16), False),
         (KUBE.replace("DE15B144", "AB15B144"), datetime.date(2026, 11, 15), False),
-        ("pkgs.k8s.io v1.35: serves X, not the pinned DE15B14486CD377B9E876E1A234654DA9A296436", datetime.date(2026, 11, 15), False),
+        (
+            "pkgs.k8s.io v1.35: serves X, not the pinned DE15B14486CD377B9E876E1A234654DA9A296436",
+            datetime.date(2026, 11, 15),
+            False,
+        ),
         (NPA, datetime.date(2026, 11, 24), True),
         (NPA, datetime.date(2026, 11, 25), False),
         ("tools/vendored.asc: key AB has expired", datetime.date(2026, 11, 15), False),
     ],
-    ids=["key-held", "key-past-date", "other-fingerprint", "rotated-key", "npa-held", "npa-past-date", "unrelated"],
+    ids=[
+        "key-held",
+        "key-past-date",
+        "other-fingerprint",
+        "rotated-key",
+        "npa-held",
+        "npa-past-date",
+        "unrelated",
+    ],
 )
-def test_a_held_finding_fails_again_after_its_date(finding: str, today: datetime.date, is_held: bool) -> None:
+def test_a_held_finding_fails_again_after_its_date(
+    finding: str, today: datetime.date, is_held: bool
+) -> None:
     assert (watch.held(finding, today) is not None) is is_held
