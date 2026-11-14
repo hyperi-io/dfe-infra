@@ -87,8 +87,8 @@ metadata:
   labels:
     {{- include "dfe-common.labels" .ctx | nindent 4 }}
 spec:
-  length: 24
-  digits: 4
+  length: 32
+  digits: 5
   symbols: 0          # alphanumeric -- the value is a ClickHouse password passed through env
   noUpper: false
   allowRepeat: true
