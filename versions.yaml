@@ -10279,7 +10279,7 @@ stacks:
       dfe-fetcher: "v1.4.54"        # 2026-11-12, amd64 and arm64. A config reload starts, stops and rebuilds sources, so a source added, removed or changed needs no restart (#286, closes #134). Carries v1.4.53: a container Vector instance takes its image from its own `image` or extractors.vector.image and fails to load with neither (#282), the default image ships the ODBC driver manager with PostgreSQL, MariaDB/MySQL and SQLite drivers, a SQL Server instance needs odbc.mssql.accept_eula (#274), on scalo-rs 2.14.29 (#281).
       dfe-transform-vrl: "v1.1.48"   # 2026-11-15, amd64 and arm64. Rebuilt on scalo-rs 2.14.30, whose chart scales down after a 300 s window at 25% a minute (#150), with rustix 1.1.6.
       dfe-transform-vector: "v1.0.65"  # 2026-11-15, amd64 and arm64. Rebuilt on scalo-rs 2.14.30, whose chart scales down after a 300 s window at 25% a minute (#163), with rustix 1.1.6.
-      dfe-transform-elastic: "v1.1.31" # 2026-11-11, amd64 and arm64. Generates its detection labels and markers from the pinned dfe-schemas wheel, with a drift check, where they were hand-kept tables, and labels are unchanged (#169). Rebuilt on scalo-rs 2.14.29 (#167): topic discovery skips Kafka-ecosystem internals such as strimzi.* and unsubscribes on an empty refresh.
+      dfe-transform-elastic: "v1.1.32" # 2026-11-15, amd64 and arm64. Rebuilt on scalo-rs 2.14.30, whose chart scales down after a 300 s window at 25% a minute (#178). Splits the generated transforms into their own crate, so the release build fits its runner (#179, #173). Carries v1.1.31: detection labels generated from the pinned dfe-schemas wheel (#169).
       # Alpha and unpublished. A commented pin is read by nothing.
       # dfe-transform-wasm: "2.2.0"
       # dfe-transform-splack: "2.2.0"
@@ -10297,7 +10297,7 @@ stacks:
       dfe-fetcher: "sha256:fec585cb49dcfa6d3f988dd19ed5d6455e48188783a93bb3b0c6cc686378d9fa"
       dfe-transform-vrl: "sha256:da083592e0e87617207d1be01a474462ba4e1e47e80c08cfaf2508a6f78adda6"
       dfe-transform-vector: "sha256:073f9b5ba88bbef43a86c162bd3ef48f9361ea222f2c097a2148b908b8d2ccfb"
-      dfe-transform-elastic: "sha256:48d4f891245b12bc5c2f6bb5f5075700f9d704398f236f329745c37b3a16921c"
+      dfe-transform-elastic: "sha256:83a5298d6b161aac162b588f9c2d0ea46a243d2f1040759daee6a8d7ae62b507"
       dfe-hyperdx: "sha256:ecb74a710bac6c80276ea23447616944a48276bb4e1ecc304ecb3a813920c416"
       culvert: "sha256:467b5effcd73c7db549426a5cc843e8f82b0a02877a3378ae8bc864d0787bed0"
       # Tagged by toolbox.dfe-toolbox.
@@ -10316,7 +10316,7 @@ stacks:
       dfe-hyperdx: "sha256:e012495aa7903b9e637127efe309c30a495f028cef3b2023144662b589463b5a"            # 0.3.24
       dfe-loader: "sha256:c7251932086aa8c0f005df4f7359d694c3f44ff505d9c641768dd3187460e357"             # 1.18.72
       dfe-receiver: "sha256:29a06709842806654be641c8706b7dddc8c929b7dde3d64a995ec59d8820cbcd"           # 1.15.68
-      dfe-transform-elastic: "sha256:f7455320b97baafbe777c4e9dac18e0c21eaf5d8a008b0588c6e11752e3a24f8"  # 1.1.31
+      dfe-transform-elastic: "sha256:f328f17ef05dd44f71bebcd0d6cc7019070c7b9c5db0c8d79e28f670214dd8cd"  # 1.1.32
       dfe-transform-vector: "sha256:0a72642d1a3a587567d2750d89073acd66ff739531655c77983c652b8869ed84"   # 1.0.65
       dfe-transform-vrl: "sha256:d69097ca2cc0e0f0b2ac6bcee7da007076e1c27f11adb97aab47f77848d3dd4a"      # 1.1.48
       dfe-ui: "sha256:78fc88a85a37e7aa67e584b9c4e1a30420209cc773320a9e94d31573868bcb37"                # 1.7.45
