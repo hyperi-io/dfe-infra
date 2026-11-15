@@ -9127,7 +9127,7 @@
       "kind": "source",
       "name": "github",
       "description": "GitHub org / Enterprise Cloud audit-log events. Accepted auth modes: bearer.",
-      "maturity": "alpha",
+      "maturity": "stable",
       "fields": [
         {
           "name": "id",
@@ -9187,7 +9187,7 @@
       "kind": "source",
       "name": "okta",
       "description": "Okta System Log events for one tenant. Accepted auth modes: api_key, bearer, oauth2_client_credentials.",
-      "maturity": "alpha",
+      "maturity": "stable",
       "fields": [
         {
           "name": "id",
@@ -9248,7 +9248,7 @@
       "kind": "source",
       "name": "cloudflare",
       "description": "Cloudflare account audit-log events. Accepted auth modes: bearer.",
-      "maturity": "alpha",
+      "maturity": "stable",
       "fields": [
         {
           "name": "id",
@@ -9308,7 +9308,7 @@
       "kind": "source",
       "name": "onepassword",
       "description": "1Password Events Reporting API (Business/Enterprise). Accepted auth modes: bearer.",
-      "maturity": "alpha",
+      "maturity": "stable",
       "fields": [
         {
           "name": "id",
@@ -9376,7 +9376,7 @@
       "kind": "source",
       "name": "crowdstrike",
       "description": "CrowdStrike Falcon alerts via OAuth2 client-credentials. Accepted auth modes: oauth2_client_credentials.",
-      "maturity": "alpha",
+      "maturity": "stable",
       "fields": [
         {
           "name": "id",
@@ -9436,7 +9436,7 @@
       "kind": "source",
       "name": "slack",
       "description": "Slack Enterprise Grid audit-log events. Accepted auth modes: bearer.",
-      "maturity": "alpha",
+      "maturity": "stable",
       "fields": [
         {
           "name": "id",
@@ -9490,7 +9490,7 @@
       "kind": "source",
       "name": "bitwarden",
       "description": "Bitwarden organisation Events API (OAuth2 client-credentials). Accepted auth modes: oauth2_client_credentials.",
-      "maturity": "alpha",
+      "maturity": "stable",
       "fields": [
         {
           "name": "id",
@@ -9530,7 +9530,7 @@
       "kind": "source",
       "name": "duo",
       "description": "Duo Admin API authentication events (request-signed). Accepted auth modes: signature.",
-      "maturity": "alpha",
+      "maturity": "stable",
       "fields": [
         {
           "name": "id",
@@ -9595,7 +9595,7 @@
       "kind": "source",
       "name": "pypi",
       "description": "PyPI package metadata (supply-chain monitoring; no auth). Single-connection. Accepted auth modes: none.",
-      "maturity": "alpha",
+      "maturity": "stable",
       "fields": [
         {
           "name": "packages",
@@ -9616,7 +9616,7 @@
       "kind": "source",
       "name": "crates_io",
       "description": "crates.io crate metadata (supply-chain monitoring; no auth). Single-connection. Accepted auth modes: none.",
-      "maturity": "alpha",
+      "maturity": "stable",
       "fields": [
         {
           "name": "crates",
@@ -9637,7 +9637,7 @@
       "kind": "source",
       "name": "go_modules",
       "description": "Go module-proxy metadata (supply-chain monitoring; no auth). Single-connection. Accepted auth modes: none.",
-      "maturity": "alpha",
+      "maturity": "stable",
       "fields": [
         {
           "name": "modules",
@@ -9658,7 +9658,7 @@
       "kind": "source",
       "name": "google_workspace",
       "description": "Google Workspace Reports API per-application activity (domain-wide-delegation SA). Accepted auth modes: jwt_bearer.",
-      "maturity": "alpha",
+      "maturity": "stable",
       "fields": [
         {
           "name": "id",
@@ -9713,7 +9713,7 @@
       "kind": "source",
       "name": "gcp_pubsub",
       "description": "GCP Pub/Sub pull source (Log Sink delivery). Single-connection. Accepted auth modes: jwt_bearer, gce_metadata.",
-      "maturity": "alpha",
+      "maturity": "stable",
       "fields": [
         {
           "name": "service_account_key",
@@ -9734,7 +9734,7 @@
           "kind": "service",
           "name": "subscription",
           "description": "One entry per `subscriptions[]`: a subscription to pull from.",
-          "maturity": "alpha",
+          "maturity": "stable",
           "fields": [
             {
               "name": "project_id",
@@ -9770,7 +9770,7 @@
       "kind": "source",
       "name": "object_store",
       "description": "Object-store tailing (S3 live; GCS / Azure Blob are Phase-2 stubs). Single-connection. Accepted auth modes: sigv4.",
-      "maturity": "alpha",
+      "maturity": "stable",
       "children": [
         {
           "kind": "service",
@@ -9821,13 +9821,13 @@
           "kind": "service",
           "name": "gcs",
           "description": "Google Cloud Storage (Phase-2 stub).",
-          "maturity": "alpha"
+          "maturity": "stable"
         },
         {
           "kind": "service",
           "name": "azure_blob",
           "description": "Azure Blob Storage (Phase-2 stub).",
-          "maturity": "alpha"
+          "maturity": "stable"
         }
       ]
     },
@@ -9835,7 +9835,7 @@
       "kind": "source",
       "name": "salesforce",
       "description": "Salesforce audit surfaces via REST (JWT-bearer or client-credentials OAuth2). Accepted auth modes: jwt_bearer, oauth2_client_credentials.",
-      "maturity": "alpha",
+      "maturity": "stable",
       "fields": [
         {
           "name": "id",
