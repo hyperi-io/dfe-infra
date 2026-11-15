@@ -38,7 +38,7 @@ import dfe_ops_bastion as bastion  # noqa: E402
 # _set_toolbox_field -- the dial editor
 # ---------------------------------------------------------------------------
 
-DIAL_WITH_TOOLBOX = """substrate: k8s
+DIAL_WITH_TOOLBOX = """platform: k8s
 
 toolbox:
   ## The in-cluster troubleshooting pod, which has an `enabled` of its own.
@@ -135,7 +135,7 @@ def test_up_and_down_both_address_the_top_level_toggle(
 def test_set_toolbox_field_refuses_a_dial_with_no_toolbox_block() -> None:
     with pytest.raises(bastion.BastionError, match=r"toolbox\.enabled"):
         bastion._set_toolbox_field(
-            "substrate: k8s\nkafka:\n  provider: strimzi\n", "enabled", "true"
+            "platform: k8s\nkafka:\n  provider: strimzi\n", "enabled", "true"
         )
 
 
@@ -1144,7 +1144,7 @@ def test_up_refuses_a_dial_with_no_toolbox_block(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _dial_file(
-        tmp_path, monkeypatch, text="substrate: k8s\nkafka:\n  provider: strimzi\n"
+        tmp_path, monkeypatch, text="platform: k8s\nkafka:\n  provider: strimzi\n"
     )
     assert bastion.cmd_bastion_up(_args()) == 1
 

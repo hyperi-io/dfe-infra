@@ -148,5 +148,5 @@ def test_the_cluster_secret_carries_both_annotations() -> None:
     ("body", "eips"), [("", True), ("edge:\n  aws:\n    receiver_eips: false\n", False)]
 )
 def test_the_dial_switch_reaches_the_root(body: str, eips: bool) -> None:
-    dial = parse_dial("substrate: k8s\n" + body, source="test-dial")
+    dial = parse_dial("platform: k8s\n" + body, source="test-dial")
     assert render_dial._edge(dial)["receiver"] == {"eips": eips}

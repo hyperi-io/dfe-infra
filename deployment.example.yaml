@@ -7,7 +7,7 @@
 ## Copyright: (c) 2026 HYPERI PTY LIMITED
 
 ## THE DEPLOYMENT DIAL -- one config file the whole deployment reads. This is the
-## CANONICAL SUPERSET: it spans every substrate (docker-vm + k8s) and every cloud,
+## CANONICAL SUPERSET: it spans every platform (docker-vm + k8s) and every cloud,
 ## and it is the persisted, wizard-populatable form of the DeployContext. The chain is
 ##
 ##     dial  ->  DeployContext  ->  deploy(context)  ->  running stack
@@ -37,12 +37,12 @@
 apiVersion: dfe.hyperi.io/v1
 kind: DeployContext
 
-## Which substrate this deployment targets.
+## Which platform this deployment targets.
 ##   docker-vm -- single-VM docker compose stack (dfe-docker).
 ##   k8s       -- an RKE2/EKS/GKE/AKS cluster via dfe-ops (this repo).
-## The k8s renderer here requires substrate: k8s; the docker renderer requires
-## docker-vm. One file, sliced per substrate.
-substrate: k8s
+## The k8s renderer here requires platform: k8s, and the docker renderer requires
+## docker-vm. One file, sliced per platform.
+platform: k8s
 
 ## WHO + WHAT LIFECYCLE. metadata.name is the deploy id -> namespace / release /
 ## Argo-app prefix. lifecycle drives whether the deployment is torn down with its

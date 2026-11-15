@@ -76,7 +76,7 @@ def test_each_boolean_reads_through_quoted_or_not() -> None:
 def test_the_tunnel_is_off_until_a_deployment_asks() -> None:
     """The module OFFERS the tunnel; the engine turns it on by writing a file."""
     assert (
-        render_dial._edge_flags(dial("substrate: k8s\n"))["edge.ingest.tunnel.enabled"]
+        render_dial._edge_flags(dial("platform: k8s\n"))["edge.ingest.tunnel.enabled"]
         is False
     )
     assert render_dial._edge_flags(example())["edge.ingest.tunnel.enabled"] is False
@@ -318,7 +318,7 @@ def test_the_defaults_and_an_omitted_block_both_read_through() -> None:
     _admin_peer(
         f'        ttl_minutes: {render_dial.ADMIN_PEER_TTL_MINUTES}\n        peer_cidr: ""\n'
     )
-    render_dial._edge_tunnel(dial("substrate: k8s\n"))
+    render_dial._edge_tunnel(dial("platform: k8s\n"))
     render_dial._edge(example())
 
 
@@ -589,6 +589,12 @@ REFUSED_DIALS = {
         '    trusted_proxy_cidrs: ""',
         "    trusted_proxy_cidrs: 192.0.2.0/25, 0.0.0.0/0",
     ),
+    "the renamed substrate key": lambda text: text.replace(
+        "\nplatform: k8s\n", "\nsubstrate: k8s\n"
+    ),
+    "the docker-vm platform": lambda text: text.replace(
+        "\nplatform: k8s\n", "\nplatform: docker-vm\n"
+    ),
 }
 
 # An env file an operator already holds, which a refused dial must not touch.
@@ -636,21 +642,36 @@ def test_a_refused_dial_leaves_an_existing_env_file_untouched(
     assert env.read_text(encoding="utf-8") == OPERATOR_ENV, result.stderr
 
 
-def test_a_trusted_proxy_range_of_every_address_is_refused_with_its_reason(
-    tmp_path: Path,
+@pytest.mark.parametrize(
+    ("refusal", "reasons"),
+    [
+        (
+            "a trusted proxy range of every address",
+            (
+                "edge.product.trusted_proxy_cidrs carries 0.0.0.0/0, which trusts "
+                "every address",
+                "a header the client sets",
+            ),
+        ),
+        (
+            "the renamed substrate key",
+            ("`substrate` was renamed to `platform`",),
+        ),
+        (
+            "the docker-vm platform",
+            ("the dial says 'docker-vm'", "renders via dfe-docker"),
+        ),
+    ],
+)
+def test_a_refused_dial_names_its_reason(
+    refusal: str, reasons: tuple[str, ...], tmp_path: Path
 ) -> None:
     result = _render(
-        REFUSED_DIALS["a trusted proxy range of every address"](
-            EXAMPLE.read_text(encoding="utf-8")
-        ),
-        tmp_path,
+        REFUSED_DIALS[refusal](EXAMPLE.read_text(encoding="utf-8")), tmp_path
     )
     assert result.returncode == 1, result.stderr
-    assert (
-        "edge.product.trusted_proxy_cidrs carries 0.0.0.0/0, which trusts every address"
-        in result.stderr
-    )
-    assert "a header the client sets" in result.stderr
+    for reason in reasons:
+        assert reason in result.stderr
 
 
 def test_an_accepted_dial_still_writes_the_env_file(tmp_path: Path) -> None:

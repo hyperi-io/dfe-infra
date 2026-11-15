@@ -97,7 +97,7 @@ def _dial(
     lines = [
         "apiVersion: dfe.hyperi.io/v1",
         "kind: DeployContext",
-        "substrate: k8s",
+        "platform: k8s",
         "metadata:",
         "  name: dfe-test",
         "target:",
@@ -3297,7 +3297,7 @@ def test_every_nodepool_renders_the_budgets_the_resolver_wrote(tmp_path: Path) -
 # file and is called here AS IT IS, never edited, so this test proves (or
 # disproves) the composition rather than asserting a behaviour of its own.
 RENDER_DIAL_TOFU_FIXTURE = """
-substrate: k8s
+platform: k8s
 metadata:
   name: dfe-example
 profile: scale

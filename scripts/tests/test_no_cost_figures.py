@@ -139,7 +139,7 @@ def resolved(tmp_path_factory) -> Path:
     dial.write_text(
         "apiVersion: dfe.hyperi.io/v1\n"
         "kind: DeployContext\n"
-        "substrate: k8s\n"
+        "platform: k8s\n"
         "metadata:\n"
         "  name: dfe-test\n"
         "target:\n"

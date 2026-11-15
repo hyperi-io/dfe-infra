@@ -52,7 +52,7 @@ def test_an_absent_block_reports_the_cloud_overlays_door() -> None:
     ):
         assert (
             render_dial._ingest_door(
-                dial(f"k8s:\n  cloud: {cloud}\n" if cloud else "substrate: k8s\n")
+                dial(f"k8s:\n  cloud: {cloud}\n" if cloud else "platform: k8s\n")
             )
             == door
         )

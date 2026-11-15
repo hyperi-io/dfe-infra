@@ -32,7 +32,7 @@ from yaml_subset import parse as parse_dial  # noqa: E402
 # _tofu_vars needs to reach _toolbox without a DialError elsewhere. RFC 5737
 # documentation addresses, never a real deployment.
 BASE_DIAL = """
-substrate: k8s
+platform: k8s
 
 metadata:
   name: dfe-example

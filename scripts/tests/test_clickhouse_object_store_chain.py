@@ -53,7 +53,7 @@ ENDPOINT_KEY = "dfe.hyperi.io/clickhouse_object_store_endpoint"
 DIAL = """\
 apiVersion: dfe.hyperi.io/v1
 kind: DeployContext
-substrate: k8s
+platform: k8s
 metadata:
   name: dfe-test
 target:

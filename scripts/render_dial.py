@@ -8,7 +8,7 @@
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
 
-"""Render the deployment dial into the DFE_* env file, for the k8s substrate.
+"""Render the deployment dial into the DFE_* env file, for the k8s platform.
 
 Two renders, one dial. ``--tofu`` writes the tfvars file the cloud roots read
 (``terraform/environments/<cloud>/dial.auto.tfvars.json``) from the dial's
@@ -2228,11 +2228,18 @@ def main() -> int:
         return 1
 
     dial = _parse_yaml_subset(args.dial.read_text(encoding="utf-8", errors="replace"))
-    substrate = _scalar(dial, ("substrate",))
-    if substrate != "k8s":
+    platform = _scalar(dial, ("platform",))
+    if platform is None and _scalar(dial, ("substrate",)) is not None:
         print(
-            f"render_dial: this renderer handles substrate 'k8s', the dial says "
-            f"{substrate!r} -- the docker-vm substrate renders via dfe-docker",
+            "render_dial: the dial key `substrate` was renamed to `platform` -- "
+            "change `substrate:` to `platform:` in the dial",
+            file=sys.stderr,
+        )
+        return 1
+    if platform != "k8s":
+        print(
+            f"render_dial: this renderer handles platform 'k8s', the dial says "
+            f"{platform!r} -- the docker-vm platform renders via dfe-docker",
             file=sys.stderr,
         )
         return 1

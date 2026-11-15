@@ -933,7 +933,7 @@ def build_dial_text(a: Answers) -> str:
             "## hand-add a field it does not already declare.\n",
             "apiVersion: dfe.hyperi.io/v1\n",
             "kind: DeployContext\n",
-            "substrate: k8s\n\n",
+            "platform: k8s\n\n",
             "metadata:\n",
             f"  name: {a.name}\n",
             '  owner: ""\n',

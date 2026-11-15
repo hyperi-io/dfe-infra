@@ -42,7 +42,7 @@ _VARIABLE_RE = re.compile(r'^variable\s+"([a-z_]+)"', re.MULTILINE)
 # Every field the render reads, and nothing that names a real deployment: RFC
 # 5737 documentation addresses and the reserved example domain.
 DIAL = """
-substrate: k8s
+platform: k8s
 
 metadata:
   name: dfe-example
