@@ -331,7 +331,7 @@ metadata:
   name: dfe-loader-scaler
   namespace: dfe
 spec:
-  cooldownPeriod: 120
+  cooldownPeriod: 300
   maxReplicaCount: 12
   minReplicaCount: 2
   pollingInterval: 15
