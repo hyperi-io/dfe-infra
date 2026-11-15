@@ -78,9 +78,9 @@ DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}")
 # The scalo-service release a render uses when DFE_WEAVE_LIBRARY is unset. The
 # pull names the manifest digest, so a re-pushed tag cannot change what renders.
 LIBRARY_CHART = "oci://ghcr.io/hyperi-io/charts/scalo-service"
-LIBRARY_VERSION = "2.14.28"
+LIBRARY_VERSION = "2.14.30"
 LIBRARY_DIGEST = (
-    "sha256:9ce75e073e51e56b3ce52d844e46f62fab7e87e3ee94bac1ca67dbcd0278614c"
+    "sha256:5218182a56f69797bfe5e0b06177f426c3dfe759042bc13873f84d200e10f392"
 )
 
 # Where each component's thin chart is published, the registry its images come from.

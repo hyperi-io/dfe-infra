@@ -309,7 +309,16 @@ metadata:
   name: dfe-loader-scaler
   namespace: dfe
 spec:
-  cooldownPeriod: 120
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleDown:
+          policies:
+          - periodSeconds: 60
+            type: Percent
+            value: 25
+          stabilizationWindowSeconds: 300
+  cooldownPeriod: 300
   maxReplicaCount: 3
   minReplicaCount: 1
   pollingInterval: 15

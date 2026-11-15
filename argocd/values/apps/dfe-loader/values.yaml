@@ -36,7 +36,6 @@ kafka:
   saslSecretName: dfe-kafka-user
 
 keda:
-  cooldownPeriod: 120
   cpu:
     targetUtilization: 70
   # profile-slim.yaml clears it.

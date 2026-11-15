@@ -102,16 +102,16 @@ spec:
           targetRevision: |-
             {{- $pins := dict
                 "culvert" "sha256:423166ccc25223b702864e49684f95b150cc1d8dded42f0bace6b05844b068f6"
-                "dfe-archiver" "sha256:c79e4531c1726caa6a5411670a6da6cdd7cc183a8f9500d8d12874f718be13d0"
-                "dfe-engine" "sha256:c4e9483c1d6e9257f0eeec8c95792e1bd4caeb9da4e06375f43ed267c82052ab"
+                "dfe-archiver" "sha256:00968327e354da038aaaf56b0630b0147abda0396427cdd3cb08479a1827d743"
+                "dfe-engine" "sha256:e93e550adf991edab34b3bad2a50e58f6620ee5393922b9a1a401ff4e1324a81"
                 "dfe-fetcher" "sha256:9a3b6498d4056a04bfb6189b1db9b23d5c721b2e2c7e31f25d60c130238fa703"
                 "dfe-hyperdx" "sha256:e012495aa7903b9e637127efe309c30a495f028cef3b2023144662b589463b5a"
-                "dfe-loader" "sha256:aef43d5680a547bd6d220ba57a8ae7e43d728df40c1f8dbc3a838f060185f133"
-                "dfe-receiver" "sha256:12dcf2a497750cd65f29a2a6a90406df062a27e5a78fe040e576541ecef06397"
-                "dfe-transform-elastic" "sha256:f7455320b97baafbe777c4e9dac18e0c21eaf5d8a008b0588c6e11752e3a24f8"
-                "dfe-transform-vector" "sha256:fb512bc95f378f4ac92ccb8bb447786f28d1076fc298f0471af6defa8456ae04"
-                "dfe-transform-vrl" "sha256:1924b953dd277c958cc22033e5f236d1c8f19c353547a4247c850d28644e0fb6"
-                "dfe-ui" "sha256:6d006a4b8ad2efa2d3476fe015893c6284c0a03e0e1bb36a8e2c1840ec9995fc"
+                "dfe-loader" "sha256:c7251932086aa8c0f005df4f7359d694c3f44ff505d9c641768dd3187460e357"
+                "dfe-receiver" "sha256:29a06709842806654be641c8706b7dddc8c929b7dde3d64a995ec59d8820cbcd"
+                "dfe-transform-elastic" "sha256:f328f17ef05dd44f71bebcd0d6cc7019070c7b9c5db0c8d79e28f670214dd8cd"
+                "dfe-transform-vector" "sha256:0a72642d1a3a587567d2750d89073acd66ff739531655c77983c652b8869ed84"
+                "dfe-transform-vrl" "sha256:d69097ca2cc0e0f0b2ac6bcee7da007076e1c27f11adb97aab47f77848d3dd4a"
+                "dfe-ui" "sha256:78fc88a85a37e7aa67e584b9c4e1a30420209cc773320a9e94d31573868bcb37"
             -}}
             {{- $pin := index $pins .deploy.service | default "" -}}
             {{- if not $pin -}}
