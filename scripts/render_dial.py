@@ -2229,6 +2229,13 @@ def main() -> int:
 
     dial = _parse_yaml_subset(args.dial.read_text(encoding="utf-8", errors="replace"))
     platform = _scalar(dial, ("platform",))
+    if platform is None and _scalar(dial, ("substrate",)) is not None:
+        print(
+            "render_dial: the dial key `substrate` was renamed to `platform` -- "
+            "change `substrate:` to `platform:` in the dial",
+            file=sys.stderr,
+        )
+        return 1
     if platform != "k8s":
         print(
             f"render_dial: this renderer handles platform 'k8s', the dial says "
