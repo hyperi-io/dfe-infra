@@ -43,7 +43,7 @@ dfeops = importlib.util.module_from_spec(_spec)
 sys.modules["dfeops_ephemeral"] = dfeops
 _loader.exec_module(dfeops)
 
-DIAL = """substrate: k8s
+DIAL = """platform: k8s
 metadata:
   name: dfe
 target:
@@ -215,7 +215,7 @@ def test_a_dial_that_provisions_nothing_gets_no_line(
     reason to stat one an unrelated deployment happens to have left behind."""
     dial = tmp_path / "deployment.yaml"
     dial.write_text(
-        "substrate: k8s\ntarget:\n  existing:\n    kubeconfig: x\ntags:\n  lifecycle: ephemeral\n",
+        "platform: k8s\ntarget:\n  existing:\n    kubeconfig: x\ntags:\n  lifecycle: ephemeral\n",
         encoding="utf-8",
     )
     monkeypatch.setattr(dfeops, "DIAL", dial)

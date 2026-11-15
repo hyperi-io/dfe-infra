@@ -68,7 +68,7 @@ def test_every_field_reads_through_flag() -> None:
 
 def test_an_absent_dial_takes_the_charts_own_defaults() -> None:
     """No ui: block and no edge: block -- every field takes its chart default."""
-    flags = render_dial._edge_flags(parse_dial("substrate: k8s\n", source="test-dial"))
+    flags = render_dial._edge_flags(parse_dial("platform: k8s\n", source="test-dial"))
     assert flags["edge.product.public"] is True
     assert flags["edge.admin_uis.public.kafbat"] is False
     assert flags["edge.admin_uis.public.cruise_control"] is False
@@ -119,7 +119,7 @@ def test_the_new_block_silences_the_deprecation_for_that_key_alone() -> None:
 
 
 def test_the_engine_api_switches_default_to_the_browsers_families_alone() -> None:
-    flags = render_dial._edge_flags(parse_dial("substrate: k8s\n", source="test-dial"))
+    flags = render_dial._edge_flags(parse_dial("platform: k8s\n", source="test-dial"))
     assert flags["edge.engine_api.with_product"] is True
     assert flags["edge.engine_api.cli_families_public"] is False
     assert flags["edge.engine_api.scim_public"] is False

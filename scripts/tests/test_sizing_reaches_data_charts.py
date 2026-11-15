@@ -59,7 +59,7 @@ AWS_FACTS = {
 DIAL = """\
 apiVersion: dfe.hyperi.io/v1
 kind: DeployContext
-substrate: k8s
+platform: k8s
 metadata:
   name: dfe-test
 target:

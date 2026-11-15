@@ -37,7 +37,7 @@ from yaml_subset import parse as parse_dial  # noqa: E402
 def test_an_absent_field_takes_the_charts_own_default() -> None:
     """A dial with no kafka block deploys the chart's combined default, so that
     is what the renderer reports."""
-    dial = parse_dial("substrate: k8s\n", source="test-dial")
+    dial = parse_dial("platform: k8s\n", source="test-dial")
     assert render_dial._controller_pool(dial) == "combined"
 
 

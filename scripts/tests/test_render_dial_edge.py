@@ -76,7 +76,7 @@ def test_each_boolean_reads_through_quoted_or_not() -> None:
 def test_the_tunnel_is_off_until_a_deployment_asks() -> None:
     """The module OFFERS the tunnel; the engine turns it on by writing a file."""
     assert (
-        render_dial._edge_flags(dial("substrate: k8s\n"))["edge.ingest.tunnel.enabled"]
+        render_dial._edge_flags(dial("platform: k8s\n"))["edge.ingest.tunnel.enabled"]
         is False
     )
     assert render_dial._edge_flags(example())["edge.ingest.tunnel.enabled"] is False
@@ -318,7 +318,7 @@ def test_the_defaults_and_an_omitted_block_both_read_through() -> None:
     _admin_peer(
         f'        ttl_minutes: {render_dial.ADMIN_PEER_TTL_MINUTES}\n        peer_cidr: ""\n'
     )
-    render_dial._edge_tunnel(dial("substrate: k8s\n"))
+    render_dial._edge_tunnel(dial("platform: k8s\n"))
     render_dial._edge(example())
 
 

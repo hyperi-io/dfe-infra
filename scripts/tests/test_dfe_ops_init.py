@@ -297,7 +297,7 @@ def test_cmd_init_overwrites_with_force(tmp_path: Path) -> None:
     rc = wiz.cmd_init(_args(out=str(out), answers=str(answers_file), force=True))
 
     assert rc == 0
-    assert "substrate: k8s" in out.read_text(encoding="utf-8")
+    assert "platform: k8s" in out.read_text(encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -314,7 +314,7 @@ def test_dry_run_writes_nothing(tmp_path: Path, capsys: pytest.CaptureFixture) -
 
     assert rc == 0
     assert not out.exists()
-    assert "substrate: k8s" in capsys.readouterr().out
+    assert "platform: k8s" in capsys.readouterr().out
 
 
 # ---------------------------------------------------------------------------
