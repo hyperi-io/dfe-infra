@@ -19,17 +19,17 @@ Every page here comes from a suite repository's own `docs/`, at the version one 
 ```mermaid
 flowchart LR
   S[JSON over HTTP or HTTPS] --> R[dfe-receiver]
-  R -->|Kafka| K1[source topic]
+  R -->|Kafka| K1["source topic (*_land)"]
   F[dfe-fetcher pulls from APIs, databases and files] --> K1
   K1 --> L[dfe-loader]
-  K1 -.-> T[dfe-transform, optional] -.-> K2[transformed topic] -.-> L
+  K1 -.-> T[dfe-transform, optional] -.-> K2["transformed topic (*_load)"] -.-> L
   R -->|direct gRPC| L
   R -.->|direct gRPC| T -.->|direct gRPC| L
   L --> C[(ClickHouse)]
   C --> H[DFE console]
 ```
 
-That's the default path. The leaner profiles skip Kafka and go receiver to loader over gRPC. A transform app (dfe-transform-vrl, dfe-transform-vector or dfe-transform-elastic) is optional. On Kafka a source that needs grok or your own logic gets one: it reads the source's topic and writes a second one, and the loader reads that one instead. Over gRPC the receiver sends to the transform and the transform sends to the loader, and the lean gRPC profiles run only the fixed transforms a deployment ships, not one per source, so a source that needs its own is refused there. Every component also sends its own logs and metrics over OpenTelemetry into ClickHouse, so the console shows the stack's health before your first event arrives.
+This is the default path. The leaner profiles skip Kafka and go receiver to loader over gRPC. A transform app (dfe-transform-vrl, dfe-transform-vector or dfe-transform-elastic) is optional. On Kafka a source that needs grok or your own logic gets one: it reads the source's `*_land` topic and writes a `*_load` one, and the loader reads that one instead. Over gRPC the receiver sends to the transform and the transform sends to the loader, and the lean gRPC profiles run only the fixed transforms a deployment ships, not one per source, so a source that needs its own is refused there. Every component also sends its own logs and metrics over OpenTelemetry into ClickHouse, so the console shows the stack's health before your first event arrives.
 
 ## Purpose-built where it's hot, generic where it has to be
 
@@ -41,7 +41,7 @@ Such an engine interprets your program. VRL, for one, compiles it at startup int
 
 Release builds add profile-guided optimisation (PGO) and BOLT, which means 'run it under real load, record what's hot, rebuild around it'. A bookend's hot path is the same work in every deployment, so a profile trained on it carries over. An interpreter's profile only matches the programs it was trained on.
 
-Parsing is where this pays most, because grok and regex over a product's message body are some of the most expensive per-event work in a pipeline. So dfe-transform-elastic doesn't interpret Elastic ingest pipelines. Their processors compile to Rust, one module per source, and their Painless scripts run as hand-transcribed or pattern-matched Rust. A script it doesn't recognise is counted and skipped.
+Parsing is where this pays most, because grok and regex over a product's message body are some of the most expensive per-event work in a pipeline. So dfe-transform-elastic doesn't interpret Elastic ingest pipelines. Their processors compile to Rust, one module per source, and so do their Painless scripts. A script it doesn't recognise is counted and skipped.
 
 Zero-copy parsers replace grok for the patterns they cover.
 
