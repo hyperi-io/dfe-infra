@@ -233,6 +233,8 @@ flowchart LR
   dfe_clickhouse_rs["dfe-clickhouse-rs"]:::producer
   dfe_fetcher["dfe-fetcher"]:::suite
   dfe_clickhouse_rs -->|cargo-dep, potential| dfe_fetcher
+  dfe_loader["dfe-loader"]:::suite
+  dfe_clickhouse_rs -->|cargo-dep, potential| dfe_loader
   classDef suite fill:#2EA4F6,stroke:#2EA4F6,stroke-width:2px,color:#000647
   classDef producer fill:#000647,stroke:#2EA4F6,stroke-width:3px,color:#FFFFFF
 ```
