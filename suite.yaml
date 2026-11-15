@@ -589,10 +589,9 @@ nodes:
       - kind: crate
         registry: crates.io
         public: true
-    # Our ClickHouse transport crate, published and recently first-tagged.
-    # dfe-fetcher takes it as an optional dependency behind its db crate's
-    # clickhouse feature. dfe-loader still reaches ClickHouse through the
-    # upstream crate with a patch onto the clickhouse-rs fork.
+    # Our ClickHouse transport crate, published on crates.io. dfe-loader takes
+    # it directly, and dfe-fetcher as an optional dependency behind its db
+    # crate's clickhouse feature.
 
 # ---------------------------------------------------------------------------
 # NON-MEMBERS -- names this repo carries a chart or a versions.yaml app pin for
@@ -764,6 +763,13 @@ edges:
     note: "Declared with the `enhanced` extra and imported lazily in sampling/service.py and sampling/kafka_reader.py, for the sampler's smart and anomaly modes."
 
   # --- dfe-clickhouse-rs ---------------------------------------------------
+
+  - from: dfe-clickhouse-rs
+    to: dfe-loader
+    kind: cargo-dep
+    type: potential
+    evidence: "dfe-loader/Cargo.toml"
+    note: "A range with the ext, tls and dynamic features, beside the upstream clickhouse crate."
 
   - from: dfe-clickhouse-rs
     to: dfe-fetcher
