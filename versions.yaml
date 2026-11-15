@@ -9588,7 +9588,7 @@ stacks:
 
     stack:
       # The release an environment upgrades to this one from.
-      previous: "2.2.2-rc.4"
+      previous: "2.2.2"
       # Rollout order between component groups on an upgrade.
       upgrade-order: "dfe-schemas, dfe-engine, data-plane, dfe-ui"
 
@@ -9864,7 +9864,7 @@ stacks:
 
     stack:
       # The releases an environment upgrades to this one from.
-      previous: "2.2.2-rc.5, 2.2.2-rc.4"
+      previous: "2.2.2-rc.5,2.2.2"
       # Rollout order between component groups on an upgrade.
       upgrade-order: "dfe-schemas, dfe-engine, data-plane, dfe-ui"
 
@@ -10140,7 +10140,7 @@ stacks:
 
     stack:
       # The release an environment upgrades to this one from.
-      previous: "2.2.2-rc.6, 2.2.2-rc.4"
+      previous: "2.2.2-rc.6,2.2.2"
       # Rollout order between component groups on an upgrade.
       upgrade-order: "dfe-schemas, dfe-engine, data-plane, dfe-ui"
 
@@ -10416,7 +10416,7 @@ stacks:
 
     stack:
       # The release an environment upgrades to this one from.
-      previous: "2.2.2-rc.7, 2.2.2-rc.4"
+      previous: "2.2.2-rc.7,2.2.2"
       # Rollout order between component groups on an upgrade.
       upgrade-order: "dfe-schemas, dfe-engine, data-plane, dfe-ui"
 
@@ -10692,7 +10692,7 @@ stacks:
 
     stack:
       # The release an environment upgrades to this one from.
-      previous: "2.2.2-rc.8"
+      previous: "2.2.2-rc.4"
       # Rollout order between component groups on an upgrade.
       upgrade-order: "dfe-schemas, dfe-engine, data-plane, dfe-ui"
 
