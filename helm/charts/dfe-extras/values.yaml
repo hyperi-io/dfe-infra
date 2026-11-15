@@ -25,7 +25,7 @@ extras:
     dfe-engine: "v1.22.91"
     dfe-ui: "v1.7.45"
     dfe-receiver: "v1.15.68"
-    dfe-loader: "v1.18.72"
+    dfe-loader: "v1.18.73"
     dfe-archiver: "v1.7.51"
     dfe-fetcher: "v1.4.55"
     dfe-transform-vrl: "v1.1.48"

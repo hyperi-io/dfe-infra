@@ -10550,7 +10550,7 @@ stacks:
       dfe-engine: "v1.22.91"        # 2026-11-15, amd64 and arm64. Builds a rule from a stored condition and previews it (#1169), and walks the deploy repo once per head (#1143). Carries v1.22.90: every fetcher source in one Compose fetcher (#1149). Locks dfe-schemas 0.2.29.
       dfe-ui: "v1.7.45"              # 2026-11-15, amd64 and arm64. Assembles its thin chart on scalo-service 2.14.30 (#736) and reworks the source details view (#731). Carries v1.7.44: creates a rule from the hunt form (#726).
       dfe-receiver: "v1.15.68"      # 2026-11-15, amd64 and arm64. Rebuilt on scalo-rs 2.14.30, whose chart scales down after a 300 s window at 25% a minute (#267).
-      dfe-loader: "v1.18.72"        # 2026-11-15, amd64 and arm64. Rebuilt on scalo-rs 2.14.30, whose chart scales down after a 300 s window at 25% a minute (#348). Drops the capture disable lists and no_capture tags (#347). Carries v1.18.71: a metric per computed-column failure (#334).
+      dfe-loader: "v1.18.73"        # 2026-11-15, amd64 and arm64. Skips absent source tables during schema pre-warm, so a source table created right after a routing reload no longer sends its first minute of rows to the default table (#349). Carries v1.18.72: scalo-rs 2.14.30, whose chart scales down after a 300 s window at 25% a minute (#348).
       dfe-archiver: "v1.7.51"       # 2026-11-15, amd64 and arm64. Rebuilt on scalo-rs 2.14.30, whose chart scales down after a 300 s window at 25% a minute (#178), with rustix 1.1.6. Carries v1.7.50: spool caps sized from config or the volume limit (#170).
       dfe-fetcher: "v1.4.55"        # 2026-11-15, amd64 and arm64. Marks every released source stable and drops the maturity labels, so the theatre pack no longer logs adsb-tracks and ais-tracks as alpha (#296). Reports pressure and processed counts (#285). Carries v1.4.54: a config reload rebuilds sources without a restart (#286).
       dfe-transform-vrl: "v1.1.48"   # 2026-11-15, amd64 and arm64. Rebuilt on scalo-rs 2.14.30, whose chart scales down after a 300 s window at 25% a minute (#150), with rustix 1.1.6.
@@ -10568,7 +10568,7 @@ stacks:
       dfe-engine: "sha256:cad1c3fb9cadfbcc3ae14c763ea9107652b4f9034af93ab41a1757245ed981c0"
       dfe-ui: "sha256:7b77a5b20e9b06e2bd98455e17794d0243d255accf85986a657605e84357435d"
       dfe-receiver: "sha256:6e92a7633a05fb6f8e4fce93b2f03e0d2a78771bc5b4d317b063ff878a3213e2"
-      dfe-loader: "sha256:1c88b284995f81d02e47d759b0b52f2ee7b00e0e8f62b5eaa75cbd81435abe2b"
+      dfe-loader: "sha256:46f49778c4bba7abba2f4696e6fa949e6c29a04cbb41a7bae43734eb8408ed1c"
       dfe-archiver: "sha256:1601fab7bd6f7212f706ca115e0678fe925e0e126d290466c12ebfae323ccc04"
       dfe-fetcher: "sha256:0225505b7fce9687aed8d8d4e261590f1f77b66fe6076f79b0a1fcbe6507bc6e"
       dfe-transform-vrl: "sha256:da083592e0e87617207d1be01a474462ba4e1e47e80c08cfaf2508a6f78adda6"
@@ -10590,7 +10590,7 @@ stacks:
       dfe-engine: "sha256:e93e550adf991edab34b3bad2a50e58f6620ee5393922b9a1a401ff4e1324a81"             # 1.22.91
       dfe-fetcher: "sha256:a1b04f401c8272bf98d9825e99b613943c936f4196cd166b413c77f40d0b6c4d"            # 1.4.55
       dfe-hyperdx: "sha256:48f2e7173892e0dc68bfa4e6ff45d909ab128cc7f608561ea150b668fdbe020d"            # 0.3.25
-      dfe-loader: "sha256:c7251932086aa8c0f005df4f7359d694c3f44ff505d9c641768dd3187460e357"             # 1.18.72
+      dfe-loader: "sha256:c8def6cecd4155e14ac3ac7bee549af8c4e286c4362db707136bf94840b69a1c"             # 1.18.73
       dfe-receiver: "sha256:29a06709842806654be641c8706b7dddc8c929b7dde3d64a995ec59d8820cbcd"           # 1.15.68
       dfe-transform-elastic: "sha256:f328f17ef05dd44f71bebcd0d6cc7019070c7b9c5db0c8d79e28f670214dd8cd"  # 1.1.32
       dfe-transform-vector: "sha256:0a72642d1a3a587567d2750d89073acd66ff739531655c77983c652b8869ed84"   # 1.0.65

@@ -106,7 +106,7 @@ spec:
                 "dfe-engine" "sha256:e93e550adf991edab34b3bad2a50e58f6620ee5393922b9a1a401ff4e1324a81"
                 "dfe-fetcher" "sha256:a1b04f401c8272bf98d9825e99b613943c936f4196cd166b413c77f40d0b6c4d"
                 "dfe-hyperdx" "sha256:48f2e7173892e0dc68bfa4e6ff45d909ab128cc7f608561ea150b668fdbe020d"
-                "dfe-loader" "sha256:c7251932086aa8c0f005df4f7359d694c3f44ff505d9c641768dd3187460e357"
+                "dfe-loader" "sha256:c8def6cecd4155e14ac3ac7bee549af8c4e286c4362db707136bf94840b69a1c"
                 "dfe-receiver" "sha256:29a06709842806654be641c8706b7dddc8c929b7dde3d64a995ec59d8820cbcd"
                 "dfe-transform-elastic" "sha256:f328f17ef05dd44f71bebcd0d6cc7019070c7b9c5db0c8d79e28f670214dd8cd"
                 "dfe-transform-vector" "sha256:0a72642d1a3a587567d2750d89073acd66ff739531655c77983c652b8869ed84"
