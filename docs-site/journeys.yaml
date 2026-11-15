@@ -144,6 +144,8 @@ placement:
     deployment/stack-versioning.md: "Operate / Upgrade"
     deployment/state-and-repos.md: "Deploy / The deploy repo"
     deployment/toolbox.md: "Operate / Day to day and troubleshooting"
+    its-always-dns.md: "Operate / Day to day and troubleshooting"
+    and-if-its-not-dns-its-pki.md: "Operate / Day to day and troubleshooting"
     deployment/upgrades.md: "Operate / Upgrade"
     deployment/migrating-from-2.1.md: "Operate / Upgrade"
     deployment/upgrade-rollback.md: "Operate / Upgrade"
