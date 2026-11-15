@@ -64,7 +64,7 @@ kubectl get issuer,clusterissuer -A      # READY False is the cause
 kubectl describe issuer <name> -n <namespace>
 ```
 
-The fix is to give the issuer its CA back. Restore the Secret under the name the issuer references, from the persisted root or a backup, then check that `kubectl get issuer` shows `READY True` and that the pending CertificateRequest signs. The pods that serve the certificate then need a restart.
+Restore the issuer's Secret, then restart the pods that mount the certificate, because a running server keeps the old serial.
 
 A renewed certificate isn't served until the process reloads it. After a renewal the mounted file held the new serial while a server that had started earlier kept presenting the old one, which `openssl s_client` showed by its different serial. Restart the pods that serve the certificate, or give them a reloader, once the Secret has changed.
 

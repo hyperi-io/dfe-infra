@@ -50,7 +50,7 @@ A dead upstream resolver breaks only the names outside the stack. Docker answers
 
 ```bash
 docker inspect -f '{{.HostConfig.Dns}}' dfe-loader
-docker exec dfe-loader getent hosts example.com          # exit=2, after about 16 seconds
+docker exec dfe-loader getent hosts example.com          # any outside name, exit=2 after about 16 seconds
 docker exec dfe-loader getent hosts clickhouse           # exit=0, instantly
 ```
 
