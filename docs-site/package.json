@@ -23,7 +23,7 @@
     "docusaurus-plugin-sass": "0.2.7",
     "docusaurus-theme-openapi-docs": "5.2.0",
     "js-yaml": "4.3.2",
-    "katex": "0.16.47",
+    "katex": "0.18.11",
     "react": "19.3.1",
     "react-dom": "19.3.1",
     "rehype-katex": "7.0.1",
@@ -53,7 +53,8 @@
     "docusaurus-plugin-llms": {
       "minimatch": "11.0.4",
       "yaml": "2.8.3"
-    }
+    },
+    "katex": "0.18.11"
   },
   "browserslist": {
     "production": [
