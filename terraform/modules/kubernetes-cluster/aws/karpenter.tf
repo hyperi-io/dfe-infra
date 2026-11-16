@@ -1,36 +1,20 @@
-// Karpenter -- the node provisioner for everything the managed group does not
-// carry.
+// Karpenter's AWS half: the two identities, the interruption queue and the discovery tag. The
+// NodePools and EC2NodeClasses are Kubernetes objects in helm/charts/node-pools.
 //
-// The managed group stays. Karpenter's own chart pins the controller off
-// Karpenter nodes with a required nodeAffinity on karpenter.sh/nodepool
-// DoesNotExist, so a node the controller did not make has to exist for the
-// controller to run at all.
+// The managed group stays: Karpenter's chart keeps the controller off Karpenter nodes, so a
+// node it did not make has to exist for the controller to run.
 //
-// This file is the AWS half: the two identities, the interruption queue and the
-// tag Karpenter discovers its network by. The NodePools and EC2NodeClasses are
-// Kubernetes objects and live in helm/charts/node-pools, rendered from the
-// resolver's values.
-//
-// The controller policy below is AWS's published one for the pinned provider
-// release, read from
-// website/content/en/docs/getting-started/getting-started-with-karpenter/cloudformation.yaml
-// at v1.14.3, with the instance-profile lifecycle statements dropped: the
-// profile is created here, so the controller never creates, tags or deletes one.
-// The two instance-profile reads stay, because the controller makes them
-// whether or not it manages a profile.
-//
-// That published policy carries no KMS statement, because it has no idea which
-// key a caller's EC2NodeClass might encrypt volumes with. karpenter_kms below
-// supplies that separately, against this deployment's own key.
+// The controller policy is AWS's published one for the pinned release, minus the
+// instance-profile lifecycle statements (this file creates the profile) and plus karpenter_kms,
+// which the published one lacks. The two instance-profile reads stay because the controller
+// makes them anyway (docs/deployment/aws-configuration.md).
 
 locals {
-  // The one tag both selector terms match on. The value is the cluster name so
-  // two clusters sharing a VPC cannot take each other's subnets.
+  // The tag both selector terms match on, valued with the cluster name so clusters sharing a VPC keep their subnets apart.
   karpenter_discovery_key = "karpenter.sh/discovery"
 
-  // Karpenter reads one queue and decides from the detail-type which event it
-  // is holding. AWS Health carries scheduled retirement and degradation; the
-  // other three are EC2's.
+  // One queue, four events, told apart by detail-type. AWS Health carries scheduled retirement
+  // and degradation, the other three are EC2's.
   karpenter_events = {
     spot-interruption     = { source = "aws.ec2", detail_type = "EC2 Spot Instance Interruption Warning" }
     rebalance             = { source = "aws.ec2", detail_type = "EC2 Instance Rebalance Recommendation" }
@@ -46,10 +30,8 @@ locals {
 // Discovery -- what the EC2NodeClass selector terms match
 // ---------------------------------------------------------------------------
 
-// EKS creates the cluster security group itself, so it is not a resource here
-// and aws_ec2_tag is the way to add a tag to it. The same call against a subnet
-// would fight aws_subnet's own tag management, which is why the subnets carry
-// the tag in vpc.tf instead.
+// EKS creates the cluster security group, so aws_ec2_tag tags it. The subnets carry the tag in
+// vpc.tf instead, because aws_ec2_tag against one fights aws_subnet's own tag management.
 resource "aws_ec2_tag" "karpenter_cluster_security_group" {
   resource_id = aws_eks_cluster.this.vpc_config[0].cluster_security_group_id
   key         = local.karpenter_discovery_key
@@ -63,14 +45,11 @@ resource "aws_ec2_tag" "karpenter_cluster_security_group" {
 resource "aws_sqs_queue" "karpenter" {
   name = var.name
 
-  // An interruption notice is worthless once the instance is gone, so an old
-  // message is deleted rather than replayed at a controller that has just
-  // restarted.
+  // A notice is worthless once the instance is gone, so an old message is deleted, not replayed at a restarted controller.
   message_retention_seconds = local.karpenter_interruption_retention_seconds
 
-  // SQS-managed encryption rather than the deployment CMK: the messages are
-  // instance ids and event types, and a CMK here would need an EventBridge
-  // grant in the key policy to buy nothing.
+  // SQS-managed encryption: the messages are instance ids and event types, and a CMK would need
+  // an EventBridge grant in the key policy for nothing.
   sqs_managed_sse_enabled = true
 }
 
@@ -84,17 +63,13 @@ data "aws_iam_policy_document" "karpenter_queue" {
 
     principals {
       type = "Service"
-      // The two service principals EventBridge delivers to a queue as. Fixed
-      // by AWS.
+      // The service principals EventBridge delivers to a queue as. Fixed by AWS.
       identifiers = ["events.amazonaws.com", "sqs.amazonaws.com"]
     }
 
-    // Without this, any account's EventBridge rule that learns this queue's
-    // ARN can enqueue to it -- a forged spot-interruption message naming a
-    // real instance id would make Karpenter drain a node on a false alarm.
-    // AWS's own published CloudFormation for Karpenter carries no such
-    // condition (this queue policy matches it otherwise statement for
-    // statement), so this is a deliberate tightening beyond upstream parity.
+    // Without this, any account's EventBridge rule that learns the queue ARN can enqueue to it,
+    // and a forged spot-interruption naming a real instance id drains a node. AWS's published
+    // CloudFormation omits the condition, so this tightens upstream.
     condition {
       test     = "StringEquals"
       variable = "aws:SourceAccount"
@@ -127,9 +102,7 @@ resource "aws_sqs_queue_policy" "karpenter" {
   policy    = data.aws_iam_policy_document.karpenter_queue.json
 }
 
-// Without these rules the queue is created, encrypted, granted and never
-// written to -- which is what dfe-core shipped, and why its spot alerts could
-// not fire.
+// Without these rules nothing ever writes to the queue.
 resource "aws_cloudwatch_event_rule" "karpenter" {
   for_each = local.karpenter_events
 
@@ -147,15 +120,13 @@ resource "aws_cloudwatch_event_target" "karpenter" {
   rule = aws_cloudwatch_event_rule.karpenter[each.key].name
   arn  = aws_sqs_queue.karpenter.arn
 
-  // Karpenter matches this target id in its own logs, so it is the upstream
-  // spelling rather than a name of ours.
+  // Upstream's spelling, which Karpenter matches in its logs.
   target_id = "KarpenterInterruptionQueueTarget"
 }
 
 // ---------------------------------------------------------------------------
-// Node identity -- a role of its own, so the controller's PassRole reaches
-// exactly one role; it carries the same policy set as eks.tf's managed-group
-// role on purpose, not by drift.
+// Node identity -- its own role so the controller's PassRole reaches exactly one role, with the
+// same policy set as eks.tf's managed-group role.
 // ---------------------------------------------------------------------------
 
 resource "aws_iam_role" "karpenter_node" {
@@ -169,11 +140,9 @@ resource "aws_iam_role_policy_attachment" "karpenter_node" {
   for_each = toset([
     "AmazonEKSWorkerNodePolicy",
     "AmazonEKS_CNI_Policy",
-    // PullOnly, not ReadOnly: a node pulls images and never describes a
-    // repository.
+    // PullOnly, not ReadOnly: a node never describes a repository.
     "AmazonEC2ContainerRegistryPullOnly",
-    // The nodes are in private subnets with no inbound path, so Session Manager
-    // is how an operator reaches one.
+    // Session Manager is how an operator reaches a node in a private subnet.
     "AmazonSSMManagedInstanceCore",
   ])
 
@@ -181,24 +150,21 @@ resource "aws_iam_role_policy_attachment" "karpenter_node" {
   policy_arn = "${local.managed_policy_prefix}/${each.value}"
 }
 
-// Karpenter is given a profile rather than a role, so it never needs
-// iam:CreateInstanceProfile -- and a private cluster with no route to the IAM
-// endpoint can still launch nodes.
+// A profile rather than a role, so the controller never needs iam:CreateInstanceProfile and a
+// private cluster with no route to the IAM endpoint can still launch nodes.
 resource "aws_iam_instance_profile" "karpenter_node" {
   name = "${var.name}-karpenter-node"
   path = var.iam_path
   role = aws_iam_role.karpenter_node.name
 }
 
-// authentication_mode is API, so the aws-auth ConfigMap is read by nobody and
-// this entry is the only thing that lets a Karpenter node register. A managed
-// node group gets one from EKS; a self-managed node does not.
+// With authentication_mode API the aws-auth ConfigMap is read by nobody, so this entry is what
+// lets a Karpenter node register. EKS adds one for a managed group itself.
 resource "aws_eks_access_entry" "karpenter_node" {
   cluster_name  = aws_eks_cluster.this.name
   principal_arn = aws_iam_role.karpenter_node.arn
 
-  // EC2_LINUX is what grants system:nodes and the node username; EKS fills both
-  // in, and neither kubernetes_groups nor an access policy may be set with it.
+  // EC2_LINUX grants system:nodes and the node username itself, so neither kubernetes_groups nor an access policy may be set.
   type = "EC2_LINUX"
 }
 
@@ -308,8 +274,7 @@ data "aws_iam_policy_document" "karpenter_lifecycle" {
       values   = [var.name]
     }
 
-    // Tagging is allowed only as part of the call that creates the thing, so a
-    // stolen credential cannot relabel an existing instance into the cluster.
+    // Tagging only as part of the creating call, so a stolen credential cannot relabel an existing instance into the cluster.
     condition {
       test     = "StringEquals"
       variable = "ec2:CreateAction"
@@ -386,22 +351,15 @@ resource "aws_iam_role_policy" "karpenter_lifecycle" {
   policy = data.aws_iam_policy_document.karpenter_lifecycle.json
 }
 
-// RunInstances and CreateFleet are called under this role's credentials, so it
-// is this role -- never the node role the instance itself assumes -- that EC2
-// checks for KMS permission before it will attach an encrypted root volume.
-// Without this grant every launch fails Client.InvalidKMSKey.InvalidState and
-// the instance is terminated within seconds of joining.
+// RunInstances and CreateFleet run under this role, so EC2 checks this role, not the node role,
+// for KMS permission before attaching an encrypted root volume. Without it every launch fails
+// Client.InvalidKMSKey.InvalidState.
 //
-// Built with jsonencode() directly rather than a data "aws_iam_policy_document"
-// -- the same choice kms.tf and object-store.tf explain: a mocked
-// aws_iam_policy_document's .json always returns the mock's fixed default
-// regardless of the statement blocks, so a module test could not assert this
-// policy carries the right actions and conditions.
+// jsonencode() rather than a data "aws_iam_policy_document", for the reason kms.tf gives.
 locals {
   karpenter_kms_policy_statements = [
     {
-      // The action list AWS documents for a service that launches EC2
-      // instances with a customer managed key
+      // The action list AWS documents for launching EC2 instances with a customer managed key
       // (autoscaling/ec2/userguide/key-policy-requirements-EBS-encryption.html).
       Sid    = "AllowEBSEncryptionActions"
       Effect = "Allow"
@@ -413,8 +371,7 @@ locals {
         "kms:DescribeKey",
       ]
       Resource = local.kms_key_arn
-      // The controller has no reason to touch this key outside a node launch,
-      // so the grant is usable only when EC2 is the caller on its behalf.
+      // Usable only through EC2: the controller has no reason to touch this key outside a node launch.
       Condition = {
         StringEquals = {
           "kms:ViaService" = "ec2.${var.provision.region}.amazonaws.com"
@@ -422,8 +379,7 @@ locals {
       }
     },
     {
-      // CreateGrant is what lets the controller delegate a subset of its own
-      // key permissions to EC2 for the life of the instance being launched.
+      // CreateGrant lets the controller delegate part of its key permissions to EC2 for the instance's life.
       Sid      = "AllowEBSEncryptionGrants"
       Effect   = "Allow"
       Action   = "kms:CreateGrant"
@@ -432,9 +388,7 @@ locals {
         StringEquals = {
           "kms:ViaService" = "ec2.${var.provision.region}.amazonaws.com"
         }
-        // Restricts the grant to one an AWS service creates for itself,
-        // matching the condition AWS's own key-policy documentation requires
-        // on CreateGrant.
+        // Only grants an AWS service creates for itself, as AWS's key-policy documentation requires on CreateGrant.
         Bool = {
           "kms:GrantIsForAWSResource" = "true"
         }
@@ -459,15 +413,13 @@ data "aws_iam_policy_document" "karpenter_iam" {
     effect  = "Allow"
     actions = ["iam:PassRole"]
 
-    // One role, the one the instance profile above carries. The controller
-    // cannot hand a node any other identity in the account.
+    // One role, the instance profile's: the controller cannot hand a node any other identity.
     resources = [aws_iam_role.karpenter_node.arn]
 
     condition {
       test     = "StringEquals"
       variable = "iam:PassedToService"
-      // Both EC2 principals AWS documents, because the China partitions use the
-      // second one.
+      // Both EC2 principals AWS documents: the China partitions use the second.
       values = ["ec2.amazonaws.com", "ec2.amazonaws.com.cn"]
     }
   }
@@ -556,8 +508,7 @@ data "aws_iam_policy_document" "karpenter_discovery" {
     effect  = "Allow"
     actions = ["ssm:GetParameter"]
 
-    // Where AWS publishes the EKS-optimised AMI ids the al2023 alias resolves
-    // through. AWS owns the parameters, so the ARN carries no account.
+    // Where AWS publishes the EKS-optimised AMI ids the al2023 alias resolves through. AWS owns them, so the ARN has no account.
     resources = ["arn:${data.aws_partition.current.partition}:ssm:${var.provision.region}::parameter/aws/service/*"]
   }
 
@@ -581,9 +532,8 @@ resource "aws_iam_role_policy" "karpenter_discovery" {
 resource "aws_eks_pod_identity_association" "karpenter" {
   cluster_name = aws_eks_cluster.this.name
 
-  // Namespace and service account the chart is installed under in
-  // argocd/appsets/layer1-addons.yaml. The chart's default name is generated
-  // from the release, so the appset names it rather than leaving it to drift.
+  // Namespace and service account the chart installs under (argocd/appsets/layer1-addons.yaml),
+  // which names it because the chart's default is generated from the release.
   namespace       = "kube-system"
   service_account = "karpenter"
 

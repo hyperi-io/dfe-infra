@@ -30,6 +30,8 @@ What the AWS root builds, how the dial sizes it, and the Kafka and ClickHouse ch
 - A gateway VPC endpoint keeps S3 traffic off the NAT path at no extra charge.
 - The account's state bucket is a one-off. Run `terraform/environments/aws-state` once, before any deployment applies.
 - Every controller that needs an AWS credential gets it through EKS Pod Identity, tied to its service account by the cluster module. That's the EBS CSI driver, Karpenter, the AWS Load Balancer Controller, external-dns and cert-manager. Nothing here holds a static key.
+- The deployment has one KMS key, and the cluster module is its one policy owner. A sibling module that needs a grant on it (MSK log delivery, the root's CloudTrail bucket) passes the statement in through `key_policy_grants`, because a second `aws_kms_key_policy` on the same key would replace the first one's whole policy. The account-root statement stays so every IAM-side grant on the key keeps working.
+- Karpenter's controller policy is AWS's published one with the instance-profile lifecycle statements dropped, because the module creates the profile, and the two profile reads kept. It adds a KMS statement, which the published policy lacks, so the controller can launch nodes with encrypted root volumes, and an `aws:SourceAccount` condition on the interruption queue that the published CloudFormation omits, so no other account's EventBridge rule can enqueue a forged interruption. The managed node group stays because Karpenter's chart keeps the controller off Karpenter nodes.
 - One file drives all of it, the deployment dial `deployment.yaml`. Copy it from `deployment.example.yaml` or let `dfe-ops init` write it ([wizard.md](wizard.md)).
 
 ### external-dns

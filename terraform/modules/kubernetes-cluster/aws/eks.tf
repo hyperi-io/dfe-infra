@@ -1,33 +1,20 @@
-// Vanilla EKS with managed node groups -- not RKE2 on EC2.
-//
-// Raw resources rather than terraform-aws-modules/eks, following the shape
-// dfe-core's own EKS module proved, so the surface is exactly what is declared
-// here.
+// Vanilla EKS with managed node groups, as raw resources rather than
+// terraform-aws-modules/eks. See docs/deployment/aws-configuration.md.
 
 data "aws_partition" "current" {}
 
-// The principal running this apply, so the cluster-admin grant below names
-// them explicitly rather than relying on EKS's own implicit "whoever created
-// the cluster" rule.
+// The principal running this apply, named in the cluster-admin grant below.
 data "aws_caller_identity" "current" {}
 
-// aws_caller_identity.current.arn is the STS session ARN for an assumed role
-// (arn:aws:sts::<acct>:assumed-role/<role>/<session>) -- an SSO permission
-// set, a cross-account AssumeRole, an instance profile or a Lambda role all
-// return this shape, and EKS's CreateAccessEntry rejects it outright. The
-// bare role name recovered from that ARN is rejected too: an SSO role's real
-// ARN carries a path (arn:aws:iam::<acct>:role/aws-reserved/sso.amazonaws.com/
-// <region>/<name>) that no regex on the STS ARN can reconstruct.
-// aws_iam_session_context resolves the session ARN back to the IAM role that
-// issued it, path included, and is a no-op (issuer_arn == arn) for a plain
-// IAM user.
+// CreateAccessEntry rejects an assumed role's STS session ARN, and a bare role name too: an
+// SSO role's ARN carries a path no regex can rebuild. This resolves the session back to the
+// IAM role that issued it, path included (a plain IAM user returns itself).
 data "aws_iam_session_context" "current" {
   arn = data.aws_caller_identity.current.arn
 }
 
 locals {
-  // AWS-managed policies are addressed by name under the aws-managed account;
-  // only the partition varies, which is why it is read rather than written.
+  // Only the partition varies in an AWS-managed policy ARN, so it is read.
   managed_policy_prefix = "arn:${data.aws_partition.current.partition}:iam::aws:policy"
 }
 
@@ -60,14 +47,8 @@ resource "aws_iam_role_policy_attachment" "cluster" {
   policy_arn = "${local.managed_policy_prefix}/AmazonEKSClusterPolicy"
 }
 
-// EKS delivers control-plane logs to CloudWatch and nowhere else -- there is
-// no S3 or OTel export path for them, unlike MSK's broker logs -- so this is
-// created explicitly rather than left to EKS's own auto-create-on-enable
-// behaviour, which carries NO expiration at all. Which streams are on is
-// telemetry.eks_log_types, from tfvars. A product deploy keeps audit, the
-// compliance-relevant one. api/controllerManager/scheduler are CloudWatch
-// ingestion cost with nothing downstream to read them. An empty list enables
-// no stream, so there is nothing to deliver and no log group to create.
+// EKS exports control-plane logs to CloudWatch only, and the group it auto-creates never
+// expires, so the group is created here. No stream enabled means no group.
 resource "aws_cloudwatch_log_group" "cluster" {
   count = length(var.telemetry.eks_log_types) > 0 ? 1 : 0
 
@@ -75,8 +56,7 @@ resource "aws_cloudwatch_log_group" "cluster" {
   retention_in_days = var.telemetry.sink == "otel" ? var.telemetry.forced_retention_days : var.telemetry.retention_days
 }
 
-// Keeps a deployment that already runs the group from planning a delete and a
-// create, which would drop its audit history.
+// Keeps an existing group from being deleted and recreated, which would drop its audit history.
 moved {
   from = aws_cloudwatch_log_group.cluster
   to   = aws_cloudwatch_log_group.cluster[0]
@@ -90,24 +70,20 @@ resource "aws_eks_cluster" "this" {
   enabled_cluster_log_types = var.telemetry.eks_log_types
 
   vpc_config {
-    // PRIVATE subnets only. The control-plane network interfaces belong on the
-    // inside; the load balancer controller finds the public subnets by tag, not
-    // from this list.
+    // Private subnets only. The load balancer controller finds the public ones by tag.
     subnet_ids = [for s in aws_subnet.private : s.id]
 
     endpoint_private_access = true
     endpoint_public_access  = var.endpoint.public
 
-    // Omitted entirely when the public endpoint is off -- an empty list is
-    // rejected by the API rather than read as "nobody".
+    // null, not an empty list, when the public endpoint is off: the API rejects an empty one.
     public_access_cidrs = var.endpoint.public ? var.endpoint.allowed_cidrs : null
   }
 
   access_config {
     authentication_mode = "API"
-    // false, not the implicit grant: the true default writes an access entry
-    // for whatever principal ran the apply, unnamed and unreviewable in any
-    // plan. aws_eks_access_entry.creator below is the same grant, made explicit.
+    // false: the true default grants an unnamed access entry to whoever ran the apply.
+    // aws_eks_access_entry.creator below is the same grant, visible in a plan.
     bootstrap_cluster_creator_admin_permissions = false
   }
 
@@ -119,17 +95,10 @@ resource "aws_eks_cluster" "this" {
     }
   }
 
-  // The log group (when any stream is enabled) has to exist before
-  // enabled_cluster_log_types takes effect, or EKS auto-creates one of its own
-  // with no expiration set.
-  //
-  // The private zone's teardown is in this list for the DESTROY order, which is
-  // the reverse: a dependent is destroyed BEFORE what it depends on, so naming
-  // the cleanup here is what puts the cluster's destruction ahead of it. Without
-  // it the two are siblings under the VPC and external-dns can still be running
-  // when the zone is emptied, republishing a record between the delete and
-  // DeleteHostedZone -- which fails with HostedZoneNotEmpty and succeeds on a
-  // re-run, so it reads as a flaky destroy.
+  // The log group must exist before the log types are enabled, or EKS auto-creates one that
+  // never expires. The zone teardown is listed so the destroy takes the cluster down first:
+  // otherwise external-dns can republish a record mid-cleanup and DeleteHostedZone fails with
+  // HostedZoneNotEmpty, which a re-run clears and so reads as a flaky destroy.
   depends_on = [
     aws_iam_role_policy_attachment.cluster,
     aws_iam_role_policy.cluster_kms,
@@ -138,10 +107,8 @@ resource "aws_eks_cluster" "this" {
   ]
 }
 
-// The explicit stand-in for bootstrap_cluster_creator_admin_permissions: the
-// same cluster-admin grant EKS would otherwise hand the deploying principal
-// implicitly, but declared here so it appears in a plan and survives being
-// read back rather than being inferred from whoever happened to run apply.
+// The explicit form of bootstrap_cluster_creator_admin_permissions: cluster-admin for the
+// deploying principal, visible in a plan.
 resource "aws_eks_access_entry" "creator" {
   cluster_name  = aws_eks_cluster.this.name
   principal_arn = data.aws_iam_session_context.current.issuer_arn
@@ -172,8 +139,7 @@ data "aws_iam_policy_document" "ec2_assume" {
 
     principals {
       type = "Service"
-      // The EC2 service principal, which is what a node instance profile
-      // assumes. Fixed by AWS.
+      // The EC2 service principal. Fixed by AWS.
       identifiers = ["ec2.amazonaws.com"]
     }
   }
@@ -188,33 +154,25 @@ resource "aws_iam_role" "nodes" {
 
 resource "aws_iam_role_policy_attachment" "nodes" {
   for_each = toset([
-    // The three AWS-managed policies a managed node group is documented to
-    // need: join the cluster, run the VPC CNI, pull from ECR.
     "AmazonEKSWorkerNodePolicy",
     "AmazonEKS_CNI_Policy",
-    // PullOnly, not ReadOnly: a node pulls images and never describes a
-    // repository.
+    // PullOnly, not ReadOnly: a node never describes a repository.
     "AmazonEC2ContainerRegistryPullOnly",
-    // The nodes are in private subnets with no inbound path, so Session Manager
-    // is how an operator reaches one.
+    // Session Manager is how an operator reaches a node in a private subnet.
     "AmazonSSMManagedInstanceCore",
   ])
-  // Deliberately the same policy set as the Karpenter node role in karpenter.tf
-  // -- one node role should not have a capability its sibling lacks.
+  // The same policy set as the Karpenter node role in karpenter.tf.
 
   role       = aws_iam_role.nodes.name
   policy_arn = "${local.managed_policy_prefix}/${each.value}"
 }
 
 locals {
-  // A launch template is the only way a node group's instances carry a test
-  // run's tags (EKS copies no node group tag onto them), run a script before
-  // kubelet, or assemble their instance store. With none of the three there is
-  // no template and no node group changes.
+  // A launch template is the only way a node carries run tags, runs a pre-kubelet script or
+  // assembles its instance store. With none of the three there is none, so no node group changes.
   node_launch_template = length(var.controller_tags) > 0 || var.node_user_data != ""
 
-  // The nodeadm localStorage strategy each pool's resolved shape asks for: the
-  // array its Karpenter pool's instanceStorePolicy assembles, under kubelet and containerd.
+  // The nodeadm localStorage strategy each pool's shape asks for, matching its Karpenter pool's instanceStorePolicy.
   node_local_storage = {
     for name, pool in var.node_pools : name => var.resolved_shapes[pool.shape_ref].instance_store_policy
     if try(var.resolved_shapes[pool.shape_ref].instance_store_policy, null) != null
@@ -269,8 +227,7 @@ resource "aws_launch_template" "nodes" {
 
   user_data = contains(keys(local.node_user_data_mime), each.key) ? base64encode(local.node_user_data_mime[each.key]) : null
 
-  // EKS refuses a node group's disk_size beside a launch template, so the root
-  // volume is sized here. /dev/xvda is the root device AL2023 exposes.
+  // EKS refuses disk_size beside a launch template, so the root volume is sized here (/dev/xvda is AL2023's root).
   block_device_mappings {
     device_name = "/dev/xvda"
 
@@ -281,8 +238,7 @@ resource "aws_launch_template" "nodes" {
     }
   }
 
-  // IMDSv2 only, hop limit 1, as the Karpenter nodes run: a launch template's
-  // EKS default is hop limit 2, which lets a pod reach the node role.
+  // IMDSv2 with hop limit 1, like the Karpenter nodes: hop limit 2 lets a pod reach the node role.
   metadata_options {
     http_endpoint               = "enabled"
     http_tokens                 = "required"
@@ -306,15 +262,12 @@ resource "aws_eks_node_group" "this" {
   node_group_name = each.key
   node_role_arn   = aws_iam_role.nodes.arn
 
-  // Nodes are private. Anything they need to reach outward goes through the
-  // NAT gateways.
   subnet_ids = [for s in aws_subnet.private : s.id]
 
-  // ARM everywhere in the cloud; the arch itself is asserted against the
-  // resolved shape below rather than assumed from the image name.
+  // The arch is checked against the resolved shape in the precondition below, not inferred from this family.
   ami_type = var.node_image.family
 
-  // A dated release moves the group's image only when a resolve and an apply move it, and null leaves the release it runs.
+  // A dated release moves only on a resolve and an apply. Null keeps the release the group runs.
   release_version = var.node_image.version
 
   instance_types = var.resolved_shapes[each.value.shape_ref].instance_types
@@ -322,9 +275,8 @@ resource "aws_eks_node_group" "this" {
   disk_size      = contains(keys(local.node_launch_templates), each.key) ? null : each.value.disk_gb
   labels         = each.value.labels
 
-  // Only with run tags, a node script or an instance store to assemble. Adding
-  // a launch template to a node group that has none replaces it, which is why a
-  // pool with none of the three gets no block at all.
+  // Adding a launch template to a group that has none replaces the group, so a pool with no run
+  // tags, script or instance store gets no block.
   dynamic "launch_template" {
     for_each = contains(keys(local.node_launch_templates), each.key) ? [aws_launch_template.nodes[each.key]] : []
 
@@ -351,8 +303,7 @@ resource "aws_eks_node_group" "this" {
   }
 
   update_config {
-    // One node at a time. A pool of two or three carries stateful pods, and
-    // replacing more than one at once can take a quorum with it.
+    // One at a time: replacing several nodes of a stateful pool can take a quorum with it.
     max_unavailable = 1
   }
 
@@ -373,25 +324,15 @@ resource "aws_eks_node_group" "this" {
 // ---------------------------------------------------------------------------
 
 locals {
-  // Add-on names are EKS API identifiers. aws-ebs-csi-driver is what makes a
-  // gp3 StorageClass possible, which is why DFE's storage_class becomes gp3 on
-  // this cloud; eks-pod-identity-agent is what makes every role below work
-  // without a credential in a pod.
+  // EKS API names. aws-ebs-csi-driver backs the gp3 StorageClass, and eks-pod-identity-agent is
+  // what lets the roles below work with no credential in a pod.
   addons = ["coredns", "kube-proxy", "vpc-cni", "eks-pod-identity-agent", "aws-ebs-csi-driver"]
 
-  // vpc-cni's own configuration schema (aws eks describe-addon-configuration)
-  // takes enableNetworkPolicy as a top-level STRING "true"/"false", not a JSON
-  // boolean -- confirmed against AWS's own worked example
-  // (https://aws.amazon.com/blogs/containers/amazon-vpc-cni-now-supports-kubernetes-network-policies/).
-  // With no config, network-policies' whole chart is decorative on this
-  // cluster: the add-on is created with no configuration_values at all
-  // otherwise, so nothing enforces a NetworkPolicy object. See
-  // helm/charts/network-policies and the toolbox pod's own fence.
+  // vpc-cni takes enableNetworkPolicy as the STRING "true", not a boolean. Without it nothing
+  // enforces a NetworkPolicy object (helm/charts/network-policies).
   //
-  // var.controller_tags reaches what the two add-ons create themselves, which
-  // default_tags never sees: ADDITIONAL_ENI_TAGS on the pod network interfaces,
-  // extraVolumeTags on every volume the CSI driver provisions. Empty leaves both
-  // configurations exactly as they were.
+  // controller_tags reaches what these add-ons create themselves, which default_tags never sees:
+  // ADDITIONAL_ENI_TAGS on pod network interfaces and extraVolumeTags on CSI volumes.
   addon_configuration = {
     "vpc-cni" = length(var.controller_tags) == 0 ? jsonencode({ enableNetworkPolicy = "true" }) : jsonencode({
       enableNetworkPolicy = "true"
@@ -408,9 +349,8 @@ locals {
   kube_proxy_minor = try(regex("^v([0-9]+\\.[0-9]+)\\.", lookup(var.addon_versions, "kube-proxy", ""))[0], "")
 }
 
-// vpc-cni stands apart from the other add-ons for its order alone: created
-// before the node groups and destroyed after them (see their depends_on). It is
-// a DaemonSet, so it needs no node to become ACTIVE.
+// Its own resource for its order: created before the node groups and destroyed after them. A
+// DaemonSet, so it needs no node to become ACTIVE.
 resource "aws_eks_addon" "vpc_cni" {
   depends_on = [terraform_data.cni_eni_teardown]
 
@@ -431,26 +371,22 @@ resource "aws_eks_addon" "vpc_cni" {
   }
 }
 
-// Without it a deployment that already runs vpc-cni plans a delete and a create
-// of the same add-on instead of keeping it.
+// Keeps an existing vpc-cni add-on from being deleted and recreated.
 moved {
   from = aws_eks_addon.this["vpc-cni"]
   to   = aws_eks_addon.vpc_cni
 }
 
-// The VPC CNI creates pod network interfaces itself, so none is in state. One
-// left `available` holds the EKS cluster security group, EKS cannot delete that
-// group with the cluster, and the VPC delete then fails on it. This deletes them
-// once the node groups and vpc-cni are gone, before the cluster is deleted.
+// Deletes pod network interfaces the VPC CNI leaked, once the node groups and vpc-cni are gone
+// and before the cluster is. A leaked `available` one holds the cluster security group and
+// fails the VPC delete (docs/deployment/aws-teardown.md).
 //
-// The filter is the one the CNI's own leak cleanup sends (amazon-vpc-cni-k8s
-// pkg/awsutils/awsutils.go, getLeakedENIs): the instance_id tag key, status
-// available and this VPC. Its optional cluster-name tag is left out because
-// CLUSTER_NAME may be unset, and this VPC is the module's own, holding no other
-// cluster.
+// The filter is the CNI's own leaked-interface one (amazon-vpc-cni-k8s pkg/awsutils/awsutils.go,
+// getLeakedENIs). Its cluster-name tag is left out because CLUSTER_NAME may be unset, and this
+// VPC holds one cluster.
 //
-// No on_failure = continue: an interface that cannot be deleted stops the
-// destroy here, rather than surfacing as the VPC's DependencyViolation later.
+// No on_failure = continue: a stuck interface fails the destroy here, not later as the VPC's
+// DependencyViolation.
 resource "terraform_data" "cni_eni_teardown" {
   // A dependent is destroyed first, so this runs before the cluster is deleted.
   depends_on = [aws_eks_cluster.this]
@@ -464,7 +400,7 @@ resource "terraform_data" "cni_eni_teardown" {
   // A replaced VPC is swept by the old instance, before the old cluster goes.
   triggers_replace = [aws_vpc.this.id]
 
-  // Retries for an interface still detaching: 12 rounds, 10 seconds apart.
+  // Retries while an interface is still detaching, then fails.
   provisioner "local-exec" {
     when = destroy
 
@@ -539,9 +475,8 @@ resource "aws_eks_addon" "this" {
 }
 
 // ---------------------------------------------------------------------------
-// Pod Identity -- the principal is the EKS auth service, so this is the whole
-// trust policy. IRSA would need an OIDC provider plus a subject condition per
-// service account.
+// Pod Identity -- the EKS auth service is the whole trust policy, where IRSA needs an OIDC
+// provider and a subject condition per service account.
 // ---------------------------------------------------------------------------
 
 data "aws_iam_policy_document" "pod_identity_trust" {
@@ -580,16 +515,10 @@ resource "aws_eks_pod_identity_association" "ebs_csi" {
 }
 
 // ---------------------------------------------------------------------------
-// Toolbox operator -- read-only EKS access for whoever is behind the
-// on-demand bastion's tunnel. Empty var.toolbox_operator_role_arn means no
-// entry at all: the caller (the aws root) passes it only when the toolbox is
-// enabled. This is deliberately a SECOND access entry, never a wider scope on
-// aws_eks_access_entry.creator above -- a troubleshooting session should not
-// default to the identity that can rewrite the cluster. The toolbox EC2
-// instance/pod themselves get no access entry anywhere in this module or the
-// toolbox module -- the tunnel terminates TLS at the operator's laptop, so
-// the kubectl identity is the operator's own role, never the instance's
-// (terraform/modules/toolbox/aws/CONTRACT.md, "EKS access").
+// Toolbox operator -- read-only EKS access for whoever is behind the bastion's tunnel. No
+// entry unless toolbox_operator_role_arn is set. It is a SECOND entry, never a wider scope on
+// the creator's, and the toolbox instance gets none: the kubectl identity is the operator's own
+// role (terraform/modules/toolbox/aws/CONTRACT.md, "EKS access").
 // ---------------------------------------------------------------------------
 
 resource "aws_eks_access_entry" "toolbox_operator" {
