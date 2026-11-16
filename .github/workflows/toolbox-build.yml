@@ -1,22 +1,6 @@
-# Build and push the dfe-toolbox ops-shell image family: one base image plus
-# three thin per-cloud layers (aws/gcp/azure). Every tool version is a
-# --build-arg resolved from versions.yaml's toolbox.* pins at build time, via
-# the same nested-YAML reader scripts/check_versions_drift.py uses to check
-# them -- so this workflow can never push a version that pin does not say.
-#
-# Each platform builds on a runner of its own architecture, never under QEMU,
-# and pushes by digest. A merge job then joins the digests under the family tag
-# with `docker buildx imagetools create`, which writes the inputs-hash annotation.
-#
-# The cloud images FROM the base image by tag, so base's merged index must be in
-# the registry before either platform of aws/gcp/azure builds -- hence
-# cloud-build waits on base-merge.
-#
-# A published family tag is immutable (scripts/toolbox_inputs.py): an absent tag
-# is built, a tag already carrying this build's inputs hash is skipped, and a tag
-# carrying other inputs fails the plan until toolbox.dfe-toolbox is bumped. On a
-# pull request the same plan runs with no registry credential and pushes
-# nothing, so a change that needs the bump fails before it reaches main.
+# Builds and pushes the dfe-toolbox image family: a base image and aws, gcp and azure layers on it. Each platform builds
+# natively and pushes by digest, and a merge job joins the digests under the family tag.
+# docs/deployment/toolbox.md, "The image", has the design.
 name: Toolbox Build
 
 on:
@@ -53,15 +37,9 @@ env:
 jobs:
   resolve:
     name: Resolve pins from versions.yaml
-    # A named runner image, so a move of the ubuntu-latest label cannot swap the python3 and tools these steps run on.
     runs-on: ubuntu-26.04
     outputs:
-      # Whether this stack block names the toolbox at all. The pins arrive with
-      # the rc.14 block (dfe-infra#315) while the images themselves landed with
-      # the AWS path, so main carries the workflow before it carries the
-      # versions -- and a build with no version to build is a skip, not a
-      # failure. The alternative was a KeyError that turned main red for an
-      # ordering the split deliberately chose.
+      # Whether versions.yaml's stack block names the toolbox pins at all. Without them the run skips rather than fails.
       pinned: ${{ steps.pins.outputs.pinned }}
       dfe_toolbox: ${{ steps.pins.outputs.DFE_TOOLBOX }}
       debian: ${{ steps.pins.outputs.DEBIAN }}
@@ -80,9 +58,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # Imports the SAME parser the drift check runs, rather than a second
-      # YAML reader -- there is exactly one nested-YAML reader in this repo,
-      # and this is it (see check_versions_drift.py's own docstring).
+      # Reuses the drift check's reader (check_versions_drift.load_versions), not a second YAML parser.
       - name: Read toolbox.* + services.clickhouse-version
         id: pins
         run: |
