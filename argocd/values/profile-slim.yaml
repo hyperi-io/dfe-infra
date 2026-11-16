@@ -1,16 +1,6 @@
-# Profile: slim -- the smallest k8s tier (below this -> dfe-docker compose).
-# gRPC transport, NO Kafka, pods sized to MINIMUM VIABLE + safety. Bare-minimum
-# footprint: engine + ui + the receiver/loader ingest path, plus an idle archiver
-# (apps.yaml default_in). The fetcher and the transform workers are NOT deployed
-# by default (the slim deploy repo omits their values files; add them later).
-# No web infra UIs unless cheap (Kafbat off -- no Kafka anyway; Argo CD runs
-# headless; Forgejo only as the deploy-repo fallback). Merged after common.yaml +
-# <cloud>.yaml. Keys unknown to a chart are ignored by Helm.
+# The smallest k8s tier: gRPC, no Kafka. See docs/deployment/values-tiers-apps.md#tier-profiles.
 
-# DFE service deployments -- minimum viable + a little safety headroom.
-# Requests are the tier's real cost (scheduling); limits are only a runaway
-# cap. The 1Gi memory limit exists for dfe-hyperdx (multi-process Node: app + api
-# + alert-task + provisioner OOMs at 384Mi); the Rust apps never approach it.
+# The 1Gi memory limit is for dfe-hyperdx, which OOMs at 384Mi.
 replicaCount: 1
 resources:
   requests:
@@ -20,44 +10,31 @@ resources:
     cpu: 500m
     memory: 1Gi
 
-# Pressure OFF on this tier: slim runs no broker (receiver -> loader direct gRPC),
-# so the composite's kafka_lag term has nothing to measure and the native cpu scaler
-# is the honest signal. The pressure trigger is a keda.extraTriggers entry in
-# argocd/values/apps, which no app carries on this tier.
+# Pressure off: no broker, so CPU alone scales it. See docs/deployment/values-tiers-apps.md#tier-profiles.
 keda:
   minReplicaCount: 1
   maxReplicaCount: 2
   pressure:
     targetValue: 75
 
-# ClickHouse -- single standalone node, Keeper embedded, a cluster of one.
-# mode and storageModel are TIER DEFAULTS: the deploy repo's infra/ overlay is
-# layered after this file, so a deployer reaches external, cached-object or
-# tiered-block there.
+# Tier defaults: the deploy repo's infra/ overlay layers after this file.
 clickhouse:
   mode: single
   replicas: 1
   shardsCount: 1
 
-# Kafka -- DISABLED. slim uses gRPC transport (receiver -> loader direct).
 kafka:
   mode: disabled
 
-# Kafbat -- not deployed (no Kafka to manage in slim). Scoped under `kafbat:` so it
-# gates ONLY the kafbat chart; a bare top-level `enabled` would apply to every chart
-# in this cascade (this file is merged into every chart's values).
+# Scoped under kafbat: because a bare enabled would reach every chart in the cascade.
 kafbat:
   enabled: false
 
-# Its HTTPRoute lives in the kafka namespace, which slim never creates; left on,
-# envoy-gateway-config stays OutOfSync forever on `namespaces "kafka" not found`.
-# `routes:` is a key only that chart carries.
+# This tier has no kafka namespace, so the route would stay OutOfSync.
 routes:
   kafbat:
     enabled: false
 
-# Observability collection -- the cheap scrapers only. Per-container kubelet stats
-# are the cardinality cost this tier exists to avoid, and there is no Kafka to scrape.
 clusterTelemetry:
   kubeletStats:
     enabled: false

@@ -1,5 +1,4 @@
-# Direct transport: records arrive on the Push listener and go to the loader's.
-# Which transport carries them is this profile's, never the engine's.
+# The transport is this profile's, never the engine's.
 configOverrides:
   source:
     transport: direct
@@ -7,7 +6,6 @@ configOverrides:
   sink:
     transport: direct
 
-# The loader's Service in this namespace. The engine's compiled endpoint wins.
 config:
   sink:
     endpoint: http://dfe-loader:6000

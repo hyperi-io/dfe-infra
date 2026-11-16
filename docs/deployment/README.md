@@ -151,6 +151,7 @@ The pages in this directory, and the ones beside it a deployer reads:
 | [edge.md](edge.md) | every door into a deployment, and the dial key that opens it |
 | [gateway-oidc.md](gateway-oidc.md) | edge OIDC and the private-CA IdP setup |
 | [edge-vpn.md](edge-vpn.md) | the opt-in tunnel a field appliance dials in on |
+| [values-shared.md](values-shared.md), [values-clouds-edge.md](values-clouds-edge.md), [values-tiers-apps.md](values-tiers-apps.md) | why the keys in `argocd/values/` are set as they are |
 | [toolbox.md](toolbox.md) | the troubleshooting image, pod and AWS bastion |
 | [rke2.md](rke2.md) | the default distribution |
 | [on-prem.md](on-prem.md) | the on-prem cluster cycle through the `local` target |

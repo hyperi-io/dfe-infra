@@ -1,11 +1,5 @@
-# dfe-hyperdx's integration values over its thin chart, layered after
-# apps/_common.yaml: HyperDX's wiring, under the keys the scalo-service library
-# reads. The keys below them are HyperDX's own dials, read here through tpl and
-# by dfe-extras, which renders the generated keys and the dfe-hyperdx-env
-# ConfigMap.
+# dfe-hyperdx's wiring over its thin chart. See docs/deployment/values-tiers-apps.md#per-app-notes.
 
-# The env dfe-extras renders under conditionals, so a variable stays absent
-# where its condition is off. Reloader restarts the pod when the ConfigMap changes.
 extraEnvFrom:
   - configMapRef:
       name: '{{ include "scalo-service.fullname" . }}-env'
@@ -13,31 +7,26 @@ reload:
   configmaps:
     - dfe-hyperdx-env
 
-# The contract's secret groups, on the Secrets these values name.
 secrets:
   session:
     existingSecret: '{{ .Values.sessionSecret.name }}'
   token-encryption:
     existingSecret: '{{ .Values.tokenEncryption.name }}'
-  # Off: HyperDX queries ClickHouse on the connection dfe-engine hands each team,
-  # and nothing it runs reads a password of its own.
+  # Off: HyperDX queries ClickHouse on the connection dfe-engine hands each team.
   clickhouse:
     enabled: false
 
 extraEnv:
-  # The telemetry.mode endpoint (apps/_common.yaml), on the collector's OTLP/HTTP
-  # port, which the image exports to with no protocol set.
+  # The collector's OTLP/HTTP port, which the image exports to with no protocol set.
   OTEL_EXPORTER_OTLP_ENDPOINT: '{{ regexReplaceAll ":4317$" (tpl .Values.telemetry.otlpEndpointTemplate .) ":4318" }}'
   MONGO_PASSWORD:
     valueFrom:
       secretKeyRef:
         name: '{{ .Values.mongodb.passwordSecretName }}'
         key: '{{ .Values.mongodb.passwordSecretKey }}'
-  # The kubelet expands $(MONGO_PASSWORD) here because extraEnv renders in name order.
+  # The kubelet expands $(MONGO_PASSWORD) because extraEnv renders in name order.
   MONGO_URI: '{{ .Values.mongodb.uri }}'
 
-# dfe-engine owns the dashboard JSON: this init container copies it out of the
-# engine image into the directory HyperDX's provisioner reads.
 initContainers:
   - name: dashboards
     image: '{{ with .Values.dashboards.image.repository }}{{ . }}{{ else }}{{ $.Values.global.registry }}/dfe-engine{{ end }}:{{ .Values.dashboards.image.tag }}{{ with .Values.dashboards.image.digest }}@{{ . }}{{ end }}'
@@ -64,10 +53,7 @@ initContainers:
       limits:
         cpu: 200m
         memory: 128Mi
-  # Node reads NODE_EXTRA_CA_CERTS once, as each process starts, and the CA lands
-  # here through two asynchronous copies (clickhouse-cluster's tls-ca.yaml and
-  # clickhouse-admin-appns.yaml), so this holds the pod until the file
-  # dfe-hyperdx-env names is present. It exits at once where that names none.
+  # Holds the pod until the CA file exists, because Node reads NODE_EXTRA_CA_CERTS once as each process starts.
   - name: wait-for-clickhouse-ca
     image: '{{ include "scalo-service.image" . }}'
     imagePullPolicy: '{{ .Values.image.pullPolicy | default "IfNotPresent" }}'
@@ -118,17 +104,11 @@ initContainers:
 extraVolumes:
   - name: dashboards
     emptyDir: {}
-  # The CA the document store's gateway certificate chains to, which MONGO_URI's
-  # tlsCAFile names. The bundled store copies it here (helm/charts/documentdb), and
-  # the pod waits for it rather than starting unable to verify the gateway.
+  # The CA the document store's gateway chains to, which MONGO_URI's tlsCAFile names.
   - name: documentdb-ca
     secret:
       secretName: '{{ .Values.mongodb.caSecretName }}'
-  # Optional: a deployment on plaintext ClickHouse has no CA object, and
-  # NODE_EXTRA_CA_CERTS (dfe-hyperdx-env) is set only where it has one. There,
-  # wait-for-clickhouse-ca holds the pod until the CA is in this volume. tpl
-  # mounts the CA from a Secret when clickhouse.tls.ca.secretName is set, else
-  # from a ConfigMap.
+  # Optional: plaintext ClickHouse has no CA object.
   - name: clickhouse-ca
     '{{ if .Values.clickhouse.tls.ca.secretName }}secret{{ else }}configMap{{ end }}':
       '{{ if .Values.clickhouse.tls.ca.secretName }}secretName{{ else }}name{{ end }}': '{{ .Values.clickhouse.tls.ca.secretName | default .Values.clickhouse.tls.ca.configMapName | default "dfe-clickhouse-ca" }}'
@@ -148,11 +128,7 @@ extraVolumeMounts:
     mountPath: /etc/dfe/documentdb-ca
     readOnly: true
 
-# Mongo-protocol metadata store: the bundled DocumentDB gateway, which serves only
-# TLS and authenticates with SCRAM-SHA-256. The host is the Service the operator
-# puts in front of the primary. An external endpoint sets uri with its
-# credentials inline, extraEnv.MONGO_PASSWORD to an empty string, and caSecretName
-# to a Secret carrying its own CA under ca.crt.
+# The bundled DocumentDB gateway, TLS with SCRAM-SHA-256. An external endpoint sets uri, an empty extraEnv.MONGO_PASSWORD and caSecretName.
 mongodb:
   uri: "mongodb://hyperdx:$(MONGO_PASSWORD)@documentdb-service-dfe-documentdb.cnpg.svc.cluster.local:10260/hyperdx?tls=true&tlsCAFile=/etc/dfe/documentdb-ca/ca.crt&authMechanism=SCRAM-SHA-256"
   passwordSecretName: dfe-documentdb-credentials
@@ -171,8 +147,7 @@ tokenEncryption:
 dashboards:
   mountPath: /etc/hyperdx/dashboards
   image:
-    repository: ""     # empty -> {{ global.registry }}/dfe-engine
-    tag: "v1.22.91"     # == versions.yaml apps.dfe-engine (drift-checked)
-    # The init container runs the ENGINE image, so this is versions.yaml
-    # digests.dfe-engine (drift-checked).
+    repository: ""
+    tag: "v1.22.91"
+    # Runs the engine image: versions.yaml digests.dfe-engine.
     digest: "sha256:cad1c3fb9cadfbcc3ae14c763ea9107652b4f9034af93ab41a1757245ed981c0"

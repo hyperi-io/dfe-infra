@@ -1,11 +1,5 @@
-# dfe-loader's integration values over its thin chart, layered after
-# apps/_common.yaml: the loader's wiring, under the keys the scalo-service
-# library reads. The keys below them are the loader's own dials, read here
-# through tpl and by dfe-extras, which renders the mesh listener and the
-# dfe-loader-env ConfigMap.
+# dfe-loader's wiring over its thin chart. See docs/deployment/values-tiers-apps.md#per-app-notes.
 
-# The env dfe-extras renders under conditionals, so a variable stays absent
-# where its condition is off. Reloader restarts the pod when the ConfigMap changes.
 extraEnvFrom:
   - configMapRef:
       name: '{{ include "scalo-service.fullname" . }}-env'
@@ -13,21 +7,17 @@ reload:
   configmaps:
     - dfe-loader-env
 
-# http, not native: the pinned ClickHouse client has no TCP row fetch, so schema
-# queries stall on 9000. The loader's key is `protocol`; `transport` is ignored.
+# http, not native: the pinned ClickHouse client has no TCP row fetch. The key is protocol, and transport is ignored.
 config:
   clickhouse:
     protocol: http
 
-# The contract's secret groups on the Secrets the stack writes, under their keys;
-# the library's key names take no tpl.
 secrets:
   kafka:
     existingSecret: '{{ .Values.kafka.saslSecretName }}'
     keys:
       username: username
       password: password
-  # The loader's own password, never the admin one.
   clickhouse:
     existingSecret: '{{ .Values.clickhouse.serviceUsers.loader.passwordSecretName }}'
     keys:
@@ -38,7 +28,7 @@ kafka:
 keda:
   cpu:
     targetUtilization: 70
-  # profile-slim.yaml clears it.
+  # Cleared by profile-slim.yaml.
   extraTriggers:
     # BEGIN fragment pressure-trigger -- rendered by `python3 scripts/composition.py --write-fragments`
     - type: metrics-api
@@ -51,17 +41,12 @@ keda:
 
 waitForEngine:
   service: dfe-engine
-  # Empty is the release's own namespace.
   namespace: ""
   port: 8000
   timeoutSeconds: 600
   intervalSeconds: 5
 
-# The second init container appends the ClickHouse CA to a copy of the image's
-# own roots, because SSL_CERT_FILE replaces the system store and the release
-# check still needs the public roots. It writes the bundle only where
-# dfe-loader-env sets SSL_CERT_FILE: ClickHouse over TLS with a CA Secret or
-# ConfigMap named.
+# Appends the ClickHouse CA to a copy of the image's roots, because SSL_CERT_FILE replaces the system store.
 initContainers:
   # BEGIN fragment wait-for-engine -- rendered by `python3 scripts/composition.py --write-fragments`
   - name: wait-for-engine
@@ -135,9 +120,6 @@ initContainers:
         cpu: 100m
         memory: 32Mi
 
-# Optional: a deployment on plaintext ClickHouse, or trusting the system roots
-# alone, has no CA object. tpl mounts the CA from a Secret when
-# clickhouse.tls.ca.secretName is set, else from a ConfigMap.
 extraVolumes:
   - name: clickhouse-ca
     '{{ if .Values.clickhouse.tls.ca.secretName }}secret{{ else }}configMap{{ end }}':

@@ -1,78 +1,46 @@
-# THE deploy-config SSoT -- the versions.yaml of configuration. Every
-# top-level fact consumed by more than one component (service hostnames,
-# telemetry destination, data endpoints, RBAC policy) is defined HERE once
-# and read downstream; defining a shared fact anywhere else is config
-# sprawl. Environment overrides layer on top (local.yaml, aws.yaml, ...);
-# version/image pins live in versions.yaml.
+# Shared deploy facts, each defined once. See docs/deployment/values-shared.md#shared-facts.
 global:
   project: dfe
   cloud: ""
   domain: ""
-  # The registry every dfe-* image is pulled from. Bootstrap writes it from
-  # DFE_REGISTRY onto the dfe.hyperi.io/registry cluster-secret annotation and
-  # the layer 2 appsets pass it as this parameter, so no values file sets it.
-  # A DFE_REGISTRY looks like: ghcr.io/my-org, my-registry.example.com/dfe,
-  # or 123456.dkr.ecr.us-east-1.amazonaws.com/dfe.
+  # Written by bootstrap from DFE_REGISTRY, so no values file sets it.
   registry: ""
 
-# THE canonical service-name map: every surface is {hostname}.{domain}, and
-# every chart resolves names from HERE (gateway routes, links page, dfe-ui
-# embed URLs). Role names, never vendor names (git, not forgejo).
+# Service-name map: every surface is {hostname}.{domain}. See docs/deployment/values-shared.md#shared-facts.
 hostnames:
-  dfe: dfe            # dfe-ui at /, engine API at /api/v1 -- one shared hostname
-  hyperdx: hyperdx    # the embedded fork (iframe inside dfe-ui)
+  dfe: dfe
+  hyperdx: hyperdx
   argocd: argocd
-  git: git            # deploy-repo git host (bundled Forgejo or external)
+  git: git
   kafbat: kafbat
-  cruiseControl: cruise-control  # Kafka rebalancer UI, kafka.mode cluster only
+  cruiseControl: cruise-control
   links: links
-  otel: otel          # platform OTLP ingest
-  receiver: receiver  # data ingest, used only by exposure.groups.ingest.door: gateway
-  vpn: vpn            # edge-fleet tunnel door; culvert's server certificate CN
+  otel: otel
+  receiver: receiver
+  vpn: vpn
 
-# THE admin groups: the OIDC groups that administer this deployment's ops
-# surfaces. The gateway's edge policy admits exactly these to every infra route
-# it fronts, and Kafbat grants them its admin role unless an overlay names its
-# own. Argo CD keeps its own policy.csv (bootstrap/argocd_login.py), and
-# scripts/tests/test_argocd_login.py fails when its admins differ from these.
-# Canonical names: dfe-engine docs/control-plane/rbac-vocabulary.md. An empty
-# list refuses to render in both charts.
+# OIDC groups that administer the ops surfaces. See docs/deployment/values-shared.md#shared-facts.
 adminGroups:
   - dfe-admins
   - dfe-infra
 
-# THE exposure dial: who may reach each surface from outside the cluster, by
-# group. These are the product defaults, and an empty allow list means "no
-# fence" here; each cloud's edge-<flavour>.yaml, whose gateway is
-# internet-facing, makes empty mean "refuse every address" and turns admin off.
-# A deployment sets its own lists in its deploy repo's infra/common.yaml, which
-# the engine's infravars class writes at runtime. helm/edge/gateway/values.yaml
-# documents each field; allow and deny are CIDR lists.
+# Exposure dial, product defaults: an empty allow list means no fence here. See docs/deployment/values-shared.md#shared-facts.
 exposure:
   groups:
-    # dfe-receiver and the otel route. door loadbalancer is the receiver's own
-    # load balancer, which renders only while allow names someone; gateway is
-    # receiver.{domain} on the gateway, which the on-prem cloud files set; tunnel
-    # is no public door. deny reaches the gateway routes only: the receiver's
-    # own load balancer refuses a deny list (docs/ingest-edge.md).
     ingest:
       enabled: true
       allow: []
       deny: []
       door: loadbalancer  # loadbalancer | gateway | tunnel
-    # dfe-ui, HyperDX and the engine's browser families.
     console:
       enabled: true
       allow: []
       deny: []
-    # The engine's CLI families, /openapi.json, and SCIM when scim is true.
     api:
       enabled: true
       allow: []
       deny: []
       scim: false
-    # The admin UIs. tools is THE canonical admin list, one key per class-infra
-    # gateway route, and each true puts that UI on a public hostname too.
     admin:
       enabled: true
       allow: []
@@ -84,336 +52,164 @@ exposure:
         cruiseControl: false
         forgejo: false
         links: false
-    # The fleet tunnel. culvert's chart wires it.
     vpn:
       enabled: false
       allow: []
       door: culvert       # culvert | awsClientVpn
-  # The cluster's own egress addresses, written from the cluster secret, never
-  # by hand.
   selfRanges: []
 
-# THE canonical operator-namespace map: network-policies allows data-namespace
-# ingress from these, and otel-collector scrapes their controllers' metrics.
-# A wrong name here fails SILENTLY -- a namespaceSelector naming a namespace that
-# does not exist matches nothing and raises no error (dfe-infra#136).
-# MUST agree with the destination namespaces in appsets/layer-scale.yaml.
+# Must agree with the destinations in argocd/appsets/layer-scale.yaml. A wrong name matches nothing and fails silently. See docs/deployment/values-shared.md#shared-facts.
 operatorNamespaces:
   clickhouse: clickhouse-operator-system
   strimzi: strimzi
-  # The documentdb-operator addon's CloudNativePG, which its chart installs here.
   cnpg: cnpg-system
 
-# Image pull secrets -- none, so every pod pulls anonymously. A private mirror's
-# secret, when bootstrap.sh creates one, reaches the charts through the appsets.
 imagePullSecrets: []
 
-# Node scheduling -- empty by default (no constraints).
-# Override in cloud-specific values to target dedicated DFE node pools.
-# nodeSelector and tolerations are the same placement under the keys the
-# scalo-service thin charts read, so a file that sets one sets the other equal.
+# nodeSelector and tolerations repeat nodeScheduling under the keys the thin charts read. Keep them equal.
 nodeScheduling: {}
 nodeSelector: {}
 tolerations: []
 
-# Self-monitoring telemetry (OTel) for the WHOLE stack -- selectable destination
-# so monitoring need not depend on the data pipeline working. Every app resolves
-# its OTLP endpoint from telemetry.mode, through apps/_common.yaml's
-# telemetry.otlpEndpointTemplate:
-#   hyperdx   (DEFAULT) -- push OTLP to the stack's collector gateway, which
-#             writes ClickHouse's otel tables itself, so monitoring does not
-#             depend on the receiver or loader.
-#   receiver  -- push through the dfe-receiver ingest path (reuses the scalable
-#             pipeline; for truly large scale).
-#   external  -- push to a deployer-supplied OTLP endpoint (their own backend).
-#   prometheus -- no OTLP push; expose /metrics + scrape annotations for an
-#             external Prometheus to scrape.
+# Where every app sends its telemetry. See docs/deployment/values-shared.md#telemetry.
 telemetry:
   mode: hyperdx
-  # Empty derives the stack's collector gateway,
-  # {project}-otel-collector-gateway in telemetry.collectorNamespace (default
-  # otel) on 4317. Set only to aim elsewhere.
   hyperdxEndpoint: ""
-  # Empty derives the receiver's OTLP/gRPC listener, dfe-receiver in the release
-  # namespace on 4317, which it binds only while its config.otlp.enabled is true;
-  # set only to aim elsewhere.
   receiverEndpoint: ""
   externalEndpoint: ""
 
-# Startup version check -- every DFE service boots with an opt-out release
-# check (one POST of {product, version, os, arch, install id} to the HyperI
-# releases endpoint; the id is one-way UUIDv5, deployment names never sent).
-# scalo-service reads versionCheck in every thin chart, and unset means the
-# apps' own defaults (ON). Uncomment here for a fleet-wide choice, or set under
-# one app's overlay for a per-app one:
-# versionCheck:
-#   enabled: false        # total opt-out -- no check, nothing sent (air-gap)
-#   sendInstanceId: false # keep the check, strip the install id
-#   apiUrl: ""            # point the check at a mirror
+# versionCheck is unset, so the apps default to on. See docs/deployment/values-shared.md#telemetry.
 
 otel:
-  # Explicit OVERRIDE of the resolved telemetry endpoint (empty -> use the
-  # telemetry.mode resolution above). Kept for per-deploy escape hatches. It must
-  # carry a scheme (https://host:4317): it is exported as written, with no scheme
-  # added from otel.tls.
+  # Overrides the resolved endpoint. Needs a scheme, https://host:4317.
   endpoint: ""
   tls: false
-  # OTLP ingest from OUTSIDE the cluster, on otel.{domain}. OFF: the stack's own
-  # telemetry reaches the collector on its Service and needs none of it. Two
-  # charts read this block -- the gateway renders the otel route, the collector
-  # the bearer-token receiver behind it -- so a deployment turns it on in its
-  # deploy repo's infra/common.yaml, never in one chart's overlay.
+  # OTLP ingest from outside the cluster, off by default. See docs/deployment/values-shared.md#telemetry.
   ingress:
     enabled: false
-    # The collector's authenticated OTLP/HTTP port, and the route's backend port.
     port: 4319
     auth:
-      # Where the deployment's secret store holds the bearer token. There is no
-      # unauthenticated mode: on with this empty, both charts refuse to render.
       remoteKey: ""
 
-# The engine's Swagger UI (/docs) and ReDoc (/redoc): "true", "false", or empty
-# to serve them on a dev posture only (dev, development, local, test, ci). Both
-# pages load their scripts from a public CDN into the engine's origin. Three
-# charts read this key -- the engine serves the pages, the gateway routes them,
-# the links page lists them -- so a deployment sets it in its deploy repo's
-# infra/common.yaml. /openapi.json is served either way.
+# "true", "false" or empty, which serves the pages in development environments. See docs/deployment/values-shared.md#shared-facts.
 api:
   docsEnabled: ""
 
-# The Secret dfe-engine writes dfe-receiver's ingest bearer tokens into, one key
-# per listener, while the engine keeps what it mints on its own volume, which no
-# receiver pod can mount. dfe-extras renders it empty beside the engine, with a
-# Role granting the engine get and update on it alone, and dfe-receiver mounts
-# it read-only. Two charts read this key, so it lives here.
+# Secret dfe-engine writes ingest bearer tokens into. See docs/deployment/values-shared.md#shared-facts.
 ingestBearer:
   secretName: dfe-ingest-bearer-tokens
 
-# The Secret dfe-engine mirrors each hunt alert destination into, one key per name,
-# while the engine keeps its secrets on its own volume. dfe-extras renders it empty
-# with a Role granting the engine get and update on it alone, and dfe-hunt-runner
-# mounts it read-only where its file provider reads.
+# Secret dfe-engine writes hunt alert destinations into. See docs/deployment/values-shared.md#shared-facts.
 alertDestinations:
   secretName: dfe-alert-destinations
 
-# Consumer-facing Kafka endpoint. Default = the single tier's own broker Service,
-# matching the clickhouse block below. The cluster tier's broker is operator-owned
-# and named differently, so profile-scale.yaml overrides this.
+# The single tier's broker Service. profile-scale.yaml overrides it for the cluster tier.
 kafka:
   bootstrapServers: "dfe-kafka.strimzi.svc.cluster.local:9092"
-  # The shipped broker authenticates with SCRAM over its plain listener. A
-  # deployment on a TLS listener moves this to SASL_SSL with bootstrapServers.
-  #
-  # No `sasl:` block here: it fanned `enabled` and `mechanism` out to every app
-  # chart and no chart read either (dfe-infra#79), and the mechanism is derived
-  # from kafka.provider now rather than hand-set (dfe-common.kafkaSaslMechanism,
-  # dfe-infra#191). The otel collector's own clusterTelemetry.kafka.sasl block is
-  # a different key and is read.
+  # SCRAM over a plain listener. See docs/deployment/values-shared.md#kafka-and-clickhouse-endpoints.
   securityProtocol: SASL_PLAINTEXT
 
-# The pool balancer for the direct transport. A Kubernetes Service balances per
-# CONNECTION and gRPC holds one connection open, so a sender pins itself to one
-# pod of the pool it dials. `enabled` puts a Gateway API listener in front of
-# every pool instead: the sender addresses the listener, and the proxy spreads
-# each REQUEST across the pool. Only the mesh profile turns it on -- the
-# single-replica tiers have nothing to spread, and the brokered tiers balance
-# through the broker's consumer group.
-#
-# The listener is Gateway API, so the implementation is the class name:
-# `dfe-envoy` is the in-cluster Envoy Gateway the deployment already runs at its
-# edge, and a cloud provider's Gateway API class is the swap where the class
-# name is the whole difference.
+# Pool balancer for the direct transport, on in the mesh profile. See docs/deployment/values-shared.md#mesh-pool-balancer.
 mesh:
   enabled: false
   gateway:
     name: dfe-mesh
     className: dfe-envoy
-    # Where the Gateway and its proxy pods live. The pool aliases are Services
-    # in this namespace selecting those pods, so it is also the namespace half
-    # of every pool's mesh hostname.
     namespace: envoy-gateway-system
-    # How a pool alias finds the proxy pods. These are Envoy Gateway's own
-    # ownership labels; a different Gateway API implementation supplies its
-    # equivalents here rather than in a template.
     proxySelector:
       gateway.envoyproxy.io/owning-gateway-name: dfe-mesh
       gateway.envoyproxy.io/owning-gateway-namespace: envoy-gateway-system
-  # The port the listener answers on, matching the platform push port every
-  # stage's listener already uses (dfe-common.pushPort).
   port: 6000
-  # Each pool's own policy, an Envoy Gateway BackendTrafficPolicy on its route
-  # (dfe-common.poolListener). Another Gateway API implementation sets enabled
-  # false and brings its own equivalent.
   routePolicy:
     enabled: true
-    # At or above the sender's 30 s send deadline. The next stage holds a
-    # request until its own ack is released, so a shorter timeout here cuts a
-    # request the sender is still waiting on.
     requestTimeout: 30s
-    # Retries fire only on connect-failure and resource-exhausted, the two
-    # failures where no pod took the request. The trigger list is fixed in the
-    # helper, because widening it re-delivers batches.
     retry:
       numRetries: 2
       baseInterval: 100ms
       maxInterval: 1s
-    # Passive outlier detection. Envoy maps a gRPC unavailable in the response
-    # headers to 503, so a pod answering it five times running leaves the
-    # rotation for 30 s, and at most half the pool is out at once.
-    # resource-exhausted maps to 429 and ejects nothing.
     outlier:
       consecutive5xxErrors: 5
       interval: 3s
       baseEjectionTime: 30s
       maxEjectionPercent: 50
 
-# Read only by the kafka chart, which projects the SCRAM credential into the
-# namespaces that need it beyond appNamespace. The collector's kafka_metrics
-# receiver authenticates as the same service user, so its namespace belongs here;
-# without it the gateway pod cannot resolve dfe-kafka-user and never starts.
+# The kafka chart projects the SCRAM credential into these namespaces. otel is needed or the gateway pod never starts.
 user:
   password:
     extraAppNamespaces:
       - otel
 
-# Consumer-facing ClickHouse endpoint. Default = DFE's own single-mode service.
-# cluster mode: profile-scale.yaml and profile-mesh.yaml name the operator's headless Service;
-# external mode: override host with the supplied endpoint.
-# A deployment overrides host in its deploy repo's infra/common.yaml, layered after the profile file.
+# DFE's single-mode service. profile-scale.yaml and profile-mesh.yaml name the operator's headless Service.
 clickhouse:
   host: "dfe-clickhouse.clickhouse.svc.cluster.local"
   port: 8123
-  # Native protocol port, for clients that speak it rather than HTTP. dfe-loader
-  # defaults to native and inserts RowBinary over it, so it takes this one.
   nativePort: 9000
   database: dfe
-  # The admin account dfe-engine connects as to create every other user, and the
-  # one credential the deploy layer owns. `default` because that is the only
-  # account the ClickHouse operator can password from a Secret, and it is what
-  # docker and single mode already start. Name and Secret must match
-  # clickhouse-cluster's users.admin. No other workload reads it.
+  # Admin account dfe-engine uses to create every other user. See docs/deployment/values-shared.md#kafka-and-clickhouse-endpoints.
   user: default
   passwordSecretName: clickhouse-admin-password
   passwordSecretKey: password
-  # Each app's own user. dfe-extras mints each password into a Secret beside the
-  # engine, the engine creates the user on that password, and the app connects
-  # with it -- docs/clickhouse-identity.md. The names are dfe-engine's.
   serviceUsers:
     loader:
       user: dfe_loader
       passwordSecretName: loader-clickhouse
       passwordSecretKey: password
-    # The keda shim's.
     queryReader:
       user: dfe_query_reader
       passwordSecretName: query-reader-clickhouse
       passwordSecretKey: password
-    # The OTel collector's, copied into its namespace as well.
     otelWriter:
       user: dfe_otel_writer
       passwordSecretName: otel-writer-clickhouse
       passwordSecretKey: password
-  # HTTPS between the apps and ClickHouse. clickhouse-cluster serves it and
-  # dfe-engine, dfe-loader and hyperdx dial it, all from this one block. Each
-  # applies the same rule: on when `enabled` AND there is a CA to sign with --
-  # an issuerRef, or the edge module's internal CA. No CA means HTTP, so a
-  # cluster with the edge module off and no issuerRef never waits on a
-  # Certificate. Each chart's own default is off, so the dfe-stack trial stays
-  # on HTTP. External mode: point port, verify and ca at the server dialled.
+  # HTTPS between the apps and ClickHouse. See docs/deployment/values-shared.md#clickhouse-tls.
   tls:
     enabled: true
-    # false keeps 8123 and 9000 open beside 8443 and 9440, for the smoke tests,
-    # which still dial plaintext.
     required: false
-    # What a client dials when enabled. `port` above stays the plaintext port.
     port: 8443
-    # The native protocol over TLS, which the OTel collector dials.
     nativePort: 9440
-    # false only for a server whose certificate cannot be verified. dfe-loader
-    # cannot skip verification and refuses to render with it.
     verify: true
-    # An explicit issuer: an estate PKI, AWS Private CA or corporate CA, set in
-    # the deploy repo's infra/common.yaml. It turns TLS on with or without the
-    # edge module, and has to sign for in-cluster Service names, which public
-    # ACME cannot. Empty signs with the internal CA.
     issuerRef:
       name: ""
       kind: ClusterIssuer
       group: cert-manager.io
-    # The gateway chart's internal CA (helm/edge/gateway tls.internalCA). The
-    # data and apps appsets set `present` from the cluster's dfe.hyperi.io/edge
-    # label, the one that decides whether the gateway is deployed; true here is
-    # bootstrap's default of edge on, for a render outside Argo.
     internalCA:
       issuerName: dfe-internal-ca
       present: true
-    # Where a client reads the CA that signed the server certificate, in its own
-    # namespace. clickhouse-cluster copies the certificate's ca.crt into this
-    # Secret. A corporate CA bundle the deployment supplies goes in
-    # configMapName instead; both empty trusts the image's system roots.
     ca:
       secretName: dfe-clickhouse-ca
       configMapName: ""
       dataKey: ca.crt
-      # Namespaces beyond the app namespace that read the CA: the OTel collector's.
       extraNamespaces: [otel]
 
-# External secret backend (OpenBao / Vault / cloud KMS), per deployment. Set means
-# the deployment has one, and network-policies derives the engine's egress to it
-# from that (helm/charts/network-policies/values.yaml externalEgress).
+# Set derives the engine's egress to the secret backend.
 vault:
   address: ""
 
-# External Elasticsearch or OpenSearch index server the engine imports index
-# mappings from. Set means the deployment has one, and network-policies derives
-# the engine's egress to it from that. Not a data-path destination -- no DFE app
-# writes to Elasticsearch.
+# Set derives the engine's egress to the index server.
 elasticsearch:
   endpoint: ""
 
-# THE cluster network model: the ranges the CNI and kube-proxy hand out. These
-# are what the cluster was installed with, so a deployment on different ranges
-# changes them HERE and nowhere else. network-policies carves them out of every
-# internet allow (a compromised pod cannot then reach pod or service space) and
-# culvert pushes the service range as the route a tunnel client may take. A
-# cloud root that knows its cluster's ranges writes them onto the cluster secret,
-# and layer2-platform.yaml lays them over these for network-policies.
+# Cluster network ranges, as installed. See docs/deployment/values-shared.md#network-ranges.
 networkModel:
   podCIDR: "198.18.0.0/16"
   serviceCIDR: "198.19.0.0/16"
-  # Cloud metadata and the rest of link-local, never a destination for a DFE pod.
   linkLocalCIDR: "169.254.0.0/16"
-  # The ranges above that network-policies carves out.
   carveOut: [podCIDR, serviceCIDR, linkLocalCIDR]
 
-# Edge-fleet VPN (the culvert chart). clientCIDR is the CGNAT range (RFC 6598)
-# reserved for tunnel clients and never for pod or service ranges, so an
-# appliance's own LAN and the cluster cannot collide with it; the chart carves
-# one /24 per tunnel out of it. Declared here because the reservation binds the
-# whole deployment's addressing, not just the app that consumes it.
+# Tunnel client range, CGNAT per RFC 6598. See docs/deployment/values-shared.md#network-ranges.
 vpn:
   clientCIDR: "100.64.0.0/10"
 
-# The opt-in in-cluster toolbox pod (helm/charts/dfe-toolbox), always deployed
-# by argocd/appsets/layer2-platform.yaml but idle at replicas: 0 until a
-# deployment turns it on. Off everywhere by default; a deployer opts in
-# through the dial (deployment.yaml's toolbox.pod.*), which
-# layer2-platform.yaml renders as this chart's own parameters and which wins
-# over this file -- never by editing this file directly. See
-# docs/deployment/toolbox.md.
+# Opt-in toolbox pod, set through the dial (deployment.yaml toolbox.pod.*) and not here. See docs/deployment/toolbox.md.
 toolbox:
   pod:
     enabled: false
-    # Requires enabled: true as well -- refused by the chart's own guard
-    # otherwise (helm/charts/dfe-toolbox/templates/_validate.tpl).
+    # Needs enabled: true.
     kubeApiAccess: false
-    # Empty = no auto-expiry CronJob; the pod runs until disabled by hand.
     ttlSeconds: ""
 
-# Key names mirror the ScaledObject spec fields the library helper writes; the
-# earlier minReplicas/maxReplicas spelling matched nothing and never applied.
-# Profiles override these per tier. pressure.targetValue is on the 0-100
-# ScalingPressure gauge and only applies where a chart opts pressure in.
+# Profiles override these per tier. pressure.targetValue is on the 0-100 ScalingPressure gauge.
 keda:
   minReplicaCount: 1
   maxReplicaCount: 5

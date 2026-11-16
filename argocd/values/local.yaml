@@ -1,9 +1,4 @@
-# Sample "local" cloud overlay (Rancher RKE2), one deploy's values -- the charts
-# and appsets hardcode none of it. Hostnames here are PLACEHOLDERS (RFC 2606
-# example.com), never a real estate: this repo ships publicly. A real deployment
-# supplies its own domain/vault/storage via the cluster-secret annotations that
-# bootstrap.sh sets from the private .env (dfe.hyperi.io/domain <- DFE_DOMAIN,
-# etc.) or its private deploy-repo overlay, which is layered last and wins.
+# Sample on-prem overlay for Rancher RKE2. Domain and vault are placeholders, and a deployment supplies one. See docs/deployment/values-clouds-edge.md#cloud-files.
 global:
   cloud: local
   domain: dfe.example.com
@@ -11,8 +6,7 @@ global:
 domain: dfe.example.com
 storageClass: local-path
 
-# Target the dedicated DFE worker nodes.
-# Matches label + tolerates taint applied during node provisioning.
+# The dedicated DFE worker nodes, by the label and taint set at provisioning.
 nodeScheduling:
   nodeSelector:
     dfe.hyperi.io/workload: dfe
@@ -22,8 +16,7 @@ nodeScheduling:
       value: dfe
       effect: NoSchedule
 
-# The same placement under the keys the scalo-service thin charts read. It stays
-# equal to nodeScheduling above, which scripts/tests/test_apps_common.py checks.
+# The same placement under the keys the thin charts read. test_apps_common.py keeps the two equal.
 nodeSelector:
   dfe.hyperi.io/workload: dfe
 tolerations:
@@ -32,48 +25,23 @@ tolerations:
     value: dfe
     effect: NoSchedule
 
-# THE EDGE MODULE'S OWN ON-PREM KEYS LIVE IN argocd/values/edge-onprem.yaml,
-# layered after this file by argocd/appsets/layer2-edge.yaml: the gateway
-# Service, the wildcard-cert issuer, the receiver route and the tunnel's Service
-# type. That file carries the on-prem tier table in one place; what stays here
-# is what a chart OUTSIDE the edge module reads as well.
+# The edge module's on-prem keys are in edge-onprem.yaml.
 
-# No LoadBalancer provisioner on this cloud: the gateway's own LB Service stays
-# <pending>, so the receiver's own load balancer would never get an address.
-# Ingest routes through the gateway instead, on receiver.{domain}, which the
-# gateway renders from this same key; an empty ingest allow list fences
-# nothing on the LAN.
+# No LoadBalancer provisioner, so ingest goes through the gateway. See docs/deployment/values-clouds-edge.md#cloud-files.
 exposure:
   groups:
     ingest:
       door: gateway
 
-# The gateway routes HTTP, so grpc drops back to exposed: false here -- left
-# true it fails the receiver render, which is the point of that guard. OTLP/gRPC
-# stays reachable in-cluster on the ClusterIP.
-# Helm REPLACES a list rather than merging it, so every listener the chart
-# defaults to has to be restated here or it disappears -- pushgrpc included, or
-# dfe-fetcher has nothing to push to in the no-kafka profile.
-# culvert reads this same key for ITS listeners, so a tunnel on this flavour has
-# to restate wireguard and openvpn-udp in its own instance values file or the
-# chart refuses to render.
+# grpc is not exposed because the gateway routes HTTP. Helm replaces a list, so every listener is restated. See docs/deployment/values-clouds-edge.md#cloud-files.
 listeners:
   - { name: http, port: 8080, protocol: TCP, exposed: true }
   - { name: grpc, port: 8443, protocol: TCP, exposed: false }
   - { name: pushgrpc, port: 6000, protocol: TCP, exposed: false }
 
-# This deploy runs DFE's OWN ClickHouse (single mode, its Keeper embedded, so it
-# shares no Keeper with another tenant on the cluster). Flip to cluster (with DFE-owned
-# dfe-keeper) or external to test those paths. It does NOT reuse a ClickHouse
-# the cluster already runs.
+# DFE's single-mode ClickHouse, never one the cluster already runs.
 clickhouse:
   mode: single
-  # cluster mode here uses DFE's own dfe-keeper (chart default) -- self-contained,
-  # NOT a Keeper some other tenant on the cluster owns.
 
 vault:
   address: "https://bao.example.com:8200"
-
-# The engine's runtime store is a PVC against the cluster's default
-# StorageClass (the engine contract's persistent `config` writable path) -- no per-cloud
-# storage setting needed.
