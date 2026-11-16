@@ -333,7 +333,11 @@ const openapiPlugins = build.openapi
     ]
   : [];
 
-module.exports = {
+// remark-math and rehype-katex ship as ES modules only, so the config loads them with import().
+module.exports = async function createConfig() {
+  const {default: remarkMath} = await import('remark-math');
+  const {default: rehypeKatex} = await import('rehype-katex');
+  return {
   title: siteCopy.title,
   tagline: siteCopy.tagline,
   favicon: `${GRAPHICS}/product-dfe/tertiary/product-dfe_square.svg`,
@@ -377,10 +381,12 @@ module.exports = {
           sidebarPath: require.resolve('./sidebars.js'),
           sidebarItemsGenerator,
           docItemComponent: '@theme/ApiItem',
+          remarkPlugins: [remarkMath],
+          rehypePlugins: [rehypeKatex],
         },
         blog: false,
         pages: {},
-        theme: {customCss: require.resolve('./src/css/custom.css')},
+        theme: {customCss: [require.resolve('./src/css/custom.css'), require.resolve('katex/dist/katex.min.css')]},
       },
     ],
   ],
@@ -442,4 +448,5 @@ module.exports = {
       additionalLanguages: ['bash', 'toml', 'sql', 'hcl', 'docker', 'ini', 'diff'],
     },
   },
+  };
 };
