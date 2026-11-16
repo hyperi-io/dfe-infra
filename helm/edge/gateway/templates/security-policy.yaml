@@ -4,16 +4,11 @@
 {{- if eq $provider.name $loginName }}
 {{- range $route := $.Values.oidc.targetRoutes }}
 ---
-# One SecurityPolicy per interactive route. Each route gets its OWN redirectURL
-# on its OWN hostname so the OIDC session cookie is set on the host the user is
-# actually on (a single shared redirectURL would break OIDC on every subdomain
-# except the callback host). Universal: add a route to oidc.targetRoutes and it
-# is fronted automatically -- no policy-code change.
-#
-# Per ROUTE, not per (provider x route): two policies naming the same HTTPRoute
-# conflict and only the oldest applies, so a second provider used to disappear
-# with nothing said. spec.oidc takes one provider, so oidc.loginProvider names
-# which one owns the interactive login here.
+# One SecurityPolicy per interactive route, each with its OWN redirectURL on its OWN
+# hostname, so the OIDC session cookie is set on the host the user is on. Add a
+# route to oidc.targetRoutes and it is fronted with no policy-code change. Per
+# ROUTE and not per provider, because two policies on one HTTPRoute conflict and
+# only the oldest applies: oidc.loginProvider names the one that owns the login.
 {{- /* A SecurityPolicy only targets routes in its own namespace, so the
        policy and its client secret live where the route does. */}}
 {{- $routeNs := $route.namespace | default $.Values.appNamespace | default $.Release.Namespace }}

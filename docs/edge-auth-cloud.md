@@ -55,9 +55,9 @@ The keys below are the CHART's. The dial states the same decisions under `edge.p
 | `exposure.groups.<group>.allow`, `.deny` | `[]` (nobody, internet-facing) | Who may reach the group's routes, at Envoy AND, as a union, at the load balancer. |
 | `ui.trusted_proxy_cidrs` | `""` (no forwarded header believed) | A CDN or other L7 proxy in front of the public hostnames, whose `X-Forwarded-For` names the client. |
 | `ui.rate_limit` | on, 6000/Minute, `local` | Each public route's shared bucket, per proxy replica. A distributed credential-stuffing run hits it before the login. |
-| `ui.rate_limit.per_client_requests` | 1200 (per `unit`) | A bucket per client address, per route, per proxy replica, on every public route and on every internal-name web route of an internet-facing Service, so one caller's dashboard cannot empty dfe-hyperdx for the rest. |
+| `ui.rate_limit.per_client_requests` | 1200 (per `unit`) | A bucket per client address, per route, per proxy replica, on every public route and on every internal-name web route of an internet-facing Service, so one caller's dashboard cannot empty dfe-hyperdx for the rest. 1200 a minute is five users behind one NAT address, each on a 40-tile dashboard refreshing every 10s (240 a minute). |
 | `envoyGateway.connectionLimit` | on, 10000 | Concurrent connections each listener takes per proxy replica. |
-| `ui.waf.mode` | `none` | `none` alone renders. |
+| `ui.waf.mode` | `none` | `none` alone renders. Every public route sits behind OIDC or an app-side login, so managed rules would guard code an unauthenticated caller never reaches. |
 | `ui.tls` | `"1.2"`, HSTS on | The public TLS floor and `Strict-Transport-Security`. |
 
 A public UI gets a listener of its OWN, a publicly trusted certificate and an HTTPRoute `<route>-public`. It isn't a second hostname on the internal route, because the policies that make a public route safe must not reach the internal one. Internal routes keep the internal CA. The public hostnames hold a Let's Encrypt certificate issued by DNS-01 on the public zone through cert-manager's Pod Identity role (`tls.public`).

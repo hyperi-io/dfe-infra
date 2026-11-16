@@ -16,15 +16,12 @@
 {{- range $login := $.Values.oidc.providers }}
 {{- if eq $login.name $loginName }}
 ---
-# Edge login on the PUBLIC hostname. Its own redirectURL and its own cookie: an
-# OIDC session cookie is set on the host the user is on, and a session minted on
-# the internal name must not be replayable on the public one.
-# ONE policy per route, never one per provider: two SecurityPolicies naming the
-# same HTTPRoute conflict and only the oldest applies. oidc.loginProvider owns
-# the redirect; every provider stays a JWT issuer with an Allow rule of its own.
-# defaultAction Deny means a request that matches no rule is refused, so a token
-# carrying no groups claim -- or an address outside the route's exposure group --
-# is turned away rather than admitted.
+# Edge login on the PUBLIC hostname, with its own redirectURL and cookie: a session
+# minted on the internal name must not be replayable on the public one. ONE policy
+# per route, because two on one HTTPRoute conflict and only the oldest applies.
+# oidc.loginProvider owns the redirect, and every provider stays a JWT issuer with
+# its own Allow rule. defaultAction Deny turns away a token with no groups claim
+# and an address outside the route's exposure group.
 apiVersion: gateway.envoyproxy.io/v1alpha1
 kind: SecurityPolicy
 metadata:
