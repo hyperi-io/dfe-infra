@@ -1,7 +1,5 @@
-# Wave 4: ClickHouse cluster, Strimzi Kafka, the DocumentDB store HyperDX keeps
-# its state in. Wave 6: OTel Collector, Kafbat, links.
-# HyperDX is an app, not substrate: layer2-apps deploys it at wave 5 from the
-# deploy repo's values/hyperdx-<instance>-values.yaml, like every other app.
+# Waves 4 and 6: ClickHouse, Kafka and the DocumentDB store at 4. OTel Collector, Kafbat and links at 6.
+# HyperDX is an app: layer2-apps deploys it at wave 5. See docs/deployment/appsets.md#layer-2-data.
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
@@ -24,46 +22,28 @@ spec:
                   namespace: clickhouse
                   wave: "4"
                   appProject: data
-                # strimzi-kafka is Kafka substrate: deployed only in the scale
-                # profile via appsets/layer-scale.yaml (cluster-label gated).
-                # A DocumentDB CR, which the documentdb-operator addon
-                # (layer1-addons, wave 3) turns into a CloudNativePG cluster.
+                # The Strimzi operator is layer-scale.yaml's.
+                # A DocumentDB CR, which the layer1 documentdb-operator (wave 3) turns into a CloudNativePG cluster.
                 - app: documentdb
                   namespace: cnpg
                   wave: "4"
                   appProject: data
-                # Wave 5 is dfe-engine, deployed from layer2-apps: it is the only
-                # thing that applies schema, and it does it at its own startup.
-                # Wave 6: needs its otel tables, which dfe-engine creates.
+                # Wave 5 is dfe-engine (layer2-apps), which applies the schema. Wave 6 needs the otel tables it creates.
                 - app: otel-collector
                   namespace: otel
                   wave: "6"
                   appProject: data
-                # NOTE: the in-cluster git server (forgejo) is NOT substrate.
-                # It is the deploy-repo FALLBACK, deployed ONLY when no external git
-                # (GitHub/GitLab) is supplied -- see appsets/layer2-deploy-repo.yaml,
-                # gated on the dfe.hyperi.io/bundled-deploy-repo cluster label. The
-                # deploy repo is pluggable (external git PRIMARY); never a hard dep.
-                # Kafka substrate -- mode-driven: disabled on slim -> nothing;
-                # non-operator single broker on single; cluster on scale. The
-                # cluster (scale) path with provider strimzi (default) needs the
-                # Strimzi operator (installed scale-only via layer-scale).
+                # Mode-driven: nothing on slim, one non-operator broker on single, a cluster on scale.
                 - app: kafka
                   namespace: strimzi
                   wave: "4"
                   appProject: data
-                # Kafbat (Kafka web UI) -- bundled by DEFAULT with the kafka
-                # substrate (single + scale). After the broker.
+                # Kafbat, the Kafka web UI, deploys with the broker on single and scale.
                 - app: kafbat
                   namespace: kafka
                   wave: "6"
                   appProject: data
-                # Deployment links page -- the one well-known URL answering
-                # "where is everything?" (dfe-infra#75). Bundled by default;
-                # gate off with links.enabled=false in a values overlay. The
-                # default page needs no deployment values (standard
-                # port-forward layout); deployments append/override via the
-                # chart's page values.
+                # The links page, the one URL answering "where is everything?" (#75). Off with links.enabled=false.
                 - app: links
                   namespace: links
                   wave: "6"
@@ -76,18 +56,10 @@ spec:
         argocd.argoproj.io/sync-wave: '{{ .wave }}'
     spec:
       project: '{{ .appProject }}'
-      # Multi-source, the same shape layer2-apps uses: source 1 = the pinned
-      # dfe-infra base chart, source 2 = the deploy repo (ref: values). The
-      # deploy-repo overlay is layered LAST, so a deployer's clickhouse.mode,
-      # kafka.mode and storage model beat the profile file's tier defaults and
-      # the resolver's sizing without editing dfe-infra. The one exception is a
-      # cluster secret that names a ClickHouse bucket: then the inline values
-      # below lock the bucket, its region and whatever storage model and cache
-      # placement the resolver decided, and the overlay cannot move them.
-      #
-      # Substrate therefore depends on the deploy repo resolving. On a bundled
-      # deploy the git host is layer2-deploy-repo's own single-source Application,
-      # so these report ComparisonError until it is up and then converge.
+      # Two sources: the base chart, then the deploy repo as ref values, layered last so a deployer's
+      # clickhouse.mode, kafka.mode and storage model beat the tier defaults.
+      # A cluster secret naming a ClickHouse bucket locks the bucket, region, storage model and cache placement in the inline values below.
+      # On a bundled deploy these report ComparisonError until layer2-deploy-repo's Forgejo is up.
       sources:
         - repoURL: '{{ index .metadata.annotations "dfe.hyperi.io/repo_url" }}'
           targetRevision: '{{ index .metadata.annotations "dfe.hyperi.io/target_revision" }}'
@@ -98,56 +70,33 @@ spec:
               - "../../../argocd/values/common.yaml"
               - '../../../argocd/values/{{ index .metadata.annotations "dfe.hyperi.io/cloud" }}.yaml'
               - '../../../argocd/values/profile-{{ index .metadata.annotations "dfe.hyperi.io/profile" }}.yaml'
-              # The resolver's Kafka and ClickHouse sizing, as the deploy repo's
-              # sizing/ holds it. It sits under the infra/ files below, so a
-              # deployer's or the engine's edit to a sized key wins. A bundled
-              # deploy repo is seeded with it in its first commit, and an
-              # external one carries the resolver's sizing/ as committed.
-              # Optional, like both below.
+              # The resolver's Kafka and ClickHouse sizing from the deploy repo's sizing/. It sits under infra/, so a deployer's edit to a sized key wins. Optional.
               - '$values/sizing/{{ index .metadata.annotations "dfe.hyperi.io/profile" }}.data-charts.values.yaml'
-              # infra/common.yaml is the deployer's own common.yaml -- shared
-              # facts declared once and read by every appset; infra/<chart>.yaml
-              # is the per-chart overlay. Both optional.
+              # infra/common.yaml is the deployer's shared facts, infra/<chart>.yaml the per-chart overlay. Both optional.
               - '$values/infra/common.yaml'
               - '$values/infra/{{ .app }}.yaml'
             parameters:
-              # The registry every dfe-* image is pulled from -- otel-collector
-              # renders one -- guarded exactly as in layer2-apps: a missing
-              # annotation fails the render rather than sending the image to
-              # Docker Hub, which publishes none.
+              # Guarded as in layer2-apps: a missing annotation fails the render rather than pulling from Docker Hub.
               - name: global.registry
                 value: '{{ $r := index .metadata.annotations "dfe.hyperi.io/registry" }}{{ if not $r }}{{ fail "the cluster secret carries no dfe.hyperi.io/registry -- re-run dfe-ops stack-deploy from this revision to write it" }}{{ end }}{{ $r }}'
-              # Where the DFE apps run -- the SAME annotation layer2-apps places them
-              # with, so the data services and apps cannot disagree about the
-              # namespace. kafka and documentdb read it (each projects a credential
-              # into the app namespace); Helm ignores an unused value, so passing
-              # it to every data chart is harmless.
+              # The namespace layer2-apps places the apps in, so data services and apps agree. kafka and documentdb project a credential into it.
+              # Helm ignores it for the other charts.
               - name: appNamespace
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/dfe_namespace" }}'
-              # The deployment's own domain (bootstrap sets the annotation from
-              # DFE_DOMAIN). The tracked values overlays carry only placeholder
-              # domains; the real one is a cluster fact. Consumed by links for
-              # its gateway-first URLs; harmless elsewhere.
+              # A cluster fact: tracked overlays carry placeholders. links builds its gateway URLs from it.
               - name: domain
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/domain" }}'
-              # The deployment's own posture and cloud. Every chart labels what
-              # it renders from these and the chart defaults say local, so
-              # without them a cloud deployment's objects claim to be a local
-              # one and anything selecting on those labels misses.
+              # Every chart labels what it renders from these, and the chart defaults say local.
               - name: env
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/env" }}'
               - name: cloud
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/cloud" }}'
-              # The broker DFE deploys (strimzi or redpanda), and (msk only) the
-              # bare host list the otel-collector chart's MSK open_monitoring
-              # scrape targets. A managed vendor in the annotation reaches the
-              # charts as kafka.external.provider, in the values block below.
+              # strimzi or redpanda, and for msk the host list the collector scrapes. A managed provider reaches the charts as kafka.external.provider below.
               - name: kafka.provider
                 value: '{{ $p := index .metadata.annotations "dfe.hyperi.io/kafka_provider" | default "strimzi" }}{{ if has $p (list "strimzi" "redpanda") }}{{ $p }}{{ else }}strimzi{{ end }}'
               - name: kafka.brokerHosts
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/kafka_broker_hosts" | default "" }}'
-              # The infra provider's own logs (otel-collector's provider-logs
-              # workload). A blank flavour is none, and the chart renders nothing.
+              # The provider's own logs for otel-collector. A blank flavour renders nothing.
               - name: clusterTelemetry.providerLogs.flavour
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/provider_logs_flavour" | default "none" }}'
               - name: clusterTelemetry.providerLogs.aws.region
@@ -156,18 +105,10 @@ spec:
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/eks_audit_log_group" | default "" }}'
               - name: clusterTelemetry.providerLogs.aws.cloudTrailLogGroup
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/cloudtrail_log_group" | default "" }}'
-              # Whether dfe-internal-ca exists: the gateway chart that mints it is
-              # deployed unless the edge label is "false" (layer2-edge.yaml, and
-              # layer2-platform.yaml for a secret with no label, hence the "true"
-              # default). Without it clickhouse-cluster serves HTTP unless an
-              # issuerRef is named. Same parameter in layer2-apps.yaml, so both
-              # ends agree on the scheme.
+              # Whether dfe-internal-ca exists. Without it clickhouse-cluster serves HTTP unless an issuerRef is named. Same parameter as layer2-apps.
               - name: clickhouse.tls.internalCA.present
                 value: '{{ ne (index .metadata.labels "dfe.hyperi.io/edge" | default "true") "false" }}'
-            # `values` (a YAML string) rather than a structured parameters block,
-            # same reason layer2-platform.yaml gives: a per-element conditional
-            # cannot live in a field this file's own tests parse as plain YAML
-            # before any Go templating runs.
+            # A string: the template is parsed as YAML before Go templating, so a conditional cannot be structured.
             values: |
               {{- $kafkaMode := index .metadata.annotations "dfe.hyperi.io/kafka_mode" }}
               {{- $kafkaBootstrap := index .metadata.annotations "dfe.hyperi.io/kafka_bootstrap" }}
@@ -289,13 +230,7 @@ spec:
       destination:
         server: '{{ .server }}'
         namespace: '{{ .namespace }}'
-      # KEDA owns the broker KafkaNodePool's replica count when the kafka chart
-      # renders its ScaledObject, and the chart then labels that pool
-      # dfe.hyperi.io/replicas-owner=keda. selfHeal must not revert a scale-out as
-      # drift there -- the same ignoreDifferences + RespectIgnoreDifferences=true
-      # pattern layer2-apps.yaml uses for Deployment replicas. Any other pool (the
-      # controller pool, a broker pool with no trigger) converges to its declared
-      # replicas. Inert for every other app in this matrix: none render a KafkaNodePool.
+      # KEDA owns the broker KafkaNodePool's replicas once the kafka chart renders its ScaledObject, so selfHeal must not revert a scale-out. See docs/deployment/kafka/autoscaling.md.
       ignoreDifferences:
         - group: kafka.strimzi.io
           kind: KafkaNodePool

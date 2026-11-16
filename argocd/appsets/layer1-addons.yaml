@@ -1,16 +1,5 @@
-# Layer 1 addons: KEDA, metrics-server, Reloader, the DocumentDB operator, and
-# external-dns where the cluster declares a DNS provider.
-# Chart versions MUST match versions.yaml (the SSOT).
-# Envoy Gateway uses OCI and is deployed as a standalone app in bootstrap/.
-#
-# OWNERSHIP (dedup fix, dfe-infra#4): cert-manager + external-secrets are
-# detect-or-installed by bootstrap.sh -- they are needed BEFORE Argo (ESO backs
-# the ClusterSecretStore + repo creds; cert-manager backs the gateway certs and the
-# AWS load balancer controller's webhook certificate). They
-# are deliberately NOT listed here, else Argo installs a SECOND copy alongside the
-# bootstrap one (two ESO cert-controllers + two cert-manager cainjectors churning
-# ~0.8 core, and double-reconciling every CR). bootstrap owns cert-manager+ESO;
-# Argo owns the rest.
+# Layer 1 addons. See docs/deployment/appsets.md#layer-1-addons.
+# Chart versions must match versions.yaml. cert-manager and external-secrets are bootstrap's, so they are not listed.
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
@@ -29,14 +18,7 @@ spec:
                   dfe.hyperi.io/managed: "true"
           - list:
               elements:
-                # cert-manager + external-secrets intentionally absent -- bootstrap
-                # owns them (see header). Adding them here re-introduces the dup.
-                # chartValues is merged into helm.valuesObject below. goTemplate
-                # runs with missingkey=error, so every element must carry the key.
-                # chartDigest is empty unless versions.yaml pins the chart's OCI
-                # digest under services-digests.
-                # external-dns is absent too, and gated below on the cluster's
-                # declared DNS provider.
+                # missingkey=error: every element carries every key. chartDigest is empty unless versions.yaml pins an OCI digest.
                 - chart: keda
                   repo: https://kedacore.github.io/charts
                   version: "2.21.0"
@@ -44,16 +26,7 @@ spec:
                   namespace: keda
                   wave: "3"
                   appProject: infra
-                  # Scaler value, active flag and error counters pushed to the
-                  # collector gateway over OTLP, rather than exposed for scraping
-                  # via prometheus.operator.enabled.
-                  # Port 4318, not 4317: KEDA's exporter speaks OTLP/HTTP and POSTs
-                  # to /v1/metrics, so the gRPC port answers with a frame it cannot
-                  # parse ("malformed HTTP response").
-                  # The uri needs its scheme; a bare host:port is an invalid URI.
-                  # OTEL_SERVICE_NAME because KEDA sets no service.name of its
-                  # own, so the Go SDK falls back to `unknown_service:keda` and
-                  # every KEDA series groups under that instead of the operator.
+                  # OTLP/HTTP on 4318, not 4317. See docs/deployment/appsets.md#layer-1-addons.
                   chartValuesYaml: |
                     opentelemetry:
                       operator:
@@ -79,15 +52,7 @@ spec:
                   wave: "3"
                   appProject: infra
                   chartValuesYaml: ""
-                # The operator behind HyperDX's document store (layer2-data's
-                # documentdb). Its chart bundles CloudNativePG, which it requires
-                # and installs into cnpg-system, and needs cert-manager, which
-                # bootstrap installs first. OCI only, pinned by digest. The chart
-                # composes repository:tag, so each tag carries its image digest.
-                # CloudNativePG runs 1.29.3, the 1.29 line's last patch, over the
-                # chart's 1.29.1: it fixes GHSA-x8c2-3p4r-v9r6, GHSA-w3gf-xc94-wvmj
-                # and CVE-2026-84304. The EndpointSlice read it needs and the
-                # bundled chart lacks is granted by helm/charts/documentdb.
+                # The operator behind HyperDX's document store. OCI only, pinned by digest. See docs/deployment/appsets.md#layer-1-addons.
                 - chart: documentdb-operator
                   repo: ghcr.io/documentdb
                   version: "1.0.0"
@@ -127,16 +92,9 @@ spec:
                           memory: 256Mi
                         limits:
                           memory: 512Mi
-                # strimzi-kafka-operator (Kafka substrate) and clickhouse-operator
-                # (clickhouse.com CRDs) are cluster-only operators: deployed in the
-                # scale profile via appsets/layer-scale.yaml (cluster-label gated).
-                # slim + single CH use a plain StatefulSet -- no operator.
-    # external-dns, deployed ONLY where the cluster declares a DNS provider it has
-    # credentials for. The chart's own default provider is aws, so an
-    # unconfigured install runs a controller that fails every minute against
-    # Route 53 and publishes nothing (#223). Exists AND NotIn: a cluster secret
-    # with no dns-provider label is excluded, because NotIn alone matches an
-    # absent key.
+                # strimzi-kafka-operator and clickhouse-operator are scale-tier only: layer-scale.yaml.
+    # external-dns, where the cluster declares a DNS provider (#223).
+    # Exists AND NotIn: NotIn alone matches an absent key.
     - matrix:
         generators:
           - clusters:
@@ -160,21 +118,8 @@ spec:
                   wave: "2"
                   appProject: infra
                   chartValuesYaml: ""
-    # The two AWS-only controllers.
-    #
-    # The AWS Load Balancer Controller: a type=LoadBalancer Service annotated
-    # aws-load-balancer-type: external is OWNED by this controller and sits at
-    # "Ensuring load balancer" forever without it, because the annotation is
-    # also what tells the in-tree cloud provider to keep its hands off. Wave 1
-    # so it is running before any Service that names it.
-    #
-    # Karpenter: the node provisioner every pool outside the managed group comes
-    # from. Wave 1 as well -- a workload scheduled before it is running has
-    # nowhere to go but the managed group, which is sized for the cluster's own
-    # controllers.
-    #
-    # Gated on the cluster's declared cloud, the same shape external-dns uses
-    # above: Exists AND In, because NotIn/In alone matches an absent key.
+    # The AWS-only controllers, wave 1 so they run before any Service or pod that needs them.
+    # Exists AND In, as for external-dns above.
     - matrix:
         generators:
           - clusters:
@@ -190,9 +135,7 @@ spec:
                     values: ["aws"]
           - list:
               elements:
-                # imageTag and imageDigest are versions.yaml's
-                # services.aws-load-balancer-controller-image pin, empty until a
-                # stack pins it; the chart's own tag runs while they are.
+                # imageTag and imageDigest are versions.yaml services.aws-load-balancer-controller-image, empty until pinned.
                 - chart: aws-load-balancer-controller
                   repo: https://aws.github.io/eks-charts
                   version: "3.6.2"
@@ -203,12 +146,7 @@ spec:
                   wave: "1"
                   appProject: infra
                   chartValuesYaml: ""
-                # OCI, the only place Karpenter publishes -- same bare-host form
-                # the clickhouse-operator entry in layer-scale.yaml uses. The
-                # chart carries its own crds/ directory, which Argo renders and
-                # applies with the release, so a CRD field added by an upgrade
-                # arrives with the controller that reads it. Its values pin the
-                # controller image by digest, so a chart digest pins both.
+                # OCI, the only place Karpenter publishes. The chart's crds/ apply with the release.
                 - chart: karpenter
                   repo: public.ecr.aws/karpenter
                   version: "1.14.3"
@@ -225,9 +163,7 @@ spec:
         argocd.argoproj.io/sync-wave: '{{ .wave }}'
     spec:
       project: '{{ .appProject }}'
-      # A chartDigest switches the element to Argo's OCI source at that digest, the shape
-      # layer2-apps.yaml deploys the thin charts with. Without one the chart comes from its
-      # repository by version, and the empty chart and path below are dropped as unset.
+      # A chartDigest switches the element to the OCI source, as layer2-apps does. Without one the chart comes from its repository.
       source:
         repoURL: '{{ if .chartDigest }}oci://{{ .repo }}/{{ .chart }}{{ else }}{{ .repo }}{{ end }}'
         chart: '{{ if not .chartDigest }}{{ .chart }}{{ end }}'
@@ -243,10 +179,7 @@ spec:
           {{- .chartDigest -}}
           {{- end -}}
         helm:
-          # `values` (a YAML string) rather than `valuesObject`: the ApplicationSet
-          # template is parsed as YAML before it is Go-templated, so a structured
-          # valuesObject cannot carry a per-element block. Inside this string the
-          # generator's chartValuesYaml is plain text.
+          # A string, not valuesObject: the template is parsed as YAML before Go templating, so a per-element block cannot be structured.
           values: |
             global:
               domain: '{{ index .metadata.annotations "dfe.hyperi.io/domain" }}'
