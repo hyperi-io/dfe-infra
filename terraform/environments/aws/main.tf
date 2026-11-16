@@ -1,55 +1,28 @@
-// The aws root is thin by design: one provider, one backend, a rendered tfvars
-// file and the module calls. Everything that creates a resource lives in a
-// capability module, so gcp and azure are new roots over new bodies rather than
-// a fork of this file.
+// The aws root: one provider, one backend, a rendered tfvars file and the module calls.
 
 data "aws_caller_identity" "current" {}
-
-// data.aws_partition.current is declared in cloudtrail.tf and reused below in
-// the KMS key policy grants' condition ARNs -- a CloudTrail ARN's partition
-// varies the same way any other ARN's does. (The toolbox operator's EKS
-// access-entry policy ARN uses its own copy, kubernetes-cluster/aws/eks.tf.)
 
 locals {
   project = "dfe"
   cloud   = "aws"
 
-  // Deletion protection follows the dial's tags.lifecycle, not a fixed answer:
-  // ephemeral (tyre-kick, provision-test-destroy) deployments are torn down and
-  // rebuilt under the same names, so they get the fastest teardown each service
-  // allows; anything else -- persistent today, and any future value -- keeps
-  // the vendor's own default so destroying a real deployment needs a
-  // deliberate confirmation. (Named "lifecycle" is a reserved OpenTofu
-  // variable identifier, so this reads tags.lifecycle rather than a var of
-  // its own -- tags is where render_dial.py already renders it.)
+  // Deletion protection follows tags.lifecycle (docs/deployment/aws-teardown.md).
+  // "lifecycle" is a reserved variable name, so this reads it off var.tags.
   ephemeral                         = var.tags.lifecycle == "ephemeral"
   secret_recovery_window_days       = local.ephemeral ? 0 : 30
   kafka_secret_recovery_window_days = local.ephemeral ? 0 : 30
 
-  // A test run's id and expiry, plus Inspector's scan exclusion when asked for.
-  // These are the tags the controllers need explicitly, beyond default_tags.
+  // The tags the controllers need explicitly, beyond default_tags.
   run_tags = merge(
     module.run_tags.tags,
     var.inspector_ec2_exclusion ? tomap({ InspectorEc2Exclusion = "true" }) : tomap({}),
   )
 
-  // What every resource is tagged with: the governance set plus the above.
   tags = merge(var.tags, local.run_tags)
 
-  // Every service principal the deployment's KMS key must grant, beyond the
-  // account root -- collected here because the cluster module is the key's
-  // ONE policy owner (aws_kms_key_policy replaces the whole policy) and
-  // cloudtrail.tf's bucket and msk's broker-log delivery are both this root's
-  // to know about. The CloudTrail grants follow cloudtrail.enabled, and hold
-  // under either telemetry.sink, because the trail's bucket is SSE-KMS on this
-  // key. The MSK grant is conditional on the otel sink actually creating a log-
-  // delivery target -- confluent-cloud and redpanda-cloud emit no
-  // CloudWatch-shaped broker log for anything to deliver.
+  // Grants beyond the account root, passed to the cluster module, which owns the key policy (docs/deployment/aws-configuration.md).
   key_policy_grants = concat(
     var.cloudtrail.enabled ? [
-      // AWS's documented CloudTrail-to-KMS statements: GenerateDataKey* needs
-      // both the trail-ARN and EncryptionContext conditions, Decrypt/
-      // DescribeKey need only the trail ARN. See
       // https://docs.aws.amazon.com/awscloudtrail/latest/userguide/create-kms-key-policy-for-cloudtrail.html
       {
         sid        = "AllowCloudTrailToGenerateDataKeys"
@@ -84,9 +57,7 @@ locals {
   )
 }
 
-// An SCP fences the test account to one region; nothing fences a deployment to
-// the right ACCOUNT, and GCP and Azure have no SCP at all. So the assertion is
-// in the config, where all three clouds can carry it.
+// Fails the plan when the shell is authenticated to an account other than provision.account.
 resource "terraform_data" "account_guard" {
   lifecycle {
     precondition {
@@ -106,17 +77,14 @@ module "naming" {
   region    = var.provision.region
 }
 
-// No resources: validates var.run and renders its two tags, empty when null.
+// No resources: renders var.run's two tags, empty when null.
 module "run_tags" {
   source = "../../modules/tf-run-tags"
 
   run = var.run
 }
 
-// No resources: refuses at plan a managed backend aws does not offer, a tier the
-// vendor does not run on aws, and a ClickHouse Cloud service on another cloud
-// (docs/deployment/managed-backends.md). Its outputs carry the vendor's token
-// for aws to the SaaS bodies and their ports to the toolbox's egress.
+// No resources: refuses an offering aws lacks (docs/deployment/managed-backends.md).
 module "managed_backends" {
   source = "../../modules/managed-backends"
 
@@ -149,9 +117,7 @@ module "cluster" {
   telemetry          = var.telemetry
   tags               = local.tags
 
-  // The run's tags alone, for what the EKS add-ons create (EBS volumes, pod
-  // ENIs) where default_tags cannot reach. Empty outside a test run, which
-  // leaves the add-ons' configuration exactly as it was.
+  // The run's tags alone, for what the EKS add-ons create where default_tags cannot reach.
   controller_tags      = local.run_tags
   permissions_boundary = var.permissions_boundary
   iam_path             = var.iam_path
@@ -159,19 +125,14 @@ module "cluster" {
 
   key_policy_grants = local.key_policy_grants
 
-  // Empty unless the toolbox is enabled -- var.toolbox.aws.operator_role_arn
-  // is required-when-enabled (deployment.example.yaml), and the module
-  // itself treats an empty string as "create no access entry".
+  // An empty string creates no access entry.
   toolbox_operator_role_arn = var.toolbox.enabled ? var.toolbox.aws.operator_role_arn : ""
 
   // The registry cache's containerd mirrors, on every managed node; Karpenter's take it through DFE_NODE_USER_DATA.
   node_user_data = local.node_user_data
 }
 
-// ---------------------------------------------------------------------------
-// Registry cache -- ECR pull-through rules every node pulls its images
-// through, so an upstream's rate limit cannot fail a deploy.
-// ---------------------------------------------------------------------------
+// Registry cache (docs/deployment/aws-operations.md#registry-cache)
 
 module "registry_cache" {
   count = var.registry_cache.enabled && length(var.registry_cache.upstreams) > 0 ? 1 : 0
@@ -204,17 +165,10 @@ locals {
   node_user_data = join("", module.registry_cache[*].node_user_data)
 }
 
-// ---------------------------------------------------------------------------
-// Edge -- every resource that exists because traffic crosses the VPC boundary:
-// the load balancer controller's identity, the public zone, and the two
-// controller identities that write it. `count` on the module block is the
-// whole-module switch, so a disabled edge is an absent module rather than one
-// full of zero-count resources, and every moved {} block in moved.tf therefore
-// maps one instance to one instance.
-// ---------------------------------------------------------------------------
+// Edge: everything that exists because traffic crosses the VPC boundary.
 
 locals {
-  // The resolved shape the forwarder launches on, read only on mode forwarder.
+  // Read only on mode forwarder.
   forwarder_shape = var.edge.tunnel.address.mode == "forwarder" ? var.resolved_shapes[var.edge.tunnel.address.shape_ref] : null
 }
 
@@ -228,8 +182,7 @@ module "edge" {
 
   cluster_name = module.cluster.cluster_name
 
-  // The public half, because the forwarder's Elastic IP is only delivered where
-  // the subnet routes at an internet gateway.
+  // The public subnets, because the forwarder's Elastic IP needs an internet gateway route.
   network = {
     vpc_id            = module.cluster.network.vpc_id
     cidr              = module.cluster.network.cidr
@@ -237,8 +190,7 @@ module "edge" {
     public_subnet_ids = module.cluster.network.public_subnet_ids
   }
 
-  // The group the nodes carry, so the forwarder's DNAT target is admitted at the
-  // node rather than dropped there.
+  // Admits the forwarder's DNAT target at the node.
   node_security_group_id = module.cluster.cluster_security_group_id
 
   pod_identity_trust_policy_json = module.cluster.pod_identity_trust_policy_json
@@ -272,29 +224,18 @@ module "edge" {
   tags = local.tags
 }
 
-// The one Kafka password of the deployment, generated HERE rather than in the
-// secrets module because a managed broker is CREATED with it: the same value has
-// to reach the store ESO reads and the secret MSK authenticates against, and a
-// value generated inside that module never leaves it -- which is what keeps a
-// credential out of the plan and out of every output.
-//
-// special = false for the reason that module states: the value rides a JAAS
-// string, where punctuation needs escaping and buys no entropy at 32 characters.
+// The deployment's one Kafka password (docs/deployment/aws-configuration.md#kafka).
+// special = false: the value rides JAAS strings, where punctuation needs escaping.
 resource "random_password" "kafka_scram" {
   length  = 32
   special = false
 
   lifecycle {
-    // NEVER regenerated. The brokers keep the password they were created with,
-    // so a new one locks every DFE service out of Kafka. Rotation is a
-    // deliberate, separate operation.
+    // Brokers keep the password they were created with, so a new one locks every DFE service out.
     ignore_changes = all
   }
 }
 
-// Nothing is created here unless the deployment asked for the managed broker.
-// strimzi and redpanda run inside the cluster, and a SaaS broker is another body
-// under managed-kafka rather than another branch in this root.
 module "kafka" {
   count = var.kafka.provider == "msk" ? 1 : 0
 
@@ -309,8 +250,7 @@ module "kafka" {
 
   broker_shape_ref = var.kafka.msk.shape_ref
   resolved_shapes  = var.resolved_shapes
-  // The resolver chose the broker size for its own count, so that count wins. The
-  // dial's broker_count is for a hand-written shape that carries none.
+  // The resolver's count wins. broker_count serves a hand-written shape with none.
   broker_count  = coalesce(try(var.resolved_shapes[var.kafka.msk.shape_ref].count, null), var.kafka.msk.broker_count)
   kafka_version = var.kafka.msk.broker_version
 
@@ -340,20 +280,11 @@ module "kafka" {
   iam_path             = var.iam_path
   s3_bucket_prefix     = var.s3_bucket_prefix
 
-  // NO module-wide depends_on. The grant ordering this module needs now rides
-  // on kms_key_arn itself, which the cluster module declares against its own
-  // key POLICY; every other input above is an explicit reference that orders
-  // against exactly the resource it names. A depends_on here would instead
-  // hold the longest resource in the deployment behind the control plane, the
-  // node groups and every addon, none of which a broker reads.
+  // No module-wide depends_on: it would hold the broker behind the control plane, node groups and add-ons
+  // (docs/deployment/aws-configuration.md, "What the apply builds").
 }
 
-// Confluent Cloud sizes, tunes and versions the cluster itself (CONTRACT.md),
-// so this root passes the name, the network the private attachment lands in,
-// the tier and its connectivity, and where to put the cluster. The vendor API
-// credential is NOT a tfvar -- `provider "confluent"` below reads
-// CONFLUENT_CLOUD_API_KEY / CONFLUENT_CLOUD_API_SECRET from the deployer's own
-// environment, the way the aws provider already reads AWS_* rather than a var.
+// Confluent Cloud sizes and versions itself. Its API credential comes from the environment (providers.tf).
 module "confluent" {
   count = var.kafka.provider == "confluent-cloud" ? 1 : 0
 
@@ -363,28 +294,21 @@ module "confluent" {
   env     = var.env
   network = module.cluster.network
 
-  // Confluent's token for aws, from the offering rather than the dial.
+  // The vendor's token for aws.
   cloud = module.managed_backends.kafka.vendor_cloud
 
-  // The body reads region on public connectivity only, where there is no VPC
-  // attachment to discover it from; it is the deployment's own region either way.
+  // Read on public connectivity only.
   tier           = var.kafka.confluent_tier
   connectivity   = var.kafka.connectivity
   region         = var.provision.region
   environment_id = var.kafka.confluent_environment_id
   rest_ready     = var.kafka.confluent_rest_ready
 
-  // Checked against the tier's per-topic ceiling. dfe-engine creates the topics
-  // and applies the size, read from the DFE_KAFKA_MESSAGE_MAX_BYTES output.
+  // Checked against the tier's per-topic ceiling, then handed to dfe-engine through DFE_KAFKA_MESSAGE_MAX_BYTES.
   message_max_bytes = var.kafka.message_max_bytes
 }
 
-// Same reasoning as confluent-cloud: Redpanda Cloud Serverless sizes and scales
-// itself, so the name, the network, the connectivity and the resource group
-// travel. The SCRAM password reuses the SAME seed msk is created with -- one
-// Kafka password per deployment, whichever provider ends up authenticating
-// against it -- and the vendor client credential is a provider environment
-// variable (REDPANDA_CLIENT_ID / REDPANDA_CLIENT_SECRET), never a tfvar.
+// Redpanda Cloud Serverless sizes itself. It reuses the msk password seed, and its API credential comes from the environment.
 module "redpanda" {
   count = var.kafka.provider == "redpanda-cloud" ? 1 : 0
 
@@ -394,7 +318,7 @@ module "redpanda" {
   env     = var.env
   network = module.cluster.network
 
-  // Redpanda's token for aws, from the offering rather than the dial.
+  // The vendor's token for aws.
   cloud = module.managed_backends.kafka.vendor_cloud
 
   tier              = var.kafka.redpanda_tier
@@ -403,29 +327,19 @@ module "redpanda" {
 
   scram_password = random_password.kafka_scram.result
 
-  // The provider defaults this true, which makes tofu destroy refuse. Only an
-  // ephemeral deployment gets that: CONTRACT.md's own words are "a customer
-  // deployment sets it false", and lifecycle is what tells the two apart.
+  // The provider defaults this true, which makes tofu destroy refuse.
   allow_deletion = local.ephemeral
 }
 
 locals {
-  // The managed broker's handles, or empty strings when the deployment runs its
-  // own brokers or a different SaaS body. var.kafka.provider selects at most
-  // ONE of the three modules, so concatenating every body's output the same way
-  // and joining over "at most one populated list" is coalescing, not an
-  // ambiguity between vendors -- and the outputs below need no index that may
-  // not exist.
+  // The managed broker's handles, or empty when none is selected. var.kafka.provider selects at most one of the three modules.
   managed_kafka = {
     bootstrap = join("", concat(
       module.kafka[*].bootstrap,
       module.confluent[*].bootstrap,
       module.redpanda[*].bootstrap,
     ))
-    // one(), not join(): the port is a number, not a string, and var.kafka.
-    // provider selects at most one body, so the concat is 0 or 1 elements --
-    // one() reads that single element, or returns null when no body is
-    // selected at all.
+    // one(), not join(): the port is a number. Null when no body is selected.
     bootstrap_port = one(concat(
       module.kafka[*].bootstrap_port,
       module.confluent[*].bootstrap_port,
@@ -457,23 +371,19 @@ module "secrets" {
   prefix  = var.secrets.ref
   seeds   = var.seeds
 
-  // The same credential the broker authenticates, so the store and Kafka cannot
-  // disagree: the key and secret Confluent minted, otherwise the password a
-  // managed broker was created with. An in-cluster broker reads it from the
-  // store too, through the ExternalSecret the kafka chart renders. MSK has no
-  // kafka seed: its AmazonMSK_ secret is the one copy, and ESO reads it there.
+  // The credential the broker authenticates, so the store and Kafka cannot disagree. MSK has no kafka seed: ESO reads its AmazonMSK_ secret.
   kafka_username   = var.kafka.provider == "confluent-cloud" ? one(module.confluent[*].dfe_api_key) : null
   kafka_password   = var.kafka.provider == "confluent-cloud" ? one(module.confluent[*].dfe_api_secret) : random_password.kafka_scram.result
   read_secret_arns = module.kafka[*].credential_ref
 
-  // The external server's own password, which the clickhouse/external seed carries in external mode only.
+  // Seeded into clickhouse/external in external mode only.
   clickhouse_password = var.clickhouse_external_password
 
   kms_key_arn                    = module.cluster.kms_key_arn
   cluster_name                   = module.cluster.cluster_name
   pod_identity_trust_policy_json = module.cluster.pod_identity_trust_policy_json
 
-  // Where dfe-engine runs, the namespace DFE_NAMESPACE hands bootstrap.
+  // The namespace DFE_NAMESPACE hands bootstrap.
   engine_namespace = module.naming.k8s_namespace
 
   recovery_window_days = local.secret_recovery_window_days
@@ -482,13 +392,8 @@ module "secrets" {
   iam_path             = var.iam_path
 }
 
-// ---------------------------------------------------------------------------
-// Toolbox -- the on-demand SSM-managed troubleshooting instance. This module
-// is ALWAYS instantiated (no `count` on the block): `var.toolbox.enabled` is
-// threaded through as a plain input, because toolbox/aws's own session-log
-// bucket must survive an up/down cycle rather than being destroyed and
-// recreated with everything else -- see that module's CONTRACT.md.
-// ---------------------------------------------------------------------------
+// Toolbox (docs/deployment/toolbox.md). Always instantiated, with var.toolbox.enabled as an input, so
+// bastion up and down never destroy the session-log bucket.
 
 module "toolbox_naming" {
   source = "../../modules/tf-naming"
@@ -501,41 +406,21 @@ module "toolbox_naming" {
 }
 
 locals {
-  // The named forward targets `dfe-ops bastion forward` picks a Session
-  // document by -- computed here from the OTHER modules' own outputs, never
-  // invented in the toolbox module itself (toolbox/aws/CONTRACT.md).
+  // The forward targets `dfe-ops bastion forward` picks a Session document by (docs/deployment/toolbox.md#forward-targets).
   toolbox_eks_api_target = {
     eks-api = {
-      // module.cluster.cluster_endpoint is a full URL (https://<host>); the
-      // Port session document's `host` property takes a bare hostname.
-      host = trimsuffix(replace(module.cluster.cluster_endpoint, "https://", ""), "/")
-      port = 443
-      // The private endpoint resolves to control-plane interfaces inside the
-      // VPC, and 443 is served by the module's own control rule regardless.
+      // The Port session document's `host` takes a bare hostname.
+      host  = trimsuffix(replace(module.cluster.cluster_endpoint, "https://", ""), "/")
+      port  = 443
       scope = "vpc"
     }
   }
 
-  // for_each keys must be known at plan; only the VALUES may stay unknown
-  // until apply. local.managed_kafka.bootstrap (the broker host) is unknown
-  // until a managed broker actually exists, but the key here ("kafka") and
-  // the port (managed-kafka/CONTRACT.md's bootstrap_port, a literal each
-  // body's outputs.tf hardcodes) are both known from var.kafka.provider
-  // alone -- which is what lets the toolbox be enabled on a fresh apply,
-  // before MSK/Confluent/Redpanda has ever been created. A single target
-  // reaches ONE bootstrap broker, which proves reachability, TLS and SASL;
-  // a client that must follow Kafka's own metadata response to the other
-  // brokers runs ON the instance itself (`dfe-ops bastion shell`), because the
-  // brokers' advertised hostnames only resolve inside the VPC. That client is
-  // the Apache Kafka console scripts, pinned to the deployment's own broker
-  // version -- the instance's distribution publishes no kcat package, which
-  // toolbox/aws/CONTRACT.md and docs/deployment/toolbox.md both record.
+  // for_each keys and the port are known at plan from var.kafka.provider, so the broker host may stay unknown until apply.
   managed_kafka_selected = contains(["msk", "confluent-cloud", "redpanda-cloud"], var.kafka.provider)
-  // MSK fixes its SASL/IAM listener on this port; the msk module opens it beside SCRAM's.
+  // MSK fixes its SASL/IAM listener on this port.
   msk_iam_listener_port = 9098
-  // MSK's brokers are ENIs in this VPC; Confluent Cloud and Redpanda Cloud
-  // publish a vendor-hosted bootstrap the instance reaches over NAT, so their
-  // egress rule has to leave the VPC or the forward hangs.
+  // Confluent Cloud and Redpanda Cloud are reached over NAT, so their egress rule has to leave the VPC.
   toolbox_kafka_scope = var.kafka.provider == "msk" ? "vpc" : "internet"
   toolbox_kafka_targets = local.managed_kafka_selected ? merge(
     {
@@ -545,13 +430,7 @@ locals {
         scope = local.toolbox_kafka_scope
       }
     },
-    // MSK's SASL/IAM listener, a SECOND target rather than a variant of the
-    // one above: it is a different port with different authentication, and
-    // without its own entry nothing opens 9098 in the toolbox's egress. Gated
-    // on the provider token, not on bootstrap_iam being non-empty, for the
-    // plan-time reason stated above -- the endpoint is unknown until the
-    // cluster exists, and a for_each key may not be. Confluent Cloud and
-    // Redpanda Cloud publish no IAM listener at all.
+    // A second target: another port, with its own egress entry. Gated on the provider token because bootstrap_iam is unknown at plan.
     var.kafka.provider == "msk" ? {
       kafka-iam = {
         host  = split(":", split(",", local.managed_kafka.bootstrap_iam)[0])[0]
@@ -561,25 +440,13 @@ locals {
     } : {},
   ) : {}
 
-  // A Kubernetes Service name resolves through CoreDNS, inside the cluster,
-  // and the instance sits outside it -- so advertising one as a forward target
-  // names an address that can never resolve from the box advertising it. An
-  // in-cluster ClickHouse is reached over the eks-api target instead, with
-  // `kubectl port-forward` from the toolbox shell. A ClickHouse the deployer
-  // brought (ClickHouse Cloud, a VM in the VPC) has a real address and keeps
-  // its target, on the native port the dial names (9440, native over TLS,
-  // unless it says otherwise).
-  // A dotless host counts too: `dfe-clickhouse` is a Service short name that
-  // only resolves through a pod's search domains, and the instance has none.
+  // A Service name never resolves from the instance, so it is no forward target. A dotless host counts as one too.
   clickhouse_host_is_in_cluster = (
     endswith(var.endpoints.clickhouse_host, ".cluster.local")
     || endswith(var.endpoints.clickhouse_host, ".svc")
     || !strcontains(var.endpoints.clickhouse_host, ".")
   )
-  // A name in the deployment's own private zone resolves to an address inside
-  // the VPC; anything else the deployer supplied -- a ClickHouse Cloud host,
-  // the `mode: external` case -- is reached over NAT, so its egress rule has
-  // to leave the VPC.
+  // Outside the deployment's private zone the host is reached over NAT, so its egress rule has to leave the VPC.
   clickhouse_scope = endswith(var.endpoints.clickhouse_host, ".${var.dns.private_zone}") ? "vpc" : "internet"
   toolbox_clickhouse_target = var.endpoints.clickhouse_host != "" && !local.clickhouse_host_is_in_cluster ? {
     clickhouse = {
@@ -589,11 +456,7 @@ locals {
     }
   } : {}
 
-  // Every port a client run on the instance dials on the managed backends, past
-  // the one each target forwards to: a Kafka client follows the brokers'
-  // metadata to every broker port, and a ClickHouse client may take either of
-  // the service's two. The ports are the vendor's, from managed-backends; an
-  // external ClickHouse no vendor runs is dialled on the dial's own two.
+  // Every port a client on the instance dials past the forwarded one, from managed-backends or the dial's own two for an external ClickHouse.
   toolbox_clickhouse_ports = (
     module.managed_backends.clickhouse.service != "" ? module.managed_backends.clickhouse.client_ports :
     var.clickhouse.mode == "external" ? [var.clickhouse.port, var.clickhouse.native_port] :
@@ -607,24 +470,18 @@ locals {
     [for port in local.toolbox_clickhouse_ports : { port = port, scope = local.clickhouse_scope }],
   )
 
-  // No Keeper target: no root output or dial field names a Keeper address
-  // today, and inventing a Service DNS name that might not match the actual
-  // chart's naming is worse than omitting it -- see docs/deployment/toolbox.md.
+  // No Keeper target: nothing names a Keeper address.
   toolbox_targets = merge(
     local.toolbox_eks_api_target,
     local.toolbox_kafka_targets,
     local.toolbox_clickhouse_target,
   )
 
-  // The resolved shape the toolbox launches on; the module is always instantiated, so it is read either way.
+  // Read whether or not the toolbox is enabled.
   toolbox_shape = var.resolved_shapes[var.toolbox.aws.shape_ref]
 }
 
-// Every shell session's transcript: evidence of human access to the data plane,
-// not service telemetry, so it keeps its own retention and outlives every
-// toolbox up/down cycle. It sits here, outside module.toolbox, because
-// `bastion down` is a destroy targeted at that module. A persistent
-// deployment's destroy keeps it, the way it keeps the CloudTrail bucket.
+// Session transcripts, outside module.toolbox because `bastion down` destroys that module.
 module "toolbox_session_logs" {
   source = "../../modules/s3-bucket"
 
@@ -672,16 +529,8 @@ module "toolbox" {
   targets        = local.toolbox_targets
   backend_egress = local.toolbox_backend_egress
 
-  // The fleet tunnel's address and listeners, so `dfe-ops bastion join` can
-  // dial the hub as an admin peer. Both empty unless the edge module built a
-  // forwarder, and an empty address renders no egress rule at all.
-  //
-  // client_cidr and reach are the OTHER half, and they do not need the address:
-  // the reach-back that works today routes the client range at the culvert pod
-  // rather than dialling in, so it is TCP to a tunnel address inside the VPC.
-  // `join`/`flatten` rather than `one`, because `one([])` is null and `try` only
-  // catches an error -- a disabled edge would hand this module a null address and
-  // fail its own variable validation before any plan could be read.
+  // For `dfe-ops bastion join`. Empty unless the edge module built a forwarder, which renders no egress rule.
+  // join/flatten rather than one(): a disabled edge would hand the module a null address and fail its validation.
   tunnel = {
     address     = join("", module.edge[*].tunnel_address)
     ports       = flatten(module.edge[*].tunnel_listener_ports)
@@ -689,9 +538,7 @@ module "toolbox" {
     reach       = var.edge.tunnel.admin_peer.reach
   }
 
-  // The one group the toolbox needs admitting to that it does not own -- the
-  // module adds a single 443 ingress rule naming its own group, and takes it
-  // away again on `bastion down`.
+  // The module adds one 443 ingress rule on this group and removes it on `bastion down`.
   eks_cluster_security_group_id = module.cluster.cluster_security_group_id
 
   permissions_boundary = var.permissions_boundary
@@ -699,11 +546,3 @@ module "toolbox" {
 
   tags = local.tags
 }
-
-// The toolbox operator's read-only EKS access entry (AmazonEKSViewPolicy)
-// lives INSIDE the cluster module now (kubernetes-cluster/aws/eks.tf,
-// "Toolbox operator"), fed by toolbox_operator_role_arn above -- not as a
-// standalone resource here. The cluster module already owns the creator's
-// cluster-admin entry and the Karpenter node entry; a third EKS access entry
-// belongs beside them rather than duplicated against the same cluster from a
-// second resource address, which is what this used to be.

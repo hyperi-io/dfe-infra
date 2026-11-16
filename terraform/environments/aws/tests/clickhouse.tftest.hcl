@@ -1,9 +1,5 @@
-// The aws root's external ClickHouse wiring, executable: the facts it hands
-// bootstrap for each mode, the shapes it refuses before anything is planned, and
-// the cluster's egress addresses and own ranges.
-//
-// Provider-free by construction, like kafka.tftest.hcl beside it: every provider
-// is mocked and every module this file does not exercise is overridden.
+// The facts the root hands bootstrap for each ClickHouse mode, the shapes it refuses, and the cluster's egress addresses and own ranges.
+// Providers are mocked and unexercised modules overridden.
 
 mock_provider "aws" {
   mock_data "aws_caller_identity" {

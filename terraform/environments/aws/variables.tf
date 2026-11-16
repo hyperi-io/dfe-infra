@@ -1,5 +1,4 @@
-// The dial, as OpenTofu sees it. Nothing here carries a value that names a
-// particular deployment -- those arrive in a tfvars file the deployer renders.
+// The dial as OpenTofu sees it. Deployment values arrive in the tfvars file the deployer renders.
 
 variable "provision" {
   description = "Which cloud, which account, which region, which network. The cloud token picks the root; the account is asserted against the caller's identity before anything is created."
@@ -36,9 +35,7 @@ variable "profile" {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Cluster
-// ---------------------------------------------------------------------------
 
 variable "kubernetes_version" {
   description = "EKS control-plane minor version, pinned in tfvars (the dial's kubernetes_version) because the add-on pins in eks_addon_versions are built for one minor."
@@ -149,9 +146,7 @@ variable "dns" {
   })
 }
 
-// ---------------------------------------------------------------------------
 // Edge
-// ---------------------------------------------------------------------------
 
 variable "edge" {
   description = "The edge module (terraform/modules/edge/aws) -- the AWS Load Balancer Controller's identity, the public Route 53 zone, the external-dns and cert-manager identities that write it, and the fleet tunnel's own address. enabled is the whole-module switch the dial's edge.enabled feeds, on by default because a deployment with no door reaches nothing from outside the cluster. Turning it off AFTER a load balancer exists ORPHANS that load balancer, since the controller that owns it is gone: destroy the Services first, then disable. tunnel is the dial's edge.ingest.tunnel block; its address.mode defaults to byo, so nothing here is created until a deployment asks for the forwarder. address.shape_ref names the resolved shape the forwarder takes its instance type and root volume from, auto-selected by the shape resolver as the newest arm64 generation in the region. tunnel.admin_peer is the operator's reach-back to one appliance, and only its two fields travel here because they are a security-group rule on the toolbox -- the rest of the class is a chart value. client_cidr is the range appliances are issued out of, the culvert chart's vpn.clientCIDR, which that reach-back egress is aimed at. receiver.eips is the dial's edge.aws.receiver_eips: one Elastic IP per public subnet for the receiver's NLB, on by default. Every field is described in the module's own variables.tf."
@@ -249,9 +244,7 @@ variable "storage_class" {
   type        = string
 }
 
-// ---------------------------------------------------------------------------
 // Kafka
-// ---------------------------------------------------------------------------
 
 variable "lambda_runtimes" {
   description = "The Lambda runtimes the modules deploy, keyed by function. Pinned in tfvars: render_dial.py renders versions.yaml's lambda-runtimes, because a runtime Lambda publishes after review must not reach a deploy. msk-broker-scaler is the MSK broker scaler's, read only when kafka.provider is msk."
@@ -274,9 +267,7 @@ variable "kafka" {
         namespace       = string
         service_account = string
       })
-      // render_dial.py always sends the ceiling, the per-broker capacity, the
-      // headroom and the alarm window, from the dial or its own documented
-      // values; step left null takes the zone count in the module.
+      // render_dial.py always sends the five sizing fields. A null step takes the client subnet count.
       autoscaling = object({
         enabled                  = optional(bool, true)
         max_brokers              = number
@@ -287,26 +278,20 @@ variable "kafka" {
         evaluation_periods       = number
       })
     }))
-    // Read only when provider is confluent-cloud or redpanda-cloud -- msk's
-    // equivalents live inside msk above.
+    // The SaaS bodies' own; msk's sit inside msk.
     message_max_bytes = optional(number)
     log_retention_ms  = optional(number)
-    // Read only for the two SaaS bodies. Private connectivity has the ACLs
-    // written from inside the VPC, so a run from outside it asks for public.
+    // Private connectivity has the ACLs written from inside the VPC, so a run from outside it asks for public.
     connectivity = optional(string, "private")
-    // Read only when provider is confluent-cloud, which render_dial.py always
-    // sends a tier for. An empty environment id has the body create one of its own.
+    // An empty environment id has the body create one.
     confluent_tier           = optional(string)
     confluent_environment_id = optional(string, "")
-    // Read only when provider is confluent-cloud, which render_dial.py always
-    // sends the REST endpoint wait for.
     confluent_rest_ready = optional(object({
       successes        = number
       timeout_seconds  = number
       interval_seconds = number
     }))
-    // Read only when provider is redpanda-cloud, which render_dial.py always
-    // sends a tier for. An empty id has the body create a resource group of its own.
+    // An empty id has the body create a resource group.
     redpanda_tier              = optional(string)
     redpanda_resource_group_id = optional(string, "")
   })
@@ -347,8 +332,7 @@ variable "kafka" {
   }
 
   validation {
-    // Confluent caps a topic's max.message.bytes at 8388608 on Basic and Standard,
-    // and refuses a larger topic at apply, after the cluster has been created.
+    // Confluent refuses a larger topic at apply, after the cluster exists.
     condition = !(
       var.kafka.provider == "confluent-cloud"
       && contains(["basic", "standard"], var.kafka.confluent_tier == null ? "" : var.kafka.confluent_tier)
@@ -358,9 +342,7 @@ variable "kafka" {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Toolbox
-// ---------------------------------------------------------------------------
 
 variable "toolbox" {
   description = "The on-demand SSM-managed troubleshooting instance (terraform/modules/toolbox/aws), from tfvars (the dial's toolbox block). enabled is the dfe-ops bastion up/down toggle -- down means the instance, its security group, its IAM role and both kinds of Session document do not exist (terminate, never stop). The session-log bucket is this root's (module.toolbox_session_logs), so it is not gated by it. session_log_retention_days is that bucket's expiry, deliberately its own field and never telemetry.retention_days: a session log is evidence of human access, not service telemetry. aws.shape_ref names the resolved shape the instance takes its type and root volume from, auto-selected by the shape resolver as the newest arm64 generation in the region. aws.operator_role_arn is the IAM role granted a read-only EKS access entry when enabled -- required then, since a toolbox with no EKS identity to hand its kubectl forward to is not a deliverable. tool_versions is NOT a dial field a deployer sets by hand: render_dial.py assembles it from versions.yaml (toolbox/aws/CONTRACT.md), so it defaults empty here and the module's own validation refuses an enabled toolbox until it is populated."
@@ -396,9 +378,7 @@ variable "toolbox" {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Registry cache
-// ---------------------------------------------------------------------------
 
 variable "registry_cache" {
   description = "The ECR pull-through cache every node pulls its images through (terraform/modules/registry-cache), from tfvars (the dial's registry_cache block). render_dial.py renders upstreams: the registries ECR caches with no credential (quay.io, registry.k8s.io, public.ecr.aws), plus docker.io or ghcr.io only where the dial names a Secrets Manager credential for it; an upstream that requires one and names none is skipped, and nodes pull it directly. namespace prefixes every rule and cached repository, and empty takes name. expiry_days is how many days a cached image is kept after ECR cached it, after which the next pull refetches it from the upstream. enabled defaults to true, and false creates nothing. On with no upstreams creates nothing either."
@@ -422,9 +402,7 @@ variable "registry_cache" {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Secrets
-// ---------------------------------------------------------------------------
 
 variable "secrets" {
   description = "backend names the store body; ref is its path prefix."
@@ -444,9 +422,7 @@ variable "seeds" {
   type        = map(map(string))
 }
 
-// ---------------------------------------------------------------------------
 // What the deployment points at
-// ---------------------------------------------------------------------------
 
 variable "endpoints" {
   description = "In-cluster service addresses the DFE stack resolves each other by. kafka_bootstrap is the in-cluster broker on a strimzi or redpanda deployment and empty on a brokerless profile; on kafka.provider msk the module's own bootstrap replaces it. clickhouse_host is the external server on clickhouse.mode external, and becomes a toolbox forward target only when it names an address outside the cluster -- a Kubernetes Service name resolves through CoreDNS, which the toolbox instance cannot reach, so an in-cluster ClickHouse is port-forwarded over the eks-api target instead."
@@ -485,8 +461,7 @@ variable "clickhouse" {
     error_message = "clickhouse.user must name the account the apps connect as."
   }
 
-  // A Service name resolves through CoreDNS only, so an external server it names
-  // is one no pod could reach.
+  // A Service name resolves through CoreDNS only, so no pod could reach an external server named by one.
   validation {
     condition = var.clickhouse.mode != "external" || (
       strcontains(var.endpoints.clickhouse_host, ".")
@@ -519,9 +494,7 @@ variable "target_revision" {
   type        = string
 }
 
-// ---------------------------------------------------------------------------
 // State and tags
-// ---------------------------------------------------------------------------
 
 variable "state" {
   description = "Where this root's state lives. Read by the backend block at init, which is why every field is a plain string with no default."
@@ -545,11 +518,7 @@ variable "tags" {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Test runs and account guardrails -- none of these is a dial field. A guarded
-// test run (`dfe-ops cloud-cycle`) sets them in its own overlay tfvars file;
-// every other deployment leaves them at their defaults and changes nothing.
-// ---------------------------------------------------------------------------
+// Test runs and account guardrails. Not dial fields: `dfe-ops cloud-cycle` sets them in an overlay tfvars file.
 
 variable "run" {
   description = "The test run this apply belongs to, or null. Its id and expiry are added to every resource's tags at create, so a reaper can remove what a stalled run left behind. Shape and validation: terraform/modules/tf-run-tags."

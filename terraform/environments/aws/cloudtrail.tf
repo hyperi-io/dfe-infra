@@ -1,47 +1,18 @@
-// Account-level, not module-shaped: CloudTrail records everything that
-// happens to the deployment, including the modules above, so it belongs to
-// the root rather than to any one of them. Management events only, under
-// BOTH telemetry sinks -- unlike MSK's broker logs there is no S3-vs-otel
-// choice at this layer, since a trail always delivers to S3 regardless of
-// var.telemetry.sink, and to CloudWatch Logs as well.
+// The deployment's CloudTrail trail, gated by var.cloudtrail.enabled (docs/deployment/aws-configuration.md#what-every-deployment-builds).
 
 data "aws_partition" "current" {}
 
 locals {
   cloudtrail_name = "${var.name}-cloudtrail"
-  // The trail's own ARN is needed by the bucket policy below BEFORE the trail
-  // exists -- CreateTrail validates the bucket policy already grants it
-  // access, so the policy cannot depend on the resource it authorises.
-  // Constructing it from account, region and name breaks that cycle.
+  // Built from its parts because CreateTrail checks the bucket policy already grants the trail, so the policy can't reference the resource.
   cloudtrail_arn = "arn:${data.aws_partition.current.partition}:cloudtrail:${var.provision.region}:${data.aws_caller_identity.current.account_id}:trail/${local.cloudtrail_name}"
 
-  // var.cloudtrail.enabled gates everything in this file. The CloudWatch half
-  // is built under both sinks: sink = cloudwatch keeps it for the AWS-native
-  // path, and sink = otel reads it from there into the otel database
-  // (provider_logs.tf). Only the retention differs.
   cloudtrail_count            = var.cloudtrail.enabled ? 1 : 0
   cloudtrail_cloudwatch_count = var.cloudtrail.enabled ? 1 : 0
   cloudtrail_log_retention    = var.telemetry.sink == "otel" ? var.telemetry.forced_retention_days : var.telemetry.retention_days
 }
 
-// A persistent deployment's audit trail survives a tofu destroy rather than
-// being deleted along with the record of the destroy itself, and so does the key
-// it is encrypted under (kubernetes-cluster/aws/kms.tf). Only an ephemeral one
-// gets the fast, no-confirmation teardown, the same rule as the secret recovery
-// windows above.
-//
-// Versioning means a principal holding s3:DeleteObject cannot remove a trail
-// file with nothing to recover it from, and the noncurrent rule frees what a
-// delete leaves. Versioning alone, not Object Lock: Object Lock has to be enabled
-// at bucket creation, needs its own retention-period variable, and in compliance
-// mode blocks deletion of locked objects outright, which fights an ephemeral
-// deployment's teardown. That is a design question for whoever owns the
-// tamper-evident-audit story.
-//
-// The policy is AWS's own documented one for CloudTrail delivery: the ACL check
-// plus the write, both scoped to this one trail via aws:SourceArn so a second
-// trail elsewhere in the account cannot write here. The bucket's ARN is built
-// from its name, because the module's arn is not known before the bucket exists.
+// The bucket's ARN is built from its name because the module's arn is unknown before the bucket exists.
 locals {
   cloudtrail_bucket_name = "${var.s3_bucket_prefix}${local.cloudtrail_name}"
   cloudtrail_bucket_arn  = "arn:${data.aws_partition.current.partition}:s3:::${local.cloudtrail_bucket_name}"
@@ -92,12 +63,7 @@ module "cloudtrail_bucket" {
   tags = { Name = local.cloudtrail_name }
 }
 
-// ---------------------------------------------------------------------------
-// The CloudWatch Logs half. Under sink = otel the collector's provider-logs
-// receiver polls it into the otel database, so it keeps only the catch-up
-// window (telemetry.forced_retention_days). Under sink = cloudwatch it is the
-// AWS-native copy and keeps telemetry.retention_days.
-// ---------------------------------------------------------------------------
+// The CloudWatch Logs half.
 
 resource "aws_cloudwatch_log_group" "cloudtrail" {
   count = local.cloudtrail_cloudwatch_count
@@ -129,7 +95,6 @@ resource "aws_iam_role" "cloudtrail_cloudwatch" {
   permissions_boundary = var.permissions_boundary
 }
 
-// AWS's own documented role policy for CloudTrail-to-CloudWatch-Logs delivery.
 data "aws_iam_policy_document" "cloudtrail_cloudwatch" {
   count = local.cloudtrail_cloudwatch_count
 
@@ -163,8 +128,6 @@ resource "aws_cloudtrail" "this" {
   is_multi_region_trail         = false
   enable_log_file_validation    = true
 
-  // No data_resource block: management events only, everywhere this trail
-  // is asked for.
   event_selector {
     read_write_type           = "All"
     include_management_events = true
@@ -173,14 +136,9 @@ resource "aws_cloudtrail" "this" {
   cloud_watch_logs_group_arn = local.cloudtrail_cloudwatch_count == 1 ? "${aws_cloudwatch_log_group.cloudtrail[0].arn}:*" : null
   cloud_watch_logs_role_arn  = local.cloudtrail_cloudwatch_count == 1 ? aws_iam_role.cloudtrail_cloudwatch[0].arn : null
 
-  // The bucket policy has to exist before CreateTrail validates against it, and so does the
-  // role's policy: CreateTrail checks that CloudTrail can write to the log group, and the role
-  // is not enough on its own to let it.
+  // CreateTrail validates the bucket policy and that CloudTrail can write to the log group, so both must exist first.
   depends_on = [module.cloudtrail_bucket, aws_iam_role_policy.cloudtrail_cloudwatch]
 }
-
-// aws_cloudtrail.this gained `count` for cloudtrail.enabled. Without this a
-// deployment applied before it reads its trail as one destroy and one create.
 
 moved {
   from = aws_cloudtrail.this

@@ -1,10 +1,5 @@
-// The aws root's sizing inputs, executable: the toolbox and the tunnel
-// forwarder take their instance type and root volume off a resolved shape, and
-// every value that used to default in a module arrives in tfvars or is refused.
-//
-// Provider-free by construction, like kafka.tftest.hcl beside it. The toolbox
-// and the edge module are planned for real, so their own validation of the type
-// and the root volume they are handed runs here too.
+// The toolbox and the tunnel forwarder take their instance type and root volume off a resolved shape, and sizing values arrive in tfvars or are refused.
+// Providers are mocked. The toolbox and edge modules are planned for real, so their own validation runs.
 
 mock_provider "aws" {
   mock_data "aws_caller_identity" {

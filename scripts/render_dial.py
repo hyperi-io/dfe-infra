@@ -1420,10 +1420,9 @@ def disruption_summary(disruption: Disruption) -> tuple[str, list[str]]:
     return line, []
 
 
-# The broker scaler's sizing when the dial names none: the broker ceiling, the
-# per-broker MB/s the alarm threshold scales with, the margin above full
-# utilisation it fires at, and the alarm window -- three 300s periods in breach,
-# the 15-minute stabilisation the scaler's missing cooldown relies on.
+# The broker scaler's sizing when the dial names none. The scaler runs every
+# period_seconds and adds brokers only when all evaluation_periods were over
+# per_broker_capacity_mb_s x headroom (docs/deployment/kafka/aws-msk-operations.md).
 MSK_AUTOSCALING_DEFAULTS: dict[str, int | float] = {
     "max_brokers": 6,
     "per_broker_capacity_mb_s": 50,
@@ -1437,7 +1436,7 @@ def _msk_autoscaling(dial: dict[str, object]) -> dict[str, object]:
     """kafka.msk.autoscaling -- MSK's broker-count scaler, `var.autoscaling` for
     the msk module (terraform/modules/managed-kafka/msk/variables.tf).
 
-    The ceiling, the per-broker capacity, the headroom and the alarm window are
+    The ceiling, the per-broker capacity, the headroom and the evaluation window are
     always sent, from the dial or MSK_AUTOSCALING_DEFAULTS, because the root
     declares none of them a default. `enabled` is sent only when the dial sets it, and `step` too: the
     module derives it from the subnet count when unset, so it is never invented
