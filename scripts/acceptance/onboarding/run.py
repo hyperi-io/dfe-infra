@@ -140,12 +140,15 @@ def sign_in(driver: Driver, user: str, password: str) -> None:
     driver.page.goto(
         f"{driver.ui}/login", wait_until="domcontentloaded", timeout=STEP_TIMEOUT_MS * 2
     )
-    # A deployment with an identity provider registered opens on the OIDC tab,
-    # and the local accounts sit behind the other one.
+    # The form shows a spinner until the setup status loads. A deployment with an
+    # identity provider registered then opens on the OIDC tab, with the local
+    # accounts behind the other one, so the tab is looked for only once either has rendered.
     local = driver.page.get_by_role("tab", name=LOCAL_LOGIN_TAB, exact=True)
+    username = driver.textbox("Username")
+    username.or_(local).first.wait_for(state="visible", timeout=STEP_TIMEOUT_MS)
     if local.count():
         local.first.click(timeout=STEP_TIMEOUT_MS)
-    driver.textbox("Username").wait_for(state="visible", timeout=STEP_TIMEOUT_MS)
+    username.wait_for(state="visible", timeout=STEP_TIMEOUT_MS)
     driver.textbox("Username").fill(user)
     driver.textbox("Password").fill(password)
     driver.button("Login").click(timeout=STEP_TIMEOUT_MS)

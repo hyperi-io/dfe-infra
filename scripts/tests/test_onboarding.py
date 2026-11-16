@@ -166,6 +166,13 @@ class _Control:
     def count(self):
         return 1 if self._label in self._page.offered else 0
 
+    @property
+    def first(self):
+        return self
+
+    def or_(self, _other):
+        return self
+
     def wait_for(self, **_):
         pass
 
