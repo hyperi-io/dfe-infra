@@ -8,16 +8,13 @@ sidebar_label: Docker
 The whole DFE stack under Docker Compose on one host: a laptop, a demo box or a proof of concept. It runs the same images as a Kubernetes deployment, just packaged differently.
 
 <!-- docker-quickstart: up -->
-You need Docker with Compose v2, Python 3, git and make.
-
+<!-- landing -->
 ```bash
-git clone https://github.com/hyperi-io/dfe-docker && cd dfe-docker
-make up     # pull, start, self test, print the console login
+docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:compose up -d
+docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:compose run --rm secrets-init login
 ```
 
-`make up` runs the newest DFE release with every image pinned, on the `single-kafka` profile. It ends with a self test that sends marked events through and prints `PASS` as each check lands. `VERSION=` pins another release.
-
-`make up PROFILE=<name>` picks another profile. A name not in this table is refused with the valid list.
+Point your browser to http://localhost:3000 and log in with the name and password the second command prints. The console makes you change it at first login. Every port listens on 127.0.0.1 only. `docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:compose down` stops the stack and keeps its data.
 <!-- /docker-quickstart -->
 
 If `docker compose version` shows a release below 2.34, as Debian's own packages do, install Docker from [Docker's own repository](https://docs.docker.com/engine/install/) first.
@@ -44,6 +41,12 @@ curl -X POST http://localhost:8080/ingest \
 > **Coming from Splunk or Elastic?** You didn't create an index or a mapping first, and you won't need to. `main` takes whatever fields you send and they all work straight away, so a sender adding or changing a field breaks nothing. You tune the fields that matter later. More in [what's different](../coming-from.md#nothing-breaks-when-a-source-changes).
 
 Where to find it: the console is at http://localhost:3000, ClickHouse HTTP at http://localhost:8123 and the engine API at http://localhost:8003. `single-kafka` adds the Kafka UI at http://localhost:8081. The ingest ports listen on every interface, and everything else on this host only.
+
+The second install command prints the login again whenever you run it. To stop the stack and delete its data, the minted secrets included:
+
+```bash
+docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:compose down -v
+```
 
 Next:
 
