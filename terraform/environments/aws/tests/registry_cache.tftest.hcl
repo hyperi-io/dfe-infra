@@ -1,7 +1,5 @@
-// The aws root's registry cache, executable: the dial's upstreams reach the
-// registry-cache module, its node script reaches the managed node groups and
-// the DFE_NODE_USER_DATA hand-off to Karpenter, and the cache off leaves both
-// empty. Provider-free, like shapes.tftest.hcl beside it.
+// The dial's upstreams reach the registry-cache module, its node script reaches the managed node groups and DFE_NODE_USER_DATA,
+// and the cache off leaves both empty. Providers are mocked.
 
 mock_provider "aws" {
   mock_data "aws_caller_identity" {
