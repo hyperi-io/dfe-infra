@@ -19,7 +19,6 @@ docs_refs:
     dfe-archiver: "c8509175dcc2842c7abae2d9bf576c9bdec565ed"
     dfe-loader: "ecdb5a3aa7d85bf5a7cbc75937b8de1e8c522b33"  # says record throughout, lists memory as restart-only
     dfe-receiver: "de94eb83b44ae390a165462026cda5a94c609bd9"
-    dfe-schemas: "704e7dcecadd8721730be10a6bf764468a315474"
     dfe-transform-elastic: "4809783d58673f7d67ee6af5d131926b167c1409"
     dfe-transform-vector: "58bf4a371da4279c3900f491dbd9daf3d7de8e4b"
     dfe-transform-vrl: "01ed6768130469a62de42311c467f9b9e85e82af"

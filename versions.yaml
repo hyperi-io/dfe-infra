@@ -10506,7 +10506,7 @@ stacks:
       forgejo: "15.0.9"              # 2026-09-17, v15 LTS, supported to 2027-07; fixes remote code execution. The bundled deploy repo, used only when no GitHub or GitLab is supplied. Pull from code.forgejo.org, not codeberg.org.
       # renovate: datasource=docker depName=otel/opentelemetry-collector-contrib
       otel-collector: "0.163.2"      # 2026-10-21, inside the 7-day cooldown, which is waived for 2.2.1. The gateway and daemonset configs rendered for aws/scale and local/slim, and dfe-docker's collector config, pass otelcol validate on it.
-      hyperdx: "2.43.0"              # The upstream HyperDX release dfe-hyperdx v0.3.22 merges, its packages/app version. The image is content.dfe-hyperdx.
+      hyperdx: "2.45.0"              # The upstream HyperDX release dfe-hyperdx v0.3.26 merges (upstream commit 0096a355c), its packages/app version. The image is content.dfe-hyperdx.
       # renovate: datasource=docker depName=ghcr.io/kafbat/kafka-ui
       kafbat: "v1.5.0"               # 2026-04-20. Kafka web UI, behind DFE sign-in.
       # renovate: datasource=docker depName=envoyproxy/envoy
@@ -10547,12 +10547,12 @@ stacks:
     # DFE apps: Argo wave 5 (appsets/layer2-apps.yaml). Each has its own release line on GHCR.
     # A tag also names its thin chart's version, the tag less its v; dfe-stack cut and bump-app move chart-digests with it.
     apps:
-      dfe-engine: "v1.22.91"        # 2026-11-15, amd64 and arm64. Builds a rule from a stored condition and previews it (#1169), and walks the deploy repo once per head (#1143). Carries v1.22.90: every fetcher source in one Compose fetcher (#1149). Locks dfe-schemas 0.2.29.
+      dfe-engine: "v1.22.92"        # 2026-11-16, amd64 and arm64. Sends each dump unit to its source's topic, so the Feodo C2 dump lands in its own table (#1192). Fixes the catalogue, repository, fetcher status and rules endpoints (#1198). Locks dfe-schemas 0.2.32.
       dfe-ui: "v1.7.45"              # 2026-11-15, amd64 and arm64. Assembles its thin chart on scalo-service 2.14.30 (#736) and reworks the source details view (#731). Carries v1.7.44: creates a rule from the hunt form (#726).
       dfe-receiver: "v1.15.68"      # 2026-11-15, amd64 and arm64. Rebuilt on scalo-rs 2.14.30, whose chart scales down after a 300 s window at 25% a minute (#267).
       dfe-loader: "v1.18.73"        # 2026-11-15, amd64 and arm64. Skips absent source tables during schema pre-warm, so a source table created right after a routing reload no longer sends its first minute of rows to the default table (#349). Carries v1.18.72: scalo-rs 2.14.30, whose chart scales down after a 300 s window at 25% a minute (#348).
       dfe-archiver: "v1.7.51"       # 2026-11-15, amd64 and arm64. Rebuilt on scalo-rs 2.14.30, whose chart scales down after a 300 s window at 25% a minute (#178), with rustix 1.1.6. Carries v1.7.50: spool caps sized from config or the volume limit (#170).
-      dfe-fetcher: "v1.4.55"        # 2026-11-15, amd64 and arm64. Marks every released source stable and drops the maturity labels, so the theatre pack no longer logs adsb-tracks and ais-tracks as alpha (#296). Reports pressure and processed counts (#285). Carries v1.4.54: a config reload rebuilds sources without a restart (#286).
+      dfe-fetcher: "v1.4.56"        # 2026-11-16, amd64 and arm64. Writes dump units to the instance topic, which dfe-engine v1.22.92 routes, so the two move together (#316). Reports misspelt config keys after logger setup (#301) and drops the unbuilt GCS and Azure Blob backends (#311).
       dfe-transform-vrl: "v1.1.48"   # 2026-11-15, amd64 and arm64. Rebuilt on scalo-rs 2.14.30, whose chart scales down after a 300 s window at 25% a minute (#150), with rustix 1.1.6.
       dfe-transform-vector: "v1.0.65"  # 2026-11-15, amd64 and arm64. Rebuilt on scalo-rs 2.14.30, whose chart scales down after a 300 s window at 25% a minute (#163), with rustix 1.1.6.
       dfe-transform-elastic: "v1.1.32" # 2026-11-15, amd64 and arm64. Rebuilt on scalo-rs 2.14.30, whose chart scales down after a 300 s window at 25% a minute (#178). Splits the generated transforms into their own crate, so the release build fits its runner (#179, #173). Carries v1.1.31: detection labels generated from the pinned dfe-schemas wheel (#169).
@@ -10565,16 +10565,16 @@ stacks:
     # The immutable half of each app's tag@sha256 pin, always the multi-arch index digest.
     # An app with no digest here is unpublished and left out of rendered manifests.
     digests:
-      dfe-engine: "sha256:cad1c3fb9cadfbcc3ae14c763ea9107652b4f9034af93ab41a1757245ed981c0"
+      dfe-engine: "sha256:9a0fab80ac2621b03c2b01f3dbdac592537a1fbd3ceb7c603ab155c030dfe3ce"
       dfe-ui: "sha256:7b77a5b20e9b06e2bd98455e17794d0243d255accf85986a657605e84357435d"
       dfe-receiver: "sha256:6e92a7633a05fb6f8e4fce93b2f03e0d2a78771bc5b4d317b063ff878a3213e2"
       dfe-loader: "sha256:46f49778c4bba7abba2f4696e6fa949e6c29a04cbb41a7bae43734eb8408ed1c"
       dfe-archiver: "sha256:1601fab7bd6f7212f706ca115e0678fe925e0e126d290466c12ebfae323ccc04"
-      dfe-fetcher: "sha256:0225505b7fce9687aed8d8d4e261590f1f77b66fe6076f79b0a1fcbe6507bc6e"
+      dfe-fetcher: "sha256:9dd9da062df2eb5ff54f6d0d71f9ab45c56685d95df5c80c6818969ce9d92d8b"
       dfe-transform-vrl: "sha256:da083592e0e87617207d1be01a474462ba4e1e47e80c08cfaf2508a6f78adda6"
       dfe-transform-vector: "sha256:073f9b5ba88bbef43a86c162bd3ef48f9361ea222f2c097a2148b908b8d2ccfb"
       dfe-transform-elastic: "sha256:83a5298d6b161aac162b588f9c2d0ea46a243d2f1040759daee6a8d7ae62b507"
-      dfe-hyperdx: "sha256:a458841fc37c14b5b21ff528290cc9ef4d6b05bc1955127d2eddc2b9e26e289f"
+      dfe-hyperdx: "sha256:7fa3d786fa8e073729c5d59f2123b235d1caaaca229f8769787fdabeec5985bb"
       culvert: "sha256:467b5effcd73c7db549426a5cc843e8f82b0a02877a3378ae8bc864d0787bed0"
       # Tagged by toolbox.dfe-toolbox.
       dfe-toolbox-base: "sha256:bd633946e6defb53dbe29d046543330782d8f2f97260e7288e69692281079d15"
@@ -10587,9 +10587,9 @@ stacks:
     chart-digests:
       culvert: "sha256:423166ccc25223b702864e49684f95b150cc1d8dded42f0bace6b05844b068f6"                # 2.1.30
       dfe-archiver: "sha256:00968327e354da038aaaf56b0630b0147abda0396427cdd3cb08479a1827d743"           # 1.7.51
-      dfe-engine: "sha256:e93e550adf991edab34b3bad2a50e58f6620ee5393922b9a1a401ff4e1324a81"             # 1.22.91
-      dfe-fetcher: "sha256:a1b04f401c8272bf98d9825e99b613943c936f4196cd166b413c77f40d0b6c4d"            # 1.4.55
-      dfe-hyperdx: "sha256:48f2e7173892e0dc68bfa4e6ff45d909ab128cc7f608561ea150b668fdbe020d"            # 0.3.25
+      dfe-engine: "sha256:c561445f2aef4f6b1b0e93c5674fd11789d4be1d14a48614ea9e218b06cfd226"             # 1.22.92
+      dfe-fetcher: "sha256:9fe840e035900b1adf8cae767bf8f6573fa387f1171a7a6114da12f2bf55a240"            # 1.4.56
+      dfe-hyperdx: "sha256:9b041a43fd2edd55bea28895ea3ae5b07ca50e6a1f0ce22eb6f1f6f0d0a4972f"            # 0.3.26
       dfe-loader: "sha256:c8def6cecd4155e14ac3ac7bee549af8c4e286c4362db707136bf94840b69a1c"             # 1.18.73
       dfe-receiver: "sha256:29a06709842806654be641c8706b7dddc8c929b7dde3d64a995ec59d8820cbcd"           # 1.15.68
       dfe-transform-elastic: "sha256:f328f17ef05dd44f71bebcd0d6cc7019070c7b9c5db0c8d79e28f670214dd8cd"  # 1.1.32
@@ -10628,12 +10628,12 @@ stacks:
 
     # Content repos, tagged with this stack.
     content:
-      dfe-schemas: "v0.2.29"             # 2026-11-11. The engine applies it at startup and reads its source catalogue. Renders tables and indexes from one DDL catalogue, with nullable dimension indexes as bloom_filter (#107), adds the Spamhaus DROP and Feodo Tracker meta schemas (#99) and enforces query caps as profile constraints (#111). dfe-engine v1.22.89 locks 0.2.29.
+      dfe-schemas: "v0.2.32"             # 2026-11-16. The engine applies it at startup and reads its source catalogue. Grants the HyperDX roles read on system.merge_tree_settings (#131), records when the hunt runner auto-disables a hunt and why (#128), and limits LowCardinality to string and text (#124). dfe-engine v1.22.92 locks 0.2.32.
       # renovate: datasource=github-tags depName=hyperi-io/dfe-deploy
       dfe-deploy: "v1.0.24"              # 2026-11-16. The deploy-repo template, seeded from this tag. Its pins.yaml names stack 2.2.2 on the release channel.
       # Contains bbf19bf1, the Docker-only installer image and quickstart.json, which the docs site's quickstart pages render.
       dfe-docker: "v1.0.5"                # 2026-11-12, tag at cf2e8d35a. Installs with one line, docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:compose up -d, and the demo from :demo. Runs every fetcher source in one container (#373). Its compose is built against 2.2.2-rc.5, so the console reports that stack until 2.2.3.
-      dfe-hyperdx: "v0.3.25"             # 2026-11-15, amd64 and arm64. Still upstream HyperDX 2.43.0. The search filter panel lists JSON keys again: the build had lowered an optional chain into an undefined helper, so getKeyValues threw and the panel stayed empty (#219). Reports container CPU and memory (#206).
+      dfe-hyperdx: "v0.3.26"             # 2026-11-16, amd64 and arm64. Merges upstream HyperDX 2.45.0. Hides null and blank fields in the row view by default (#221) and shows a capped hunt run's summary row as its counts (#227).
 
     # The dfe-toolbox operator shell images (docker/dfe-toolbox/), not part of the deployed stack.
     # Each Dockerfile ARG default equals its pin here (drift-checked). clickhouse-client follows services.clickhouse-version.
