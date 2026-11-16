@@ -337,6 +337,10 @@ def build(
     graph = suite_graph.load(infra / "suite.yaml")
     body = "stale\n" if stale_docs else None
     page = PAGE_HEAD + (
+        "<!-- suite-graph:begin overview:services -->\n"
+        "<!-- suite-graph:end overview:services -->\n"
+        "<!-- suite-graph:begin overview:platform -->\n"
+        "<!-- suite-graph:end overview:platform -->\n"
         "<!-- suite-graph:begin producer:lib-a -->\n"
         + (body or "")
         + "<!-- suite-graph:end producer:lib-a -->\n"
@@ -404,12 +408,19 @@ def _write(path: Path, text: str) -> None:
     path.write_text(text, encoding="utf-8", newline="\n")
 
 
-def check(infra: Path, *args: str) -> tuple[int, str]:
-    """Run the copied check with a PATH holding git but never `maid`."""
+def check(
+    infra: Path, *args: str, diagram_check: Path | None = None
+) -> tuple[int, str]:
+    """Run the copied check with a PATH holding git only.
+
+    DIAGRAM_CHECK names the diagram checker. By default it names a file that
+    does not exist, so the result never depends on what the host has installed.
+    """
     restricted = infra.parent / "restricted-path"
     restricted.mkdir(exist_ok=True)
     env = dict(os.environ)
     env["PATH"] = str(Path(GIT).parent) if GIT else str(restricted)
+    env["DIAGRAM_CHECK"] = str(diagram_check or infra.parent / "no-diagram-check.py")
     proc = subprocess.run(
         [sys.executable, str(infra / "scripts" / "check_suite_drift.py"), *args],
         capture_output=True,
@@ -463,19 +474,36 @@ def main() -> int:
                 output,
             )
             expect(
-                "maid missing is reported, not swallowed",
-                "SKIPPED  mermaid syntax" in output,
+                "a missing diagram checker is reported, not swallowed",
+                "SKIPPED  diagram source pass" in output,
                 output,
             )
+            for label, body, want_code, needle in (
+                ("passes", "print('0 failing')\n", 0, "OK -- suite.yaml"),
+                (
+                    "rejects a block",
+                    "print('FAIL  page.md:3')\nprint('        R7 no accTitle')\nraise SystemExit(1)\n",
+                    1,
+                    "diagram_check rejects a diagram -- FAIL  page.md:3 R7 no accTitle",
+                ),
+            ):
+                fake = root / "fake-diagram-check.py"
+                fake.write_text(body, encoding="utf-8", newline="\n")
+                code, output = check(infra, "--repos", repos, diagram_check=fake)
+                expect(
+                    f"an installed diagram checker that {label} decides the run",
+                    code == want_code and needle in output,
+                    f"exit {code}\n{output}",
+                )
 
             code, output = check(infra, "--repos", repos, "--strict")
             expect(
-                "--strict with maid absent and the clones present still exits 0",
+                "--strict with the diagram checker absent and the clones present still exits 0",
                 code == 0,
                 f"exit {code}\n{output}",
             )
             expect(
-                "maid absent is not counted as a repo skip",
+                "an absent diagram checker is not counted as a repo skip",
                 "0 repo(s) skipped" in output,
                 output,
             )

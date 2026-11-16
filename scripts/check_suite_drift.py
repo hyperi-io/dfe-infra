@@ -9,8 +9,8 @@
 #                declared non-member, and docs/suite-graph.md carrying the
 #                diagrams the file generates. The docs check is MARKERS-DRIVEN
 #                -- it renders the blocks the page already carries -- so a
-#                producer with no diagram block is an advisory rather than a
-#                failure.
+#                block the graph expects and the page lacks is an advisory
+#                rather than a failure.
 #                Cross-repo citations and lock files are read from each member
 #                clone's fetched `--ref` (default origin/main), never the
 #                clone's working tree, so a clone sitting on a feature branch
@@ -71,6 +71,7 @@ producer in Cargo.lock, a python one in uv.lock. scalo-rs and scalo-py are both
 """
 
 import argparse
+import os
 import re
 import shutil
 import subprocess
@@ -435,29 +436,28 @@ def check_non_members(graph: dict, named: set[str]) -> list[str]:
 
 
 def check_producer_diagrams(graph: dict) -> list[str]:
-    """Producers with out-edges and no diagram block on the page -- advisory.
+    """Blocks the page should carry and does not -- advisory.
 
-    The docs check renders the blocks the page already carries, so a producer
-    nobody added a block for is invisible to it rather than wrong.
+    That is a producer with out-edges and no diagram, or an overview half the
+    page never asked for. The docs check renders the blocks the page already
+    carries, so a block nobody added is invisible to it rather than wrong.
     """
     if not DOCS_PAGE.exists():
         return []
     text = DOCS_PAGE.read_text(encoding="utf-8", errors="replace")
-    drawn = {
-        name.split(":", 1)[1]
-        for name in suite_graph.doc_block_names(text)
-        if name.startswith("producer:")
-    }
-    producers = {edge["from"] for edge in graph["edges"]}
+    drawn = set(suite_graph.doc_block_names(text))
+    page = DOCS_PAGE.relative_to(REPO_ROOT)
     return [
-        f"producer {name} has out-edges and no diagram block in "
-        f"{DOCS_PAGE.relative_to(REPO_ROOT)}"
-        for name in sorted(producers - drawn)
+        f"producer {name.split(':', 1)[1]} has out-edges and no diagram block in {page}"
+        if name.startswith("producer:")
+        else f"overview block {name} is not in {page}"
+        for name in suite_graph.block_names(graph)
+        if name not in drawn
     ]
 
 
 def check_docs(graph: dict) -> tuple[list[str], list[str]]:
-    """The page's diagrams match the file, and parse where a Mermaid linter is on the host."""
+    """The page's diagrams match the file, and pass the diagram checker's source pass where it is installed."""
     rel = DOCS_PAGE.relative_to(REPO_ROOT)
     if not DOCS_PAGE.exists():
         return [f"{rel} is missing"], []
@@ -470,21 +470,30 @@ def check_docs(graph: dict) -> tuple[list[str], list[str]]:
         return [
             f"{rel} diagrams differ from suite.yaml -- run `dfe-stack suite --render-docs`"
         ], []
-    maid = shutil.which("maid")
-    if not maid:
-        return [], ["mermaid syntax: `maid` is not on PATH"]
+    checker = Path(
+        os.environ.get("DIAGRAM_CHECK")
+        or Path.home() / ".local/share/hyperi-ai/tools/diagram_check.py"
+    )
+    if not checker.is_file():
+        return [], [f"diagram source pass: {checker} is not installed"]
     proc = subprocess.run(
-        [maid, str(DOCS_PAGE)],
+        [sys.executable, str(checker), "--no-render", str(DOCS_PAGE)],
         capture_output=True,
         text=True,
         encoding="utf-8",
         errors="replace",
     )
     if proc.returncode != 0:
-        detail = (proc.stdout + proc.stderr).strip().splitlines()
-        return [
-            f"{rel}: maid rejects a diagram -- {detail[0] if detail else 'see `maid`'}"
-        ], []
+        lines = (proc.stdout + proc.stderr).splitlines()
+        fail = next(
+            (i for i, line in enumerate(lines) if line.startswith("FAIL")), None
+        )
+        detail = (
+            " ".join(x.strip() for x in lines[fail : fail + 2])
+            if fail is not None
+            else "see its output"
+        )
+        return [f"{rel}: diagram_check rejects a diagram -- {detail}"], []
     return [], []
 
 
