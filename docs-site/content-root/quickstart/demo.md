@@ -25,7 +25,13 @@ Other demo use cases:
 
 If `docker compose version` shows a release below 2.34, as Debian's own packages do, install Docker from [Docker's own repository](https://docs.docker.com/engine/install/) first.
 
-The second command prints the login again whenever you run it.
+The second command prints the login again whenever you run it. When you're done, this removes the demo and its data:
+
+```bash
+docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:demo down -v
+```
+
+A demo pack uses its own tag in place of `demo`: `demo-cyber`, `demo-telco` or `demo-theatre`. Plain `down` stops it and keeps the data.
 
 ## From a checkout
 
