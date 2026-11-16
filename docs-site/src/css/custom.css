@@ -187,6 +187,11 @@ code {
   border: 0;
 }
 
+/* A doc page's column starts at the sidebar. Infima centres the 1320px container, which leaves a gap that grows with the window. */
+.plugin-docs main > .container {
+  margin-inline: 0;
+}
+
 /* A table wraps its cells to the content width instead of scrolling sideways. */
 .markdown table {
   display: table;
