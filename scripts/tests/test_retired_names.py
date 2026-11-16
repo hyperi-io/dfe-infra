@@ -11,8 +11,7 @@
 
 FerretDB was HyperDX's document store until DocumentDB replaced it on Kubernetes.
 Its name survives in the stacks that shipped it (constraints/ and the older stacks
-in versions.yaml), in the upgrade note that explains the swap, and in a few
-fixtures that parse those historical tags. Anywhere else it is a leftover that
+in versions.yaml) and in a few that parse those historical tags. Anywhere else it is a leftover that
 sends a reader to a component that no longer deploys.
 
     python3 -m pytest scripts/tests/test_retired_names.py -q
@@ -36,7 +35,6 @@ RETIRED = {"ferretdb": re.compile(r"ferretdb", re.IGNORECASE)}
 # History recorded as history: path prefix or exact path -> why the name stays.
 HISTORY = {
     "constraints/": "one file per cut stack, kept as shipped",
-    "docs/deployment/upgrades.md": "the upgrade note explaining the swap to DocumentDB",
     "scripts/check_versions_drift.py": "a message naming the stacks that predate DocumentDB",
     "scripts/tests/test_version_range.py": "parses the tag shape the older stacks carry",
     "scripts/tests/test_retired_names.py": "names what it looks for",
