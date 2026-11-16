@@ -54,8 +54,8 @@ class Listener:
     @staticmethod
     def _route(run) -> str:
         """The receiver's config route, or empty when the engine lists no instance of it."""
-        for entry in run.engine.call("GET", "/apps").body or []:
-            if isinstance(entry, dict) and entry.get("service") == RECEIVER_SERVICE:
+        for entry in steps.listed_apps(run.engine.call("GET", "/apps").body):
+            if entry.get("service") == RECEIVER_SERVICE:
                 instances = [str(i) for i in entry.get("instances") or []]
                 if instances:
                     return f"/apps/{RECEIVER_SERVICE}/{instances[0]}/config"
