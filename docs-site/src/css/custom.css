@@ -187,9 +187,28 @@ code {
   border: 0;
 }
 
-/* A doc page's column starts at the sidebar. Infima centres the 1320px container, which leaves a gap that grows with the window. */
+/* A doc page fills the window: the text takes every pixel between the sidebar and a TOC held against the right edge. */
 .plugin-docs main > .container {
+  max-width: none;
   margin-inline: 0;
+}
+
+@media (min-width: 997px) {
+  .plugin-docs main > .container > .row {
+    flex-wrap: nowrap;
+  }
+
+  /* Docusaurus caps this column at 75% with !important. min-width 0 lets a long code token wrap instead of pushing the TOC below. */
+  .plugin-docs main > .container > .row > .col[class*='docItemCol'] {
+    flex: 1 1 0;
+    min-width: 0;
+    max-width: none !important;
+  }
+
+  .plugin-docs main > .container > .row > .col--3 {
+    flex: 0 0 min(25%, 18rem);
+    max-width: min(25%, 18rem);
+  }
 }
 
 /* A table wraps its cells to the content width instead of scrolling sideways. */
