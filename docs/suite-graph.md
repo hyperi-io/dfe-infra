@@ -37,52 +37,89 @@ Each node is one repo we own and release. It declares what it is (`role`), who i
 
 It's kept apart from whether the artefact is public, because those come apart: dfe-schemas publishes to PyPI for anyone to install and is useless outside DFE.
 
-The same `audience` tag colours a node: green for `general`, blue for `suite`. Navy is the producer of the diagram you're reading, and there's one per picture. A faded fill is an optional member, and its label says `(optional)` too, so colour is never the only signal.
+## The members
 
-<!-- suite-graph:begin overview -->
+Colour says which box is the subject: the producer of a build-cycle diagram is blue and every other box is plain. Audience is in the list above, not the colour. A box that is optional says `(optional)` in its label.
+
+The services are mostly Rust, with dfe-engine and the optional culvert the two in Python.
+
+<!-- suite-graph:begin overview:services -->
 ```mermaid
-flowchart TB
-  subgraph content["content"]
-    direction LR
-    dfe_deploy["dfe-deploy"]:::suite
-    dfe_schemas["dfe-schemas"]:::suite
-  end
-  subgraph infra["infra"]
-    direction LR
-    dfe_docker["dfe-docker"]:::suite
-    dfe_infra["dfe-infra"]:::suite
-  end
-  subgraph library["library"]
-    direction LR
-    dfe_clickhouse_rs["dfe-clickhouse-rs"]:::general
-    factbook_rs["factbook-rs"]:::general
-    logreducer["logreducer"]:::general
-    scalo_py["scalo-py"]:::general
-    scalo_rs["scalo-rs"]:::general
-    vector_vrl["vector-vrl"]:::general
-  end
-  subgraph service["service"]
-    direction LR
-    culvert["culvert (optional)"]:::general-optional
-    dfe_archiver["dfe-archiver"]:::suite
-    dfe_engine["dfe-engine"]:::suite
-    dfe_fetcher["dfe-fetcher"]:::suite
-    dfe_loader["dfe-loader"]:::suite
-    dfe_receiver["dfe-receiver"]:::suite
-    dfe_transform_elastic["dfe-transform-elastic"]:::suite
-    dfe_transform_vector["dfe-transform-vector"]:::suite
-    dfe_transform_vrl["dfe-transform-vrl"]:::suite
-  end
-  subgraph ui["ui"]
-    direction LR
-    dfe_hyperdx["dfe-hyperdx"]:::suite
-    dfe_ui["dfe-ui"]:::suite
-  end
-  classDef general fill:#2DED88,stroke:#2EA4F6,stroke-width:2px,color:#000647
-  classDef suite fill:#2EA4F6,stroke:#2EA4F6,stroke-width:2px,color:#000647
-  classDef general-optional fill:#8CF5BE,stroke:#2EA4F6,stroke-width:2px,color:#000647
+flowchart LR
+    accTitle: L4 Detail -- Suite overview, services
+    accDescr: The suite has 9 services, in 2 boxes. dfe-archiver, dfe-fetcher, dfe-loader, dfe-receiver, dfe-transform-elastic, dfe-transform-vector and dfe-transform-vrl sit in Rust services. culvert (optional) and dfe-engine sit in Python services.
+
+    subgraph rust_services["Rust services"]
+        direction LR
+        dfe_archiver["dfe-archiver"]
+        dfe_fetcher["dfe-fetcher"]
+        dfe_loader["dfe-loader"]
+        dfe_receiver["dfe-receiver"]
+        dfe_transform_elastic["dfe-transform-elastic"]
+        dfe_transform_vector["dfe-transform-vector"]
+        dfe_transform_vrl["dfe-transform-vrl"]
+        dfe_archiver ~~~ dfe_fetcher ~~~ dfe_loader ~~~ dfe_receiver
+        dfe_transform_elastic ~~~ dfe_transform_vector ~~~ dfe_transform_vrl
+    end
+    subgraph python_services["Python services"]
+        direction LR
+        culvert["culvert (optional)"]
+        dfe_engine["dfe-engine"]
+    end
+    rust_services ~~~ python_services
+
+    classDef default fill:#F8FAFC,stroke:#64748B,stroke-width:1px,color:#0F172A
+    classDef group fill:none,stroke:#64748B,stroke-width:1px,stroke-dasharray:2 4
+    class rust_services,python_services group
 ```
-<!-- suite-graph:end overview -->
+<!-- suite-graph:end overview:services -->
+
+*Figure 1. L4 Detail -- Suite overview, services. Boxes group the services by language.* Up: top of dfe-infra.
+
+Everything that is not a service is a library, a piece of infra, content or a UI.
+
+<!-- suite-graph:begin overview:platform -->
+```mermaid
+flowchart LR
+    accTitle: L4 Detail -- Suite overview, platform
+    accDescr: The suite has 12 members that are not services, in 4 boxes. dfe-clickhouse-rs, factbook-rs, logreducer, scalo-py, scalo-rs and vector-vrl sit in Libraries. dfe-deploy and dfe-schemas sit in Content. dfe-docker and dfe-infra sit in Infra. dfe-hyperdx and dfe-ui sit in UI.
+
+    subgraph libraries["Libraries"]
+        direction LR
+        dfe_clickhouse_rs["dfe-clickhouse-rs"]
+        factbook_rs["factbook-rs"]
+        logreducer["logreducer"]
+        scalo_py["scalo-py"]
+        scalo_rs["scalo-rs"]
+        vector_vrl["vector-vrl"]
+        dfe_clickhouse_rs ~~~ factbook_rs
+        logreducer ~~~ scalo_py
+        scalo_rs ~~~ vector_vrl
+    end
+    subgraph content["Content"]
+        direction LR
+        dfe_deploy["dfe-deploy"]
+        dfe_schemas["dfe-schemas"]
+    end
+    subgraph infra["Infra"]
+        direction LR
+        dfe_docker["dfe-docker"]
+        dfe_infra["dfe-infra"]
+    end
+    subgraph ui["UI"]
+        direction LR
+        dfe_hyperdx["dfe-hyperdx"]
+        dfe_ui["dfe-ui"]
+    end
+    libraries ~~~ content ~~~ infra ~~~ ui
+
+    classDef default fill:#F8FAFC,stroke:#64748B,stroke-width:1px,color:#0F172A
+    classDef group fill:none,stroke:#64748B,stroke-width:1px,stroke-dasharray:2 4
+    class libraries,content,infra,ui group
+```
+<!-- suite-graph:end overview:platform -->
+
+*Figure 2. L4 Detail -- Suite overview, platform. Boxes group the members by role.* Up: top of dfe-infra.
 
 ## Reading an edge
 
@@ -96,7 +133,7 @@ The `kind` says HOW the two are tied, and `edge_kinds` in the file carries the c
 
 ## The build cycles
 
-One diagram per producer whose release puts something in motion. Every producer in the file has one, so a new producer with no block is an advisory the drift check raises, not a gap nobody sees. Thick arrows are lockstep, plain arrows are potential, dotted arrows are derived.
+One diagram per producer whose release puts something in motion. Every producer in the file has one, so a new producer with no block is an advisory the drift check raises, not a gap nobody sees. Solid arrows are lockstep or potential and dotted arrows are derived. Each caption says which kind is which.
 
 ### scalo-rs
 
@@ -105,32 +142,34 @@ Two edges run from scalo-rs to each Rust member. One is the crate range. The oth
 <!-- suite-graph:begin producer:scalo-rs -->
 ```mermaid
 flowchart LR
-  scalo_rs["scalo-rs"]:::producer
-  dfe_archiver["dfe-archiver"]:::suite
-  scalo_rs -->|cargo-dep, potential| dfe_archiver
-  scalo_rs ==>|generated-file, lockstep| dfe_archiver
-  dfe_fetcher["dfe-fetcher"]:::suite
-  scalo_rs -->|cargo-dep, potential| dfe_fetcher
-  scalo_rs ==>|generated-file, lockstep| dfe_fetcher
-  dfe_loader["dfe-loader"]:::suite
-  scalo_rs -->|cargo-dep, potential| dfe_loader
-  scalo_rs ==>|generated-file, lockstep| dfe_loader
-  dfe_receiver["dfe-receiver"]:::suite
-  scalo_rs -->|cargo-dep, potential| dfe_receiver
-  scalo_rs ==>|generated-file, lockstep| dfe_receiver
-  dfe_transform_elastic["dfe-transform-elastic"]:::suite
-  scalo_rs -->|cargo-dep, potential| dfe_transform_elastic
-  scalo_rs ==>|generated-file, lockstep| dfe_transform_elastic
-  dfe_transform_vector["dfe-transform-vector"]:::suite
-  scalo_rs -->|cargo-dep, potential| dfe_transform_vector
-  scalo_rs ==>|generated-file, lockstep| dfe_transform_vector
-  dfe_transform_vrl["dfe-transform-vrl"]:::suite
-  scalo_rs -->|cargo-dep, potential| dfe_transform_vrl
-  scalo_rs ==>|generated-file, lockstep| dfe_transform_vrl
-  classDef suite fill:#2EA4F6,stroke:#2EA4F6,stroke-width:2px,color:#000647
-  classDef producer fill:#000647,stroke:#2EA4F6,stroke-width:3px,color:#FFFFFF
+    accTitle: L4 Detail -- scalo-rs build cycle
+    accDescr: A scalo-rs release puts 7 consumers in motion. dfe-archiver, dfe-fetcher, dfe-loader, dfe-receiver, dfe-transform-elastic, dfe-transform-vector and dfe-transform-vrl take cargo-dep and generated-file.
+
+    scalo_rs["scalo-rs"]
+    subgraph rust_services["Rust services"]
+        direction LR
+        dfe_archiver["dfe-archiver"]
+        dfe_fetcher["dfe-fetcher"]
+        dfe_loader["dfe-loader"]
+        dfe_receiver["dfe-receiver"]
+        dfe_transform_elastic["dfe-transform-elastic"]
+        dfe_transform_vector["dfe-transform-vector"]
+        dfe_transform_vrl["dfe-transform-vrl"]
+        dfe_archiver ~~~ dfe_fetcher ~~~ dfe_loader ~~~ dfe_receiver
+        dfe_transform_elastic ~~~ dfe_transform_vector ~~~ dfe_transform_vrl
+    end
+
+    scalo_rs -->|cargo-dep, generated-file| rust_services
+
+    classDef default fill:#F8FAFC,stroke:#64748B,stroke-width:1px,color:#0F172A
+    classDef core fill:#DCEBF7,stroke:#0072B2,stroke-width:2px,color:#0B2A3F
+    classDef group fill:none,stroke:#64748B,stroke-width:1px,stroke-dasharray:2 4
+    class scalo_rs core
+    class rust_services group
 ```
 <!-- suite-graph:end producer:scalo-rs -->
+
+*Figure 3. L4 Detail -- scalo-rs build cycle. The crate range is potential and the generated file is lockstep.* Up: [L4 Detail -- Suite overview](#the-members).
 
 ### scalo-py
 
@@ -139,20 +178,29 @@ dfe-engine, culvert and vector-vrl each declare it by range. vector-vrl does it 
 <!-- suite-graph:begin producer:scalo-py -->
 ```mermaid
 flowchart LR
-  scalo_py["scalo-py"]:::producer
-  culvert["culvert (optional)"]:::general-optional
-  scalo_py -->|python-dep, potential| culvert
-  dfe_engine["dfe-engine"]:::suite
-  scalo_py ==>|contract-guard, lockstep| dfe_engine
-  scalo_py -->|python-dep, potential| dfe_engine
-  vector_vrl["vector-vrl"]:::general
-  scalo_py -->|python-dep, potential| vector_vrl
-  classDef general fill:#2DED88,stroke:#2EA4F6,stroke-width:2px,color:#000647
-  classDef suite fill:#2EA4F6,stroke:#2EA4F6,stroke-width:2px,color:#000647
-  classDef producer fill:#000647,stroke:#2EA4F6,stroke-width:3px,color:#FFFFFF
-  classDef general-optional fill:#8CF5BE,stroke:#2EA4F6,stroke-width:2px,color:#000647
+    accTitle: L4 Detail -- scalo-py build cycle
+    accDescr: A scalo-py release puts 3 consumers in motion. culvert (optional) and vector-vrl take python-dep. dfe-engine takes contract-guard and python-dep.
+
+    scalo_py["scalo-py"]
+    subgraph python_members["Python members"]
+        direction LR
+        culvert["culvert (optional)"]
+        vector_vrl["vector-vrl"]
+    end
+    dfe_engine["dfe-engine"]
+
+    scalo_py -->|python-dep| python_members
+    scalo_py -->|contract-guard, python-dep| dfe_engine
+
+    classDef default fill:#F8FAFC,stroke:#64748B,stroke-width:1px,color:#0F172A
+    classDef core fill:#DCEBF7,stroke:#0072B2,stroke-width:2px,color:#0B2A3F
+    classDef group fill:none,stroke:#64748B,stroke-width:1px,stroke-dasharray:2 4
+    class scalo_py core
+    class python_members group
 ```
 <!-- suite-graph:end producer:scalo-py -->
+
+*Figure 4. L4 Detail -- scalo-py build cycle. The range declarations are potential and the contract guard is lockstep.* Up: [L4 Detail -- Suite overview](#the-members).
 
 ### dfe-engine
 
@@ -161,16 +209,23 @@ Its image tag sits in two places in this repo (its own chart and the hyperdx cha
 <!-- suite-graph:begin producer:dfe-engine -->
 ```mermaid
 flowchart LR
-  dfe_engine["dfe-engine"]:::producer
-  dfe_infra["dfe-infra"]:::suite
-  dfe_engine ==>|image-pin, lockstep x2| dfe_infra
-  dfe_ui["dfe-ui"]:::suite
-  dfe_engine -->|generated-file, potential| dfe_ui
-  dfe_engine -->|vendored-file, potential| dfe_ui
-  classDef suite fill:#2EA4F6,stroke:#2EA4F6,stroke-width:2px,color:#000647
-  classDef producer fill:#000647,stroke:#2EA4F6,stroke-width:3px,color:#FFFFFF
+    accTitle: L4 Detail -- dfe-engine build cycle
+    accDescr: A dfe-engine release puts 2 consumers in motion. dfe-infra takes image-pin x2. dfe-ui takes generated-file and vendored-file.
+
+    dfe_engine["dfe-engine"]
+    dfe_infra["dfe-infra"]
+    dfe_ui["dfe-ui"]
+
+    dfe_engine -->|image-pin x2| dfe_infra
+    dfe_engine -->|generated-file, vendored-file| dfe_ui
+
+    classDef default fill:#F8FAFC,stroke:#64748B,stroke-width:1px,color:#0F172A
+    classDef core fill:#DCEBF7,stroke:#0072B2,stroke-width:2px,color:#0B2A3F
+    class dfe_engine core
 ```
 <!-- suite-graph:end producer:dfe-engine -->
+
+*Figure 5. L4 Detail -- dfe-engine build cycle. The image pin is lockstep, and the generated and vendored files are potential.* Up: [L4 Detail -- Suite overview](#the-members).
 
 ### dfe-infra
 
@@ -179,17 +234,25 @@ The app catalogue goes OUT to dfe-engine before any library moves, which is why 
 <!-- suite-graph:begin producer:dfe-infra -->
 ```mermaid
 flowchart LR
-  dfe_infra["dfe-infra"]:::producer
-  dfe_deploy["dfe-deploy"]:::suite
-  dfe_infra -->|version-pin, potential| dfe_deploy
-  dfe_docker["dfe-docker"]:::suite
-  dfe_infra -.->|derived-pins, derived| dfe_docker
-  dfe_engine["dfe-engine"]:::suite
-  dfe_infra ==>|vendored-file, lockstep| dfe_engine
-  classDef suite fill:#2EA4F6,stroke:#2EA4F6,stroke-width:2px,color:#000647
-  classDef producer fill:#000647,stroke:#2EA4F6,stroke-width:3px,color:#FFFFFF
+    accTitle: L4 Detail -- dfe-infra build cycle
+    accDescr: A dfe-infra release puts 3 consumers in motion. dfe-deploy takes version-pin. dfe-docker takes derived-pins. dfe-engine takes vendored-file.
+
+    dfe_infra["dfe-infra"]
+    dfe_deploy["dfe-deploy"]
+    dfe_docker["dfe-docker"]
+    dfe_engine["dfe-engine"]
+
+    dfe_infra -->|version-pin| dfe_deploy
+    dfe_infra -.->|derived-pins| dfe_docker
+    dfe_infra -->|vendored-file| dfe_engine
+
+    classDef default fill:#F8FAFC,stroke:#64748B,stroke-width:1px,color:#0F172A
+    classDef core fill:#DCEBF7,stroke:#0072B2,stroke-width:2px,color:#0B2A3F
+    class dfe_infra core
 ```
 <!-- suite-graph:end producer:dfe-infra -->
+
+*Figure 6. L4 Detail -- dfe-infra build cycle. The dotted arrow is derived, the vendored file is lockstep and the version pin is potential.* Up: [L4 Detail -- Suite overview](#the-members).
 
 ### dfe-schemas
 
@@ -198,15 +261,23 @@ dfe-engine takes it as a package dependency by range. The one version pin is loc
 <!-- suite-graph:begin producer:dfe-schemas -->
 ```mermaid
 flowchart LR
-  dfe_schemas["dfe-schemas"]:::producer
-  dfe_engine["dfe-engine"]:::suite
-  dfe_schemas -->|python-dep, potential| dfe_engine
-  dfe_infra["dfe-infra"]:::suite
-  dfe_schemas ==>|version-pin, lockstep| dfe_infra
-  classDef suite fill:#2EA4F6,stroke:#2EA4F6,stroke-width:2px,color:#000647
-  classDef producer fill:#000647,stroke:#2EA4F6,stroke-width:3px,color:#FFFFFF
+    accTitle: L4 Detail -- dfe-schemas build cycle
+    accDescr: A dfe-schemas release puts 2 consumers in motion. dfe-engine takes python-dep. dfe-infra takes version-pin.
+
+    dfe_schemas["dfe-schemas"]
+    dfe_engine["dfe-engine"]
+    dfe_infra["dfe-infra"]
+
+    dfe_schemas -->|python-dep| dfe_engine
+    dfe_schemas -->|version-pin| dfe_infra
+
+    classDef default fill:#F8FAFC,stroke:#64748B,stroke-width:1px,color:#0F172A
+    classDef core fill:#DCEBF7,stroke:#0072B2,stroke-width:2px,color:#0B2A3F
+    class dfe_schemas core
 ```
 <!-- suite-graph:end producer:dfe-schemas -->
+
+*Figure 7. L4 Detail -- dfe-schemas build cycle. The package range is potential and the version pin is lockstep.* Up: [L4 Detail -- Suite overview](#the-members).
 
 ### logreducer
 
@@ -215,13 +286,21 @@ dfe-engine takes it as a package dependency by range, with the `enhanced` extra,
 <!-- suite-graph:begin producer:logreducer -->
 ```mermaid
 flowchart LR
-  logreducer["logreducer"]:::producer
-  dfe_engine["dfe-engine"]:::suite
-  logreducer -->|python-dep, potential| dfe_engine
-  classDef suite fill:#2EA4F6,stroke:#2EA4F6,stroke-width:2px,color:#000647
-  classDef producer fill:#000647,stroke:#2EA4F6,stroke-width:3px,color:#FFFFFF
+    accTitle: L4 Detail -- logreducer build cycle
+    accDescr: A logreducer release puts 1 consumer in motion. dfe-engine takes python-dep.
+
+    logreducer["logreducer"]
+    dfe_engine["dfe-engine"]
+
+    logreducer -->|python-dep| dfe_engine
+
+    classDef default fill:#F8FAFC,stroke:#64748B,stroke-width:1px,color:#0F172A
+    classDef core fill:#DCEBF7,stroke:#0072B2,stroke-width:2px,color:#0B2A3F
+    class logreducer core
 ```
 <!-- suite-graph:end producer:logreducer -->
+
+*Figure 8. L4 Detail -- logreducer build cycle. The package range is potential.* Up: [L4 Detail -- Suite overview](#the-members).
 
 ### dfe-clickhouse-rs
 
@@ -230,15 +309,27 @@ The crate is `dfe-clickhouse`. dfe-fetcher takes it as an optional dependency, b
 <!-- suite-graph:begin producer:dfe-clickhouse-rs -->
 ```mermaid
 flowchart LR
-  dfe_clickhouse_rs["dfe-clickhouse-rs"]:::producer
-  dfe_fetcher["dfe-fetcher"]:::suite
-  dfe_clickhouse_rs -->|cargo-dep, potential| dfe_fetcher
-  dfe_loader["dfe-loader"]:::suite
-  dfe_clickhouse_rs -->|cargo-dep, potential| dfe_loader
-  classDef suite fill:#2EA4F6,stroke:#2EA4F6,stroke-width:2px,color:#000647
-  classDef producer fill:#000647,stroke:#2EA4F6,stroke-width:3px,color:#FFFFFF
+    accTitle: L4 Detail -- dfe-clickhouse-rs build cycle
+    accDescr: A dfe-clickhouse-rs release puts 2 consumers in motion. dfe-fetcher and dfe-loader take cargo-dep.
+
+    dfe_clickhouse_rs["dfe-clickhouse-rs"]
+    subgraph rust_services["Rust services"]
+        direction LR
+        dfe_fetcher["dfe-fetcher"]
+        dfe_loader["dfe-loader"]
+    end
+
+    dfe_clickhouse_rs -->|cargo-dep| rust_services
+
+    classDef default fill:#F8FAFC,stroke:#64748B,stroke-width:1px,color:#0F172A
+    classDef core fill:#DCEBF7,stroke:#0072B2,stroke-width:2px,color:#0B2A3F
+    classDef group fill:none,stroke:#64748B,stroke-width:1px,stroke-dasharray:2 4
+    class dfe_clickhouse_rs core
+    class rust_services group
 ```
 <!-- suite-graph:end producer:dfe-clickhouse-rs -->
+
+*Figure 9. L4 Detail -- dfe-clickhouse-rs build cycle. The crate range is potential.* Up: [L4 Detail -- Suite overview](#the-members).
 
 ## The build cycles: the deployed members
 
@@ -248,27 +339,47 @@ The other direction. Every deployed member is a producer too, and what its relea
 
 Each moves one image pin in this repo when it releases. dfe-hyperdx also has its release tag pinned in the content block.
 
+A dfe-ui release moves one image pin in dfe-infra.
+
 <!-- suite-graph:begin producer:dfe-ui -->
 ```mermaid
 flowchart LR
-  dfe_ui["dfe-ui"]:::producer
-  dfe_infra["dfe-infra"]:::suite
-  dfe_ui ==>|image-pin, lockstep| dfe_infra
-  classDef suite fill:#2EA4F6,stroke:#2EA4F6,stroke-width:2px,color:#000647
-  classDef producer fill:#000647,stroke:#2EA4F6,stroke-width:3px,color:#FFFFFF
+    accTitle: L4 Detail -- dfe-ui build cycle
+    accDescr: A dfe-ui release puts 1 consumer in motion. dfe-infra takes image-pin.
+
+    dfe_ui["dfe-ui"]
+    dfe_infra["dfe-infra"]
+
+    dfe_ui -->|image-pin| dfe_infra
+
+    classDef default fill:#F8FAFC,stroke:#64748B,stroke-width:1px,color:#0F172A
+    classDef core fill:#DCEBF7,stroke:#0072B2,stroke-width:2px,color:#0B2A3F
+    class dfe_ui core
 ```
 <!-- suite-graph:end producer:dfe-ui -->
+
+*Figure 10. L4 Detail -- dfe-ui build cycle. The image pin is lockstep.* Up: [L4 Detail -- Suite overview](#the-members).
+
+A dfe-hyperdx release moves one image pin in dfe-infra.
 
 <!-- suite-graph:begin producer:dfe-hyperdx -->
 ```mermaid
 flowchart LR
-  dfe_hyperdx["dfe-hyperdx"]:::producer
-  dfe_infra["dfe-infra"]:::suite
-  dfe_hyperdx ==>|image-pin, lockstep| dfe_infra
-  classDef suite fill:#2EA4F6,stroke:#2EA4F6,stroke-width:2px,color:#000647
-  classDef producer fill:#000647,stroke:#2EA4F6,stroke-width:3px,color:#FFFFFF
+    accTitle: L4 Detail -- dfe-hyperdx build cycle
+    accDescr: A dfe-hyperdx release puts 1 consumer in motion. dfe-infra takes image-pin.
+
+    dfe_hyperdx["dfe-hyperdx"]
+    dfe_infra["dfe-infra"]
+
+    dfe_hyperdx -->|image-pin| dfe_infra
+
+    classDef default fill:#F8FAFC,stroke:#64748B,stroke-width:1px,color:#0F172A
+    classDef core fill:#DCEBF7,stroke:#0072B2,stroke-width:2px,color:#0B2A3F
+    class dfe_hyperdx core
 ```
 <!-- suite-graph:end producer:dfe-hyperdx -->
+
+*Figure 11. L4 Detail -- dfe-hyperdx build cycle. The image pin is lockstep.* Up: [L4 Detail -- Suite overview](#the-members).
 
 ### dfe-deploy
 
@@ -277,98 +388,176 @@ The certified stack's own tag comes back the other way. dfe-deploy is pinned in 
 <!-- suite-graph:begin producer:dfe-deploy -->
 ```mermaid
 flowchart LR
-  dfe_deploy["dfe-deploy"]:::producer
-  dfe_infra["dfe-infra"]:::suite
-  dfe_deploy ==>|version-pin, lockstep| dfe_infra
-  classDef suite fill:#2EA4F6,stroke:#2EA4F6,stroke-width:2px,color:#000647
-  classDef producer fill:#000647,stroke:#2EA4F6,stroke-width:3px,color:#FFFFFF
+    accTitle: L4 Detail -- dfe-deploy build cycle
+    accDescr: A dfe-deploy release puts 1 consumer in motion. dfe-infra takes version-pin.
+
+    dfe_deploy["dfe-deploy"]
+    dfe_infra["dfe-infra"]
+
+    dfe_deploy -->|version-pin| dfe_infra
+
+    classDef default fill:#F8FAFC,stroke:#64748B,stroke-width:1px,color:#0F172A
+    classDef core fill:#DCEBF7,stroke:#0072B2,stroke-width:2px,color:#0B2A3F
+    class dfe_deploy core
 ```
 <!-- suite-graph:end producer:dfe-deploy -->
+
+*Figure 12. L4 Detail -- dfe-deploy build cycle. The version pin is lockstep.* Up: [L4 Detail -- Suite overview](#the-members).
 
 ### The components
 
 Every deployed component is a producer too. A component release moves its image pin here (the tag, the image digest and the thin chart's digest, every copy held by the drift check) and nothing else, with two exceptions. dfe-engine authors the loader's and the receiver's configs, so it carries a hand-written copy of each one's validation rules that no script can compare.
 
+A dfe-loader release moves its image pin in dfe-infra, and dfe-engine carries a hand-written copy of its validation rules.
+
 <!-- suite-graph:begin producer:dfe-loader -->
 ```mermaid
 flowchart LR
-  dfe_loader["dfe-loader"]:::producer
-  dfe_engine["dfe-engine"]:::suite
-  dfe_loader -->|mirrored-logic, potential| dfe_engine
-  dfe_infra["dfe-infra"]:::suite
-  dfe_loader ==>|image-pin, lockstep| dfe_infra
-  classDef suite fill:#2EA4F6,stroke:#2EA4F6,stroke-width:2px,color:#000647
-  classDef producer fill:#000647,stroke:#2EA4F6,stroke-width:3px,color:#FFFFFF
+    accTitle: L4 Detail -- dfe-loader build cycle
+    accDescr: A dfe-loader release puts 2 consumers in motion. dfe-engine takes mirrored-logic. dfe-infra takes image-pin.
+
+    dfe_loader["dfe-loader"]
+    dfe_engine["dfe-engine"]
+    dfe_infra["dfe-infra"]
+
+    dfe_loader -->|mirrored-logic| dfe_engine
+    dfe_loader -->|image-pin| dfe_infra
+
+    classDef default fill:#F8FAFC,stroke:#64748B,stroke-width:1px,color:#0F172A
+    classDef core fill:#DCEBF7,stroke:#0072B2,stroke-width:2px,color:#0B2A3F
+    class dfe_loader core
 ```
 <!-- suite-graph:end producer:dfe-loader -->
+
+*Figure 13. L4 Detail -- dfe-loader build cycle. The image pin is lockstep and the mirrored logic is potential.* Up: [L4 Detail -- Suite overview](#the-members).
+
+A dfe-receiver release moves its image pin in dfe-infra, and dfe-engine carries a hand-written copy of its validation rules.
 
 <!-- suite-graph:begin producer:dfe-receiver -->
 ```mermaid
 flowchart LR
-  dfe_receiver["dfe-receiver"]:::producer
-  dfe_engine["dfe-engine"]:::suite
-  dfe_receiver -->|mirrored-logic, potential| dfe_engine
-  dfe_infra["dfe-infra"]:::suite
-  dfe_receiver ==>|image-pin, lockstep| dfe_infra
-  classDef suite fill:#2EA4F6,stroke:#2EA4F6,stroke-width:2px,color:#000647
-  classDef producer fill:#000647,stroke:#2EA4F6,stroke-width:3px,color:#FFFFFF
+    accTitle: L4 Detail -- dfe-receiver build cycle
+    accDescr: A dfe-receiver release puts 2 consumers in motion. dfe-engine takes mirrored-logic. dfe-infra takes image-pin.
+
+    dfe_receiver["dfe-receiver"]
+    dfe_engine["dfe-engine"]
+    dfe_infra["dfe-infra"]
+
+    dfe_receiver -->|mirrored-logic| dfe_engine
+    dfe_receiver -->|image-pin| dfe_infra
+
+    classDef default fill:#F8FAFC,stroke:#64748B,stroke-width:1px,color:#0F172A
+    classDef core fill:#DCEBF7,stroke:#0072B2,stroke-width:2px,color:#0B2A3F
+    class dfe_receiver core
 ```
 <!-- suite-graph:end producer:dfe-receiver -->
+
+*Figure 14. L4 Detail -- dfe-receiver build cycle. The image pin is lockstep and the mirrored logic is potential.* Up: [L4 Detail -- Suite overview](#the-members).
+
+A dfe-fetcher release moves one image pin in dfe-infra and nothing else.
 
 <!-- suite-graph:begin producer:dfe-fetcher -->
 ```mermaid
 flowchart LR
-  dfe_fetcher["dfe-fetcher"]:::producer
-  dfe_infra["dfe-infra"]:::suite
-  dfe_fetcher ==>|image-pin, lockstep| dfe_infra
-  classDef suite fill:#2EA4F6,stroke:#2EA4F6,stroke-width:2px,color:#000647
-  classDef producer fill:#000647,stroke:#2EA4F6,stroke-width:3px,color:#FFFFFF
+    accTitle: L4 Detail -- dfe-fetcher build cycle
+    accDescr: A dfe-fetcher release puts 1 consumer in motion. dfe-infra takes image-pin.
+
+    dfe_fetcher["dfe-fetcher"]
+    dfe_infra["dfe-infra"]
+
+    dfe_fetcher -->|image-pin| dfe_infra
+
+    classDef default fill:#F8FAFC,stroke:#64748B,stroke-width:1px,color:#0F172A
+    classDef core fill:#DCEBF7,stroke:#0072B2,stroke-width:2px,color:#0B2A3F
+    class dfe_fetcher core
 ```
 <!-- suite-graph:end producer:dfe-fetcher -->
+
+*Figure 15. L4 Detail -- dfe-fetcher build cycle. The image pin is lockstep.* Up: [L4 Detail -- Suite overview](#the-members).
+
+A dfe-archiver release moves one image pin in dfe-infra and nothing else.
 
 <!-- suite-graph:begin producer:dfe-archiver -->
 ```mermaid
 flowchart LR
-  dfe_archiver["dfe-archiver"]:::producer
-  dfe_infra["dfe-infra"]:::suite
-  dfe_archiver ==>|image-pin, lockstep| dfe_infra
-  classDef suite fill:#2EA4F6,stroke:#2EA4F6,stroke-width:2px,color:#000647
-  classDef producer fill:#000647,stroke:#2EA4F6,stroke-width:3px,color:#FFFFFF
+    accTitle: L4 Detail -- dfe-archiver build cycle
+    accDescr: A dfe-archiver release puts 1 consumer in motion. dfe-infra takes image-pin.
+
+    dfe_archiver["dfe-archiver"]
+    dfe_infra["dfe-infra"]
+
+    dfe_archiver -->|image-pin| dfe_infra
+
+    classDef default fill:#F8FAFC,stroke:#64748B,stroke-width:1px,color:#0F172A
+    classDef core fill:#DCEBF7,stroke:#0072B2,stroke-width:2px,color:#0B2A3F
+    class dfe_archiver core
 ```
 <!-- suite-graph:end producer:dfe-archiver -->
+
+*Figure 16. L4 Detail -- dfe-archiver build cycle. The image pin is lockstep.* Up: [L4 Detail -- Suite overview](#the-members).
+
+A dfe-transform-vrl release moves one image pin in dfe-infra and nothing else.
 
 <!-- suite-graph:begin producer:dfe-transform-vrl -->
 ```mermaid
 flowchart LR
-  dfe_transform_vrl["dfe-transform-vrl"]:::producer
-  dfe_infra["dfe-infra"]:::suite
-  dfe_transform_vrl ==>|image-pin, lockstep| dfe_infra
-  classDef suite fill:#2EA4F6,stroke:#2EA4F6,stroke-width:2px,color:#000647
-  classDef producer fill:#000647,stroke:#2EA4F6,stroke-width:3px,color:#FFFFFF
+    accTitle: L4 Detail -- dfe-transform-vrl build cycle
+    accDescr: A dfe-transform-vrl release puts 1 consumer in motion. dfe-infra takes image-pin.
+
+    dfe_transform_vrl["dfe-transform-vrl"]
+    dfe_infra["dfe-infra"]
+
+    dfe_transform_vrl -->|image-pin| dfe_infra
+
+    classDef default fill:#F8FAFC,stroke:#64748B,stroke-width:1px,color:#0F172A
+    classDef core fill:#DCEBF7,stroke:#0072B2,stroke-width:2px,color:#0B2A3F
+    class dfe_transform_vrl core
 ```
 <!-- suite-graph:end producer:dfe-transform-vrl -->
+
+*Figure 17. L4 Detail -- dfe-transform-vrl build cycle. The image pin is lockstep.* Up: [L4 Detail -- Suite overview](#the-members).
+
+A dfe-transform-vector release moves one image pin in dfe-infra and nothing else.
 
 <!-- suite-graph:begin producer:dfe-transform-vector -->
 ```mermaid
 flowchart LR
-  dfe_transform_vector["dfe-transform-vector"]:::producer
-  dfe_infra["dfe-infra"]:::suite
-  dfe_transform_vector ==>|image-pin, lockstep| dfe_infra
-  classDef suite fill:#2EA4F6,stroke:#2EA4F6,stroke-width:2px,color:#000647
-  classDef producer fill:#000647,stroke:#2EA4F6,stroke-width:3px,color:#FFFFFF
+    accTitle: L4 Detail -- dfe-transform-vector build cycle
+    accDescr: A dfe-transform-vector release puts 1 consumer in motion. dfe-infra takes image-pin.
+
+    dfe_transform_vector["dfe-transform-vector"]
+    dfe_infra["dfe-infra"]
+
+    dfe_transform_vector -->|image-pin| dfe_infra
+
+    classDef default fill:#F8FAFC,stroke:#64748B,stroke-width:1px,color:#0F172A
+    classDef core fill:#DCEBF7,stroke:#0072B2,stroke-width:2px,color:#0B2A3F
+    class dfe_transform_vector core
 ```
 <!-- suite-graph:end producer:dfe-transform-vector -->
+
+*Figure 18. L4 Detail -- dfe-transform-vector build cycle. The image pin is lockstep.* Up: [L4 Detail -- Suite overview](#the-members).
+
+A dfe-transform-elastic release moves one image pin in dfe-infra and nothing else.
 
 <!-- suite-graph:begin producer:dfe-transform-elastic -->
 ```mermaid
 flowchart LR
-  dfe_transform_elastic["dfe-transform-elastic"]:::producer
-  dfe_infra["dfe-infra"]:::suite
-  dfe_transform_elastic ==>|image-pin, lockstep| dfe_infra
-  classDef suite fill:#2EA4F6,stroke:#2EA4F6,stroke-width:2px,color:#000647
-  classDef producer fill:#000647,stroke:#2EA4F6,stroke-width:3px,color:#FFFFFF
+    accTitle: L4 Detail -- dfe-transform-elastic build cycle
+    accDescr: A dfe-transform-elastic release puts 1 consumer in motion. dfe-infra takes image-pin.
+
+    dfe_transform_elastic["dfe-transform-elastic"]
+    dfe_infra["dfe-infra"]
+
+    dfe_transform_elastic -->|image-pin| dfe_infra
+
+    classDef default fill:#F8FAFC,stroke:#64748B,stroke-width:1px,color:#0F172A
+    classDef core fill:#DCEBF7,stroke:#0072B2,stroke-width:2px,color:#0B2A3F
+    class dfe_transform_elastic core
 ```
 <!-- suite-graph:end producer:dfe-transform-elastic -->
+
+*Figure 19. L4 Detail -- dfe-transform-elastic build cycle. The image pin is lockstep.* Up: [L4 Detail -- Suite overview](#the-members).
 
 ## The build-cycle table
 

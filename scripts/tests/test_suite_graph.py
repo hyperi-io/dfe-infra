@@ -435,38 +435,70 @@ def test_unknown_slice_names_what_exists() -> None:
             expect(f"{label} names what exists", False, "did not raise")
 
 
+# The class lines of diagrams.md "Colour", byte for byte. A block copies the ones
+# it uses, so each must equal the standard's own line.
+STANDARD_CLASS_LINES = {
+    "default": "classDef default fill:#F8FAFC,stroke:#64748B,stroke-width:1px,color:#0F172A",
+    "core": "classDef core fill:#DCEBF7,stroke:#0072B2,stroke-width:2px,color:#0B2A3F",
+    "group": "classDef group fill:none,stroke:#64748B,stroke-width:1px,stroke-dasharray:2 4",
+}
+# The hyperi-ai standard, where this host has it installed.
+INSTALLED_STANDARD = (
+    Path.home() / ".local/share/hyperi-ai/standards/universal/diagrams.md"
+)
+
+
+def block_lines(block: str) -> list[str]:
+    return [line.strip() for line in block.splitlines()]
+
+
 def test_mermaid_and_docs_render() -> None:
     g = suite_graph.parse_block_yaml(SAMPLE)
-    overview = suite_graph.mermaid_overview(g)
+    services = suite_graph.mermaid_overview(g, "services")
+    platform = suite_graph.mermaid_overview(g, "platform")
     expect(
-        "overview groups by role",
-        "subgraph library" in overview and "subgraph service" in overview,
+        "the services overview holds the service nodes, boxed by language",
+        'subgraph rust_services["Rust services"]' in services
+        and 'subgraph python_services["Python services"]' in services
+        and '"lib-a"' not in services,
+        services,
     )
     expect(
-        "overview shades by audience",
-        ":::general" in overview and ":::suite" in overview,
+        "the platform overview holds every other node, boxed by role",
+        'subgraph libraries["Libraries"]' in platform
+        and '"app-b"' not in platform
+        and '"lib-a"' in platform,
+        platform,
     )
-    expect("an optional member is labelled as one", "side-c (optional)" in overview)
     expect(
-        "a block declares only the classes it paints",
-        "classDef producer" not in overview
-        and "classDef suite-optional" not in overview,
-        overview,
+        "an optional member keeps its label suffix and takes no colour of its own",
+        '["side-c (optional)"]' in services
+        and not any(
+            "side_c" in line
+            for line in block_lines(services)
+            if line.startswith("class")
+        ),
+        services,
     )
     producer = suite_graph.mermaid_producer(g, "lib-a")
+    lines = block_lines(producer)
     expect(
-        "producer diagram labels the edge with plain words -- no quotes, no parentheses",
-        "|cargo-dep, potential|" in producer
-        and not any(c in producer.split("\n")[3] for c in '"()'),
+        "a producer block opens flowchart LR with an accTitle and a one-line accDescr",
+        lines[0] == "flowchart LR"
+        and lines[1] == "accTitle: L4 Detail -- lib-a build cycle"
+        and lines[2].startswith("accDescr: ")
+        and ":" not in lines[2].removeprefix("accDescr: "),
+        producer,
     )
     expect(
-        "every class carries an explicit text colour",
-        all("color:" in line for line in producer.splitlines() if "classDef" in line),
+        "the producer is core and a one-consumer block draws one solid labelled arrow",
+        "class lib_a core" in lines and "lib_a -->|cargo-dep| app_b" in lines,
+        producer,
     )
     g["edges"].append(dict(g["edges"][0], evidence="app-b/other:1"))
     expect(
-        "repeated edges collapse to one arrow with a count",
-        "|cargo-dep, potential x2|" in suite_graph.mermaid_producer(g, "lib-a"),
+        "repeated edges of one kind collapse to one arrow with a count",
+        "lib_a -->|cargo-dep x2| app_b" in suite_graph.mermaid_producer(g, "lib-a"),
     )
     page = "intro\n<!-- suite-graph:begin producer:lib-a -->\nstale\n<!-- suite-graph:end producer:lib-a -->\nouttro\n"
     rendered = suite_graph.render_docs(g, page)
@@ -488,155 +520,210 @@ def test_mermaid_and_docs_render() -> None:
     expect("an empty pair renders the same as a stale one", filled == rendered)
 
 
-# The two canvases these diagrams are read on.
-CANVASES = {"light": "#FFFFFF", "dark": "#0D1117"}
+def test_consumers_with_the_same_arrow_share_one_box() -> None:
+    """Fan-out: one box and one arrow for consumers that get the same arrow."""
 
-# A fill has to stand off its canvas by this much to be a plate at all.
-FILL_FLOOR = 2.5
+    def edge(to: str, kind: str, kind_type: str) -> dict:
+        return {"from": "lib-a", "to": to, "kind": kind, "type": kind_type}
 
-# The (class, canvas) pairs whose fill is deliberately below that floor, with
-# the ratio each one measures. The tertiary stroke carries the boundary there
-# and is asserted in its place. Pinning the ratio catches a fill that drifts to
-# the canvas colour instead of letting it ride on the stroke.
-SOFT_FILLS = {
-    ("general", "light"): 1.55,
-    ("general-optional", "light"): 1.32,
-    ("producer", "dark"): 1.01,
-    ("suite-optional", "light"): 1.72,
-}
-
-
-def _luminance(colour: str) -> float:
-    """WCAG relative luminance of a #RRGGBB colour."""
-    total = 0.0
-    for offset, weight in zip((1, 3, 5), (0.2126, 0.7152, 0.0722), strict=True):
-        value = int(colour[offset : offset + 2], 16) / 255
-        total += weight * (
-            value / 12.92 if value <= 0.03928 else ((value + 0.055) / 1.055) ** 2.4
+    cargo = ("cargo-dep", "potential")
+    pin = ("image-pin", "lockstep")
+    nodes = {
+        name: {"role": role, "language": language, "audience": "suite"}
+        for name, role, language in (
+            ("a-1", "service", "rust"),
+            ("a-2", "service", "rust"),
+            ("b-1", "library", "python"),
+            ("b-2", "service", "rust"),
+            ("c-1", "service", "rust"),
+            ("lib-a", "library", "rust"),
         )
-    return total
-
-
-def contrast(one: str, other: str) -> float:
-    """WCAG contrast ratio between two #RRGGBB colours."""
-    high, low = sorted((_luminance(one), _luminance(other)), reverse=True)
-    return (high + 0.05) / (low + 0.05)
-
-
-def _class_styles() -> dict[str, dict[str, str]]:
-    """Each house classDef as {name: {fill, stroke, color, ...}}."""
-    styles = {}
-    for line in suite_graph._CLASSES.values():
-        _, name, declarations = line.split(" ", 2)
-        styles[name] = dict(d.split(":", 1) for d in declarations.split(","))
-    return styles
-
-
-def test_contrast_on_both_canvases() -> None:
-    """No class may disappear or go unreadable on either GitHub theme."""
-    expect(
-        "the helper reproduces the known ratio for navy on the light canvas",
-        round(contrast("#000647", "#FFFFFF"), 2) == 18.80,
-        str(round(contrast("#000647", "#FFFFFF"), 2)),
-    )
-    for name, style in _class_styles().items():
-        ratio = contrast(style["color"], style["fill"])
-        expect(
-            f"{name} text on its own fill clears 4.5:1", ratio >= 4.5, f"{ratio:.2f}"
-        )
-        for canvas, background in CANVASES.items():
-            fill = contrast(style["fill"], background)
-            soft = SOFT_FILLS.get((name, canvas))
-            if soft is None:
-                expect(
-                    f"{name} fill stands off the {canvas} canvas",
-                    fill >= FILL_FLOOR,
-                    f"{fill:.2f}",
-                )
-                continue
-            expect(
-                f"{name} fill is the soft one it is declared to be on the {canvas} canvas",
-                round(fill, 2) == soft,
-                f"{fill:.2f}, declared {soft:.2f}",
-            )
-            edge = contrast(style["stroke"], background)
-            expect(
-                f"{name} stroke carries its boundary on the {canvas} canvas",
-                edge >= FILL_FLOOR,
-                f"{edge:.2f}",
-            )
-    navy_fills = [
-        n
-        for n, s in _class_styles().items()
-        if s["fill"] == suite_graph.PALETTE["navy"]
-    ]
-    expect(
-        "navy is a fill for the producer alone",
-        navy_fills == ["producer"],
-        str(navy_fills),
-    )
-
-
-def test_brand_palette() -> None:
-    """Every colour a diagram draws is a graphics.hyperi.io token or a 0.45 fade of one."""
-    expect(
-        "PALETTE is the brand tokens",
-        suite_graph.PALETTE
-        == {
-            "navy": "#000647",
-            "tertiary": "#2EA4F6",
-            "accent": "#2DED88",
-            "white": "#FFFFFF",
-            "black": "#000000",
-        },
-        str(suite_graph.PALETTE),
-    )
-    expect(
-        "the fade mixes 45 per cent white into the brand tertiary",
-        suite_graph.faded("#2EA4F6") == "#8CCDFA",
-        suite_graph.faded("#2EA4F6"),
-    )
-    expect("fading white leaves white", suite_graph.faded("#FFFFFF") == "#FFFFFF")
-    g = suite_graph.parse_block_yaml(SAMPLE)
-    g["edges"].append(
-        {
-            "from": "lib-a",
-            "to": "side-c",
-            "kind": "cargo-dep",
-            "type": "potential",
-            "evidence": "side-c/pyproject.toml",
-        }
-    )
-    allowed = set(suite_graph.PALETTE.values()) | {
-        suite_graph.faded(c) for c in suite_graph.PALETTE.values()
     }
-    for label, block in (
-        ("overview", suite_graph.mermaid_overview(g)),
-        ("producer diagram", suite_graph.mermaid_producer(g, "lib-a")),
+    base = {"nodes": nodes, "edge_kinds": {}}
+    for label, edges, expected, absent in (
+        (
+            "two consumers with one kind become a box with one arrow",
+            [edge("a-1", *cargo), edge("a-2", *cargo)],
+            [
+                'subgraph rust_services["Rust services"]',
+                "lib_a -->|cargo-dep| rust_services",
+            ],
+            ["lib_a -->|cargo-dep| a_1"],
+        ),
+        (
+            "a consumer alone stays a plain node",
+            [edge("a-1", *cargo)],
+            ["lib_a -->|cargo-dep| a_1"],
+            ["subgraph"],
+        ),
+        (
+            "two kinds to every consumer give one arrow labelled with both",
+            [edge(to, *kind) for to in ("a-1", "a-2") for kind in (cargo, pin)],
+            ["lib_a -->|cargo-dep, image-pin| rust_services"],
+            ["potential", "lockstep"],
+        ),
+        (
+            "a derived edge is dotted and no other is",
+            [edge("a-1", "derived-pins", "derived"), edge("a-2", *cargo)],
+            ["lib_a -.->|derived-pins| a_1", "lib_a -->|cargo-dep| a_2"],
+            ["subgraph"],
+        ),
+        (
+            "members of mixed language and role are titled by what they share",
+            [edge("a-1", *cargo), edge("b-1", *cargo)],
+            ['subgraph members["Members"]'],
+            ["Rust"],
+        ),
+        (
+            "the same title twice takes a second box id",
+            [
+                edge("a-1", *cargo),
+                edge("a-2", *cargo),
+                edge("b-2", *pin),
+                edge("c-1", *pin),
+            ],
+            [
+                'subgraph rust_services["Rust services"]',
+                'subgraph rust_services_2["Rust services"]',
+            ],
+            [],
+        ),
     ):
-        found = set(re.findall(r"#[0-9A-Fa-f]{3,6}", block))
+        block = suite_graph.mermaid_producer(dict(base, edges=edges), "lib-a")
         expect(
-            f"the {label} draws no colour outside the palette and its fades",
-            found <= allowed,
-            str(sorted(found - allowed)),
-        )
-        expect(
-            f"every classDef in the {label} carries a text colour",
-            all("color:" in line for line in block.splitlines() if "classDef" in line),
-        )
-        expect(
-            f"every classDef in the {label} strokes in the both-modes tertiary",
-            all(
-                f"stroke:{suite_graph.PALETTE['tertiary']}," in line
-                for line in block.splitlines()
-                if "classDef" in line
-            ),
-        )
-        expect(
-            f"an optional member is faded AND labelled in the {label}",
-            '["side-c (optional)"]:::general-optional' in block,
+            label,
+            all(want in block for want in expected)
+            and not any(bad in block for bad in absent),
             block,
         )
+
+
+def test_block_names_and_unknown_blocks() -> None:
+    g = suite_graph.parse_block_yaml(SAMPLE)
+    expect(
+        "the page can carry both overview halves and one block per producer",
+        suite_graph.block_names(g)
+        == ["overview:services", "overview:platform", "producer:lib-a"],
+        str(suite_graph.block_names(g)),
+    )
+    for name in ("overview", "producer:ghost", "nonsense"):
+        try:
+            suite_graph.render_block(g, name)
+        except KeyError as exc:
+            expect(
+                f"the unknown block {name!r} raises and names what exists",
+                "overview:services" in exc.args[0],
+                exc.args[0],
+            )
+        else:
+            expect(f"the unknown block {name!r} raises", False, "did not raise")
+    page = "<!-- suite-graph:begin ghost -->\n<!-- suite-graph:end ghost -->\n"
+    try:
+        suite_graph.render_docs(g, page)
+    except KeyError:
+        expect("an unknown block on a page raises", True)
+    else:
+        expect("an unknown block on a page raises", False, "did not raise")
+
+
+def _live_blocks() -> list[tuple[str, str]]:
+    g = suite_graph.load()
+    return [
+        (name, suite_graph.render_block(g, name)) for name in suite_graph.block_names(g)
+    ]
+
+
+def test_class_lines_are_the_standards() -> None:
+    """A block copies the standard's class lines byte for byte, and adds no other."""
+    expect(
+        "the generator's class lines are the standard's",
+        suite_graph.CLASS_LINES == STANDARD_CLASS_LINES,
+        str(suite_graph.CLASS_LINES),
+    )
+    if INSTALLED_STANDARD.is_file():
+        text = INSTALLED_STANDARD.read_text(encoding="utf-8")
+        section = text.split("\n## Colour\n", 1)[1].split("\n## ", 1)[0]
+        in_standard = {ln.strip() for ln in section.splitlines() if "classDef" in ln}
+        expect(
+            "the installed standard still carries each of them",
+            set(STANDARD_CLASS_LINES.values()) <= in_standard,
+            str(set(STANDARD_CLASS_LINES.values()) - in_standard),
+        )
+    g = suite_graph.parse_block_yaml(SAMPLE)
+    blocks = [
+        suite_graph.mermaid_overview(g, "services"),
+        suite_graph.mermaid_overview(g, "platform"),
+        suite_graph.mermaid_producer(g, "lib-a"),
+        *(block for _, block in _live_blocks()),
+    ]
+    for block in blocks:
+        defined = [ln for ln in block_lines(block) if ln.startswith("classDef")]
+        expect(
+            "every classDef in a block is one of the standard's, and default is first",
+            set(defined) <= set(STANDARD_CLASS_LINES.values())
+            and defined[0] == STANDARD_CLASS_LINES["default"],
+            block,
+        )
+        used = {ln.split()[2] for ln in block_lines(block) if ln.startswith("class ")}
+        expect(
+            "every class a block applies has its line, and no brand colour appears",
+            used <= {ln.split()[1] for ln in defined}
+            and not re.search(r"#(?:2EA4F6|2DED88|000647)", block, re.IGNORECASE),
+            block,
+        )
+        expect(
+            "no thick arrow, style, linkStyle or per-diagram configuration",
+            not re.search(
+                r"==>|^\s*(style|linkStyle|click)\b|%%\{", block, re.MULTILINE
+            ),
+            block,
+        )
+
+
+def test_generated_blocks_follow_the_standard() -> None:
+    """Rules the checker reads from the source, held without a browser."""
+    g = suite_graph.load()
+    for name, block in _live_blocks():
+        lines = block_lines(block)
+        expect(f"{name} opens flowchart LR", lines[0] == "flowchart LR", lines[0])
+        expect(
+            f"{name} has an accTitle at L4 and an accDescr on one line",
+            lines[1].startswith("accTitle: L4 Detail -- ")
+            and lines[2].startswith("accDescr: "),
+            block,
+        )
+        labels = re.findall(r"-(?:->|\.->)\|([^|]*)\|", block)
+        expect(
+            f"{name} labels every arrow, with no parenthesis or quote in a label",
+            len(labels) == len(re.findall(r"-(?:->|\.->)", block))
+            and not any(c in label for label in labels for c in '("'),
+            str(labels),
+        )
+        nodes = re.findall(r'^\s*\w+\["', block, re.MULTILINE)
+        expect(f"{name} stays within 12 nodes", len(nodes) <= 12, str(len(nodes)))
+        expect(
+            f"{name} renders the same twice",
+            block == suite_graph.render_block(g, name),
+        )
+
+
+def test_live_page_is_in_sync() -> None:
+    """The committed page equals a fresh render, and carries every block."""
+    g = suite_graph.load()
+    page = (REPO_ROOT / "docs" / "suite-graph.md").read_text(
+        encoding="utf-8", errors="replace"
+    )
+    expect(
+        "docs/suite-graph.md equals a fresh render of suite.yaml",
+        suite_graph.render_docs(g, page) == page,
+        "run `scripts/dfe-stack suite --render-docs`",
+    )
+    carried = suite_graph.doc_block_names(page)
+    expect(
+        "the page carries each block once",
+        sorted(carried) == sorted(suite_graph.block_names(g)),
+        str(sorted(set(suite_graph.block_names(g)) ^ set(carried))),
+    )
 
 
 def test_an_unmatched_marker_is_refused() -> None:
@@ -716,8 +803,11 @@ def main() -> int:
         test_queries()
         test_unknown_slice_names_what_exists()
         test_mermaid_and_docs_render()
-        test_brand_palette()
-        test_contrast_on_both_canvases()
+        test_consumers_with_the_same_arrow_share_one_box()
+        test_block_names_and_unknown_blocks()
+        test_class_lines_are_the_standards()
+        test_generated_blocks_follow_the_standard()
+        test_live_page_is_in_sync()
         test_an_unmatched_marker_is_refused()
         test_live_file()
         test_no_version_literal_in_the_live_file()
