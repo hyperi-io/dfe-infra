@@ -1,7 +1,6 @@
 {{- $pl := .Values.clusterTelemetry.providerLogs }}
 {{- if has $pl.flavour (list "aws" "azure" "gcp") }}
-# aws, azure and gcp: one replica polling or pulling the provider's log service,
-# in a process of its own so that a receiver that exits takes nothing else down.
+# aws, azure and gcp: one replica reading the provider's log service. See docs/observability/provider-logs.md.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -9,10 +8,9 @@ metadata:
   labels:
     {{- include "dfe-common.labels" . | nindent 4 }}
 spec:
-  # One poller: a second would read every log group twice and fight over the checkpoint.
+  # One poller: a second would read every group twice.
   replicas: 1
-  # The old pod stops before the new one starts, since the claim is ReadWriteOnce and one
-  # poller owns the checkpoint.
+  # The claim is ReadWriteOnce, so the old pod stops first.
   strategy:
     type: Recreate
   selector:
