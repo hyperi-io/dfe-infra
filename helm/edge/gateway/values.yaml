@@ -601,8 +601,7 @@ routes:
   # wherever the console does and the infra kill switch never takes it away. No
   # edge OIDC policy either: an interactive redirect cannot complete in a frame
   # the IdP refuses to be framed in. The fork is its own PEP -- it authenticates
-  # from the dfe_token cookie dfe-ui shares across the domain. adminLink keeps it
-  # on the engine's admin list.
+  # from the dfe_token cookie dfe-ui shares across the domain.
   hyperdx:
     class: product
     enabled: true
@@ -612,9 +611,6 @@ routes:
     backendService: dfe-hyperdx
     backendNamespace: ""      # set in values overlay (deployed with dfe-ui wave 5)
     backendPort: 8080
-    adminLink:
-      name: Search
-      purpose: Search and dashboards over DFE data and the stack's own telemetry
 
   # Forgejo (in-cluster deploy-repo FALLBACK git host). Only deployed when no
   # external git is supplied (see layer2-deploy-repo appset), so the route
