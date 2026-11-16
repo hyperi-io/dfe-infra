@@ -1,4 +1,4 @@
-# Migrating from DFE 2.x before 2.2
+# Migrating from DFE/XDR 2.1.x and earlier
 
 A private-cloud DFE deployment run before 2.2 used an internal ClickHouse fork with an SSD cache of its own in front of bulk storage, under an internal operator (described, not named, in [clickhouse.md](clickhouse.md)). DFE 2.2 retired that pairing for less code to maintain and one storage model across on-prem and cloud.
 

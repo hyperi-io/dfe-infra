@@ -15,7 +15,7 @@ Which ClickHouse is a per-deployment choice in the `clickhouse-cluster` chart's 
 | **Official ClickHouse operator** (clickhouse.com CRDs) | `mode: cluster` -- ClickHouseCluster CR + DFE-owned Keeper, ReplicatedMergeTree | Public default for the scale tier |
 | **ClickHouse Cloud** (or any BYO endpoint) | `mode: external` -- deploy nothing, connect to the supplied endpoint | Public default for managed deployments |
 | Standalone server | `mode: single` -- plain StatefulSet, no operator, Keeper embedded, a cluster of one | Small/test tiers |
-| **HyperI internal operator + CH fork** (private cloud) | Retired as of DFE 2.2 | See [Migrating from DFE 2.x before 2.2](migrating-from-2.1.md) |
+| **HyperI internal operator + CH fork** (private cloud) | Retired as of DFE 2.2 | See [Migrating from DFE/XDR 2.1.x and earlier](migrating-from-2.1.md) |
 | Altinity operator | -- | **NOT tested.** Nothing in this stack has run under it |
 
 An external ClickHouse must run 24.10 or later. The collector's `otel_writer` grant uses a table wildcard (`INSERT ON dfe.otel_*`) that an older server rejects, so the collector can't insert.
@@ -42,7 +42,7 @@ In cluster mode the `KeeperCluster` turns on the operator's NetworkPolicy, and `
 
 Until ClickHouse published an operator, the Kubernetes options were the Altinity operator or building your own. DFE 2.0 and 2.1 ran HyperI's: an internal operator and a ClickHouse fork, on private-cloud deployments. The Vector-based loader of those releases needed the fork's SSD cache in front of bulk storage.
 
-The ground-up Rust dfe-loader in DFE 2.2 resolved those pain points, which let the fork and the internal operator go. The official ClickHouse operator plus the `cached-object` storage model replaces them as the supported path. That model is an object-store disk with a local read-through cache in front of it, under the `s3_cached` policy, and it's the default wherever an object-store endpoint exists. A deployment still on the retired pairing follows [Migrating from DFE 2.x before 2.2](migrating-from-2.1.md).
+The ground-up Rust dfe-loader in DFE 2.2 resolved those pain points, which let the fork and the internal operator go. The official ClickHouse operator plus the `cached-object` storage model replaces them as the supported path. That model is an object-store disk with a local read-through cache in front of it, under the `s3_cached` policy, and it's the default wherever an object-store endpoint exists. A deployment still on the retired pairing follows [Migrating from DFE/XDR 2.1.x and earlier](migrating-from-2.1.md).
 
 When ClickHouse Inc shipped its official operator, DFE 2.2 adopted it as the public on-cluster default. The decision record (versions.yaml, `operators.clickhouse-operator`): greenfield stack, single-shard topology, DFE owns its DDL, safe Keeper consensus, and ClickHouse partner support. None of that needed Altinity's extra machinery. ClickHouse Cloud is the other main public target via `mode: external`.
 
