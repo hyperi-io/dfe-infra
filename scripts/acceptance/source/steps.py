@@ -335,6 +335,16 @@ def record_deploy(driver, engine: Engine, name: str) -> dict:
     return deployed
 
 
+def listed_apps(body: object) -> list[dict]:
+    """The catalogue entries a GET /apps reply carries.
+
+    The engine answers with a page, ``{"items": [...]}``. An engine from before
+    that answered with the bare list.
+    """
+    entries = body.get("items") if isinstance(body, dict) else body
+    return [entry for entry in entries or [] if isinstance(entry, dict)]
+
+
 def wait_instance(
     engine: Engine, service: str, name: str, deadline: float
 ) -> tuple[str, bool]:
@@ -347,7 +357,7 @@ def wait_instance(
     while True:
         apps = engine.call("GET", "/apps")
         entry = next(
-            (a for a in (apps.body or []) if a.get("service") == service), None
+            (a for a in listed_apps(apps.body) if a.get("service") == service), None
         )
         instances = [str(i) for i in (entry or {}).get("instances", [])]
         if name in instances:
@@ -1054,8 +1064,7 @@ def archiver_runs(engine: Engine) -> bool:
         )
     return any(
         entry.get("service") == ARCHIVER_SERVICE and bool(entry.get("instances"))
-        for entry in reply.body or []
-        if isinstance(entry, dict)
+        for entry in listed_apps(reply.body)
     )
 
 
@@ -1145,17 +1154,23 @@ def record_archive(driver, archive_exec: list[list[str]], name: str) -> None:
 
 
 _HINT_SERVICE = re.compile(r"SERVICES=(\S+)")
+_LEGACY_RESTART = "docker compose restart "
 
 
 def hinted_service(hint: str) -> str:
-    """The Compose service one engine restart hint names.
+    """The Compose service one engine restart hint names, empty when it names none.
 
     appconfig.RESTART_HINT and RECREATE_HINT name it as ``make apply
-    SERVICES=<service>``; an engine from before that ended the hint on
-    ``docker compose restart <service>``, so the service was the last word.
+    SERVICES=<service>``. An engine from before that ended the hint on
+    ``docker compose restart <service>``. A ``not run:`` note and the bare
+    ``removal required: make apply`` name no service, so nothing is restarted for them.
     """
     found = _HINT_SERVICE.search(hint)
-    return found.group(1) if found else hint.rsplit(" ", 1)[-1]
+    if found:
+        return found.group(1)
+    if _LEGACY_RESTART in hint:
+        return hint.rsplit(" ", 1)[-1]
+    return ""
 
 
 def reply_hints(body: object) -> list[str]:
@@ -1203,16 +1218,20 @@ def restart_outcome(prefix: list[str], reported: list[str]) -> tuple[str, str]:
         The status and detail of the restart step.
     """
     hints = sorted({str(hint) for hint in reported if hint})
-    if not hints:
-        return "skipped", "the engine reports every write taken where it stands"
+    services = sorted({hinted_service(hint) for hint in hints} - {""})
+    # Notes the engine attaches about other apps and sources, never a command to run.
+    noted = [hint for hint in hints if not hinted_service(hint)]
+    aside = f"; not commands, so not run: {noted}" if noted else ""
+    if not services:
+        return "skipped", f"the engine reports every write taken where it stands{aside}"
     if not prefix:
+        commands = [hint for hint in hints if hinted_service(hint)]
         return (
             "failed",
-            f"{len(hints)} app(s) need restarting and this run was given no --restart-exec: {hints}",
+            f"{len(services)} app(s) need restarting and this run was given no --restart-exec: {commands}",
         )
     done = []
-    for hint in hints:
-        service = hinted_service(hint)
+    for service in services:
         reply = subprocess.run(
             [*prefix, service],
             capture_output=True,
@@ -1226,7 +1245,7 @@ def restart_outcome(prefix: list[str], reported: list[str]) -> tuple[str, str]:
         )
     return (
         "done" if all("restarted" in entry for entry in done) else "failed"
-    ), "; ".join(done)
+    ), "; ".join(done) + aside
 
 
 def apply_restarts(driver, prefix: list[str], reported: list[str]) -> None:

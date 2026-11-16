@@ -342,7 +342,7 @@ class FakeEngine:
                     "instances": ["default"] if self.archiver else [],
                 }
             )
-            return reply(200, listed)
+            return reply(200, {"items": listed, "next_page_token": None})
         if method == "POST" and path == "/sources":
             self.sent[path] = dict(body or {})
             return reply(201, {"restart_required": list(self.source_restarts)})
@@ -2253,6 +2253,29 @@ class TestTheRestartStep:
 
         assert ran == [["docker", "restart", self.SERVICE]]
 
+    NOT_RUN = (
+        "not run: source 'aws-guardduty' cannot share the one dfe-fetcher this "
+        "deployment runs: its config.sources.aws.topic is already set by another source"
+    )
+
+    @pytest.mark.parametrize(
+        ("reported", "status", "ran"),
+        [
+            ([NOT_RUN], "skipped", []),
+            (["removal required: make apply"], "skipped", []),
+            ([NOT_RUN, FakeEngine.RESTART_HINT], "done", [["make", "apply", SERVICE]]),
+        ],
+        ids=["not-run-note", "removal-names-no-service", "note-beside-a-restart"],
+    )
+    def test_a_hint_naming_no_service_is_listed_not_run(
+        self, monkeypatch, reported, status, ran
+    ):
+        driver, called = self._apply(monkeypatch, ["make", "apply"], reported)
+
+        assert driver.status("restart") == status
+        assert called == ran
+        assert "not commands, so not run" in driver.detail("restart")
+
     def test_one_restart_per_app_however_many_writes_reported_it(self, monkeypatch):
         _, ran = self._apply(
             monkeypatch, ["docker", "restart"], [FakeEngine.RESTART_HINT] * 3
@@ -2822,8 +2845,10 @@ class TestTheReportingVerdict:
         ],
     )
     def test_the_row_reads_what_was_published_since_the_feed(
-        self, info, samples, state
+        self, monkeypatch, info, samples, state
     ):
+        # The unproven cases otherwise sit out the whole 180s work deadline.
+        monkeypatch.setattr(steps, "WORK_DEADLINE", 0.0)
         driver = FakeDriver(FakePage())
         reported = (
             self.UP,
