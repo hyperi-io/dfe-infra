@@ -1,9 +1,5 @@
 {{- if eq .Values.kafka.mode "single" }}
-# Non-operator single broker has no User Operator to mint the SCRAM secret, so we
-# generate dfe-kafka-user/password IN-CLUSTER (ESO Password generator) -- same
-# secret SHAPE the operator paths produce, so clients authenticate identically
-# (SASL/SCRAM-SHA-512) regardless of tier. The broker bootstraps THIS user at
-# kafka-storage format time (--add-scram); see kafka-single.yaml.
+# The single tier has no User Operator, so the password is generated in-cluster (ESO Password generator) in the Secret shape the operator tiers produce. The broker registers this user at storage format time (--add-scram, kafka-single.yaml).
 apiVersion: generators.external-secrets.io/v1alpha1
 kind: Password
 metadata:
@@ -29,9 +25,7 @@ spec:
   target:
     name: {{ .Values.user.name }}
     creationPolicy: Owner
-    # CreatedOnce still re-runs the generator on any reconcile that finds no recorded
-    # sync or an altered Secret. Immutable keeps the first password, the one the broker
-    # registered as the user's SCRAM credential at its first start.
+    # Keeps the first password, which the broker registered at first start. CreatedOnce alone re-runs the generator on an altered Secret.
     immutable: true
     template:
       engineVersion: v2

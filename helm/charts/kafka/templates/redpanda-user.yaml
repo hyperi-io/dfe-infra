@@ -1,17 +1,8 @@
 {{- if eq .Values.kafka.provider "redpanda" }}
 {{- if eq .Values.kafka.mode "cluster" }}
-# DFE service account on redpanda -- the operator's User CR, the direct analogue
-# of the Strimzi KafkaUser (kafka-user.yaml). Same SCRAM-512 mechanism, same ACLs
-# (topic '*': Read/Write/Create/Describe/Alter/Delete/DescribeConfigs/AlterConfigs;
-# consumer groups prefixed 'dfe-': Read/Describe), and the same password source:
-# <user>-store when user.password.fromSecretsStore is on, else a Secret named
-# after the user that the operator generates into. Neither carries username or
-# sasl.mechanism, so clusterexternalsecret-appns.yaml and kafka-user-appkeys.yaml
-# write those, as they do on Strimzi.
-#
-# The topic set is the same on every provider because one principal drives every
-# topic call dfe-engine makes; kafka-user.yaml maps each operation to its call.
-# Cluster operations are withheld here as they are there.
+# The Redpanda operator's User CR, the analogue of the Strimzi KafkaUser (kafka-user.yaml): same SCRAM-512, same ACLs, same password source
+# (<user>-store when user.password.fromSecretsStore, else the operator-generated Secret). Neither Secret has username or sasl.mechanism,
+# so clusterexternalsecret-appns.yaml and kafka-user-appkeys.yaml write them.
 apiVersion: cluster.redpanda.com/v1alpha2
 kind: User
 metadata:
@@ -20,12 +11,7 @@ metadata:
     {{- include "dfe-common.labels" . | nindent 4 }}
 spec:
   cluster:
-    # clusterRef SRV discovery is broken when SASL is enabled (operator bug #1130
-    # "Operator fails to load credentials from clusterRef when SASL is enabled" --
-    # the User controller does an SRV lookup of _kafka._tcp.<svc> that fails).
-    # staticConfiguration points the controller straight at the kafka + admin
-    # endpoints, authenticating as the operator-generated bootstrap superuser.
-    # Revert to clusterRef once the upstream bug is fixed.
+    # clusterRef discovery fails with SASL on (redpanda-operator #1130), so the controller is pointed at the endpoints directly, as the bootstrap superuser.
     staticConfiguration:
       kafka:
         brokers:
@@ -64,8 +50,7 @@ spec:
       - type: allow
         resource:
           type: group
-          # patternType prefixed -> the name is the literal prefix (NOT a glob).
-          # All DFE consumer groups are "dfe-"-prefixed.
+          # A prefixed name is the literal prefix, not a glob.
           name: "dfe-"
           patternType: prefixed
         operations: ["Read", "Describe"]

@@ -87,6 +87,23 @@ Plugin settings go in `kafka.tieredObject.config` verbatim, but credentials don'
 
 Changing the model on a live cluster strands the segments written. So the engine holds `kafka.storageModel`, `kafka.tieredObject.*` and `kafka.objectStore.*` as protected vars.
 
+## Sizing dials
+
+The chart derives partitions and retention from a few dials, so no figure sits as a literal in two places.
+
+- Partitions are one number for `num.partitions` and every landing topic: `roundUpToMultiple(max(consumerCeiling, ceil(peakMbS / perPartitionCapMbS), brokers x minPartitionsPerBroker), brokers)`. The defaults give 12 on 3 brokers, which 3, 6 and 12 brokers share out with no remainder. `consumerCeiling` is the consumer parallelism limit, because a classic group has one consumer per partition at most. Kafka can add partitions and never remove them, so the resolver only moves the count up.
+- Retention is `log.retention.ms = (assumedConsumerDowntimeH + archiverLagH) x 3600000`. The default is 24 hours, and 72 covers a weekend outage. Raise `archiverLagH` rather than the downtime figure, so the report still shows which half the retention was bought for. `log.retention.bytes = floor(pvcBytes x usableFraction / partitionsPerBroker)`, with `usableFraction` 0.85 leaving the rest for index, snapshot and in-flight segment space. Time retention alone can't stop a 20Gi PVC filling at 116 MB/s.
+- `kafka.broker.networkMbS` is the NIC figure Cruise Control's network goals use (default 1250, 10 GbE). Left unset, Strimzi drops those goals and reports a network-blind rebalance as a success. A figure above the real NIC makes them non-binding again. `kafka.rebalancing.replicationThrottleBytesS` caps replica movement at 300 MiB/s, about a quarter of that NIC, so move the two together.
+- The thread dials in `kafka.profile.scale` exist because Kafka's request-handler and network-thread defaults are fixed, not core-scaled. They render only at a broker CPU limit of `threadDialVcpuFloor` vCPU (default 4), because below that they add context switching and nothing else. Raise io before network. Under 30% idle on `RequestHandlerAvgIdlePercent` or `NetworkProcessorAvgIdlePercent` means they are still too low.
+- `kafka.controllerPool.enabled` puts the KRaft controllers in their own pool. In combined mode a broker under GC or IO pressure is also the metadata quorum, and Apache Kafka 4.3 says to avoid that in critical deployments. The pool is sized by partition count and not ingest: three controllers of 1 dedicated vCPU and 4 GB RAM each (Confluent's production minimum), on 20 GiB volumes. It is off by default because switching a live cluster re-forms the quorum, and the `controller_mode` lock in `sizing.yaml` refuses the move without `--migrate`.
+- `kafka.podSpread` is enforced (`DoNotSchedule`), so a broker stays Pending rather than land on a node holding more brokers than the emptiest eligible node. Nodes the pod doesn't tolerate still count as domains.
+
+## Service user credential
+
+The service user's SCRAM password comes from the secrets store (`user.password.fromSecretsStore`, on by default). A User Operator password exists only as a Secret in the broker's namespace and the apps run elsewhere, so every dfe-* pod would sit in `CreateContainerConfigError`. With the store in front, both namespaces read one value, and the store is the one part that swaps for a cloud: point the ClusterSecretStore at AWS, GCP or Azure.
+
+The deploy layer seeds the store (`terraform/modules/tf-secrets`, `seed_kafka_user`) and ESO only reads it, because its AppRole policy is read-only. An in-cluster PushSecret was refused with a 403. Run `tofu apply` on `tf-secrets` first. With `fromSecretsStore: false` the User Operator generates into the broker namespace only, and the app namespace has no `dfe-kafka-user`.
+
 ## Wiring a managed cluster back to DFE
 
 1. Stand up the cluster with the guide's OpenTofu snippet. It has the right auth for the platform and whatever DFE defaults the platform lets you set.

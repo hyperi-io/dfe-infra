@@ -1,15 +1,7 @@
 {{- if and (eq .Values.kafka.provider "strimzi") (eq .Values.kafka.mode "cluster") }}
 {{- $replicas := int (include "dfe-kafka.brokerCount" .) }}
-# The pool that always exists. In the chart's default (combined) mode it
-# carries both broker and controller roles -- this file adds the controller
-# role, and kafka-controller-nodepool.yaml renders nothing. Set
-# kafka.controllerPool.enabled=true to split the KRaft controllers into their
-# own pool instead: recommended for a NEW deployment (a broker under GC or IO
-# pressure is otherwise also the metadata quorum), but a migration -- never a
-# default -- on a cluster that already exists.
-# replicas: cluster -> kafka.replicas (default 3, set higher). This is also the
-# ONLY field a scale-out changes, and the only change that triggers Cruise
-# Control's auto-rebalance.
+# The broker pool, which also holds the controller role unless kafka.controllerPool.enabled splits it out (kafka-controller-nodepool.yaml).
+# spec.replicas is the one field a scale-out changes.
 apiVersion: kafka.strimzi.io/v1
 kind: KafkaNodePool
 metadata:
@@ -18,8 +10,7 @@ metadata:
     strimzi.io/cluster: {{ .Values.kafka.name }}
     {{- include "dfe-common.labels" . | nindent 4 }}
     {{- if include "dfe-kafka.autoscalerRendered" . }}
-    # KEDA scales this pool (kafka-autoscaler.yaml), so layer2-data leaves its
-    # spec.replicas alone. Without the ScaledObject, replicas converge as declared.
+    # KEDA scales this pool (kafka-autoscaler.yaml), so layer2-data leaves spec.replicas alone.
     dfe.hyperi.io/replicas-owner: keda
     {{- end }}
 spec:
@@ -51,7 +42,6 @@ spec:
   template:
     pod:
       {{- if .Values.nodeScheduling }}
-      {{- /* The broker pool, which carries the controller role too in combined mode. */}}
       {{- with include "dfe-kafka.poolSelector" (dict "root" $ "pool" "kafka-broker") | fromYaml }}
       affinity:
         nodeAffinity:
@@ -71,9 +61,7 @@ spec:
       {{- end }}
       {{- end }}
       {{- if .Values.kafka.podSpread.enabled }}
-      {{- /* Counts broker pods only -- strimzi.io/cluster alone also takes the
-      entity operator and Cruise Control (label source:
-      scripts/tests/test_kafka_pool_spread.py). */}}
+      {{- /* Broker pods only: strimzi.io/cluster alone also matches the entity operator and Cruise Control. */}}
       topologySpreadConstraints:
         - maxSkew: {{ .Values.kafka.podSpread.maxSkew }}
           topologyKey: {{ .Values.kafka.podSpread.topologyKey }}
