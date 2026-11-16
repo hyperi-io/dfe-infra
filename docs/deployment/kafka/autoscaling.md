@@ -34,3 +34,9 @@ Argo: KEDA owns the `KafkaNodePool`'s `spec.replicas` once scaling, so Argo's `s
 Redpanda: the Redpanda CRD (the operator `versions.yaml` pins as `redpanda-operator`, `cluster.redpanda.com/v1alpha2`) declares no scale subresource, so Kubernetes' HPA can't target it. `spec.clusterSpec.statefulset.replicas` exists as a plain field, and scaling it stays manual until Redpanda ships one.
 
 MSK: [`aws-msk-operations.md`](aws-msk-operations.md#broker-count-autoscaling) covers its CloudWatch-alarm-and-Lambda scaler.
+
+## Cruise Control UI
+
+`kafka.rebalancing.ui` deploys the Cruise Control UI wherever the rebalancer is. Strimzi ships none, so without it the only view of a rebalance is the `KafkaRebalance` resource. linkedin/cruise-control-ui publishes a release tarball and no container image, and the third-party images are `linux/amd64` only, which `scripts/check_image_arch.py` refuses on arm64. So an init container fetches the tarball and checks its sha256 (nothing upstream signs it), and nginx serves it, as the MSK bootstrap Job does with its jar.
+
+Cruise Control's API is HTTPS with a certificate from the Kafka cluster CA, behind HTTP Basic. The same nginx makes the one hop to it, so the browser only talks to the UI pod and the credential stays in it. The identity is `healthcheck`, the USER-role account the Cluster Operator makes in `<cluster>-cruise-control-api`. It reaches every GET endpoint and no POST, so nothing here can start or approve a rebalance. Strimzi rejects an ADMIN role in a user-supplied secret, so read-only is the one shape on offer. Strimzi's own NetworkPolicy admits only the operators to Cruise Control on 9090, so the chart adds a policy for the UI.

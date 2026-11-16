@@ -1,23 +1,13 @@
 {{- if eq .Values.kafka.provider "redpanda" }}
 {{- if eq .Values.kafka.mode "cluster" }}
-{{- /* Inside the mode gate: a leftover provider: redpanda on mode: external
-       deploys no Redpanda from anywhere, so demanding the licence there refuses
-       a render that ships nothing. Single mode carries its own check, beside the
-       StatefulSet it deploys (kafka-single.yaml). */}}
+{{- /* Inside the mode gate: provider: redpanda left on mode: external deploys no Redpanda, so the licence check would refuse a render that ships nothing. Single mode checks beside its StatefulSet (kafka-single.yaml). */}}
 {{- if not .Values.kafka.redpanda.acceptLicense }}
 {{- fail "Redpanda is source-available under the Business Source License 1.1: set kafka.redpanda.acceptLicense=true once you have read it. See docs/deployment/kafka/redpanda-limitations.md." }}
 {{- end }}
 {{- $replicas := int (include "dfe-kafka.brokerCount" .) }}
 {{- $rf := min (int .Values.kafka.profile.scale.replicationFactor) $replicas }}
-# Redpanda cluster, managed by the Redpanda operator (cluster.redpanda.com/v1alpha2).
-# A provider alongside Strimzi, run the SAME way: operator + thin CR.
-# SASL/SCRAM-512 on, TLS off (SCRAM over plaintext internal -- matches Strimzi's
-# plain listener and the DFE kafka auth standard). The operator generates+manages
-# the bootstrap superuser secret; the dfe service account is a separate User CR
-# (redpanda-user.yaml) whose operator Secret holds only the password. The
-# app-namespace dfe-kafka-user Secret (username, password, sasl.mechanism) is
-# written by the same ClusterExternalSecret as for Strimzi, so clients are
-# identical across providers.
+# Redpanda cluster via the Redpanda operator (cluster.redpanda.com/v1alpha2), a thin CR as with Strimzi. SASL/SCRAM-512 with TLS off, matching Strimzi's plain listener.
+# The operator makes the bootstrap superuser Secret. The service account is the User CR (redpanda-user.yaml), and the app-namespace Secret comes from the same ClusterExternalSecret as Strimzi.
 apiVersion: cluster.redpanda.com/v1alpha2
 kind: Redpanda
 metadata:
@@ -26,36 +16,23 @@ metadata:
     {{- include "dfe-common.labels" . | nindent 4 }}
 spec:
   clusterSpec:
-    # DFE broker/topic defaults mapped to Redpanda cluster properties (Kafka's
-    # server.properties names differ on Redpanda). NOT yet live-validated: verify
-    # the config.cluster path against the operator pinned at operators.redpanda-operator
-    # in versions.yaml on first deploy.
-    # compression is intentionally omitted -- Redpanda topics default compression to
-    # `producer`, matching the Strimzi default (the client sizing profile owns the
-    # codec). min.insync.replicas has no direct cluster property: Redpanda's Raft
-    # consensus needs a write quorum (majority) for acks=all, giving the RF3
-    # durability equivalent; set min.insync.replicas per-topic for a stricter floor.
-    # unclean leader election does not apply -- Raft never elects a non-quorum leader.
+    # DFE broker and topic defaults, in Redpanda's cluster property names.
+    # No compression property: Redpanda topics default to producer. No min.insync.replicas: Raft needs a quorum for acks=all.
+    # No unclean leader election: Raft never elects a non-quorum leader.
     config:
       cluster:
         default_topic_partitions: {{ include "dfe-kafka.partitions" . }}
         default_topic_replications: {{ $rf }}
         log_retention_ms: {{ include "dfe-kafka.retentionMs" . }}
         retention_bytes: {{ include "dfe-kafka.retentionBytes" . }}
-        # Redpanda's half of the size chain. kafka_batch_max_bytes is the
-        # message ceiling (default 1 MiB) and kafka_max_message_size_upper_limit_bytes
-        # is the guard it cannot be raised past, so both move together.
+        # Both move with the size chain: the first is the message ceiling and the second the guard it cannot be raised past.
         kafka_batch_max_bytes: {{ include "dfe-kafka.messageMaxBytes" . }}
         kafka_max_message_size_upper_limit_bytes: {{ include "dfe-kafka.messageMaxBytes" . }}
-        # Pinned rather than left at the shipped default: v26.2.2 defaults this
-        # to `continuous`, which is licence-gated and sanctioned back to node_add
-        # on an unlicensed cluster -- so a licence appearing later would change
-        # balancing behaviour with no config change of ours.
+        # Pinned: the shipped default is continuous, which is licence-gated, so a licence appearing later would change balancing with no config change.
         partition_autobalancing_mode: {{ ternary .Values.kafka.rebalancing.redpanda.partitionAutobalancingMode "off" .Values.kafka.rebalancing.enabled | quote }}
-        # Per-sender bandwidth while a new replica catches up -- Redpanda's
-        # equivalent of the Strimzi replication throttle.
+        # Per-sender bandwidth while a replica catches up, Redpanda's equivalent of the Strimzi replication throttle.
         raft_learner_recovery_rate: {{ int64 .Values.kafka.rebalancing.redpanda.raftLearnerRecoveryRate }}
-    # DFE runs redpanda headless -- no Console UI (extra pod + its own config/secret).
+    # No Console UI (an extra pod, config and Secret).
     console:
       enabled: false
     statefulset:
@@ -84,17 +61,11 @@ spec:
       sasl:
         enabled: true
         mechanism: SCRAM-SHA-512
-        # The operator auto-generates the bootstrap superuser secret
-        # (<name>-bootstrap-user/password) and PREPENDS this user to the cluster
-        # superusers list, then authenticates as it to reconcile the User CR --
-        # so no secret for us to provide and no static users needed.
+        # The operator generates the bootstrap superuser Secret and prepends this user to the superusers, so no secret or static users are needed.
         bootstrapUser:
           name: {{ .Values.kafka.redpanda.auth.superuserName }}
           mechanism: SCRAM-SHA-512
-        # secretRef must be set AND the Secret must pre-exist (the chart only
-        # creates it when users[] is non-empty, which we keep empty). It would
-        # carry extra static SASL users; we need none, so it is an empty
-        # placeholder (redpanda-superusers-secret.yaml).
+        # Must be set and the Secret must pre-exist (redpanda-superusers-secret.yaml): the chart only creates it when users[] is non-empty.
         secretRef: {{ .Values.kafka.name }}-superusers
     {{- if .Values.nodeScheduling }}
     {{- with include "dfe-kafka.poolSelector" (dict "root" $ "pool" "kafka-broker") | fromYaml }}

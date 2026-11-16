@@ -1,28 +1,8 @@
 {{- if and (eq .Values.kafka.mode "cluster") (has .Values.kafka.provider (list "strimzi" "redpanda")) (not .Values.user.password.fromSecretsStore) }}
-# The two NON-SECRET keys the apps read out of dfe-kafka-user, written whether or
-# not the credential is projected from the secrets store.
-#
-# Strimzi's User Operator owns a Secret named after the KafkaUser and puts
-# `password` + `sasl.jaas.config` in it, and the Redpanda operator's carries
-# `password` alone -- no `username`, and a mechanism is not something an operator
-# would write at all. Four charts read those two keys off
-# that Secret (dfe-receiver, dfe-loader, dfe-archiver, kafbat), so on a profile
-# that turns the store projection off they name a key nothing creates and every
-# one of those pods sits in CreateContainerConfigError with no container started
-# and no application log to read (dfe-infra#187).
-#
-# clusterexternalsecret-appns.yaml carries the same two keys, but only on the
-# store-backed path and only into the APP namespace -- neither of which has
-# anything to do with a username. This covers the other path, in the broker's own
-# namespace, which on a single-namespace install is where the apps run.
-#
-# The ESO webhook refuses an ExternalSecret with neither data nor dataFrom, and
-# this path has no store to read, so the two values come from a Fake generator:
-# ESO's static key/value source, which needs no provider or credential.
-#
-# creationPolicy: Merge adds keys to the Secret the User Operator owns rather
-# than competing for the name; ESO retries until that Secret exists, so the
-# KafkaUser reconciling later is a wait, not a failure.
+# The two non-secret keys (username, sasl.mechanism) the apps read from dfe-kafka-user when the credential is not projected from the store.
+# The operators' Secret carries no username, so those pods sit in CreateContainerConfigError (dfe-infra#187).
+# A Fake generator supplies the values because ESO rejects an ExternalSecret with neither data nor dataFrom.
+# Merge adds the keys to the operator's Secret, and ESO retries until it exists.
 apiVersion: generators.external-secrets.io/v1alpha1
 kind: Fake
 metadata:
@@ -31,12 +11,8 @@ metadata:
     {{- include "dfe-common.labels" . | nindent 4 }}
 spec:
   data:
-    # The KafkaUser's name IS the SCRAM username, so it is templated rather
-    # than read from anywhere.
     username: {{ .Values.user.name | quote }}
-    # Derived from the provider table, never hand-set (dfe-infra#10). The
-    # literal librdkafka spelling: dfe-receiver passes this value straight
-    # through and rejects the engine model's underscore form.
+    # Derived from the provider table (dfe-infra#10), in librdkafka spelling: dfe-receiver rejects the engine model's underscore form.
     sasl.mechanism: {{ include "dfe-common.kafkaSaslMechanism" (include "dfe-kafka.providerIdentity" .) | quote }}
 ---
 apiVersion: external-secrets.io/v1

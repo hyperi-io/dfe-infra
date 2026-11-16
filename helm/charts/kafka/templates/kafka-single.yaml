@@ -1,15 +1,7 @@
 {{- if eq .Values.kafka.mode "single" }}
 {{- $name := .Values.kafka.name }}
 {{- $fqdn := printf "%s.%s.svc.cluster.local" $name .Release.Namespace }}
-# NON-OPERATOR single broker (the `single` tier). No Strimzi/Redpanda operator --
-# a plain StatefulSet of the chosen provider, mirroring the ClickHouse-single
-# pattern, so the `single` tier needs no operator install. SASL/SCRAM-SHA-512 with
-# the dfe-kafka-user (see kafka-single-user.yaml) keeps client auth identical to
-# the operator (cluster) tiers. The cluster tier still uses the operators.
-#
-# NOTE (live-validation pending): the SCRAM-at-format bootstrap + single-node KRaft
-# listener config below follow the Apache Kafka docs but have NOT been run against
-# a live broker yet -- finalise on first deploy.
+# The single tier: a plain StatefulSet with no operator, and the same SASL/SCRAM-SHA-512 user as the cluster tier (kafka-single-user.yaml).
 apiVersion: v1
 kind: Service
 metadata:
@@ -29,7 +21,6 @@ spec:
 {{- fail "Redpanda is source-available under the Business Source License 1.1: set kafka.redpanda.acceptLicense=true once you have read it. See docs/deployment/kafka/redpanda-limitations.md." }}
 {{- end }}
 ---
-# Redpanda standalone (provider=redpanda). Single node, SASL/SCRAM-SHA-512.
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -55,13 +46,11 @@ spec:
           args:
             - |
               set -e
-              # Bootstrap SASL/SCRAM superuser from the generated secret, then run.
               cat >/etc/redpanda/.bootstrap.yaml <<CFG
               superusers: ["${KAFKA_USER}"]
               enable_sasl: true
               kafka_enable_authorization: true
-              # DFE broker/topic defaults (Redpanda property names). Single broker
-              # is RF1 so default_topic_replications stays 1 (its default).
+              # Single broker is RF1, so default_topic_replications keeps its default of 1.
               default_topic_partitions: {{ include "dfe-kafka.partitions" . }}
               log_retention_ms: {{ include "dfe-kafka.retentionMs" . }}
               retention_bytes: {{ include "dfe-kafka.retentionBytes" . }}
@@ -73,7 +62,6 @@ spec:
                 --kafka-addr SASL_PLAINTEXT://0.0.0.0:9092 \
                 --advertise-kafka-addr SASL_PLAINTEXT://{{ $fqdn }}:9092 &
               RP_PID=$!
-              # Create the SCRAM user once the admin API is up.
               until rpk cluster health >/dev/null 2>&1; do sleep 2; done
               rpk security user create "${KAFKA_USER}" -p "${KAFKA_PASSWORD}" --mechanism SCRAM-SHA-512 || true
               wait $RP_PID
@@ -86,8 +74,7 @@ spec:
                 secretKeyRef: { name: {{ .Values.user.name }}, key: password }
           ports:
             - containerPort: 9092
-          # The headless Service publishes this pod's IP only once ready; without
-          # a probe it is published at start, before the listener binds.
+          # Without a probe the headless Service publishes the pod IP before the listener binds.
           readinessProbe:
             tcpSocket:
               port: 9092
@@ -109,10 +96,7 @@ spec:
             storage: {{ .Values.kafka.storage.size }}
 {{- else }}
 ---
-# Apache Kafka KRaft standalone (provider=strimzi/kafka -- the Apache Kafka broker
-# Strimzi manages, run WITHOUT the operator). Combined broker+controller, single
-# node. The init container formats storage and bootstraps the SCRAM user
-# (--add-scram); the broker then serves SASL_PLAINTEXT/SCRAM-SHA-512 on 9092.
+# Apache Kafka KRaft standalone: the broker Strimzi manages, run without the operator, as one combined broker and controller. The entrypoint formats storage and adds the SCRAM user (--add-scram).
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -138,17 +122,13 @@ data:
     transaction.state.log.min.isr=1
     default.replication.factor=1
     min.insync.replicas=1
-    # Derived, and the same number the landing topic gets. The KRaft thread
-    # pools are NOT set here: this tier runs on a 2-core broker, where they buy
-    # context switching and nothing else.
+    # No thread-pool dials: this tier runs on a 2-core broker, where they only add context switching.
     num.partitions={{ include "dfe-kafka.partitions" . }}
     log.retention.ms={{ include "dfe-kafka.retentionMs" . }}
     log.retention.bytes={{ include "dfe-kafka.retentionBytes" . }}
-    # The size chain, the same 16 MiB the cluster tier and every topic carry.
     message.max.bytes={{ include "dfe-kafka.messageMaxBytes" . }}
     replica.fetch.max.bytes={{ include "dfe-kafka.messageMaxBytes" . }}
-    # ON here, unlike the cluster tier: this tier runs no topic operator, so
-    # nothing else can create the receiver's dynamic {source}_land topics.
+    # On: this tier has no topic operator to create the receiver's dynamic {source}_land topics.
     auto.create.topics.enable={{ .Values.kafka.profile.single.autoCreateTopics }}
   entrypoint.sh: |
     #!/bin/sh
@@ -196,8 +176,7 @@ spec:
           ports:
             - containerPort: 9092
               name: sasl
-          # The headless Service publishes this pod's IP only once ready; without
-          # a probe it is published at start, before KRaft is listening.
+          # Without a probe the headless Service publishes the pod IP before KRaft is listening.
           readinessProbe:
             tcpSocket:
               port: 9092
