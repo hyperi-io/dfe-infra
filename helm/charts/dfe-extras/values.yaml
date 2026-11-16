@@ -439,6 +439,20 @@ extras:
           cooldownPeriod: 300
           pollingInterval: 30
           shimAddress: ""
+        # Hunt schedule smoothing, beta and off by default (docs/autoscaling.md).
+        # An empty tunable takes the engine's default.
+        smoothing:
+          enabled: false
+          cycleSeconds: ""
+          bucketSeconds: ""
+          windowDays: ""
+          costQuantile: ""
+          maxStepFraction: ""
+          hysteresis: ""
+          cooldownCycles: ""
+          weightMemory: ""
+          memoryCapBytes: ""
+          horizonMaxSeconds: ""
         gitSync:
           enabled: true
           image:

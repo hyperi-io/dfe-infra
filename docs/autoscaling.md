@@ -60,3 +60,13 @@ One rule covers every component whose best implementation differs by target (nod
 Node scaling is a pools interface. The resolver writes one pool class per workload, in fields every node autoscaler shares, and `helm/charts/node-pools` hands the classes to the renderer `pools.renderer` names. Karpenter on AWS (`karpenter-aws`) is the one renderer today. The AKS and GKE renderers are planned in dfe-infra#806.
 
 `argocd/appsets/layer2-platform.yaml` deploys the pools chart only to a cluster whose secret declares a cloud with a renderer (AWS today), so the on-prem baseline gets no pool object at all. Every other chart places a pod by the pool's `dfe.hyperi.io/workload` label and the cloud-neutral node labels, never by Karpenter's or a cloud's own (`scripts/tests/test_charts_select_only_the_pool_label.py`).
+
+## Hunt schedule smoothing
+
+Status: beta from 2.2.3, off by default. Set `huntRunner.smoothing.enabled: true` in the deployment's dfe-engine values to turn it on.
+
+Hunts on one interval start at hash-chosen offsets inside it, so a busy interval can stack several heavy queries into the same few seconds. With smoothing on, one hunt runner leads each cycle, reads each hunt's past cost, and moves rate-hunt offsets in `hunt_schedule` to flatten the load. A runner that starts with smoothing off puts every offset back on the hash. The chart hands the same switch to the engine, and the engine API reports next due from the learned offsets.
+
+On a 3-replica ClickHouse test cluster, with 30 hunts whose offsets all fell in one 30 s window, smoothing took the summed peak memory of the busiest 30 s from 8.07 GB to 3.30 GB over three hours, with no errors. It is not proven at PB/day. It makes one move per cycle across the fleet, so a large fleet settles over hours to days at the defaults.
+
+The tunables sit beside the switch under `huntRunner.smoothing` (`cycleSeconds`, `bucketSeconds`, `windowDays`, `costQuantile`, `maxStepFraction`, `hysteresis`, `cooldownCycles`, `weightMemory`, `memoryCapBytes`, `horizonMaxSeconds`). An empty one takes the engine's default, and a value the engine can't parse fails the render. The runner exports `dfe_hunt_smoothing_flatness`, `dfe_hunt_observed_mem_peak_bytes` and `dfe_hunt_observed_overlap_peak`.
