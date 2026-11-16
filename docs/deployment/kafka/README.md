@@ -11,13 +11,13 @@ Copyright: HyperI / DFE contributors
 
 # Kafka providers
 
-DFE talks to Kafka through one open provider abstraction (scalo `transport/kafka/providers.rs`). Each provider handles its own auth and capabilities behind a single trait. The brokers DFE deploys in the cluster authenticate with SCRAM-SHA-512 over a plaintext listener (`SASL_PLAINTEXT`). Every managed broker is SASL over TLS: SCRAM-SHA-512 on MSK Provisioned and Redpanda Cloud, PLAIN on Confluent Cloud, which offers no SCRAM, and IAM on MSK Serverless, which mandates it. A deployment on a TLS listener sets `kafka.securityProtocol: SASL_SSL` with its `kafka.bootstrapServers` in its deploy repo's `infra/common.yaml`.
+DFE talks to Kafka through one open provider abstraction (scalo `transport/kafka/providers.rs`). Each provider handles its own auth and capabilities behind a single trait. The brokers DFE deploys in the cluster authenticate with SCRAM-SHA-512 over a plaintext listener (`SASL_PLAINTEXT`). Every managed broker is SASL over TLS: SCRAM-SHA-512 on MSK Provisioned and Redpanda Cloud, and PLAIN on Confluent Cloud, which offers no SCRAM. MSK Serverless takes IAM only, which DFE doesn't support. A deployment on a TLS listener sets `kafka.securityProtocol: SASL_SSL` with its `kafka.bootstrapServers` in its deploy repo's `infra/common.yaml`.
 
 The charts take `security.protocol` and `sasl.mechanism` from one table, `helm/library/dfe-common/templates/_kafka.tpl`. Nobody sets a mechanism by hand. The table has two extra keys, `strimzi-no-tls` and `redpanda-no-tls`, for a DFE-owned broker on the TLS-off listener the charts stand up in-cluster. Every other key matches scalo's canonical table.
 
 DFE deploys two providers as in-cluster brokers, Strimzi (the default, Apache-2.0) and Redpanda (opt-in, BSL). For the managed clouds it doesn't deploy, there's one guide each:
 
-- [aws-msk.md](aws-msk.md) covers AWS MSK provisioned (SASL/SCRAM) and MSK Serverless (IAM). Running an MSK deployment (bootstrap Job, autoscaling, telemetry) is in [aws-msk-operations.md](aws-msk-operations.md).
+- [aws-msk.md](aws-msk.md) covers AWS MSK Provisioned (SASL/SCRAM), and why MSK Serverless isn't supported. Running an MSK deployment (bootstrap Job, autoscaling, telemetry) is in [aws-msk-operations.md](aws-msk-operations.md).
 - [confluent-cloud.md](confluent-cloud.md) covers Confluent Cloud (API-key PLAIN over TLS).
 - [redpanda-cloud.md](redpanda-cloud.md) covers Redpanda Cloud Serverless, Dedicated and BYOC (SCRAM).
 
