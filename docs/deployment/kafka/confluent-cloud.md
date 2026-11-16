@@ -156,6 +156,18 @@ output "bootstrap_endpoint" {
 
 The API key `id` is the SASL username and its `secret` is the SASL password. DFE's `confluent-cloud` provider sends that pair as PLAIN over TLS.
 
+## Module design notes
+
+`managed-kafka/confluent-cloud` builds Freight unless the dial names another tier. Freight autoscales on eCKUs, is the cheapest option at the top band and has no public endpoint, so it is egress-safe by construction. Confluent runs the brokers, so the module sizes and tunes nothing, and dfe-engine creates the topics. It reads `message_max_bytes` only to check it against the tier's ceiling, and warns at plan without clamping.
+
+Freight attaches through a Private Network Interface, not PrivateLink. The module creates the network interfaces in the deployment's VPC, 17 per zone by default (Confluent documents 51 across three zones, sized so the network layer never caps a scaling operation), grants Confluent's own account permission to attach them, and hands the IDs to an access point that needs at least six distinct ones. Traffic never leaves the VPC and no endpoint service is in the path.
+
+Enterprise uses AWS PrivateLink. Confluent publishes the endpoint service through a private link attachment, the module creates the interface endpoint, and the attachment connection tells Confluent which endpoint arrived. The endpoint service publishes no verified private DNS name, so the module serves the cluster's domain from a private hosted zone in the VPC, with a record per zone so a client's traffic stays in its own zone. The security group opens 9092 for Kafka and 443 for the REST endpoint and schema registry, has no egress rule so nothing in Confluent Cloud can open a connection into the network, and serves both private shapes.
+
+Two service accounts exist because something has to write the first ACL, and it must not be the credential DFE runs as. The manager account holds `CloudClusterAdmin` and exists for tofu alone. The DFE account holds the on-prem grant set from `helm/charts/kafka/templates/kafka-user.yaml`: topic `*` with Read, Write, Create, Describe, Delete, Alter, DescribeConfigs and AlterConfigs, and consumer groups under the `dfe-` prefix with Read and Describe. It has no cluster operations.
+
+ACLs are data-plane resources reached over the REST endpoint. On private connectivity tofu has to run inside the VPC, or behind a resolver rule that forwards into it. On a public cluster, Confluent's shared REST ingress resets TLS for a cluster it has no route to yet, and a new key answers 401 until it syncs. The ACLs therefore wait for `terraform_data.rest_ready` to list the topics with the manager key, HTTP 200 `rest_ready.successes` times in a row, through `scripts/wait-rest-ready.sh`.
+
 ## Wiring back to DFE
 
 - `kafka.mode=external`, `kafka.external.bootstrap=<bootstrap_endpoint>`. Strip the `SASL_SSL://` scheme if your endpoint output includes it.

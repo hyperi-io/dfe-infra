@@ -83,23 +83,11 @@ Application's resource tree and holds the app layer back until it completes.
 
 ## Broker-count autoscaling
 
-MSK Express has no native broker-count autoscaling (`UpdateBrokerCount` is a
-manual API), so `managed-kafka/msk` adds a CloudWatch alarm on cluster-wide
-`BytesInPerSec` that triggers a Lambda calling it, increase-only, behind
-`var.autoscaling` (`enabled`, `max_brokers`, `step`, `per_broker_capacity_mb_s`,
-`headroom` -- wired from the dial's `kafka.msk.autoscaling`, defaulted when the
-dial names none). It is the only CloudWatch surface this module adds -- DFE's
-own AWS monitoring stays on its OTel feed -- and the Lambda's log group is
-capped at one day's retention rather than the Lambda default of never expiring.
+MSK Express has no scaling policy (`UpdateBrokerCount` is a manual API), so `managed-kafka/msk` runs a Lambda on an EventBridge schedule, every `autoscaling.period_seconds`, behind `var.autoscaling` (`enabled`, `max_brokers`, `step`, `per_broker_capacity_mb_s`, `headroom`, `period_seconds`, `evaluation_periods`, wired from the dial's `kafka.msk.autoscaling`). Each run reads the cluster's current broker count and the `BytesInPerSec` of exactly those brokers over the last `evaluation_periods`. It adds `step` brokers when every period's per-broker mean was over `per_broker_capacity_mb_s` x `headroom`, and never scales in or passes `max_brokers`.
 
-The alarm's metric query reads the `Average` statistic, not `Sum`.
-`BytesInPerSec` is already a per-second rate, published once a minute, so a
-300s evaluation period holds five of those samples -- summing them inflates
-the reading roughly fivefold against `autoscaling_threshold_bytes_per_sec`,
-a bytes-per-second figure, and fires the alarm at about a fifth of
-the traffic it was sized for. The outer `SUM()` in the metric-math
-expression is a different aggregation and is correct as-is: it is the
-spatial sum across brokers that `SEARCH` discovers, not a sum over time.
+A run acts only on an ACTIVE cluster a full window after its last operation ended, so an overlapping or repeated run never adds a step on load read before the last one landed. A schedule beats a CloudWatch alarm here, because an alarm names a fixed broker set and notifies once per transition, so it never sees an added broker and never fires a second step while load stays high.
+
+Express storage is MSK-managed, so there is no disk metric to watch. The Lambda's log group is CloudWatch under either sink, kept for `telemetry.aws.forced_retention_days`, and DFE's own monitoring stays on its OTel feed.
 
 ## Telemetry
 
@@ -122,14 +110,18 @@ compliance need CloudWatch satisfies.
 before picking a sink, in the buckets
 [aws.md](../aws.md#how-costs-are-described) defines.
 
-## Ports the broker security group admits
+## Module design notes
 
-9096 (SASL/SCRAM, every DFE app)
-and 9098 (SASL/IAM, the bootstrap Job above) are open from `client_cidrs`
-(the whole VPC when that list is empty). 11001 and 11002 (the JMX and node
-exporter the `open_monitoring` scrape reads) are open separately, always from
-the whole VPC (`var.network.cidr`) regardless of how `client_cidrs` is set --
-a caller narrowing `client_cidrs` below the VPC for the Kafka ports does not
-also cut off the in-cluster otel-collector's scrape. All four ports are
-`terraform/modules/managed-kafka/msk/main.tf` (`aws_vpc_security_group_ingress_rule.brokers`
-and `.open_monitoring`).
+The module builds Express brokers because MSK cannot convert a Standard cluster to Express, so starting on Standard to move later is the rebuild the choice avoids. Express manages its own storage, so nothing sizes a volume. It holds the thread pools, replication factor, segment size and unclean leader election read-only, so only `num.partitions`, `log.retention.ms`, `message.max.bytes` and `replica.fetch.max.bytes` reach the configuration. `auto.create.topics.enable` stays false because dfe-engine creates the landing topics and dfe-loader treats a missing one as fatal.
+
+The cluster enables both SASL mechanisms. SCRAM serves the apps, and IAM serves the bootstrap Job alone, because the IAM policy is its authorisation and no Kafka ACL has to exist yet.
+
+The broker security group admits 9096 (SASL/SCRAM, every DFE app) and 9098 (SASL/IAM, the bootstrap Job above) from `client_cidrs`, the whole VPC when that list is empty. It admits 11001 and 11002 (the JMX and node exporter the `open_monitoring` scrape reads) separately, always from the whole VPC (`var.network.cidr`), so a caller narrowing `client_cidrs` for the Kafka ports does not cut off the in-cluster otel-collector's scrape. The rules are `aws_vpc_security_group_ingress_rule.brokers` and `.open_monitoring` in `terraform/modules/managed-kafka/msk/main.tf`.
+
+The broker security group has one egress rule, 443/tcp to `0.0.0.0/0`. Secrets Manager, KMS and CloudWatch Logs have no VPC endpoint here, and AWS publishes a managed prefix list for only Secrets Manager, so scoping that one leg would leave the other two open anyway.
+
+On the `otel` sink the log delivery service needs a grant in the deployment KMS key's own policy. The cluster module is that key's one policy owner and passes the statement in through `key_policy_grants`, because `aws_kms_key_policy` replaces the whole policy and a second one here would strip it.
+
+MSK rewrites `configuration_info` and `client_authentication` out of band, so the cluster ignores changes to both. Remove the ignore for the one apply that lands a deliberate change.
+
+The `AmazonMSK_` secret container exists before the cluster and its version after, which keeps the SCRAM association off the cluster's creation path. MSK rejects any other secret name, and the default `aws/secretsmanager` key, as an association failure rather than a create failure.

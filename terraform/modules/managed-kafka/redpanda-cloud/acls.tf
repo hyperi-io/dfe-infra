@@ -1,20 +1,8 @@
-// The SCRAM principal and its grants. dfe-engine creates every topic at
-// startup, under the topic Create grant below, so this body creates none.
-//
-// One principal for the whole DFE fleet, at the grant set
-// helm/charts/kafka/templates/kafka-user.yaml gives on-prem: topic * with Read,
-// Write, Create, Describe, Delete, Alter, DescribeConfigs and AlterConfigs,
-// which is every topic call dfe-engine makes, and consumer groups fenced to the
-// dfe- prefix with Read and Describe. No cluster operations -- widening the
-// grant past on-prem would make the cloud path looser than the one we run
-// ourselves.
-//
-// These are data-plane resources, so on private connectivity they are written
-// over the endpoint and tofu has to be able to reach it.
+// The SCRAM principal and the grants dfe-engine needs, the same set as helm/charts/kafka/templates/kafka-user.yaml. dfe-engine creates the topics.
+// Private connectivity needs tofu to reach the endpoint. docs/deployment/kafka/redpanda-cloud.md#module-design-notes.
 
 locals {
-  // Redpanda's own spelling of the mechanism. SCRAM-SHA-512 rather than the
-  // provider's 256 default, matching the on-prem user.
+  // SCRAM-SHA-512 to match the on-prem user, where the provider defaults to 256.
   scram_mechanism = "scram-sha-512"
 
   topic_grants = toset(["READ", "WRITE", "CREATE", "DESCRIBE", "DELETE", "ALTER", "DESCRIBE_CONFIGS", "ALTER_CONFIGS"])
@@ -27,9 +15,7 @@ resource "redpanda_user" "this" {
   mechanism       = local.scram_mechanism
   cluster_api_url = local.cluster_api_url
 
-  // Write-only: the password reaches Redpanda and is never stored in state.
-  // The version is what tells the provider the value moved, because a
-  // write-only argument cannot be compared between plan and apply.
+  // Write-only, so the password never reaches state. The version tells the provider it moved.
   password_wo         = var.scram_password
   password_wo_version = var.scram_password_version
 
@@ -41,8 +27,7 @@ resource "redpanda_acl" "topics" {
 
   resource_type = "TOPIC"
 
-  // The on-prem grant is topic * LITERAL, not a prefix: DFE's topic names are
-  // set by the deployment and a prefix rule would have to guess them.
+  // Topic * LITERAL like on-prem: topic names are the deployment's, so a prefix rule would have to guess.
   resource_name         = "*"
   resource_pattern_type = "LITERAL"
 

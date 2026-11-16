@@ -1,9 +1,5 @@
-// The contract, executable -- the redpanda-cloud/ body's half of it. Same
-// assertions as contract.tftest.hcl makes of msk/, against the same variables.
-// The header of that file says why each body gets its own.
-//
-// Provider-free by construction: mock_provider means no credentials, no API
-// call and no cost, so it runs in CI and on a laptop with no cloud account.
+// The redpanda-cloud/ body's half of the contract, with the same assertions as contract.tftest.hcl against the same variables.
+// Provider-free: mock_provider needs no credentials and no cloud account.
 
 mock_provider "aws" {
   // The partition is half of the principal ARN Redpanda is handed, and the

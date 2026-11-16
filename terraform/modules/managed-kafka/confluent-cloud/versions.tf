@@ -1,9 +1,4 @@
-// Two providers, because the private handshake has two ends: confluent creates
-// the cluster and one half of the attachment, and aws creates the endpoint or
-// the network interfaces it binds to. Neither provider can do the other's half.
-//
-// The provider itself -- credentials, region, default tags -- is configured by
-// the root that calls this module.
+// confluent creates the cluster and half the attachment, aws the endpoint or interfaces it binds to. The calling root configures both providers.
 
 terraform {
   required_version = ">= 1.10"

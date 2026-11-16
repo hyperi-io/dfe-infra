@@ -1,11 +1,5 @@
-// The contract, as OpenTofu sees it. Every input is described in CONTRACT.md;
-// the validation blocks here are the half a reader cannot get from the types.
-//
-// Confluent Cloud sizes and tunes the cluster itself, so several contract
-// inputs arrive and are not applied. They are declared rather than dropped,
-// because a body that refuses an input the contract names has changed the
-// contract; what this implementation cannot pass on is named in the description
-// and in CONTRACT.md.
+// Inputs are described in CONTRACT.md. Inputs Confluent manages itself are declared and not applied,
+// because a body that refuses a contract input has changed the contract.
 
 variable "implementation" {
   description = "Which body of the managed-kafka contract the caller asked for. This one answers to confluent-cloud and refuses anything else, so a mis-wired root fails at plan rather than building the wrong Kafka."
@@ -49,8 +43,6 @@ variable "connectivity" {
   }
 
   validation {
-    // Freight has no public endpoint at all, and Basic has no private
-    // networking. Neither refusal is ours -- both are the product's shape.
     condition     = !(var.tier == "freight" && var.connectivity == "public")
     error_message = "Confluent Freight is private-networking-only, so connectivity = public cannot be built on it. Use tier = enterprise or basic for a public endpoint."
   }
@@ -154,8 +146,6 @@ variable "private_network_interface_ids" {
   default     = []
 
   validation {
-    // Confluent refuses an access point with fewer than six interfaces, and the
-    // attribute is a SET, so six DISTINCT IDs is the floor.
     condition     = length(var.private_network_interface_ids) == 0 || length(distinct(var.private_network_interface_ids)) >= 6
     error_message = "private_network_interface_ids must be empty or carry at least six distinct interface IDs -- Confluent's own floor for an access point."
   }
@@ -206,10 +196,6 @@ variable "rest_ready" {
     error_message = "rest_ready.timeout_seconds must be a whole number above successes times interval_seconds, or the wait cannot pass inside its own ceiling."
   }
 }
-
-// ---------------------------------------------------------------------------
-// Contract inputs Confluent Cloud manages for us
-// ---------------------------------------------------------------------------
 
 variable "broker_shape_ref" {
   description = "NOT APPLIED. Confluent Cloud sells eCKUs, not instances, and exposes no instance type -- so the resolver's shape has nothing to select here."
