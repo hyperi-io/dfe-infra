@@ -1,23 +1,13 @@
 ## Project:   dfe-infra
 ## File:      sizing/targets/aws.yaml
-## Purpose:   The per-target dial matrix for `cloud: aws` -- every sizing dial
-##            the target changes or refuses, and why, so the sizing report can
-##            print the whole list rather than implying nothing was dropped on
-##            this target's account.
+## Purpose:   The per-target dial matrix for `cloud: aws`: what the target changes or refuses.
 ## Language:  YAML
 ##
 ## License:   BUSL-1.1
 ## Copyright: (c) 2026 HYPERI PTY LIMITED
 
-## Read by scripts/resolve_sizing.py's build_report -- see the module
-## docstring's TARGETS_DIR paragraph. Every dial below carries a `state` of
-## `blocked`, `renamed` or `managed`, plus the one-sentence `reason` the report
-## prints beside it. NO LISTS: nested maps and scalars only, parsed by
-## scripts/yaml_subset.py.
-##
-## AWS is the one POPULATED target: nothing here is blocked, because the
-## resolver, tofu and Karpenter carry every dial between them rather than a
-## vendor's own control plane taking it away.
+## Read by scripts/resolve_sizing.py build_report. `state` is blocked, renamed or managed, and `reason` is the line the report prints.
+## Nothing is blocked on aws: the resolver, tofu and Karpenter carry every dial.
 
 node_shapes:
   state: managed

@@ -1,18 +1,12 @@
 ## Project:   dfe-infra
 ## File:      sizing/targets/azure.yaml
-## Purpose:   The per-target dial matrix for `cloud: azure` -- a validated
-##            stub, not a built target. Every sizing dial it would change,
-##            marked blocked until the target itself exists.
+## Purpose:   The per-target dial matrix for `cloud: azure`, a validated stub.
 ## Language:  YAML
 ##
 ## License:   BUSL-1.1
 ## Copyright: (c) 2026 HYPERI PTY LIMITED
 
-## Read by scripts/resolve_sizing.py's build_report -- see the module
-## docstring's TARGETS_DIR paragraph. `status` names the stub so the report
-## does not read as a finished target, and every dial below carries a `state` of
-## `blocked`, `renamed` or `managed`, plus the one-sentence `reason`. NO LISTS:
-## nested maps and scalars only, parsed by scripts/yaml_subset.py.
+## Read by scripts/resolve_sizing.py build_report. `state` is blocked, renamed or managed, and `reason` is the line the report prints.
 
 status: validated-stub
 
