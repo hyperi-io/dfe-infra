@@ -2845,8 +2845,10 @@ class TestTheReportingVerdict:
         ],
     )
     def test_the_row_reads_what_was_published_since_the_feed(
-        self, info, samples, state
+        self, monkeypatch, info, samples, state
     ):
+        # The unproven cases otherwise sit out the whole 180s work deadline.
+        monkeypatch.setattr(steps, "WORK_DEADLINE", 0.0)
         driver = FakeDriver(FakePage())
         reported = (
             self.UP,
