@@ -94,9 +94,9 @@ def _list_page(
     if delimiter:
         args += ["--delimiter", "/"]
     if key_marker:
-        args += ["--key-marker", key_marker]
+        args.append(f"--key-marker={key_marker}")
     if version_marker:
-        args += ["--version-id-marker", version_marker]
+        args.append(f"--version-id-marker={version_marker}")
     listed = run(args, timeout=CALL_TIMEOUT)
     if listed.returncode != 0:
         raise EmptyError(f"listing s3://{bucket} failed: {listed.stderr.strip()[:300]}")
@@ -154,14 +154,14 @@ def _prefixes(
 def _bounds(prefixes: list[str] | None, count: int) -> list[tuple[str, str | None]]:
     """Up to `count` disjoint (after, through) key bounds that together cover every key under the stem.
 
-    A range starting at prefix P is bounded by P with its trailing "/" swapped for
-    ".", one byte lower, so P itself and everything under it sorts above the bound.
+    A range starting at prefix P is bounded by the prefix before it plus U+10FFFD, so
+    the bounds ascend strictly and every key under P sorts above its bound.
     """
     if not prefixes or len(prefixes) < 2:
         return [("", None)]
     ranges = min(count, len(prefixes))
     starts = [index * len(prefixes) // ranges for index in range(ranges)]
-    marks = ["", *(prefixes[start][:-1] + "." for start in starts[1:])]
+    marks = ["", *(prefixes[start - 1] + "\U0010fffd" for start in starts[1:])]
     return list(zip(marks, [*marks[1:], None], strict=True))
 
 

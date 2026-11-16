@@ -135,13 +135,18 @@ class FakeS3:
 
     def _list(self, args: list[str]) -> subprocess.CompletedProcess[str]:
         def option(name: str) -> str:
-            return args[args.index(name) + 1] if name in args else ""
+            for at, arg in enumerate(args):
+                if arg == name:
+                    return args[at + 1]
+                if arg.startswith(f"{name}="):
+                    return arg.split("=", 1)[1]
+            return ""
 
         assert "--no-paginate" in args
         assert "--starting-token" not in args
         with self.lock:
             self.list_calls.append(args)
-        range_call = "--delimiter" not in args and option("--key-marker")
+        range_call = "--delimiter" not in args and bool(option("--key-marker"))
         if self.list_fails or (self.range_list_fails and range_call):
             return subprocess.CompletedProcess(args, 255, "", "AccessDenied")
         prefix = option("--prefix")
@@ -230,13 +235,32 @@ def _deleted(s3: FakeS3) -> list[tuple[str, str]]:
 
 
 def _range_starts(s3: FakeS3) -> set[str]:
-    """The boundary markers of the key ranges after the first, which all end in a dot."""
+    """The boundary markers of the key ranges after the first, which all end in U+10FFFD."""
     markers = {
-        call[call.index("--key-marker") + 1]
+        arg.split("=", 1)[1]
         for call in s3.list_calls
-        if "--delimiter" not in call and "--key-marker" in call
+        if "--delimiter" not in call
+        for arg in call
+        if arg.startswith("--key-marker=")
     }
-    return {marker for marker in markers if marker.endswith(".")}
+    return {marker for marker in markers if marker.endswith("\U0010fffd")}
+
+
+def test_dot_segment_prefixes_are_deleted_once() -> None:
+    """Prefixes ending in a byte below "/" once gave descending bounds and double deletes."""
+    stems = ["../", "./", "-x/", "a/", "b/", "c/"]
+    entries: list[Entry] = []
+    for stem in stems:
+        for n in range(3):
+            entries.append((f"data/{stem}k{n}", f"{stem}{n}", False))
+        entries.append((f"data/{stem}/", f"{stem}slash", False))
+    # Direct keys between "data/.." and "data/...", the window the old bounds overlapped.
+    entries += [("data/..-edge", "e1", False), ("data/...", "e2", False)]
+    s3 = FakeS3(entries)
+    assert s3_empty.empty_bucket("b", "us-west-2", run=s3, workers=16) == len(entries)
+    deleted = _deleted(s3)
+    assert len(deleted) == len(set(deleted))
+    assert sorted(deleted) == sorted((key, version) for key, version, _ in entries)
 
 
 def test_a_flat_bucket_falls_back_to_one_range_and_deletes_in_batches() -> None:
