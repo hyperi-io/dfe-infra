@@ -74,12 +74,12 @@ There are two browser login paths, and both resolve to the same engine-owned ide
 - Local (default). dfe-ui serves a login form and authenticates the user against the engine's account store.
 - Federated (opt-in). The Envoy edge fronts the dfe-engine route with a `SecurityPolicy` per configured external OIDC provider. Adding or removing a provider is a Helm values change plus an ArgoCD sync, never a dfe-engine API call.
 
-In a federated login Envoy is the OIDC client, and dfe-engine reads the claims it forwards and nothing more.
+In a federated login Envoy is the OIDC client and checks the groups claim itself. dfe-engine receives the subject alone, because Envoy Gateway can't forward the array `groups` claim as a header.
 
 ```mermaid
 sequenceDiagram
     accTitle: L4 Detail -- Federated login
-    accDescr: Envoy sends a browser with no session to the external IdP, exchanges the returned code for an ID token, and forwards the claims to dfe-engine.
+    accDescr: Envoy sends a browser with no session to the external IdP, exchanges the returned code for an ID token, checks its groups, and forwards the request to dfe-engine with the subject header alone.
     participant browser as Browser
     participant envoy as Envoy Gateway
     participant idp as External IdP
@@ -91,14 +91,14 @@ sequenceDiagram
     browser->>envoy: /oauth2/callback
     envoy->>idp: /token with PKCE
     idp->>envoy: ID token and groups
-    envoy->>engine: claims as headers
+    envoy->>engine: Request, X-Oidc-Subject
 ```
 
 *Figure 2. L4 Detail -- Federated login.* Up: [L2 Services -- DFE deployment](architecture.md#where-this-repo-sits-in-the-suite).
 
 The local login, the default, is three steps: dfe-ui shows a form, dfe-engine checks the credentials against its account store, and dfe-engine returns the session in the `dfe_token` cookie.
 
-Envoy denies by default: a token must pass the provider's JWKS and the route's group policy, and the claims reach dfe-engine as `X-Oidc-Subject` and groups headers. The `groups` claim a federated provider forwards is what the edge policies match on, and what the engine maps to roles and tenancy (`org_viewer` -> pinned ClickHouse identity). Local users have no groups, so the engine grants their roles through per-user bindings instead.
+Envoy denies by default: a token must pass the provider's JWKS and the route's group policy. The edge policies match on the `groups` claim, but it never reaches dfe-engine: `jwtAuthn` is off by default (`helm/edge/gateway/values.yaml`), and with it on Envoy forwards `X-Oidc-Subject` and no groups header, because `claimToHeaders` takes no array claim. So a federated user gets roles and tenancy (`org_viewer` -> pinned ClickHouse identity) only through an account an administrator links to a group by hand ([gateway-oidc.md](deployment/gateway-oidc.md#x-oidc-groups-cant-be-minted)). Local users have no groups either, so the engine grants their roles through per-user bindings.
 
 ## Route class, and the switches that reach it
 
