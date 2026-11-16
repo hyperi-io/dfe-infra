@@ -1,3 +1,7 @@
+---
+sidebar_position: 2
+---
+
 # ...and if it's not DNS, it's PKI
 
 The name resolves, the port answers, and the connection still dies in the handshake. A certificate fails three ways. It expires, the CA that signed it changes or goes missing, or the name you dialled isn't in it. DFE components mostly can't tell you which, so ask the certificate.
