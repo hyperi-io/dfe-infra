@@ -11,13 +11,13 @@ Copyright: HyperI / DFE contributors
 
 # Kafka providers
 
-DFE talks to Kafka through one open provider abstraction (scalo `transport/kafka/providers.rs`). Each provider handles its own auth and capabilities behind a single trait. The brokers DFE deploys in the cluster authenticate with SCRAM-SHA-512 over a plaintext listener (`SASL_PLAINTEXT`). Every managed broker is SASL over TLS: SCRAM-SHA-512 on MSK Provisioned and Redpanda Cloud, PLAIN on Confluent Cloud, which offers no SCRAM, and IAM on MSK Serverless, which mandates it. A deployment on a TLS listener sets `kafka.securityProtocol: SASL_SSL` with its `kafka.bootstrapServers` in its deploy repo's `infra/common.yaml`.
+DFE talks to Kafka through one open provider abstraction (scalo `transport/kafka/providers.rs`). Each provider handles its own auth and capabilities behind a single trait. The brokers DFE deploys in the cluster authenticate with SCRAM-SHA-512 over a plaintext listener (`SASL_PLAINTEXT`). Every managed broker is SASL over TLS: SCRAM-SHA-512 on MSK Provisioned and Redpanda Cloud, and PLAIN on Confluent Cloud, which offers no SCRAM. MSK Serverless takes IAM only, which DFE doesn't support. A deployment on a TLS listener sets `kafka.securityProtocol: SASL_SSL` with its `kafka.bootstrapServers` in its deploy repo's `infra/common.yaml`.
 
 The charts take `security.protocol` and `sasl.mechanism` from one table, `helm/library/dfe-common/templates/_kafka.tpl`. Nobody sets a mechanism by hand. The table has two extra keys, `strimzi-no-tls` and `redpanda-no-tls`, for a DFE-owned broker on the TLS-off listener the charts stand up in-cluster. Every other key matches scalo's canonical table.
 
 DFE deploys two providers as in-cluster brokers, Strimzi (the default, Apache-2.0) and Redpanda (opt-in, BSL). For the managed clouds it doesn't deploy, there's one guide each:
 
-- [aws-msk.md](aws-msk.md) covers AWS MSK provisioned (SASL/SCRAM) and MSK Serverless (IAM). Running an MSK deployment (bootstrap Job, autoscaling, telemetry) is in [aws-msk-operations.md](aws-msk-operations.md).
+- [aws-msk.md](aws-msk.md) covers AWS MSK Provisioned (SASL/SCRAM), and why MSK Serverless isn't supported. Running an MSK deployment (bootstrap Job, autoscaling, telemetry) is in [aws-msk-operations.md](aws-msk-operations.md).
 - [confluent-cloud.md](confluent-cloud.md) covers Confluent Cloud (API-key PLAIN over TLS).
 - [redpanda-cloud.md](redpanda-cloud.md) covers Redpanda Cloud Serverless, Dedicated and BYOC (SCRAM).
 
@@ -42,13 +42,15 @@ Each row gives the default, one value per line, and the reason for it. Sources a
 | `log.retention.bytes` | PVC x 0.85 / partition replicas a broker holds for ONE topic | Each topic gets the full per-partition allowance, so any one topic can use the whole volume and the size cap never deletes unread data ahead of the time window. The broker disk is sized for the busy topics. The resolver counts every event on `_land`, and the dial's `sizing.transformed_share` of them again on `_load`. The `kafka.diskAlert` PrometheusRule warns at 70% and goes critical at 85%, before a disk fills. A full disk stops the broker, and the receiver spools through that. A deleted record is silent loss. |
 | `log.segment.bytes` | 1 GiB (Kafka default, not set) | 512 MiB doubles the mmap count against `vm.max_map_count` at DFE's partition counts, so the 1 GiB default stays. |
 | `cleanup.policy` | `delete` (default) | Our topics are append-only event streams, not compacted key/state topics. We leave the broker default alone. |
-| `message.max.bytes` | 16 MiB (`kafka.messageMaxBytes`) | One figure for the whole chain, so a produce is never rejected and a follower never stalls. See below. |
+| `message.max.bytes` | At least 8 MiB on every broker. DFE sets 16 MiB where it runs the broker (`kafka.messageMaxBytes`) | One figure for the whole chain, so a produce is never rejected and a follower never stalls. See below. |
 
 ### message.max.bytes: one figure for the chain
 
-DFE sets broker `message.max.bytes`, broker `replica.fetch.max.bytes` and every topic's `max.message.bytes` to one figure, 16 MiB by default (`kafka.messageMaxBytes`, overridden by the resolved sizing's `event.message_chain_bytes`). Raise one alone and a produce is rejected or a follower stalls. The receiver's request-body cap is 8,000,000 bytes (`maxBodySize`), below that figure.
+Every broker DFE writes to must accept at least 8 MiB (8,388,608 bytes), and the receiver chart fails the render below that. The receiver caps a request body at 8,000,000 bytes on every tier, so that minimum is enough for anything it takes in, and Confluent Cloud's Basic and Standard clusters, which stop at 8,388,608, work.
 
-The figure is the largest record batch AFTER compression. filebeat truncates at its own 10 MiB, and enrichment re-enters Kafka at about 1.48 times the source event, hence 16 MiB. For the odd large blob, send a pointer to object storage instead.
+Where DFE runs the broker it sets 16 MiB, for headroom: enrichment re-enters Kafka at about 1.48 times the source event. DFE sets broker `message.max.bytes`, broker `replica.fetch.max.bytes` and every topic's `max.message.bytes` to that one figure (`kafka.messageMaxBytes`, overridden by the resolved sizing's `event.message_chain_bytes`). Raise one alone and a produce is rejected or a follower stalls. The figure is the largest record batch after compression.
+
+dfe-transform-elastic holds each outbound record to `sink.max_message_bytes`, 8,000,000 bytes by default. It drops a record that enriches past that and counts it on `events_oversize_total`. Where the broker takes 16 MiB you can raise the budget to match. On Confluent Basic or Standard, keep it at the default. For the odd large blob, send a pointer to object storage instead.
 
 ## Settable vs locked, per platform
 
@@ -65,7 +67,7 @@ Settable means you can set it to the DFE default. Locked means the platform fixe
 | `log.retention.hours/ms` | Settable (24h) | Broker settable (72h from the dial's `kafka.msk.log_retention_ms`) | Per-topic `retention.ms`, 250 GB/partition hard cap | Per-topic `retention.ms` | Per-topic `retention.ms`, cluster `log_retention_ms` on Dedicated |
 | `log.retention.bytes` | Settable (unset) | Broker settable | Per-topic `retention.bytes` | Per-topic `retention.bytes` | Per-topic `retention.bytes` |
 | `log.segment.bytes` | Kafka default (1 GiB) | Broker settable | Locked -- managed | Locked -- not exposed | Cluster `log_segment_size` on Dedicated, managed on Serverless |
-| `message.max.bytes` | Settable (16 MiB) | Broker settable | Per-topic `max.message.bytes` | Per-topic `max.message.bytes` | Per-topic `max.message.bytes` |
+| `message.max.bytes` | Settable (16 MiB, 8 MiB minimum) | Broker settable (8 MiB minimum) | Per-topic `max.message.bytes` (8 MiB minimum) | Per-topic `max.message.bytes`, at most 8 MiB on Basic and Standard | Per-topic `max.message.bytes` (8 MiB minimum) |
 
 The more managed the platform, the fewer broker dials it exposes. The DFE default is then either already enforced (RF3, KRaft) or has to be set per topic. MSK Provisioned is closest to self-hosted, with the full `server.properties`. MSK Serverless and Confluent Cloud hide almost all broker config. Redpanda Cloud sits between them, with per-topic control and cluster config on the Dedicated tier only.
 
@@ -94,7 +96,7 @@ Changing the model on a live cluster strands the segments already written. So th
 
 ## Version pinning note
 
-The OpenTofu snippets in these guides use external providers DFE doesn't vendor. The constraints DFE's own roots run are in `versions.yaml` under `providers` (`hashicorp-aws`, `confluentinc-confluent`, `redpanda-data-redpanda`). Pin exact provider versions in your root module before applying these templates.
+The OpenTofu snippets in these guides use external providers DFE doesn't ship. The constraints DFE's own roots run are in `versions.yaml` under `providers` (`hashicorp-aws`, `confluentinc-confluent`, `redpanda-data-redpanda`). Pin exact provider versions in your root module before applying these templates.
 
 ## Sources (2026 research)
 

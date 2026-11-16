@@ -87,7 +87,7 @@ On EKS the control plane goes first, then Karpenter drift rolls the nodes. On MS
 
 ## dfe-hyperdx document store
 
-From 2.2.1 dfe-hyperdx keeps its state in a DocumentDB cluster that the DocumentDB operator runs on CloudNativePG (`helm/charts/documentdb`), in place of FerretDB. The two keep documents in different PostgreSQL schemas, so nothing moves across in place. A deployment moved from an earlier stack starts on an empty store, without the saved searches, alerts, users and unprovisioned dashboards it held. To keep them, copy them before dfe-hyperdx cuts over, with `mongodump` against the FerretDB endpoint and `mongorestore` into the gateway, using TLS against the store's CA and SCRAM-SHA-256.
+dfe-hyperdx keeps its state in a DocumentDB cluster that the DocumentDB operator runs on CloudNativePG (`helm/charts/documentdb`), in the `cnpg` namespace.
 
 Between DocumentDB releases the upgrade is in place and two-phase. The binary moves first, with `documentdb.version` and the extension and gateway images in the chart's values, and reverting them rolls it back. The schema moves only when `spec.schemaVersion` is set, which runs `ALTER EXTENSION documentdb UPDATE` and can't be undone, and the chart sets none. Upstream's runbook: https://github.com/documentdb/documentdb-kubernetes-operator/blob/1.0.0/docs/operator-public-documentation/preview/operations/upgrades.md
 

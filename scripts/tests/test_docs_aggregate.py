@@ -1705,12 +1705,13 @@ THEATRE = "- [Theatre and battlespace](https://hyperi.io/solutions/theatre-and-b
 
 
 @pytest.mark.parametrize(
-    ("kind", "form", "packs", "region"),
+    ("kind", "form", "packs", "login", "region"),
     [
         (
             "up",
             "latest",
             [],
+            False,
             "```bash\ndocker compose -f oci://img:latest up -d\n```\n\n"
             "Then point your browser to http://localhost:3000.\n",
         ),
@@ -1718,6 +1719,7 @@ THEATRE = "- [Theatre and battlespace](https://hyperi.io/solutions/theatre-and-b
             "up",
             "pinned",
             QUICKSTART_PACKS,
+            False,
             "```bash\ndocker compose -f oci://img:1.0.5 up -d\n```\n\n"
             "Then point your browser to http://localhost:3000.\n",
         ),
@@ -1725,26 +1727,58 @@ THEATRE = "- [Theatre and battlespace](https://hyperi.io/solutions/theatre-and-b
             "demo",
             "latest",
             [],
+            False,
             "```bash\ndocker compose -f oci://img-demo:latest up -d\n```\n\nDemo note.\n",
         ),
         (
             "demo",
             "pinned",
             QUICKSTART_PACKS,
+            False,
             f"```bash\ndocker compose -f oci://img-demo:1.0.5 up -d\n```\n\nDemo note.\n"
             "\nOther demo use cases:\n\n"
             f"{THEATRE}`docker compose -f oci://img:demo-theatre-1.0.6 up -d`\n",
         ),
+        (
+            "up",
+            "pinned",
+            [],
+            True,
+            "```bash\ndocker compose -f oci://img:1.0.5 up -d\n```\n\n"
+            "Then point your browser to http://localhost:3000.\n\n"
+            "`docker compose -f oci://img:1.0.5 down -v` deletes the stack's data as well, "
+            "the secrets it minted included.\n",
+        ),
+        (
+            "demo",
+            "latest",
+            [],
+            True,
+            "```bash\ndocker compose -f oci://img-demo:latest up -d\n```\n\nDemo note.\n\n"
+            "`docker compose -f oci://img-demo:latest down -v` removes the demo and its data. "
+            "A demo pack takes its own tag in place of `demo`, and plain `down` stops it "
+            "and keeps the data.\n",
+        ),
     ],
-    ids=["up", "up-ignores-packs", "demo-schema-1", "demo-schema-2-packs"],
+    ids=[
+        "up",
+        "up-ignores-packs",
+        "demo-schema-1",
+        "demo-schema-2-packs",
+        "up-login-pinned-removal",
+        "demo-login-removal",
+    ],
 )
 def test_a_compose_release_replaces_the_pages_make_region(
-    kind: str, form: str, packs: list, region: str
+    kind: str, form: str, packs: list, login: bool, region: str
 ) -> None:
     page = QUICKSTART_PAGE.replace(
         "docker-quickstart: up", f"docker-quickstart: {kind}"
     )
-    text = aggregate.fill_quickstart(page, {**QUICKSTART, "packs": packs, "form": form})
+    release = {**QUICKSTART, "packs": packs, "form": form}
+    if login:
+        release["login"] = "printed by the second command in up and demo"
+    text = aggregate.fill_quickstart(page, release)
     assert text == (
         f"Intro.\n\n<!-- docker-quickstart: {kind} -->\n<!-- landing -->\n{region}"
         "<!-- /docker-quickstart -->\n\nAfter.\n"

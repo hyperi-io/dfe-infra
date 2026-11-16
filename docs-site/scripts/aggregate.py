@@ -1528,6 +1528,31 @@ def _is_pack(pack: object, form: str) -> bool:
     )
 
 
+def _removal(quickstart: dict, kind: str, form: str) -> str:
+    """The removal step under a one-line install, for a release whose second command prints the login.
+
+    Args:
+        quickstart: docker_quickstart's result.
+        kind: "up" or "demo".
+        form: "latest" or "pinned".
+
+    Returns:
+        Markdown ending in a newline, or "" for a release with no `login` key.
+    """
+    up = quickstart[kind][form][0]
+    if "login" not in quickstart or not up.endswith(" up -d"):
+        return ""
+    down = f"{up.removesuffix(' up -d')} down -v"
+    after = {
+        "up": "deletes the stack's data as well, the secrets it minted included.",
+        "demo": (
+            "removes the demo and its data. A demo pack takes its own tag in place of "
+            "`demo`, and plain `down` stops it and keeps the data."
+        ),
+    }
+    return f"\n`{down}` {after[kind]}\n"
+
+
 def fill_quickstart(text: str, quickstart: dict | None) -> str:
     """Rewrite each docker-quickstart region of a page from a release's quickstart.json.
 
@@ -1554,6 +1579,7 @@ def fill_quickstart(text: str, quickstart: dict | None) -> str:
             f"<!-- docker-quickstart: {kind} -->\n"
             f"<!-- landing -->\n```bash\n{commands}\n```\n\n"
             f"{quickstart['notes'][kind]}\n"
+            f"{_removal(quickstart, kind, form)}"
             f"{others[kind]}"
             "<!-- /docker-quickstart -->\n"
         )

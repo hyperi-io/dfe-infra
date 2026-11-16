@@ -25,15 +25,15 @@
     "js-yaml": "4.3.2",
     "react": "19.3.1",
     "react-dom": "19.3.1",
-    "sass": "1.107.1"
+    "sass": "1.108.1"
   },
   "devDependencies": {
-    "wrangler": "4.157.0"
+    "wrangler": "4.158.0"
   },
   "overrides": {
     "tinypool": "2.2.0",
     "serialize-javascript": "7.1.4",
-    "postcss-selector-parser": "7.1.7",
+    "postcss-selector-parser": "7.1.8",
     "postman-collection": {
       "uuid": "11.1.1"
     },

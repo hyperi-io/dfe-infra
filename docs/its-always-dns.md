@@ -1,3 +1,7 @@
+---
+sidebar_position: 1
+---
+
 # It's always DNS
 
 Most "DFE is down" tickets that open on a connection error are a name that stopped resolving. Several DFE components don't say so. The loader logs `client error (Connect)` and the proxy logs `remote connection failure`, and neither mentions DNS. So ask the failing container before you read any logs.
