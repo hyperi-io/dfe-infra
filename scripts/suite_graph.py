@@ -406,136 +406,246 @@ def slice_graph(
 # Mermaid -- the blocks docs/suite-graph.md carries between markers
 # ---------------------------------------------------------------------------
 
+# The class lines the diagram standard's "Colour" section gives, byte for byte.
+# A block copies the ones it uses, and `default` always.
+CLASS_LINES = {
+    "default": "classDef default fill:#F8FAFC,stroke:#64748B,stroke-width:1px,color:#0F172A",
+    "core": "classDef core fill:#DCEBF7,stroke:#0072B2,stroke-width:2px,color:#0B2A3F",
+    "group": "classDef group fill:none,stroke:#64748B,stroke-width:1px,stroke-dasharray:2 4",
+}
+
+INDENT = "    "
+LEVEL = "L4 Detail"
+# The most a group's grid holds. Four columns beside one more box stay inside
+# the standard's five-column limit.
+GRID_COLUMNS = 4
+GRID_ROWS = 3
+
+_LANGUAGE = {"rust": "Rust", "python": "Python", "typescript": "TypeScript"}
+_ROLE_TITLE = {
+    "service": "Services",
+    "library": "Libraries",
+    "infra": "Infra",
+    "content": "Content",
+    "ui": "UI",
+}
+
+OVERVIEW_BLOCKS = ("overview:services", "overview:platform")
+
 
 def _mid(name: str) -> str:
     return name.replace("-", "_").replace(".", "_")
-
-
-# The HyperI brand tokens, verbatim from https://graphics.hyperi.io/tokens/tokens.css.
-# Every colour the diagrams below draw is one of these or a 0.45 fade of one.
-# `tertiary` is `--hyperi-tertiary`, the ink of the `<lockup>/tertiary/` icon
-# delivery: the one colour that reads on a light background and a dark one, so
-# it is what a diagram outlines with.
-PALETTE = {
-    "navy": "#000647",
-    "tertiary": "#2EA4F6",
-    "accent": "#2DED88",
-    "white": "#FFFFFF",
-    "black": "#000000",
-}
-
-FADE = 0.45
-
-
-def faded(colour: str, ratio: float = FADE) -> str:
-    """A brand colour mixed toward white, which is how an optional member is drawn."""
-    channels = colour.lstrip("#")
-    values = (int(channels[i : i + 2], 16) for i in (0, 2, 4))
-    return "#" + "".join(f"{round(c + (255 - c) * ratio):02X}" for c in values)
-
-
-# Fill, text colour and stroke width per class, against GitHub's light (#FFFFFF)
-# and dark (#0D1117) canvases.
-# Navy is an ink and the one-node emphasis plate rather than a fill for the many,
-# because a navy box is 1.01:1 against the dark canvas.
-# Text is navy on every chromatic or faded fill (6.9:1 or better) and white only
-# on navy (18.8:1).
-_CLASS_FILL = {
-    "general": (PALETTE["accent"], PALETTE["navy"], 2),
-    "suite": (PALETTE["tertiary"], PALETTE["navy"], 2),
-    "producer": (PALETTE["navy"], PALETTE["white"], 3),
-}
-
-# Every class strokes in the tertiary, the one colour that reads on both canvases
-# (2.71 light, 6.99 dark), at 2px because 2.71 is marginal for a hairline.
-# The producer is the single focal node of its diagram, so its outline is 3px.
-# An optional member takes the faded version of its audience's fill and keeps the
-# " (optional)" suffix, so colour is never the only signal.
-# The fade is soft against the light canvas by design, where the unfaded stroke
-# carries the boundary.
-_CLASSES = {
-    name: f"classDef {name} fill:{fill},stroke:{PALETTE['tertiary']},"
-    f"stroke-width:{width}px,color:{text}"
-    for name, (fill, text, width) in _CLASS_FILL.items()
-} | {
-    f"{audience}-optional": f"classDef {audience}-optional fill:{faded(_CLASS_FILL[audience][0])},"
-    f"stroke:{PALETTE['tertiary']},stroke-width:2px,color:{PALETTE['navy']}"
-    for audience in AUDIENCES
-}
-
-
-def _classdefs(used: set[str]) -> list[str]:
-    """The classDef lines for the classes a block paints, in one fixed order.
-
-    A block emits only what it references: an unused classDef is a legend entry
-    for a colour that is not on the picture.
-    """
-    return [f"  {line}" for name, line in _CLASSES.items() if name in used]
 
 
 def _label(name: str, node: dict) -> str:
     return name + (" (optional)" if node.get("optional") else "")
 
 
-def _node_class(node: dict) -> str:
-    return node["audience"] + ("-optional" if node.get("optional") else "")
+def _names(names: list[str]) -> str:
+    """`a`, `a and b`, `a, b and c`."""
+    if len(names) < 2:
+        return "".join(names)
+    return f"{', '.join(names[:-1])} and {names[-1]}"
 
 
-def mermaid_overview(graph: dict) -> str:
-    """Nodes only, grouped by role, coloured by audience. Edges are the per-producer diagrams' job."""
-    by_role: dict[str, list[str]] = {}
-    for name, node in graph["nodes"].items():
-        by_role.setdefault(node["role"], []).append(name)
-    lines = ["flowchart TB"]
-    used: set[str] = set()
-    for role in sorted(by_role):
-        lines.append(f'  subgraph {role}["{role}"]')
-        lines.append("    direction LR")
-        for name in sorted(by_role[role]):
-            node = graph["nodes"][name]
-            used.add(_node_class(node))
-            lines.append(
-                f'    {_mid(name)}["{_label(name, node)}"]:::{_node_class(node)}'
-            )
-        lines.append("  end")
-    lines.extend(_classdefs(used))
+def _slug(title: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", title.lower()).strip("_")
+
+
+def _grid(ids: list[str]) -> list[str]:
+    """Invisible links that lay a group's members out in rows of a grid.
+
+    A subgraph that an arrow ends on loses its own direction and stacks its
+    members, so the rows are set here, with `~~~`. The grid has the fewest
+    empty cells within GRID_COLUMNS wide and GRID_ROWS high, then the fewest
+    columns. Rows are as even as they can be, and never a lone member beside
+    other rows, which Mermaid puts at the top of the group.
+    """
+    n = len(ids)
+    best: tuple[int, int, list[int]] | None = None
+    for columns in range(1, GRID_COLUMNS + 1):
+        rows = -(-n // columns)
+        base, extra = divmod(n, rows)
+        sizes = [base + (row < extra) for row in range(rows)]
+        if rows > GRID_ROWS or (columns > 1 and 1 in sizes):
+            continue
+        candidate = (columns * rows - n, columns, sizes)
+        if best is None or candidate[:2] < best[:2]:
+            best = candidate
+    sizes = best[2] if best else [n]
+    chains, at = [], 0
+    for size in sizes:
+        chains.append(ids[at : at + size])
+        at += size
+    return [" ~~~ ".join(chain) for chain in chains if len(chain) > 1]
+
+
+def _block(
+    title: str,
+    descr: str,
+    body: list[str],
+    *,
+    core: list[str],
+    groups: list[str],
+) -> str:
+    """One flowchart: header, nodes and arrows in `body`, then the class lines."""
+    lines = ["flowchart LR", f"{INDENT}accTitle: {LEVEL} -- {title}"]
+    lines.append(f"{INDENT}accDescr: {descr}")
+    lines.append("")
+    lines += [f"{INDENT}{line}" if line else "" for line in body]
+    lines.append("")
+    used = ["default", *(["core"] if core else []), *(["group"] if groups else [])]
+    lines += [f"{INDENT}{CLASS_LINES[name]}" for name in used]
+    if core:
+        lines.append(f"{INDENT}class {','.join(core)} core")
+    if groups:
+        lines.append(f"{INDENT}class {','.join(groups)} group")
     return "\n".join(lines)
 
 
-_ARROW = {"lockstep": "==>", "potential": "-->", "derived": "-.->"}
+def _subgraph(gid: str, title: str, members: list[str], graph: dict) -> list[str]:
+    lines = [f'subgraph {gid}["{title}"]', f"{INDENT}direction LR"]
+    lines += [
+        f'{INDENT}{_mid(name)}["{_label(name, graph["nodes"][name])}"]'
+        for name in members
+    ]
+    lines += [f"{INDENT}{chain}" for chain in _grid([_mid(n) for n in members])]
+    lines.append("end")
+    return lines
+
+
+def _group_title(members: list[str], graph: dict) -> str:
+    """What the members share: their language and role where both agree."""
+    nodes = [graph["nodes"][name] for name in members]
+    languages = {node["language"] for node in nodes}
+    roles = {node["role"] for node in nodes}
+    language = _LANGUAGE.get(next(iter(languages)), "") if len(languages) == 1 else ""
+    role = "members"
+    if len(roles) == 1:
+        only = next(iter(roles))
+        role = _ROLE_TITLE.get(only, only).lower()
+    title = f"{language} {role}".strip()
+    return title[:1].upper() + title[1:]
+
+
+def mermaid_overview(graph: dict, block: str) -> str:
+    """Nodes only, in boxes by what they share. Edges are the per-producer diagrams' job.
+
+    `services` is the service nodes boxed by language. `platform` is every other
+    node boxed by role.
+    """
+    nodes = graph["nodes"]
+    if block == "services":
+        key, titles = "language", _LANGUAGE
+        picked = [n for n in nodes if nodes[n]["role"] == "service"]
+        scope = "Suite overview, services"
+    else:
+        key, titles = "role", _ROLE_TITLE
+        picked = [n for n in nodes if nodes[n]["role"] != "service"]
+        scope = "Suite overview, platform"
+    boxes: dict[str, list[str]] = {}
+    for name in sorted(picked):
+        boxes.setdefault(nodes[name][key], []).append(name)
+    order = sorted(boxes, key=lambda k: (-len(boxes[k]), k))
+    body: list[str] = []
+    ids: list[str] = []
+    descr = []
+    for k in order:
+        title = titles.get(k, k.capitalize())
+        if key == "language":
+            title += " services"
+        ids.append(_slug(title))
+        body += _subgraph(ids[-1], title, boxes[k], graph)
+        listed = [_label(n, nodes[n]) for n in boxes[k]]
+        descr.append(f"{_names(listed)} sit in {title}.")
+    body.append(" ~~~ ".join(ids))
+    what = "services" if key == "language" else "members that are not services"
+    return _block(
+        scope,
+        f"The suite has {len(picked)} {what}, in {len(order)} boxes. {' '.join(descr)}",
+        body,
+        core=[],
+        groups=ids,
+    )
+
+
+def _edge_label(edges: list[dict]) -> tuple[str, str]:
+    """The arrow for the edges between one producer and one consumer.
+
+    The label is the kinds alone, with a count for a repeat. Pipe labels take
+    neither quotes nor parentheses, so it is plain words. The arrow is dotted
+    only when every edge is derived: a consumer holding no copy at all.
+    """
+    counts: dict[str, int] = {}
+    for edge in edges:
+        counts[edge["kind"]] = counts.get(edge["kind"], 0) + 1
+    label = ", ".join(
+        kind + (f" x{n}" if n > 1 else "") for kind, n in sorted(counts.items())
+    )
+    dotted = all(edge["type"] == "derived" for edge in edges)
+    return label, "-.->" if dotted else "-->"
 
 
 def mermaid_producer(graph: dict, producer: str) -> str:
-    """One producer and everything a release there puts in motion."""
-    label = _label(producer, graph["nodes"][producer])
-    lines = ["flowchart LR", f'  {_mid(producer)}["{label}"]:::producer']
-    used = {"producer"}
-    # Several edges of one kind to one consumer (three copies of a tag, say)
-    # draw as one arrow with a count rather than three identical arrows.
-    grouped: dict[tuple[str, str, str], int] = {}
-    for edge in out_edges(graph, producer):
-        key = (edge["to"], edge["kind"], edge["type"])
-        grouped[key] = grouped.get(key, 0) + 1
-    seen: set[str] = set()
-    for (to, kind, etype), count in sorted(grouped.items()):
-        if to not in seen:
-            node = graph["nodes"][to]
-            used.add(_node_class(node))
-            lines.append(f'  {_mid(to)}["{_label(to, node)}"]:::{_node_class(node)}')
-            seen.add(to)
-        # Pipe labels take neither quotes nor parentheses, so the label is plain words.
-        edge_label = f"{kind}, {etype}" + (f" x{count}" if count > 1 else "")
-        lines.append(f"  {_mid(producer)} {_ARROW[etype]}|{edge_label}| {_mid(to)}")
-    lines.extend(_classdefs(used))
-    return "\n".join(lines)
+    """One producer and everything a release there puts in motion.
+
+    Consumers that get the same arrow merge into one box, with one arrow to it.
+    """
+    nodes = graph["nodes"]
+    arrows: dict[str, tuple[str, str]] = {}
+    for consumer in sorted({e["to"] for e in out_edges(graph, producer)}):
+        edges = [e for e in out_edges(graph, producer) if e["to"] == consumer]
+        arrows[consumer] = _edge_label(edges)
+    shared: dict[tuple[str, str], list[str]] = {}
+    for consumer, arrow in arrows.items():
+        shared.setdefault(arrow, []).append(consumer)
+    items = sorted(shared.items(), key=lambda item: item[1][0])
+    body = [f'{_mid(producer)}["{_label(producer, nodes[producer])}"]']
+    links: list[str] = []
+    groups: list[str] = []
+    taken = {_mid(n) for n in nodes}
+    descr = []
+    for (label, arrow), members in items:
+        if len(members) == 1:
+            target = _mid(members[0])
+            body.append(f'{target}["{_label(members[0], nodes[members[0]])}"]')
+        else:
+            title = _group_title(members, graph)
+            target = _slug(title)
+            while target in taken:
+                target += "_2"
+            taken.add(target)
+            groups.append(target)
+            body += _subgraph(target, title, members, graph)
+        links.append(f"{_mid(producer)} {arrow}|{label}| {target}")
+        listed = [_label(m, nodes[m]) for m in members]
+        take = "takes" if len(members) == 1 else "take"
+        descr.append(f"{_names(listed)} {take} {label.replace(', ', ' and ')}.")
+    consumers = len(arrows)
+    return _block(
+        f"{producer} build cycle",
+        f"A {producer} release puts {consumers} consumer{'s' * (consumers != 1)} "
+        f"in motion. {' '.join(descr)}",
+        [*body, "", *links],
+        core=[_mid(producer)],
+        groups=groups,
+    )
+
+
+def block_names(graph: dict) -> list[str]:
+    """Every block the page can carry: the overview halves, then one per producer."""
+    producers = sorted({e["from"] for e in graph.get("edges", [])})
+    return [*OVERVIEW_BLOCKS, *(f"producer:{p}" for p in producers)]
 
 
 def render_block(graph: dict, name: str) -> str:
-    if name == "overview":
-        return mermaid_overview(graph)
-    if name.startswith("producer:"):
+    if name in OVERVIEW_BLOCKS:
+        return mermaid_overview(graph, name.split(":", 1)[1])
+    if name.startswith("producer:") and name.split(":", 1)[1] in graph["nodes"]:
         return mermaid_producer(graph, name.split(":", 1)[1])
-    raise KeyError(f"unknown block {name!r}; use overview or producer:<node>")
+    raise KeyError(
+        f"unknown block {name!r}; use {' or '.join(OVERVIEW_BLOCKS)} or producer:<node>"
+    )
 
 
 def render_docs(graph: dict, text: str) -> str:
