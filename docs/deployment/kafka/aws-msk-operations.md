@@ -32,7 +32,7 @@ ACL has to exist yet, then:
 1. grants the SCRAM principal exactly what an on-prem deployment grants -- topic
    literal `*` with Read, Write, Create, Describe, Alter, Delete, DescribeConfigs
    and AlterConfigs (every topic call dfe-engine makes), consumer groups by the
-   `dfe-` prefix with Read and Describe;
+   `dfe-` prefix with Read and Describe
 2. prints the resulting ACL list, and exits non-zero on any failure.
 
 It creates no topic: dfe-engine creates the bootstrap topic set at its own
@@ -43,7 +43,7 @@ holds the ACLs for every DFE app, as on-prem. A compromised app credential
 therefore reaches every topic.
 
 **The IAM identity exists for this bootstrap path alone.** Every DFE app still
-authenticates with SASL/SCRAM-512 on 9096; the cluster enables both mechanisms so
+authenticates with SASL/SCRAM-512 on 9096, and the cluster enables both mechanisms so
 the Job can write the grants the apps rely on. Nothing is mounted into the Job --
 EKS Pod Identity supplies the credential.
 
@@ -52,7 +52,7 @@ The Job runs `kafka.cliImage`, Strimzi's Kafka image from quay.io at the brokers
 **On the standard AWS path, `kafka.mode` and `bootstrapIam` are wired, not
 set.** `bootstrap.sh` derives `DFE_KAFKA_MODE=external` from
 `DFE_KAFKA_PROVIDER=msk` and carries the aws root's `DFE_KAFKA_BOOTSTRAP_IAM`
-output onto the cluster secret; the `layer2-data` ApplicationSet turns both
+output onto the cluster secret, and the `layer2-data` ApplicationSet turns both
 annotations into the kafka chart's values, so the Job and its ServiceAccount
 render with no manual step once the dial names `kafka.provider: msk`.
 
@@ -66,7 +66,7 @@ driving the chart directly (a bespoke overlay, or outside `bootstrap.sh`).
 |---|---|
 | `kafka.mode` / `kafka.external.provider` | `external` and `msk` -- the Job renders for nothing else. |
 | `kafka.external.msk.bootstrapIam` | The 9098 bootstrap string, `bootstrap_brokers_sasl_iam`. Empty renders no Job. |
-| `kafka.external.msk.scramUsername` | The principal the ACLs are written for; must equal the username in the `AmazonMSK_` secret. |
+| `kafka.external.msk.scramUsername` | The principal the ACLs are written for. It must equal the username in the `AmazonMSK_` secret. |
 | `kafka.external.msk.credentialRef` | The `AmazonMSK_` secret's ARN, the cluster secret's `dfe.hyperi.io/kafka_credential_ref`. The one copy of the credential: the apps' `dfe-kafka-user` reads its password from it through the `dfe-secret-store-unprefixed` store, and no `kafka/msk` seed exists. |
 | `kafka.external.msk.region` | Optional. Leave empty and the Pod Identity agent's own `AWS_REGION` is used. |
 | `kafka.external.msk.bootstrap.serviceAccount` | The ServiceAccount the Job runs as. |
@@ -103,19 +103,19 @@ spatial sum across brokers that `SEARCH` discovers, not a sum over time.
 
 ## Telemetry
 
-DFE's monitoring goes to its own OTel feed and dfe-hyperdx, never CloudWatch --
+DFE's monitoring goes to its OTel feed and dfe-hyperdx, never CloudWatch --
 the deployment dial's `telemetry.aws.sink` decides which of MSK's forced
-CloudWatch touchpoints get a workaround and which stay on AWS's own path.
-`otel` is the default; `cloudwatch` is the opt-in AWS-native path for a
-compliance need CloudWatch itself satisfies.
+CloudWatch touchpoints get a workaround and which stay on AWS's path.
+`otel` is the default, and `cloudwatch` is the opt-in AWS-native path for a
+compliance need CloudWatch satisfies.
 
 | Touchpoint | Under `sink: otel` | Under `sink: cloudwatch` | Cost |
 |---|---|---|---|
-| Broker logs | S3 bucket this module creates, lifecycle-expired at `retention_days` (default 2), SSE-KMS on the deployment key. The fetcher's `object_store` source reads it. | `aws_cloudwatch_log_group`, retention `retention_days` (default 7 under this sink). | S3: XS at broker-log volumes, storage only past the lifecycle window. CloudWatch: ingestion plus storage per GB, the dearer path at any real broker throughput. |
+| Broker logs | S3 bucket this module creates, lifecycle-expired at `retention_days` (default 2), SSE-KMS on the deployment key. The fetcher's `object_store` source reads it. | `aws_cloudwatch_log_group`, retention `retention_days` (default 7 under this sink). | S3: XS at broker-log volumes, storage only past the lifecycle window. CloudWatch: ingestion plus storage per GB, the dearer path at any production broker throughput. |
 | EKS control-plane audit log | CloudWatch, at `telemetry.aws.forced_retention_days` (1 day unless the dial sets another). EKS has no other export path, so this is an unavoidable exception rather than a chosen destination (`kubernetes-cluster/CONTRACT.md`). The otel collector reads it into the otel database ([provider logs](../../observability/provider-logs.md)). | CloudWatch, `retention_days`. Nothing here reads it. | CloudWatch ingestion plus storage either way. `telemetry.aws.eks_log_types` picks the streams, `audit` by default. Otel bounds the storage to the forced retention. |
-| CloudTrail | S3 under both sinks, and a CloudWatch log group under both sinks too. Under otel the group keeps `telemetry.aws.forced_retention_days` and the otel collector reads it into the otel database ([provider logs](../../observability/provider-logs.md)). `LookupEvents` API access via the fetcher's `aws` source needs no bucket name at all. | The same group at `retention_days`, kept for the AWS-native path. | S3: XS at management-event volumes. CloudWatch adds ingestion plus storage under both sinks, the short retention under otel being what bounds it. |
-| MSK open_monitoring (JMX + node exporter) | Scraped in-cluster by the otel-collector gateway's Prometheus receiver, never delivered through either sink. | Same -- `open_monitoring` has no CloudWatch delivery option; it is always scrape-only. | No AWS-side cost; ordinary in-cluster Prometheus scrape traffic. |
-| Broker-count autoscaler Lambda log group | 1 day's retention under both sinks (see "Broker-count autoscaling" above) -- diagnostic-only, and predates the telemetry dial. | Same. | XS; the Lambda fires once per scale-out event. |
+| CloudTrail | S3 under both sinks, and a CloudWatch log group under both sinks as well. Under otel the group keeps `telemetry.aws.forced_retention_days` and the otel collector reads it into the otel database ([provider logs](../../observability/provider-logs.md)). `LookupEvents` API access via the fetcher's `aws` source needs no bucket name. | The same group at `retention_days`, kept for the AWS-native path. | S3: XS at management-event volumes. CloudWatch adds ingestion plus storage under both sinks, the short retention under otel being what bounds it. |
+| MSK open_monitoring (JMX + node exporter) | Scraped in-cluster by the otel-collector gateway's Prometheus receiver, never delivered through either sink. | Same -- `open_monitoring` has no CloudWatch delivery option, so it is always scrape-only. | No AWS-side cost, just ordinary in-cluster Prometheus scrape traffic. |
+| Broker-count autoscaler Lambda log group | 1 day's retention under both sinks (see "Broker-count autoscaling" above) -- diagnostic-only, and predates the telemetry dial. | Same. | XS, because the Lambda fires once per scale-out event. |
 
 `terraform/modules/managed-kafka/CONTRACT.md` is the source of truth for the
 `telemetry` input's fields. This table is the cost summary a deployer reads

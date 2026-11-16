@@ -6,7 +6,7 @@ sidebar_position: 2
 
 The name resolves, the port answers, and the connection still dies in the handshake. A certificate fails three ways. It expires, the CA that signed it changes or goes missing, or the name you dialled isn't in it. DFE components mostly can't tell you which, so ask the certificate.
 
-From a pod or container on the same network as the failing client, print what the server presents and whether a CA file trusts it. The engine image carries `openssl`.
+From a pod or container on the same network as the failing client, print what the server presents and whether a CA file trusts it. The engine image has `openssl`.
 
 ```bash
 # what the server presents
@@ -29,7 +29,7 @@ python3 scripts/dfe-ops ca --status
 
 ## What each fault looks like
 
-Each row is one fault against a real client, with the server presenting a certificate from a throwaway CA.
+Each row is one fault against a DFE client, with the server presenting a certificate from a throwaway CA.
 
 | Fault | `openssl s_client` | DFE client |
 |---|---|---|
@@ -42,7 +42,7 @@ The loader prints the same line for an unresolvable name and for all three certi
 
 A loader with a good certificate logged no warning. A loader with any of the three faults stays not ready, retrying with growing delays.
 
-The health checks of a service whose client has the fault stay green. With an expired certificate on DocumentDB, both `dfe-hyperdx-documentdb` and `dfe-hyperdx` reported `healthy` while every connection failed.
+The health checks of a service with the faulty client keep passing. With an expired certificate on DocumentDB, both `dfe-hyperdx-documentdb` and `dfe-hyperdx` reported `healthy` as every connection failed.
 
 ## Renewals that can't happen
 
@@ -72,7 +72,7 @@ Restore the issuer's Secret, then restart the pods that mount the certificate, b
 
 A renewed certificate isn't served until the process reloads it. After a renewal the mounted file held the new serial while a server that had started earlier kept presenting the old one, which `openssl s_client` showed by its different serial. Restart the pods that serve the certificate, or give them a reloader, once the Secret has changed.
 
-On Docker Compose the stack makes its own CA. It generates a CA and a DocumentDB server certificate for dfe-hyperdx in the `dfe-hyperdx-documentdb-tls` one-shot, and regenerates both when the leaf is within 30 days of expiry. Running `docker compose up -d` against a stack whose leaf had expired re-ran that one-shot and wrote a new CA and leaf, but left the running containers alone. DocumentDB kept serving the old leaf and dfe-hyperdx lost the path to its CA file. The result was `Verification error: unable to get local issuer certificate` from the DocumentDB port and `ENOENT ... /etc/dfe/documentdb-ca/ca.crt` in dfe-hyperdx.
+On Docker Compose the stack makes a CA of its own. It generates a CA and a DocumentDB server certificate for dfe-hyperdx in the `dfe-hyperdx-documentdb-tls` one-shot, and regenerates both when the leaf is within 30 days of expiry. Running `docker compose up -d` against a stack whose leaf had expired re-ran that one-shot and wrote a new CA and leaf, but left the running containers alone. DocumentDB kept serving the old leaf and dfe-hyperdx lost the path to its CA file. The result was `Verification error: unable to get local issuer certificate` from the DocumentDB port and `ENOENT ... /etc/dfe/documentdb-ca/ca.crt` in dfe-hyperdx.
 
 Restart them in this order, database first:
 

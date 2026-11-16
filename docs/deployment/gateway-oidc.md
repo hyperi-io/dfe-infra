@@ -1,6 +1,6 @@
 # Edge OIDC through the gateway
 
-DFE has two ways to authenticate a person. Local auth is the default and needs nothing: dfe-engine holds the accounts and signs its own tokens. The other is edge OIDC, where Envoy Gateway takes the login, verifies the token, and hands dfe-engine an already-authenticated identity in `X-Oidc-*` headers.
+DFE has two ways to authenticate a person. Local auth is the default and needs nothing: dfe-engine holds the accounts and signs its own tokens. The other is edge OIDC, where Envoy Gateway takes the login, verifies the token, and hands dfe-engine an authenticated identity in `X-Oidc-*` headers.
 
 This page covers the second one, and what Envoy Gateway can't do today. Read it before turning `jwtAuthn.enabled` on. [edge.md](edge.md) says which routes take an edge policy at all.
 
@@ -16,7 +16,7 @@ There's no single on/off switch, and deliberately no `auth.oidcEnabled`. The eng
 | dfe-engine | `auth.proxyProvider` | the provider a gateway login is stamped with. Its `X-Oidc-Groups` link only to groups linked to that provider, so group files naming `dex` need `dex` here |
 | envoy-gateway-config | `oidc.enabled` + `oidc.providers` + `oidc.targetRoutes` | which routes get an OIDC SecurityPolicy, and against which IdP |
 
-`oidc.targetRoutes` names `dfe-engine`, and the engine's PUBLIC route follows it. So an edge policy on a cloud deploy also fronts `GET /api/v1/auth/oidc/{provider}/callback`, which is where it collides with the engine's own external-IdP login ([edge.md](edge.md#what-the-engine-apis-split-gets-wrong)).
+`oidc.targetRoutes` names `dfe-engine`, and the engine's PUBLIC route follows it. So an edge policy on a cloud deploy fronts `GET /api/v1/auth/oidc/{provider}/callback`, which is where it collides with the engine's external-IdP login ([edge.md](edge.md#what-the-engine-apis-split-gets-wrong)).
 
 ## A private-CA IdP is not discoverable
 
@@ -62,7 +62,7 @@ So the engine receives `X-Oidc-Subject` with no `X-Oidc-Groups`. `_resolve_group
 {"code": "no_role_granted", "message": "OIDC login refused: no DFE group with a role is linked to your identity provider groups. Ask a DFE administrator to link one."}
 ```
 
-The way out is for the engine to read the ID token itself, instead of trusting a header the gateway can't produce. Until that exists, edge OIDC admits only an account an administrator has added by hand to a group that carries a role. That account then holds that group's roles, the same as a token sign-in would.
+The way out is for the engine to read the ID token itself, instead of trusting a header the gateway can't produce. Until that exists, edge OIDC admits an account an administrator has added by hand to a group with a role, and no other. That account then holds that group's roles, the same as a token sign-in would.
 
 The Envoy Gateway version pinned in `versions.yaml` (`envoy-gateway`) has two more limitations in the same path:
 
@@ -71,27 +71,27 @@ The Envoy Gateway version pinned in `versions.yaml` (`envoy-gateway`) has two mo
 
 ## Argo CD's own login
 
-Argo CD signs in through the provider the gateway already fronts it with. bootstrap reads the gateway's `dfe-oidc-argocd-admin` SecurityPolicy, and `bootstrap/argocd_login.py` turns it into Argo's `oidc.config`: the same issuer and client id, and `clientSecret: $<secret>:client-secret`, a reference to the Secret that policy reads. The value never leaves that Secret. Dex is turned off.
+Argo CD signs in through the provider the gateway fronts it with. bootstrap reads the gateway's `dfe-oidc-argocd-admin` SecurityPolicy, and `bootstrap/argocd_login.py` turns it into Argo's `oidc.config`: the same issuer and client id, and `clientSecret: $<secret>:client-secret`, a reference to the Secret that policy reads. The value never leaves that Secret. Dex is turned off.
 
-`argocd-rbac-cm` maps `dfe-admins` and `dfe-infra` to `role:admin` and `dfe-infra-viewers` to `role:readonly`, the engine's own names (dfe-engine `docs/control-plane/rbac-vocabulary.md`). `dfe-infra` is Argo's admin because its engine role, `infra_admin`, already carries `argo:*`. Any other group signs in and sees nothing. The admin pair is `adminGroups` in `argocd/values/common.yaml`, and `scripts/tests/test_argocd_login.py` fails when the two differ. If a deployment changes `adminGroups` in its own overlay, Argo's admins don't change.
+`argocd-rbac-cm` maps `dfe-admins` and `dfe-infra` to `role:admin` and `dfe-infra-viewers` to `role:readonly`, the engine's names (dfe-engine `docs/control-plane/rbac-vocabulary.md`). `dfe-infra` is Argo's admin because its engine role, `infra_admin`, holds `argo:*`. Any other group signs in and sees nothing. The admin pair is `adminGroups` in `argocd/values/common.yaml`, and `scripts/tests/test_argocd_login.py` fails when the two differ. If a deployment changes `adminGroups` in its overlay, Argo's admins don't change.
 
 - No policy, no SSO. With no provider, or `exposure.groups.admin.enabled: false`, the gateway renders no policy for the route and Argo keeps its local `admin`. The access summary says which one a deployment got.
 - It's read at bootstrap time. On a first bootstrap the gateway syncs after Argo is installed, so the login is read again once the readiness gate passes. A provider added later reaches Argo on the next bootstrap run.
-- The IdP client allows `https://argocd.<domain>/auth/callback`, beside the gateway's own `/oauth2/callback`.
-- The edge still decides who reaches Argo. A `dfe-infra-viewers` user needs that group in `adminGroups` as well, or the gateway refuses them first. That list is also Kafbat's admin role, so a deployment admitting viewers at the edge names Kafbat's admins itself, in `rbac.roles.admin.subjects` of its deploy repo's `infra/kafbat.yaml`.
-- A private-CA IdP on the deployment's own domain is verified against the CA that signed the gateway's certificate, set as Argo's `rootCA`. A public IdP keeps the system roots. The issuer hostname must resolve inside the cluster, as below.
+- The IdP client allows `https://argocd.<domain>/auth/callback`, beside the gateway's `/oauth2/callback`.
+- The edge still decides who reaches Argo. A `dfe-infra-viewers` user needs that group in `adminGroups` as well, or the gateway rejects them first. That list is Kafbat's admin role as well, so a deployment admitting viewers at the edge names Kafbat's admins itself, in `rbac.roles.admin.subjects` of its deploy repo's `infra/kafbat.yaml`.
+- A private-CA IdP on the deployment's domain is verified against the CA that signed the gateway's certificate, set as Argo's `rootCA`. A public IdP keeps the system roots. The issuer hostname must resolve inside the cluster, as below.
 - An adopted Argo is never reconfigured.
 
-## Reaching your own gateway from inside the cluster
+## Reaching the gateway from inside the cluster
 
 A pod that has to use the deployment's public hostname rather than a Service name (the engine fetching an IdP's discovery document, for one) needs two things that are easy to miss.
 
 Egress on the listener port. `network-policies` ships `allow-gateway-egress` for this. The baseline policy permits 443 to anywhere, which reads as "pods may reach the gateway", and they can't. The Envoy Service maps 443 to container port 10443, and NetworkPolicy is evaluated after DNAT, so the packet is judged against 10443 and dropped. Refused-vs-timeout is the tell: 443 straight at the proxy pod is refused by the kernel, 10443 never arrives.
 
-A name that resolves, to an address that hairpins. The deployment owns this one, not DFE. Its own hostnames have to resolve in-cluster, to an address a pod can actually connect to:
+A name that resolves, to an address that hairpins. The deployment owns this one, not DFE. Its hostnames have to resolve in-cluster, to an address a pod can actually connect to:
 
 - With a cloud DNS provider configured, external-dns publishes the records and in-cluster resolution follows the public ones.
-- On a private domain with no cloud DNS, the cluster needs a split-horizon answer for the deployment's domain. That's a cluster-DNS change (a CoreDNS zone or drop-in, whose mechanism differs per distribution), so it belongs in the deployment's own infrastructure config, not in a DFE chart.
+- On a private domain with no cloud DNS, the cluster needs a split-horizon answer for the deployment's domain. That's a cluster-DNS change (a CoreDNS zone or drop-in, whose mechanism differs per distribution), so it belongs in the deployment's infrastructure config, not in a DFE chart.
 - Answer with the gateway Service's ClusterIP, NOT its LoadBalancer VIP. Many on-prem load balancers don't hairpin, so a pod that resolves the VIP connects and then times out. Set `envoyGateway.service` deliberately if the deployment needs a stable name for that record.
 
 SNI and Host stay the public name either way, so Envoy routes on the HTTPRoute hostname and serves the wildcard certificate as normal.

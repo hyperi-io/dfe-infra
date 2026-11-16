@@ -163,15 +163,15 @@ The API key `id` is the SASL username and its `secret` is the SASL password. DFE
 - `kafka.securityProtocol=SASL_SSL`, the one dial every app chart and dfe-engine read their protocol from. PLAIN never crosses a cleartext transport. On the aws root you set none of the mode, the endpoint or this by hand. `DFE_KAFKA_PROVIDER=confluent-cloud` reaches bootstrap, which puts all three on the Argo cluster secret for the layer 2 appsets to hand on.
 - Credentials: put the Kafka API key (username) and secret (password) in the external secret in the deployment's secrets store (Secrets Manager on AWS, OpenBao elsewhere). `kafka.external.auth.type=scram` still works as the user/password carrier. The mechanism itself is PLAIN, derived from the provider and not from `auth.type`.
 - Client config: `dfe kafka client-config --provider confluent-cloud`.
-- Topic size: set the dfe-engine chart's `kafka.messageMaxBytes` to the `max.message.bytes` your topics carry, within your cluster type's ceiling. Unset, the engine creates each source's topics at its own default size, which a cluster capped below it refuses. On the AWS path tofu sets it for you through `DFE_KAFKA_MESSAGE_MAX_BYTES`.
+- Topic size: set the dfe-engine chart's `kafka.messageMaxBytes` to the `max.message.bytes` your topics carry, within your cluster type's ceiling. Unset, the engine creates each source's topics at its default size, which a cluster capped below it rejects. On the AWS path tofu sets it for you through `DFE_KAFKA_MESSAGE_MAX_BYTES`.
 - Topic retention: set the dfe-engine chart's `kafka.topicRetentionMs`, or the topics keep Confluent's default. On the AWS path tofu sets it through `DFE_KAFKA_RETENTION_MS`.
-- Replication: set the dfe-engine chart's `kafka.topicReplicationFactor` to 3. Confluent Cloud refuses any other factor and creates no topic on first write, so a source whose topics are refused never takes data. The layer 2 appsets set it for every external broker.
+- Replication: set the dfe-engine chart's `kafka.topicReplicationFactor` to 3. Confluent Cloud rejects any other factor and creates no topic on first write, so a source with rejected topics never takes data. The layer 2 appsets set it for every external broker.
 
 Confluent Cloud auto-provisions a billable Flink compute pool on cluster create (scalo `ProviderCapabilities.has_billable_side_resources`). Sweep that pool when you tear a cluster down, or it keeps billing.
 
 ## Verification: what is and isn't confirmed
 
-Confirmed by 2026 research (sources in the README):
+Confirmed against the platform's documentation (sources in the README):
 
 - RF is fixed at 3 platform-wide.
 - `min.insync.replicas` is settable per topic, but only 1 or 2.
@@ -185,6 +185,6 @@ NOT verified for the hand-written snippet above, which the `managed-kafka/conflu
 
 - The precise `region` string.
 - Whether the Standard tier (against Enterprise, Dedicated or Freight) meets your throughput.
-- That every topic config key above is editable after create on your tier. Some are create-only, and Confluent's own docs warn config edits can fail after creation.
+- That every topic config key above is editable after create on your tier. Some are create-only, and Confluent's docs warn config edits can fail after creation.
 
 Run `tofu validate` and plan against your org before you apply.

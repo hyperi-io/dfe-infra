@@ -1,6 +1,6 @@
 # Auth testing -- where the identities come from
 
-Proving auth end to end needs real identities in a real identity provider. `dfe-ops idp` stands one up on the deployment's own cluster, so a test never borrows a shared IdP or edits its redirect URIs.
+Testing auth across the whole login path needs identities in a working identity provider. `dfe-ops idp` stands one up on the deployment's cluster, so a test never borrows a shared IdP or edits its redirect URIs.
 
 ## The tester IdP
 
@@ -9,7 +9,7 @@ Proving auth end to end needs real identities in a real identity provider. `dfe-
 - `deploy` generates the client secret and one shared user password and writes both to a mode-0600 file (`--secrets-out`, default `.tmp/tester-idp.env`). Neither is printed or committed. The e2e specs read that password as `E2E_FIXTURE_PASSWORD`, from the file's `TESTER_IDP_USER_PASSWORD` line.
 - `wire-engine` hands the client credentials, the provider definition, the group map and the CA bundle to the engine's namespace, then prints the chart values that pick them up.
 - `status` reports whether it's serving, and `teardown` removes Dex and glauth.
-- `wire-engine --teardown` takes back what `wire-engine` handed over: the provider and group keys in the ConfigMaps, the client Secret, and the copies already seeded onto the engine's config volume. The engine's seed step never deletes, so without it the provider stays live on a persistent volume after `teardown`.
+- `wire-engine --teardown` takes back what `wire-engine` handed over: the provider and group keys in the ConfigMaps, the client Secret, and the copies seeded onto the engine's config volume. The engine's seed step never deletes, so without it the provider stays live on a persistent volume after `teardown`.
 
 Every environment value is a flag: `python3 scripts/dfe-ops idp deploy --help` lists them.
 
@@ -19,30 +19,30 @@ Two files, and the group NAMES are the link between them:
 
 - `bootstrap/fixtures/tester-idp-users.toml` -- the users and groups the IdP serves. `--users-file` on `deploy` points it at a different directory.
 - `bootstrap/fixtures/tester-idp-groups.toml` -- the engine's role, scope and org ids for each of those groups. `wire-engine` writes it to the `dfe-auth-groups` ConfigMap, which `authConfig.groupsConfigMap` seeds into the engine. `--groups-file` points it at a different map.
-- Each group file carries `source_provider`, the `--provider` name (default `dex`), and `source_id`, the claim value that links to it (the entry's `source_id`, else its name). From dfe-engine #669 on, the engine links a claim value to a group only through those two, never through the group's name. A login through any other provider name gets none of these groups.
+- Each group file has `source_provider`, the `--provider` name (default `dex`), and `source_id`, the claim value that links to it (the entry's `source_id`, else its name). From dfe-engine #669 on, the engine links a claim value to a group through those two alone, never through the group's name. A login through any other provider name gets none of these groups.
 
-The engine seeds its own four default groups only into an empty group store, so the map repeats them. Every user is a row in `tests/e2e-ui/specs/engine/oidc-rba.spec.ts`, and `scripts/tests/test_tester_idp.py` fails if the two files stop granting what that spec asserts.
+The engine seeds its four default groups into an empty group store alone, so the map repeats them. Every user is a row in `tests/e2e-ui/specs/engine/oidc-rba.spec.ts`, and `scripts/tests/test_tester_idp.py` fails if the two files stop granting what that spec asserts.
 
-| Fixture user | Carries | Proves |
+| Fixture user | Groups | Tests |
 |---|---|---|
 | `dfe-test` | `dfe-admins` and `dfe-viewers` | A multi-group claim resolves to the union of the roles |
 | `dfe-admin` | `dfe-admins` | The allow-everything baseline |
 | `dfe-test-org-viewer` | `dfe-test-org-viewers`, scoped to `test_org` | An org-scoped role binds at that org and names it in `org_ids` |
 | `dfe-multi-viewer` | `dfe-multi-viewers`, system scope over `test_org` and `test_org_2` | One group confers two orgs, and an org role held at system scope does not over-grant |
-| `dfe-nobody` | `dfe-nogroup`, which maps to no role | The IdP authenticates the user and the engine refuses the login with 401 `no_role_granted`, creating no account |
+| `dfe-nobody` | `dfe-nogroup`, which maps to no role | The IdP authenticates the user and the engine rejects the login with 401 `no_role_granted`, creating no account |
 | `dfe-nested-member` | `dfe-nested-child`, which nests `dfe-nested-parent` | Nested membership never reaches the groups claim and `dfe-nested-child` grants nothing, so the login is refused like `dfe-nobody`'s |
 
-`dfe-infra-admin`, `dfe-infra-viewer`, `dfe-analyst`, `dfe-analyst-viewer`, `dfe-viewer` and `dfe-operator` carry one role group each.
+`dfe-infra-admin`, `dfe-infra-viewer`, `dfe-analyst`, `dfe-analyst-viewer`, `dfe-viewer` and `dfe-operator` hold one role group each.
 
-## Real providers
+## Production providers
 
-The tester IdP proves the engine's login, claim and role mapping. To prove a real provider such as Entra ID, Okta or Google Workspace behaves, you need identities in your own tenant of it.
+The tester IdP proves the engine's login, claim and role mapping. To test a provider such as Entra ID, Okta or Google Workspace, you need identities in your tenant of it.
 
 `dfe-ops idp wire-external` registers one on a deployment: `--type okta|entra_id|google`, the issuer, the client id, the client secret by the NAME of an environment variable (`--client-secret-env`, never the value), and `--groups-dir`, a flat directory of engine group files.
 
-- Group files are named `<provider>-<group>.yaml`, the stem being the engine group name. Each carries `source_provider` and `source_id`, the claim value or directory id that links to it. `source_id` defaults to the stem after the prefix. Only this provider's prefix is taken, so one directory serves every provider.
-- Okta and Entra ID read the groups claim. Entra ID also records its tenant (`--tenant-id`, else the GUID in the issuer path), which the engine's lookup for a user in over 200 groups needs. Google puts no groups in its tokens, so it registers in `api` mode with `enrich_on_login`, and its scopes are always the engine's default.
+- Group files are named `<provider>-<group>.yaml`, the stem being the engine group name. Each has `source_provider` and `source_id`, the claim value or directory id that links to it. `source_id` defaults to the stem after the prefix. This provider's prefix alone is taken, so one directory serves every provider.
+- Okta and Entra ID read the groups claim. Entra ID records its tenant as well (`--tenant-id`, else the GUID in the issuer path), which the engine's lookup for a user in over 200 groups needs. Google puts no groups in its tokens, so it registers in `api` mode with `enrich_on_login`, and its scopes are always the engine's default.
 - `--target k8s` merges the files into the ConfigMaps the engine chart seeds from and applies the client-secret Secret, then prints the chart values that pick them up. `--target docker` writes them into the engine container's config directory and the compose env file, and recreates the engine.
-- `--teardown` removes exactly what the wire recorded, including the copies already seeded into the engine's config volume. `--dry-run` prints the plan with the secret redacted.
+- `--teardown` removes exactly what the wire recorded, including the copies seeded into the engine's config volume. `--dry-run` prints the plan with the secret redacted.
 
-The `oidc-live` Playwright project then signs in through that provider's own login page and checks each user's roles against an expectations table ([`tests/e2e-ui/README.md`](../tests/e2e-ui/README.md)).
+The `oidc-live` Playwright project then signs in through that provider's login page and checks each user's roles against an expectations table ([`tests/e2e-ui/README.md`](../tests/e2e-ui/README.md)).

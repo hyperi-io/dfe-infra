@@ -13,8 +13,8 @@ appNamespace: ""
 # SCRAM-512 is the ONE auth mechanism that works reliably and identically across
 # every option -- Strimzi (local/k8s), Redpanda, and every cloud-managed Kafka
 # (Confluent, MSK SASL/SCRAM). It is the DFE standard for all deployed brokers.
-# (mode=external may use msk_iam where the supplied broker mandates IAM, but the
-# DFE-owned brokers are always SCRAM-512.) BOTH provider paths now enforce it:
+# msk_iam still renders at mode=external, but scalo-rs and scalo-py reject it, so
+# no DFE app connects with it (dfe-infra#292, not planned). BOTH provider paths enforce SCRAM-512:
 # Strimzi via its listeners + KafkaUser, Redpanda via the operator's Redpanda CR
 # (auth.sasl) + User CR. For both, the ClusterExternalSecret writes the
 # app-namespace dfe-kafka-user Secret (username, password, sasl.mechanism), so
@@ -89,8 +89,8 @@ kafka:
       # for reconciling the User CR). Operator generates its password Secret.
       superuserName: "admin"
   # External Kafka (mode=external): connect to a supplied bootstrap endpoint.
-  # auth.type: scram | tls | msk_iam. scram/tls use a Vault-backed secret; msk_iam
-  # uses AWS IAM (IRSA/workload-identity, SASL OAUTHBEARER) -- no static secret.
+  # auth.type: scram | tls | msk_iam. scram/tls use a Vault-backed secret. msk_iam
+  # renders with no static secret, and scalo rejects it, so no app connects (dfe-infra#292).
   external:
     bootstrap: ""
     # The managed broker's own partition count (its num_partitions tofu
@@ -103,8 +103,8 @@ kafka:
     numPartitions: ""
     # Which managed/BYO Kafka this is, as a key in the shared provider table
     # (helm/library/dfe-common/templates/_kafka.tpl): strimzi | redpanda | msk |
-    # redpanda-cloud | confluent-cloud | msk_iam, or the -no-tls pair for a
-    # supplied broker on a cleartext listener. The chart DERIVES
+    # redpanda-cloud | confluent-cloud | msk_iam (renders, scalo rejects it, dfe-infra#292),
+    # or the -no-tls pair for a supplied broker on a cleartext listener. The chart DERIVES
     # security.protocol and sasl.mechanism from it; never hand-set a mechanism.
     #
     # confluent-cloud is the one sanctioned PLAIN target: Confluent Cloud offers

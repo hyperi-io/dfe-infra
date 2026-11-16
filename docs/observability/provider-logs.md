@@ -1,12 +1,10 @@
 # Provider logs in dfe-hyperdx
 
-Self-monitoring has two feeds: the stack's own OTLP, and the infra provider's own logs (the EKS audit log, CloudTrail, a Rancher API server audit log). Both land in dfe-hyperdx.
+Self-monitoring has two feeds: the stack's OTLP, and the infra provider's logs (the EKS audit log, CloudTrail, a Rancher API server audit log). Both land in dfe-hyperdx.
 
 Receivers in the otel collector read the provider's cloud log service, or the Rancher audit file, and send the rows through the collector gateway to the otel database dfe-hyperdx reads. They bypass DFE ingest: no fetcher source, no customer table.
 
 Every row carries `cloud.provider` and `dfe.provider_log.source`, so dfe-hyperdx can filter on them. The rows are generic OTel logs, not typed columns.
-
-## Flavours
 
 `clusterTelemetry.providerLogs.flavour` defaults to `none`.
 
@@ -17,7 +15,7 @@ Every row carries `cloud.provider` and `dfe.provider_log.source`, so dfe-hyperdx
 | `azure` | Diagnostic settings through an Event Hub | `azure_event_hub` (upstream stability: beta) | Chart only. No Azure cloud root exists. |
 | `gcp` | A log sink through a Pub/Sub subscription | `googlecloudpubsub` (upstream stability: beta) | Chart only. No GCP cloud root exists. |
 
-The receivers run in a workload of their own, `<project>-otel-collector-provider-logs`, with their own ServiceAccount. `aws_cloudwatch` makes an STS identity call and dereferences the result without checking it. A failed call exits the collector process. In its own pod that restarts the provider-logs container and leaves the gateway alone.
+The receivers run in a separate workload, `<project>-otel-collector-provider-logs`, with a ServiceAccount of its own. `aws_cloudwatch` makes an STS identity call and dereferences the result without checking it. A failed call exits the collector process. In a separate pod that restarts the provider-logs container and leaves the gateway alone.
 
 ## AWS
 
@@ -27,12 +25,12 @@ Under the `otel` sink both groups keep `telemetry.aws.forced_retention_days` in 
 
 `telemetry.aws.eks_log_types` picks the EKS streams. It defaults to `audit`.
 
-The role is created under the account's permissions boundary when the cloud guard configures one, and the boundary has to allow `logs:FilterLogEvents`. Without it the role's own grant has no effect, the receiver is denied on every poll, and no row arrives. The cloud guard's preflight refuses a run whose boundary lacks it.
+The role is created under the account's permissions boundary when the cloud guard configures one, and the boundary has to allow `logs:FilterLogEvents`. Without it the role's grant has no effect, the receiver is denied on every poll, and no row arrives. The cloud guard's preflight rejects a run with a boundary that lacks it.
 
-The receiver keeps its read offsets on a small PersistentVolumeClaim, one replica, replaced with `Recreate`. A replacement pod resumes from the checkpoint. The lookback (`aws.initialLookback`) only applies when there is no checkpoint yet.
+The receiver keeps its read offsets on a small PersistentVolumeClaim, one replica, replaced with `Recreate`. A replacement pod resumes from the checkpoint. The lookback (`aws.initialLookback`) applies when there is no checkpoint yet, and not otherwise.
 
 Recovery after an outage has three limits:
-- The checkpoint. Events before it are already delivered.
+- The checkpoint. Events before it are delivered.
 - The CloudWatch retention. Events older than it are gone, whatever the checkpoint says.
 - The exporter retry ceiling. If the gateway is down for longer than `maxElapsedTime`, the queued batches are dropped.
 
@@ -40,20 +38,18 @@ A missing group or a role without access is logged by the receiver on every poll
 
 ## Rancher
 
-The audit log path, the node selector and the tolerations all come from values. The defaults are RKE2's: `/var/lib/rancher/rke2/server/logs/audit.log` and the `node-role.kubernetes.io/control-plane` label. Another distribution sets its own.
+The audit log path, the node selector and the tolerations all come from values. The defaults are RKE2's: `/var/lib/rancher/rke2/server/logs/audit.log` and the `node-role.kubernetes.io/control-plane` label. Another distribution sets its path and label.
 
-Turning API server auditing on is the operator's job. RKE2 writes that file only once an audit policy is set. With auditing off the file isn't there, the receiver finds nothing to read, and the collector stays up.
+Turning API server auditing on is the operator's job. RKE2 writes that file once an audit policy is set, and not before. With auditing off the file isn't there, the receiver finds nothing to read, and the collector stays up.
 
 ## Why this path
 
-A dfe-fetcher source on the normal data path doesn't fit. dfe-fetcher reads only a static AWS key pair, so it can't use Pod Identity. It would also put self-monitoring on the managed ingest path, and self-monitoring has to keep reporting when ingest breaks.
+A dfe-fetcher source on the normal data path doesn't fit. dfe-fetcher reads a static AWS key pair and nothing else, so it can't use Pod Identity. It would put self-monitoring on the managed ingest path as well, and self-monitoring has to keep reporting when ingest breaks.
 
-The collector already ships a receiver per cloud, and its Go SDK picks up Pod Identity natively.
+The collector ships a receiver per cloud, and its Go SDK picks up Pod Identity natively.
 
 Under the `otel` sink, CloudWatch is a catch-up window and the otel database holds the history, so retention is pre-trimmed. Hence the shortest period by default.
 
-What it costs. Upstream labels the awscloudwatch receiver alpha, so we pin the collector version and the cloud cycle tests the feed. DFE's own AWS sources and fetchers are stable and unaffected. The rows are generic OTel logs. GuardDuty and Security Hub findings have no receiver, so they stay out.
+What it costs. Upstream labels the awscloudwatch receiver alpha, so we pin the collector version and the cloud cycle tests the feed. DFE's AWS sources and fetchers are stable and unaffected. The rows are generic OTel logs. GuardDuty and Security Hub findings have no receiver, so they stay out.
 
-## What the cloud cycle checks
-
-The integration smoke test requires a fresh EKS audit row from the AWS flavour. CloudTrail is reported and never fails the run, because management events are sparse on a quiet account.
+The integration smoke test needs a fresh EKS audit row from the AWS flavour. CloudTrail is reported and never fails the run, because management events are sparse on a quiet account.

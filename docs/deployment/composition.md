@@ -16,11 +16,11 @@
 | `dfe-transform-vector` | | | | | | X |
 | `culvert` | n/a | n/a | | | n/a | n/a |
 
-`python3 scripts/composition.py` prints that table from the manifest.
+`python3 scripts/composition.py` prints the same sets from the manifest, one list per profile.
 
 A fetcher instance is a source's processing step, so it arrives when the engine writes the source, not with the tier. Each transform declares `idle_when` instead. A tier seeds one of each, stood up empty and Ready, and the first source fills it rather than creating it. `per_config` multiplies them from there. Seeding places the first and doesn't cap the count. culvert is offered on the two HA tiers and enabled by an operator adding its values file.
 
-On Compose the fetcher and the transforms start one container per source when the engine binds a source to one, and nothing starts idle. dfe-docker's `single-kafka` profile also runs one archiver. `docker-slim` runs the core data path alone.
+On Compose the fetcher and the transforms start one container per source when the engine binds a source to one, and nothing starts idle. dfe-docker's `single-kafka` profile runs one archiver as well. `docker-slim` runs the core data path alone.
 
 The six profile names come from `scripts/profiles.py`: four Kubernetes tiers and two Compose ones. An app can be default on a cluster and opt-in on a laptop.
 
@@ -30,22 +30,22 @@ Helm can't read `apps.yaml`, so the derived set is rendered into each tier's val
 
     python3 scripts/composition.py --write-seed
 
-That writes `deployRepo.seedApps` into `argocd/values/profile-<tier>.yaml`. The bundled deploy repo seeds it on a fresh deployment, with one `values/<app>-<instance>-values.yaml` per app and one Argo Application per file. The forgejo chart's own default is empty on purpose, because a list there would be a second copy of the composition that nothing keeps in step.
+That writes `deployRepo.seedApps` into `argocd/values/profile-<tier>.yaml`. The bundled deploy repo seeds it on a fresh deployment, with one `values/<app>-<instance>-values.yaml` per app and one Argo Application per file. The forgejo chart's default is empty on purpose, because a list there would be a second copy of the composition that nothing keeps in step.
 
-The engine reflects the whole manifest, not only the derived set, so the chart that mounts it carries its own copy:
+The engine reflects the whole manifest, not the derived set alone, so the chart that mounts it has a copy of its own:
 
     python3 scripts/composition.py --write-catalogue
 
 That writes `helm/charts/dfe-extras/files/apps.yaml`, the manifest byte for byte under a generated banner. dfe-extras mounts it as a ConfigMap and points `DFE_ENGINE_APP_CATALOGUE_FILE` at it. Reloader restarts the engine when that ConfigMap changes, and after the restart `GET /api/v1/apps` returns the updated catalogue.
 
-An engine with no mount falls back to the snapshot baked into its image, and adding an app would then need an engine release. So `dfe-ops stack-deploy` fails its pre-flight when the copy is stale or the render carries no catalogue.
+An engine with no mount falls back to the snapshot baked into its image, and adding an app would then need an engine release. So `dfe-ops stack-deploy` fails its pre-flight when the copy is stale or the render has no catalogue.
 
 dfe-docker keeps its profiles in `service_profiles.yaml` by hand, and nothing generates them. `scripts/dfe-stack render --docker-profile <slim|single>` prints the projection of `default_in` for the matching `docker-<mode>` profile, to compare against that file. `dfe-engine` and `dfe-ui` become the `core` footprint key, `dfe-hyperdx` becomes `hyperdx`, and every other app becomes a `services:` entry.
 
 ## Deployed before it has work
 
-An app in the default composition is deployed whether or not anything has configured it, so an unconfigured one starts rather than crash-loops. Those apps declare `idle_when`, the config paths whose emptiness means no work, and carry the matching predicate in their own code. The Rust apps never read this manifest.
+An app in the default composition is deployed whether or not anything has configured it, so an unconfigured one starts rather than crash-loops. Those apps declare `idle_when`, the config paths that mean no work when empty, and the matching predicate lives in each app's code. The Rust apps never read this manifest.
 
 An idle app is Ready, serves health and metrics, opens no broker connection and binds no listener. It reports the `work_config` health component Degraded with the reason, holds the `pipeline_idle` gauge at 1, and starts the moment a config change gives it work. `dfe-ops acceptance --mode <tier>` asserts that against a live deploy, because the readiness gate passes an idle app by design.
 
-An app whose work can arrive without a config change declares no `idle_when`. The loader is the case: an empty topic list is auto-discovery, so a topic appearing on the broker gives it work, and the gate only wakes on a config change.
+An app whose work can arrive without a config change declares no `idle_when`. The loader is the case: an empty topic list is auto-discovery, so a topic appearing on the broker gives it work, and the gate wakes on a config change alone.

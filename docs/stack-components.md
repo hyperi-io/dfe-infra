@@ -12,7 +12,7 @@
 
 # DFE stack components - render class map
 
-"DFE X.Y.Z" is one logical version that pins every moving part on BOTH the k8s path (helm charts, CRs, appsets) and the docker path (dfe-docker `.env`), each rendered its own way. This page puts every component in a class, so the render tool and the drift check know how to treat each one.
+"DFE X.Y.Z" is one logical version that pins every moving part on BOTH the k8s path (helm charts, CRs, appsets) and the docker path (dfe-docker `.env`), each rendered differently. This page puts every component in a class, so the render tool and the drift check know how to treat each one.
 
 `versions.yaml` is the SSoT. Each component below names its SSoT field, how the k8s path renders it, how the docker path renders it, and the cascade rule.
 
@@ -24,9 +24,9 @@
 | B | third-party via an operator + a CR WE author | OUR chart templates the CR image/version from the SSoT logical version. The operator chart is a SEPARATE k8s-only pin | plain upstream image in `.env` |
 | C | upstream chart we do NOT template, k8s-ONLY | appset/chart pins the chart version | none (not in compose) |
 | D | third-party plain image in BOTH paths | OUR chart sets the image via values from the SSoT | same upstream image in `.env` |
-| E | third-party plain image, docker-ONLY (k8s uses a different mechanism, or the k8s equivalent is not yet wired) | none, or a different component does the job | plain upstream image in `.env` |
+| E | third-party plain image, docker-ONLY (k8s uses a different mechanism, or has no equivalent) | none, or a different component does the job | plain upstream image in `.env` |
 
-Class E exists because not every docker image has a k8s cascade. The compose stack needs a reverse proxy and a Mongo-wire backend, and k8s solves both with different components. Rendering must emit these for docker only.
+Class E exists because not every docker image has a k8s cascade. The compose stack needs a reverse proxy and a Mongo-wire backend, and k8s solves both with different components. Rendering must emit these for docker alone.
 
 ## Class A - dfe-* owned apps
 
@@ -52,46 +52,46 @@ Notes:
 
 - dfe-transform-splack and dfe-transform-wasm are COMING, not members. They're alpha and unpublished, so their `apps:` pins are commented out and they have no chart. Every line to uncomment when they ship carries the word `coming` beside one of the two names, so grep that.
 - dfe-transform-elastic is published and pinned by digest from 2.2.1 (v1.1.20). Older 2.2.0 release-candidate blocks in `versions.yaml` predate its first image and keep their "not yet published" comments as a record of that cut.
-- dfe-hyperdx is our extended fork of upstream HyperDX. Its k8s thin chart pulls `<registry>/dfe-hyperdx` at `content.dfe-hyperdx`. docker pulls `ghcr.io/hyperi-io/hyperi-hyperdx`. That's a DIFFERENT image name from k8s (`hyperi-hyperdx` vs `dfe-hyperdx`), so reconcile the name or the render must map the two. Its SSoT lives in `content.dfe-hyperdx`, not `apps:`, pinned by digest from 2.2.1 (v0.3.17).
+- dfe-hyperdx is our extended fork of upstream HyperDX. Both paths pull `<registry>/dfe-hyperdx` at `content.dfe-hyperdx` (dfe-docker `docker-compose.yml` names the same image). Its SSoT lives in `content.dfe-hyperdx`, not `apps:`, pinned by digest from 2.2.1 (v0.3.17).
 
 ## Class B - third-party via an operator + a CR we author
 
-The operator chart's appVersion isn't ours to move. We own the SERVICE version, and it's set in the CR our chart templates. The SSoT holds the LOGICAL service version. The operator chart is a SEPARATE, k8s-only pin on its own release line.
+The operator chart's appVersion isn't ours to move. We own the SERVICE version, and it's set in the CR our chart templates. The SSoT holds the LOGICAL service version. The operator chart is a SEPARATE, k8s-only pin on a release line of its own.
 
 ### ClickHouse
 
 - SSoT logical version: `services.clickhouse-version` (an LTS line).
-- k8s: `helm/charts/clickhouse-cluster` values `clickhouse.version` -> ClickHouseCluster CR `spec.image`. The keeper image tag mirrors it. Operator: `operators.clickhouse-operator` (k8s-only, scale mode only).
+- k8s: `helm/charts/clickhouse-cluster` values `clickhouse.version` -> ClickHouseCluster CR `spec.image`. The keeper image tag mirrors it. Operator: `operators.clickhouse-operator` (k8s-only, scale mode alone).
 - docker: `CLICKHOUSE_VERSION` -> `clickhouse/clickhouse-server:<ver>@digest`.
 - Cascade: SAME upstream image both sides (`clickhouse/clickhouse-server`). One number, both refs.
 
 ### Kafka
 
 - SSoT logical version: `services.kafka-version` (held at the pinned Strimzi operator's ceiling).
-- k8s: `helm/charts/kafka` values `kafka.version` -> Strimzi Kafka CR `spec.kafka.version`. Strimzi then pulls its OWN internal `quay.io/strimzi/kafka:*-kafka-<kafka-version>` image for the brokers. Operator: `operators.strimzi-kafka-operator` (k8s-only).
+- k8s: `helm/charts/kafka` values `kafka.version` -> Strimzi Kafka CR `spec.kafka.version`. Strimzi then pulls an internal `quay.io/strimzi/kafka:*-kafka-<kafka-version>` image of its OWN for the brokers. Operator: `operators.strimzi-kafka-operator` (k8s-only).
 - Kafka CLI: `kafka.cliImage` in `helm/charts/kafka` values names a `quay.io/strimzi/kafka:<strimzi>-kafka-<kafka-version>@digest` image for the MSK bootstrap Job and the smoke-test and diagnostics client pods. Its `-kafka-` suffix is held to `kafka.version` by `scripts/tests/test_smoke_kafka_client_image.py`. It has no `versions.yaml` key.
 - docker: `APACHE_KAFKA_VERSION` -> `apache/kafka:<ver>@digest`.
-- Cascade: TWO BROKER IMAGES for one logical number (strimzi-internal vs apache/kafka). Same logical 4.x, two renderers that each know their own image. Collapse the two into one image name and one of the two paths stops resolving. That's why the model is "logical version, two renderings".
-- OPERATOR CEILING (hard rule): each Strimzi release supports a fixed set of Kafka versions ONLY, the set strimzi's kafka-versions.yaml lists. The logical `kafka-version` must never exceed what the pinned strimzi operator supports, or the k8s path breaks. The org preset bounds Renovate to that ceiling (see "Renovate and the operator ceilings"). Bump it by hand, verified against strimzi's kafka-versions.yaml, in lockstep with the operator.
+- Cascade: TWO BROKER IMAGES for one logical number (strimzi-internal vs apache/kafka). Same logical 4.x, two renderers that each know their image. Collapse the two into one image name and one of the two paths stops resolving. That's why the model is "logical version, two renderings".
+- OPERATOR CEILING (hard rule): each Strimzi release supports a fixed set of Kafka versions and no others, the set strimzi's kafka-versions.yaml lists. The logical `kafka-version` must never exceed what the pinned strimzi operator supports, or the k8s path breaks. The org preset bounds Renovate to that ceiling (see "Renovate and the operator ceilings"). Bump it by hand, verified against strimzi's kafka-versions.yaml, in lockstep with the operator.
 
 ### Redpanda (opt-in, BSL)
 
 - SSoT logical version: `services.redpanda-version`.
-- k8s: `helm/charts/kafka` values `kafka.redpanda.image.tag` -> Redpanda CR `spec.clusterSpec.image.tag`. Operator: `operators.redpanda-operator` (k8s-only, opt-in). The broker tag is PAIRED with the operator chart, so move them together (also bounded in the org preset, for the same reason as kafka).
+- k8s: `helm/charts/kafka` values `kafka.redpanda.image.tag` -> Redpanda CR `spec.clusterSpec.image.tag`. Operator: `operators.redpanda-operator` (k8s-only, opt-in). The broker tag is PAIRED with the operator chart, so move them together (bounded in the org preset as well, for the same reason as kafka).
 - docker: `REDPANDA_VERSION` -> `redpandadata/redpanda:<ver>@digest`.
 - Cascade: SAME image both sides. One number, both refs.
 
 ## Class C - upstream chart, k8s-only, no docker, no cascade
 
-Not in compose. The SSoT pins the chart version, appset/bootstrap uses it, and the drift check enforces it where a hardcoded pin exists. It already works, so leave it as it is.
+Not in compose. The SSoT pins the chart version, appset/bootstrap uses it, and the drift check enforces it where a hardcoded pin exists. It works, so leave it as it is.
 
-- bootstrap: `cert-manager`, `external-secrets`, `argocd`, `valkey` (plain manifest image), `local-path-provisioner`, `metallb` (on-prem only).
-- operators: `envoy-gateway`, `external-dns`, `keda`, `metrics-server`, `reloader`, the three OPERATOR chart pins (`strimzi-kafka-operator`, `clickhouse-operator`, `redpanda-operator` - the operator's own release line, distinct from the class-B service version), and `documentdb-operator` (see the DocumentDB store below).
+- bootstrap: `cert-manager`, `external-secrets`, `argocd`, `valkey` (plain manifest image), `local-path-provisioner`, `metallb` (on-prem alone).
+- operators: `envoy-gateway`, `external-dns`, `keda`, `metrics-server`, `reloader`, the three OPERATOR chart pins (`strimzi-kafka-operator`, `clickhouse-operator`, `redpanda-operator` - the operator's release line, distinct from the class-B service version), and `documentdb-operator` (see the DocumentDB store below).
 - data: `otel-collector`, `forgejo` (bundled deploy-repo fallback, k8s-only). `postgresql` is no chart or image. It records the PostgreSQL major the AWS toolbox installs psql at.
 - the DocumentDB store, dfe-hyperdx's metadata on k8s (dfe-docker runs DocumentDB Local, `services.documentdb-local`, class E below):
-  - The operator is the OCI chart `oci://ghcr.io/documentdb/documentdb-operator`, by digest, in `argocd/appsets/layer1-addons.yaml`. Its chart bundles CloudNativePG and installs it into `cnpg-system`, and the operator, sidecar injector and CloudNativePG images carry their digests in the tag overrides.
+  - The operator is the OCI chart `oci://ghcr.io/documentdb/documentdb-operator`, by digest, in `argocd/appsets/layer1-addons.yaml`. Its chart bundles CloudNativePG and installs it into `cnpg-system`, and the operator, sidecar injector and CloudNativePG images have their digests in the tag overrides.
   - `helm/charts/documentdb` renders the DocumentDB CR, whose values name the extension, gateway and PostgreSQL images tag@sha256.
-  - `check_versions_drift.py` reads every one of these pins. <!-- docs-gate: allow process -- 2.2.1-rc.17 is a published stack tag --> Their versions.yaml keys start with the stack cut after 2.2.1-rc.17, and until then each check is noted as pending rather than compared (`PENDING_MIRRORS`).
+  - `check_versions_drift.py` reads every one of these pins. <!-- docs-gate: allow process -- 2.2.1-rc.17 is a published stack tag --> Their versions.yaml keys exist from the stack cut after 2.2.1-rc.17. An older stack has none, and its check is noted as pending rather than compared (`PENDING_MIRRORS`).
 
 ## Class D - third-party plain image, BOTH paths
 
@@ -99,7 +99,7 @@ OUR chart sets the image via values from the SSoT, and docker sets the same upst
 
 ### Kafbat (Kafka UI)
 
-- SSoT: `services.kafbat` (tag@sha256). k8s: `helm/charts/kafbat` `image.tag`. docker: `KAFBAT_VERSION` -> `ghcr.io/kafbat/kafka-ui`. ALIGNED today.
+- SSoT: `services.kafbat` (tag@sha256). k8s: `helm/charts/kafbat` `image.tag`. docker: `KAFBAT_VERSION` -> `ghcr.io/kafbat/kafka-ui`. ALIGNED.
 
 ## Class E - third-party plain image, docker-ONLY
 
@@ -111,7 +111,7 @@ OUR chart sets the image via values from the SSoT, and docker sets the same upst
 ### Envoy (dfe-proxy)
 
 - SSoT: `services.envoy-proxy` (tag@sha256). docker: `DFE_PROXY_VERSION` -> `envoyproxy/envoy`. The compose stack's entrypoint, fronting dfe-ui and dfe-engine on one origin.
-- Docker-ONLY despite the name. k8s runs Envoy too, but installs it via envoy-gateway (`operators.envoy-gateway`), which carries its OWN proxy image. So there's no cascade from this pin, and the two versions move independently.
+- Docker-ONLY despite the name. k8s runs Envoy too, but installs it via envoy-gateway (`operators.envoy-gateway`), which has a proxy image of its OWN. So there's no cascade from this pin, and the two versions move independently.
 - It replaced nginx here on 2026-08-18 (dfe-docker#8). OSS nginx has no free inbound OIDC, and Envoy's oauth2/jwt_authn filters are Apache-2.0 and are where an external OIDC issuer plugs in.
 - Pin the UBUNTU-based `vX.Y.Z` tag, not `distroless-*`. dfe-docker's compose healthcheck drives the admin `/ready` over bash's `/dev/tcp`, and distroless ships no shell. Envoy publishes no alpine variant and no LTS line. It supports the newest four minors, so track the newest.
 
@@ -125,13 +125,12 @@ OUR chart sets the image via values from the SSoT, and docker sets the same upst
 
 1. CLOSED - the docker proxy is in the SSoT. It was added as a docker-only (class E) pin, and on 2026-08-18 it became `services.envoy-proxy` when dfe-docker swapped nginx for Envoy. Lesson kept: a compose image whose var is a hard-fail `${...:?}` MUST have an SSoT entry. Renaming the IMAGE without renaming that entry renders a valid tag@digest for the wrong repository, which is exactly how `envoyproxy/envoy:1.31-alpine@<nginx digest>` reached a VM.
 <!-- docs-gate: allow process -- 2.2.1-rc.17 is a published stack tag -->
-2. OPEN - the DocumentDB pins have no versions.yaml keys yet. The stack cut after 2.2.1-rc.17 adds them, and the drift checks for them stop being pending.
+2. CLOSED - the DocumentDB pins have versions.yaml keys from the stack cut after 2.2.1-rc.17 (`documentdb-operator`, `documentdb`, `documentdb-gateway`, `documentdb-postgres`).
 3. Kafka/Redpanda operator ceiling. `kafka-version` <= the pinned strimzi's supported set, `redpanda-version` paired with the redpanda operator chart. Both are bounded in the org preset and bumped by hand with their operator.
-4. dfe-hyperdx image-name split. k8s pulls `dfe-hyperdx`, docker pulls `hyperi-hyperdx`. Reconcile the name or map it explicitly in the render.
 
 ## Renovate and the operator ceilings
 
-This repo extends `github>hyperi-io/renovate-config` and adds nothing but the description at the top of `renovate.json`. It carried a standalone config from 2026-07-16 to 2026-08-04, which is why it missed the org cooldown behaviour, the CVE bypass and the PR-only policy for that window.
+This repo extends `github>hyperi-io/renovate-config`. `renovate.json` adds custom managers scoped to the stack under development, and `gitIgnoredAuthors` for the propagate workflow's commits.
 
 The preset bounds the operator-coupled versions with `allowedVersions` rules, keyed by PACKAGE. The bounds themselves live in the preset:
 
@@ -141,6 +140,6 @@ The preset bounds the operator-coupled versions with `allowedVersions` rules, ke
 | `services.kafka-version` | the pinned strimzi's supported set |
 | `services.redpanda-version` | the pinned redpanda-operator's tested pairing |
 
-They're CONSTRAINED, not disabled. Patches within the line still flow, so gated doesn't mean unwatched. Gating by package rather than by file is the point. Nothing parses `versions.yaml`, so gating that file alone left the same image pinned in a compose file, a CI script or a chart values file wide open. That produced dfe-infra#32, dfe-engine#117 and dfe-loader#94.
+They're CONSTRAINED, not disabled. Patches within the line still flow, so gated doesn't mean unwatched. Gating by package rather than by file is the point. Gating `versions.yaml` alone left the same image pinned in a compose file, a CI script or a chart values file wide open (dfe-infra#32, dfe-engine#117 and dfe-loader#94).
 
 Widen a bound only in lockstep with its operator, and re-run `dfe-stack compat-check --strict`.
