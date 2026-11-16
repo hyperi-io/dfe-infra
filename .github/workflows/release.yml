@@ -1,19 +1,5 @@
-# Explicit-version stack tagger + manifest publisher.
-#
-# The stack version is versions.yaml `current` (a CURATED manifest decision, not
-# commit-derived). On push to main this:
-#   1. GATES the stack: drift-check + compat-check --strict + release-gate + the
-#      third-party amd64/arm64 check + a live-registry digest verify, all read
-#      anonymously because every image the stack pins is public.
-#   2. reads `current`; if its tag already exists -> nothing to cut (idempotent,
-#      so editing pins WITHOUT bumping `current` just re-runs the gate).
-#   3. else cuts the `current` tag, then renders + signs + publishes the manifest
-#      INLINE (folded from the old stack-manifest.yml -- a GITHUB_TOKEN-pushed tag
-#      does NOT re-trigger a separate workflow, so publishing must live here).
-#   4. on a release-maturity tag, advances the `latest` pointer through a pull
-#      request that merges once main's required checks pass on it.
-#
-# NEVER hand-tag: humans curate `current` + the stacks entry; this cuts the tag.
+# Gates the stack, cuts the `current` tag, publishes and signs the manifest, and advances `latest`.
+# Nobody hand-tags. docs/ci-maintenance-design.md, "CI workflows".
 name: Stack Release
 
 on:
@@ -29,23 +15,19 @@ permissions:
   packages: write   # push the OCI artifact
   id-token: write   # cosign keyless via GitHub OIDC
 
-# Serialise release runs so two quick pushes to versions.yaml cannot cut/publish
-# or advance `latest` concurrently (the tag + manifest are already immutable by
-# the time latest advances). Do NOT cancel-in-progress -- a mid-flight publish
-# must finish.
+# Serialised so two pushes cannot cut or advance `latest` at once, and never cancelled, because a mid-flight
+# publish must finish.
 concurrency:
   group: stack-release
   cancel-in-progress: false
 
-# The same Helm helm-lint.yml pins, so the release gate resolves chart appVersions
-# exactly as the PR check did.
+# The Helm helm-lint.yml pins (check_versions_drift.py holds the two equal).
 env:
   HELM_VERSION: "4.3.0"
 
 jobs:
   release:
     name: gate, tag `current`, publish + sign the manifest
-    # A named runner image, so a move of the ubuntu-latest label cannot swap the python3 and tools these steps run on.
     runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -59,15 +41,13 @@ jobs:
           python3 scripts/dfe-stack compat-check --strict
           python3 scripts/dfe-stack release-gate
 
-      # The chart-installed add-ons take their image tags from their chart's
-      # appVersion, which --resolve-charts reads with helm.
+      # --resolve-charts reads each chart's appVersion with helm.
       - name: Install Helm
         uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         with:
           version: ${{ env.HELM_VERSION }}
 
-      # The verdicts helm-lint.yml's arch job proved on main, so a digest-pinned image it
-      # already read is not read again here.
+      # The verdicts helm-lint.yml's arch job saved, so a digest-pinned image is not read twice.
       - name: Restore the proven image verdicts
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -77,8 +57,7 @@ jobs:
             image-arch-verdicts-${{ hashFiles('versions.yaml', 'helm/charts/forgejo/values.yaml') }}-
             image-arch-verdicts-
 
-      # Every image is public, so this needs no credential. The DFE
-      # images are dfe-stack release-gate's, above.
+      # Anonymous, because every image is public. DFE images are dfe-stack release-gate's, above.
       - name: Gate -- every pinned third-party image ships linux/amd64 and linux/arm64
         id: arch
         run: python3 scripts/check_image_arch.py --third-party-only --resolve-charts --verdict-cache "${RUNNER_TEMP}/image-arch-verdicts.json" --seed scripts/image-arch-proven.json
@@ -91,8 +70,7 @@ jobs:
           path: ${{ runner.temp }}/image-arch-verdicts.json
           key: image-arch-verdicts-${{ hashFiles('versions.yaml', 'helm/charts/forgejo/values.yaml') }}-${{ github.run_id }}-${{ github.run_attempt }}
 
-      # Every DFE image and thin chart is public, so verify reads each tag's digest
-      # anonymously through docker buildx imagetools; one an outsider cannot pull fails here.
+      # Anonymous through docker buildx imagetools, so an image an outsider cannot pull fails here.
       - name: Gate -- every pinned DFE image and chart digest matches the registry
         run: python3 scripts/dfe-stack verify
 

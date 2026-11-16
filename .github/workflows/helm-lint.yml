@@ -1,15 +1,13 @@
 # Lints all Helm charts on every PR and push to main.
 name: Helm Lint
 
-# No `paths:` here: a PR outside them would start no run, and a required check
-# that never reports blocks the merge. The `changes` job applies the filter.
+# No `paths:` here, the `changes` job filters. docs/ci-maintenance-design.md, "CI workflows".
 on:
   push:
     branches: [main]
   pull_request:
 
-# Nothing here writes to this repo. The cross-repo reads use GitHub App tokens
-# minted per step, which these scopes do not govern.
+# Nothing here writes to this repo. Cross-repo reads use App tokens minted per step, which these scopes do not govern.
 permissions:
   contents: read
 
@@ -18,8 +16,6 @@ env:
   HELM_VERSION: "4.3.0"
 
 jobs:
-  # Every other job needs this one and runs unless it positively found nothing
-  # in its paths, so a failure here runs the checks rather than skipping them.
   changes:
     name: changed paths (helm lint)
     runs-on: ubuntu-26.04
@@ -29,7 +25,6 @@ jobs:
       images: ${{ steps.images.outputs.relevant }}
       published: ${{ steps.published.outputs.relevant }}
     steps:
-      # Depth 2 carries a pull request merge commit's two parents.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 2
@@ -83,10 +78,8 @@ jobs:
             # test_docs_aggregate.py loads docs-site/scripts/aggregate.py and copies content-root/.
             docs-site/**
 
-      # The third-party arch check reads public registries, which rate-limit a shared
-      # runner, so it runs only where its verdict can change: the pins it reads and the
-      # code that reads them. test_helm_lint_triggers.py holds this list to the
-      # checker's own import closure.
+      # Registries rate-limit a shared runner, so the arch check runs only where its verdict can change.
+      # test_helm_lint_triggers.py holds this list to the checker's import closure.
       - name: Match the changed files against what the arch check reads
         id: images
         uses: ./.github/actions/changes
@@ -117,10 +110,8 @@ jobs:
             .python-version
             scripts/tests/requirements-ci.txt
 
-      # The published-chart renders pull every thin chart from the registry, so they run
-      # only where their verdict can change: the pins, the goldens and contracts they are
-      # held to, and what the render layers. test_helm_lint_triggers.py holds this list
-      # to the render's own inputs.
+      # The published-chart renders pull every thin chart from the registry, so they run only where their verdict can change.
+      # test_helm_lint_triggers.py holds this list to the render's inputs.
       - name: Match the changed files against what the published renders read
         id: published
         uses: ./.github/actions/changes
@@ -149,7 +140,6 @@ jobs:
     name: helm lint + yaml validate
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.relevant != 'false' }}
-    # A named runner image, so a move of the ubuntu-latest label cannot swap the tools these steps run on.
     runs-on: ubuntu-26.04
     steps:
       # Full history carries the stack tags, which test_stack_freeze.py holds every released block to.
@@ -157,9 +147,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      # The repo's Python, from .python-version, in a venv outside the checkout so no walk of
-      # the tree reaches its site-packages. The install is a step of its own because
-      # `uv run --with-requirements` does not check hashes.
+      # A venv outside the checkout, so no walk of the tree reaches its site-packages. The install is its own step because `uv run --with-requirements` does not check hashes.
       - name: Set up uv and the repo's Python
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
@@ -167,8 +155,7 @@ jobs:
           venv-path: ${{ runner.temp }}/venv
           enable-cache: false
 
-      # A python3 that is not the venv's would run every step below on the runner's own
-      # Python and still pass, so the version is checked before anything runs on it.
+      # A python3 that is not the venv's would run every step below on the runner's own Python and still pass, so the version is checked first.
       - name: Install the pinned test dependencies, hashes required
         run: |
           uv pip install --require-hashes -r scripts/tests/requirements-ci.txt
@@ -189,106 +176,73 @@ jobs:
           args: format --check
           src: .
 
-      # Runs first: a drift check whose patterns have stopped matching prints
-      # the same OK as one that is working.
       - name: Drift-check failure paths
         run: python3 scripts/tests/test_check_versions_drift.py
 
-      # Ties renovate.json's customManager regex to versions.yaml: a manager
-      # that matches nothing proposes nothing and reports no error.
       - name: SSoT annotation + Renovate manager contract
         run: python3 scripts/tests/test_dfe_stack.py
 
-      # The suite.yaml reader is a hand-written subset parser: a shape it
-      # cannot read fails here before it fails inside a tool.
       - name: suite.yaml reader and queries
         run: python3 scripts/tests/test_suite_graph.py
 
-      # A drift check that has stopped matching prints the same OK as one
-      # that is working, so each of its verdicts gets a case that produces it.
       - name: Suite drift check failure paths
         run: python3 scripts/tests/test_check_suite_drift.py
 
       - name: Terraform-output reader
         run: python3 scripts/tests/test_bridge.py
 
-      # A namespaceSelector naming an absent namespace matches nothing and
-      # raises no error (#136), so the guard's failure paths run first.
       - name: Namespace drift failure paths
         run: python3 scripts/tests/test_check_namespace_drift.py
 
-      # Renovate rewrites a value and never reads the comment; a cut clones the
-      # previous block's comments onto pins it then moves. Either way the
-      # evidence detaches, and the file's whole value is that it can be trusted.
       - name: Pin evidence failure paths
         run: python3 scripts/tests/test_pin_evidence.py
 
-      # `with` skips a boolean false, so a dial written that way renders nothing
-      # for the deployment that asked for it off, leaving the consumer default.
       - name: No chart gates a boolean dial on `with`
         run: python3 scripts/tests/test_with_on_a_boolean.py
 
       - name: Version drift check (versions.yaml is SSoT)
         run: python3 scripts/check_versions_drift.py
 
-      # Gates the stack under development only. Historical blocks are frozen
-      # records of what shipped; `--all` reports their backlog without failing.
+      # Gates the stack under development only. `--all` reports the frozen blocks' backlog without failing.
       - name: Pin evidence check (a bump must move its justification)
         run: python3 scripts/check_pin_evidence.py
 
       - name: Namespace drift check (common.yaml is SSoT)
         run: python3 scripts/check_namespace_drift.py
 
-      # Cross-repo citations are SKIPPED on this bare checkout and said so;
-      # the in-repo half (structure, charts, pins, the docs diagrams) is
-      # binding. --strict belongs to an operator run with the member clones
-      # on disk, which a runner does not have.
+      # Cross-repo citations are skipped on this bare checkout and said so. --strict is for an operator run with the member clones on disk.
       - name: Suite graph drift check (suite.yaml is SSoT)
         run: python3 scripts/check_suite_drift.py
 
-      # Renovate raises the submodule bump; nothing stops one repo sitting on it.
       - name: Shared-submodule drift check
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/check_submodule_drift.py
 
-      # Omitting `--strict` is what makes rule violations advisory; the release
-      # workflow runs it strict. No `|| true`: that also swallows the structural
-      # exits -- a missing constraints file, or one declaring a different stack.
+      # Without `--strict` rule violations are advisory, and release.yml runs it strict. No `|| true`, which would also
+      # swallow the structural exits.
       - name: Stack compatibility check (advisory)
         run: python3 scripts/dfe-stack compat-check
 
-      # Exits 0 on a lag, which it annotates as a warning: the bump is a reviewed
-      # versions.yaml change behind the release-age gate, never this step's to force.
+      # Exits 0 on a lag and annotates a warning: the bump is a reviewed versions.yaml change behind the release-age gate.
       - name: Karpenter AMI alias currency (advisory)
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/check_karpenter_ami.py
 
-      # dfe-ops is the CLI every deploy, verify, teardown and cycle runs
-      # through, and has no extension, so no glob elsewhere ever compiles it.
+      # dfe-ops has no extension, so no glob elsewhere compiles it.
       - name: dfe-ops compiles
         run: python3 -m py_compile scripts/dfe-ops
 
-      # A refresh that annotated but has not synced would otherwise pass the
-      # readiness gate against the pods the previous revision left behind.
       - name: refresh waits for its sync and refuses a namespace-less smoke run
         run: python3 scripts/tests/test_dfe_ops_refresh.py
 
-      # The gate decides whether a deploy is declared up, and both of its ways
-      # of being wrong (a 5h-old restart count, another distribution's
-      # namespaces) fail a healthy deploy.
       - name: Readiness gate judges the deploy's own namespaces
         run: python3 scripts/tests/test_readiness_gate.py
 
-      # A hostname is the overlay's to choose, so the summary reads its
-      # endpoints off the live HTTPRoutes rather than composing them.
       - name: Access summary reads the live routes and this deploy's Gateway
         run: python3 scripts/tests/test_access_summary.py
 
-      # A wrong dex connector does not crash: it authenticates and returns an
-      # empty groups claim, so the RBAC chain the fixture exists to prove is
-      # never exercised. The render is the only place that is caught.
       - name: Tester IdP renders a dex that emits groups, with no secret in the values
         run: python3 scripts/tests/test_tester_idp.py
 
@@ -297,10 +251,7 @@ jobs:
         with:
           version: ${{ env.HELM_VERSION }}
 
-      # The tests that drive clickhouse local and the argocd CLI fail, not skip, when a binary
-      # is missing under CI. Versions are the stack's own pins (versions.yaml), so one edit moves
-      # the deploy and these tests together. Each download is checked against the checksum its
-      # own release publishes and the step fails on a mismatch.
+      # Versions are the stack's own pins (versions.yaml). Each download is checked against its release's checksum.
       - name: Install the pinned clickhouse and argocd binaries
         run: |
           set -euo pipefail
@@ -325,22 +276,13 @@ jobs:
           "${bin}/clickhouse" local --version
           "${bin}/argocd" version --client --short
 
-      # Every file under scripts/tests runs here, including the ones no step
-      # above names; the named steps stay for the failure paths they document.
+      # Every file under scripts/tests, including ones no step above names.
       - name: scripts/tests under pytest
         run: python3 -m pytest scripts/tests -n auto --dist worksteal -q -rs -p no:cacheprovider --durations=25
 
-      # A step of its own, not a pytest case: it fetches the engine's bundled
-      # copy over the network (gh api), unlike --check-catalogue's pytest
-      # case above, which stays offline. This repo holds the SSoT and already
-      # owns that check, so the engine's copy is compared here too (dfe-infra#306).
-      #
-      # The read uses a GitHub App token scoped to dfe-engine, contents:read.
-      # Exit 2 (snapshot unreadable) used to be logged and swallowed, which
-      # read as a pass: the mirror went stale after #300 and #344 moved
-      # apps.yaml and nothing said so. With a token, exit 2 FAILS. A fork pull
-      # request is handed no secrets, so it gets no token and skips with a
-      # notice rather than passing (#200).
+      # A step of its own because it reads the engine's bundled apps.yaml over the network (gh api) with a dfe-engine
+      # App token, contents:read. Exit 2 (snapshot unreadable) fails. A fork pull request is handed no secrets, so it
+      # skips with a notice rather than passing.
       - name: Mint a dfe-engine read token
         id: engine-token
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
@@ -370,77 +312,46 @@ jobs:
           fi
           exit "$code"
 
-      # An over-wide egress policy renders green and passes a dry-run, so the
-      # derived external-service egress is checked by set equality per mode.
       - name: External-service egress derives per mode
         run: python3 scripts/tests/test_external_egress.py
 
-      # storageModel=local must stay a no-op, and the deploy-repo overlay must
-      # keep beating the profile file -- the ordering nothing else asserts.
       - name: Storage model renders and the cascade holds
         run: python3 scripts/tests/test_storage_model.py
 
-      # An issuer-only OIDC policy and a 443 egress rule both render green and
-      # then fail at admission or drop every packet (#222, #223).
       - name: Gateway OIDC and gateway egress render the working shape
         run: python3 scripts/tests/test_gateway_oidc.py
 
-      # docs/deployment/edge.md cites this as the proof of the exposure cascade,
-      # the kill switch and the render guards; it renders only, no cluster.
+      # docs/deployment/edge.md cites this as the proof of the exposure cascade.
       - name: Gateway route exposure cascade and render guards
         run: bash scripts/test-route-exposure.sh
 
-      # versions.yaml pinning tag@sha256 is worth nothing if the chart renders a
-      # bare tag, and a bare tag is mutable.
       - name: Rendered images carry the pinned digest
         run: python3 scripts/tests/test_image_digest_pin.py
 
-      # Argo renders with `helm template`, so a template that mints a value
-      # produces a different secret on every sync (#224).
       - name: A chart render is reproducible
         run: python3 scripts/tests/test_render_stable.py
 
-      # A rebuild that mints a new private root costs every developer box a
-      # re-trust and breaks the HyperDX iframe outright (#238), and a chart
-      # rendering only one half of the save/restore pair loses the root silently.
       - name: The private root persists, and dfe-ops ca exports it
         run: python3 scripts/tests/test_internal_ca.py
 
-      # An unpinned front door takes whatever the LB pool hands out, so a
-      # rebuild leaves every published hostname on the previous address.
       - name: Front-door addresses pin and the domain carries the profile
         run: python3 scripts/tests/test_pinned_addresses.py
 
-      # The hunt runner read its hunts off an emptyDir nothing wrote for 42
-      # hours while the pod stayed Running (#212), so the paths and the volume
-      # are asserted rather than the sidecar's presence.
       - name: Hunt runner reads hunts off the synced deploy repo
         run: python3 scripts/tests/test_hunt_runner_gitsync.py
 
-      # The engine and the schema Job each render the TTL, and the value has to
-      # travel env file -> cluster secret -> appset -> chart, or a deployment's
-      # retention silently stays at the shipped default.
       - name: Default retention reaches the engine and the schema apply
         run: python3 scripts/tests/test_default_ttl.py
 
-      # Every config change rolls the pod, so the roll is what has to be safe:
-      # the k8s default tears a single-replica stage down before its replacement
-      # is Ready.
       - name: App pods replace surge-first and carry a disruption budget
         run: python3 scripts/tests/test_rollout.py
 
-      # One kafka.mode, read through one helper: the branch this replaced was
-      # repeated in three charts' templates and drifted from the profile files.
       - name: Bus or direct is derived once, for every chart
         run: python3 scripts/tests/test_transport.py
 
-      # A Service balances per connection and gRPC holds one open, so without a
-      # listener in front of it a stage pool's extra replicas take nothing.
       - name: Every stage pool gets the same listener, on the one profile that asks
         run: python3 scripts/tests/test_pool_listener.py
 
-      # The engine can only report what the deploy hands it, and a console that
-      # is not told the tier lists every optional app.
       - name: The engine is told its profile and its ui pin
         run: python3 scripts/tests/test_engine_deployment_facts.py
 
@@ -464,8 +375,7 @@ jobs:
             fi
           done
 
-      # A parse inside `a && b` is exempt from set -e, so it has to be a command
-      # of its own or only the last file's result reaches the step.
+      # A parse inside `a && b` is exempt from set -e, so it is a command of its own.
       - name: Validate YAML syntax of ArgoCD manifests
         run: |
           set -e
@@ -474,8 +384,7 @@ jobs:
             echo "OK: $f"
           done < <(find argocd -name '*.yaml' -type f -print0)
 
-  # A job of its own, so a lint failure cannot hide these results. The paths above
-  # covers every file bootstrap/tests reads.
+  # A job of its own, so a lint failure cannot hide these results.
   bats:
     name: bootstrap bats
     needs: changes
@@ -498,8 +407,7 @@ jobs:
         with:
           version: ${{ env.HELM_VERSION }}
 
-      # The bootstrap templates render through bootstrap/render_env.py, so a runner without
-      # python3 fails here by name rather than as a dozen test failures.
+      # The bootstrap templates render through bootstrap/render_env.py, so a missing python3 fails here by name.
       - name: Run bootstrap/tests
         run: |
           command -v python3
@@ -508,10 +416,8 @@ jobs:
       - name: Shellcheck bootstrap/tests
         run: shellcheck -S warning -s bash bootstrap/tests/*.bats
 
-  # Registry reads here need no secret, since every image is public.
-  # The DFE images are dfe-stack release-gate's, and --third-party-only keeps them out of this job. A change
-  # touching nothing the check reads skips it, as the `images` filter above says,
-  # and release.yml runs the same check before it tags a stack.
+  # Registry reads need no secret: every image is public. DFE images are dfe-stack release-gate's, so --third-party-only
+  # keeps them out. The `images` filter skips this job when nothing the check reads changed, and release.yml runs the same check before it tags.
   third-party-arch:
     name: third-party images carry amd64 and arm64
     needs: changes
@@ -521,9 +427,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # The repo's Python, from .python-version, in a venv outside the checkout so no walk of
-      # the tree reaches its site-packages. The install is a step of its own because
-      # `uv run --with-requirements` does not check hashes.
+      # A venv outside the checkout, so no walk of the tree reaches its site-packages. The install is its own step because `uv run --with-requirements` does not check hashes.
       - name: Set up uv and the repo's Python
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
@@ -531,15 +435,13 @@ jobs:
           venv-path: ${{ runner.temp }}/venv
           enable-cache: false
 
-      # A python3 that is not the venv's would run every step below on the runner's own
-      # Python and still pass, so the version is checked before anything runs on it.
+      # A python3 that is not the venv's would run every step below on the runner's own Python and still pass, so the version is checked first.
       - name: Install the pinned test dependencies, hashes required
         run: |
           uv pip install --require-hashes -r scripts/tests/requirements-ci.txt
           python3 -c 'import pathlib, sys; want = pathlib.Path(".python-version").read_text().strip(); have = "%d.%d" % sys.version_info[:2]; sys.exit(None if have == want else f"python3 is {have}, .python-version says {want}")'
 
-      # The chart-installed add-ons take their image tags from their chart's
-      # appVersion, which --resolve-charts reads with helm.
+      # --resolve-charts reads each chart's appVersion with helm.
       - name: Install Helm
         uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         with:
@@ -568,11 +470,9 @@ jobs:
           path: ${{ runner.temp }}/image-arch-verdicts.json
           key: image-arch-verdicts-${{ hashFiles('versions.yaml', 'helm/charts/forgejo/values.yaml') }}-${{ github.run_id }}-${{ github.run_attempt }}
 
-  # The goldens render every thin chart on the one library _weave.py pins, so a chart
-  # published on another library, or from another contract, still passes them. This
-  # renders the chart the registry serves, by its chart-digests pin, against each of
-  # its goldens. The pulls are anonymous: _weave.py hands helm an empty registry
-  # config and Docker config.
+  # The goldens render each thin chart on the one library _weave.py pins, so a chart published on another library still
+  # passes them. This job renders the chart the registry serves, by its chart-digests pin. The pulls are anonymous:
+  # _weave.py hands helm an empty registry config and Docker config.
   published-charts:
     name: published thin charts render as their goldens
     needs: changes
@@ -584,9 +484,7 @@ jobs:
         with:
           persist-credentials: false
 
-      # The repo's Python, from .python-version, in a venv outside the checkout so no walk of
-      # the tree reaches its site-packages. The install is a step of its own because
-      # `uv run --with-requirements` does not check hashes.
+      # A venv outside the checkout, so no walk of the tree reaches its site-packages. The install is its own step because `uv run --with-requirements` does not check hashes.
       - name: Set up uv and the repo's Python
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
@@ -594,8 +492,7 @@ jobs:
           venv-path: ${{ runner.temp }}/venv
           enable-cache: false
 
-      # A python3 that is not the venv's would run every step below on the runner's own
-      # Python and still pass, so the version is checked before anything runs on it.
+      # A python3 that is not the venv's would run every step below on the runner's own Python and still pass, so the version is checked first.
       - name: Install the pinned test dependencies, hashes required
         run: |
           uv pip install --require-hashes -r scripts/tests/requirements-ci.txt
@@ -614,13 +511,9 @@ jobs:
           DFE_WEAVE_PUBLISHED: "1"
         run: python3 -m pytest scripts/tests/test_weave_published.py -q -p no:cacheprovider
 
-  # Drift guard (#22): the dfe-deploy template's governance actions dial chart
-  # values by dot-path; a chart renaming a dial var would orphan an action
-  # silently. dfe-deploy's own CI validates action STRUCTURE and leaves the
-  # chart side to us. The checkout uses a GitHub App token scoped to
-  # dfe-deploy, and drift FAILS the job. A fork pull request is handed no
-  # secrets, so the job is skipped there and the push to main checks the same
-  # commit.
+  # Drift guard (#22): the dfe-deploy template's governance actions dial chart values by dot-path, so a chart renaming a
+  # dial var would orphan an action. dfe-deploy's CI checks action structure and leaves the chart side here. The checkout
+  # uses an App token scoped to dfe-deploy. A fork pull request is handed no secrets, so the job skips there.
   governance-drift:
     name: governance actions vs chart values
     needs: changes
@@ -629,9 +522,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # The repo's Python, from .python-version, in a venv outside the checkout so no walk of
-      # the tree reaches its site-packages. The install is a step of its own because
-      # `uv run --with-requirements` does not check hashes.
+      # A venv outside the checkout, so no walk of the tree reaches its site-packages. The install is its own step because `uv run --with-requirements` does not check hashes.
       - name: Set up uv and the repo's Python
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
@@ -639,8 +530,7 @@ jobs:
           venv-path: ${{ runner.temp }}/venv
           enable-cache: false
 
-      # A python3 that is not the venv's would run every step below on the runner's own
-      # Python and still pass, so the version is checked before anything runs on it.
+      # A python3 that is not the venv's would run every step below on the runner's own Python and still pass, so the version is checked first.
       - name: Install the pinned test dependencies, hashes required
         run: |
           uv pip install --require-hashes -r scripts/tests/requirements-ci.txt
@@ -667,9 +557,8 @@ jobs:
       - name: Governance drift check
         run: python3 scripts/check_governance_drift.py --deploy-root .dfe-deploy --require
 
-      # The drift check above sees a key, not the keys beside it. This renders the
-      # thin path with each action applied and fails on a pod left reading a Secret
-      # the action stopped minting. The helm it needs is the lint job's.
+      # The drift check above sees a key, not the keys beside it. This renders the thin path with each action applied and
+      # fails on a pod left reading a Secret the action stopped minting.
       - name: Install Helm
         uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         with:

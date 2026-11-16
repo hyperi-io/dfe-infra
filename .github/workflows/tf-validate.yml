@@ -1,9 +1,7 @@
-# Starts on every PR and push to main, and runs when the OpenTofu tree changed.
 # Validates every OpenTofu module and environment root, and runs the module tests.
 name: OpenTofu Validate
 
-# No `paths:` here: a PR outside them would start no run, and a required check
-# that never reports blocks the merge. The `changes` job applies the filter.
+# No `paths:` here, the `changes` job filters. docs/ci-maintenance-design.md, "CI workflows".
 on:
   push:
     branches: [main]
@@ -13,18 +11,11 @@ on:
 permissions:
   contents: read
 
-# CI pins its own tooling -- versions.yaml pins the stack, not CI -- but this
-# tracks versions.yaml toolbox.tofu so the operator shell and CI validate on
-# one OpenTofu and the state format cannot drift between them. The AWS
-# modules declare required_version >= 1.10, edge/aws, toolbox/aws and
-# managed-kafka/redpanda-cloud declare >= 1.11, and kubernetes-cluster/aws,
-# s3-bucket and the aws root declare >= 1.12.
+# Tracks versions.yaml toolbox.tofu (check_versions_drift.py), so the operator shell and CI validate on one OpenTofu.
 env:
   TOFU_VERSION: "1.13.2"
 
 jobs:
-  # Both validate jobs need this one and run unless it positively found nothing
-  # in its paths, so a failure here runs them rather than skipping them.
   changes:
     name: changed paths (tofu)
     runs-on: ubuntu-26.04
@@ -32,7 +23,6 @@ jobs:
     outputs:
       relevant: ${{ steps.filter.outputs.relevant }}
     steps:
-      # Depth 2 carries a pull request merge commit's two parents.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 2
@@ -51,7 +41,6 @@ jobs:
     name: validate + test (tofu)
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.relevant != 'false' }}
-    # A named runner image, so a move of the ubuntu-latest label cannot swap the tools these steps run on.
     runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -61,14 +50,8 @@ jobs:
         with:
           tofu_version: ${{ env.TOFU_VERSION }}
 
-      # Both target sets are discovered from the files themselves rather than
-      # assumed to sit one level under terraform/modules. edge/ and toolbox/ hold
-      # no .tf of their own and keep their tests under aws/, so a one-level walk
-      # validated an empty directory and ran neither module's contract tests while
-      # reporting success.
-      # The loop body stays in this shell (process substitution, not a pipe into
-      # while), so set -e aborts the step on the first failure instead of losing it
-      # in a subshell.
+      # Targets are found from the files themselves: edge/ and toolbox/ hold no .tf of their own and keep their tests under aws/.
+      # Process substitution, not a pipe into while, so set -e sees a failure inside the loop.
       - name: Validate every module
         run: |
           set -e
@@ -86,8 +69,7 @@ jobs:
             tofu -chdir="$dir" test
           done < <(find terraform/modules -name '*.tftest.hcl' -printf '%h\n' | sed 's:/tests$::' | sort -u)
 
-  # The job above validates each module alone; only a root checks the arguments
-  # it passes them, and a root is what an operator actually applies.
+  # A root checks the arguments it passes its modules, and is what an operator applies.
   validate-roots:
     name: validate environment roots (tofu)
     needs: changes
@@ -101,10 +83,8 @@ jobs:
         with:
           tofu_version: ${{ env.TOFU_VERSION }}
 
-      # -backend=false: validate reads no state and configures no provider, so no
-      # root needs a cloud credential here. Zero roots found fails rather than
-      # reporting a pass over nothing. -lockfile=readonly fails a root whose committed
-      # .terraform.lock.hcl is missing or stale instead of writing a fresh one on the runner.
+      # -lockfile=readonly fails a root whose committed .terraform.lock.hcl is missing or stale.
+      # Zero roots found fails rather than reporting a pass over nothing.
       - name: Validate every environment root
         run: |
           set -e

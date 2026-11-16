@@ -1,12 +1,5 @@
-# versions.yaml is the SSoT for both deploy targets, but only one of them reads
-# it live. dfe-infra self-updates through GitOps; dfe-docker holds a committed
-# dial, so a `current` move reaches it only when somebody edits that number by
-# hand -- which is how it came to sit two release candidates behind
-# (dfe-infra#116). This carries the move across as a pull request.
-#
-# It moves ONE number. What that number selects still comes out of the signed
-# stack manifest, so nothing here is a second copy of a pin, and the config that
-# genuinely differs between the docker and k8s topologies is not synced.
+# Carries a versions.yaml `current` move onto dfe-docker's committed stack dial as a pull request.
+# docs/ci-maintenance-design.md, "CI workflows".
 name: Stack pin propagate
 
 on:
@@ -23,8 +16,7 @@ on:
     types: [completed]
   workflow_dispatch:
 
-# Nothing is written in THIS repo; the write is on the target, through a GitHub
-# App token scoped to dfe-docker rather than the ambient token.
+# Nothing is written in this repo. The write is on dfe-docker, through an App token scoped to it.
 permissions:
   contents: read
 
@@ -37,7 +29,6 @@ jobs:
     name: move the consumer's stack dial onto current
     # A Stack Release that failed cut no tag, so there is nothing to move onto.
     if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
-    # A named runner image, so a move of the ubuntu-latest label cannot swap the python3 and tools these steps run on.
     runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

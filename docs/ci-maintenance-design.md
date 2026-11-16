@@ -46,9 +46,30 @@ Some SSoT values legitimately have mirrors. `versions.yaml` feeds appset pins, `
 - It runs `check_versions_drift.py --fix` to write every mirror.
 - It gates on the drift check and pushes back once it passes, so the PR arrives passing.
 
+The job runs on push and not `pull_request`, because a bot's `pull_request` run gets a read-only token and can't push. Renovate pushes its branches to this repo, never a fork, so the push trigger is same-repo. The write-back uses a GitHub App token, because a pull request updated with `GITHUB_TOKEN` starts its `pull_request` runs waiting for a human's approval. It only acts on `renovate[bot]` pushes, so a human pushing a `renovate/**` branch keeps their commit unaltered.
+
 Renovate ignores the propagator's commits (`gitIgnoredAuthors`), so it still rebases the branch. `refresh-digests` rejects a stack with a git tag, because a released stack is frozen. The digest or app move goes into the next cut ([cutting-a-stack.md](cutting-a-stack.md)).
 
 Prefer deriving over mirroring. The otel collector held a second copy of the ClickHouse endpoint and crashlooped on the profile it wasn't written for. The fix was to derive it from the shared fact, which removed the mirror instead of synchronising it.
+
+## CI workflows
+
+Jobs run on a named runner image (`ubuntu-26.04`), not `ubuntu-latest`, so a move of that label can't change the tools a step runs on.
+
+**Path filters.** `helm-lint.yml`, `tf-validate.yml` and `e2e-ui.yml` are required checks, so none has an `on.<event>.paths:` filter. A pull request a filter never starts reports no check, and a required check that never reports blocks the merge. Each starts on every pull request and push to main, and its `changes` job runs `.github/actions/changes` against the paths. The jobs behind it run unless it positively found nothing, so a failure in `changes` runs the checks and never skips them. `docs.yml` and `dockerfile-lint.yml` aren't required checks and filter with `paths:`.
+
+`helm-lint.yml` has two narrower filters, `images` and `published`, for the third-party arch check and the published-chart renders. Both read public registries, which rate-limit a shared runner, so they run only where their verdict can change. `test_helm_lint_triggers.py` holds each list to what its job reads. Every test step's module docstring says what it guards, so the workflow doesn't repeat it.
+
+**Stack Release (`release.yml`).** The stack version is `current` in `versions.yaml`, a curated decision and not derived from commits. On a push to main the workflow:
+
+1. Gates the stack with the drift check, `dfe-stack compat-check --strict`, `release-gate`, the third-party amd64/arm64 check and a registry digest verify. All of them read anonymously, because every pinned image is public.
+2. Reads `current` and stops if its tag exists, so editing pins without bumping `current` re-runs the gate and nothing else.
+3. Otherwise cuts the tag, then renders, signs and publishes the manifest in the same run. A tag pushed with `GITHUB_TOKEN` doesn't start another workflow, so the publish can't live in a separate one.
+4. For a release-maturity tag, advances `latest` through a pull request that merges once main's required checks pass. The pull request is opened with the GitHub App token, because one opened with `GITHUB_TOKEN` starts its checks waiting for approval.
+
+Runs are serialised and never cancelled, so two quick pushes can't cut or advance `latest` at once and a publish in flight finishes. `check_versions_drift.py` holds the Helm version equal to `helm-lint.yml`'s, so the gate resolves chart appVersions with the Helm the pull request check used.
+
+**Stack pin propagate (`stack-pin-propagate.yml`).** `versions.yaml` is the SSoT for both deploy targets, but only dfe-infra reads it live, through GitOps. dfe-docker holds a committed dial, so a `current` move reaches it only when someone edits that number by hand. The workflow carries the move across as a pull request, through an App token scoped to dfe-docker. It moves one number. What that number selects still comes from the signed stack manifest, so nothing here is a second copy of a pin, and config that differs between the docker and k8s topologies isn't synced. It also runs after Stack Release, because a `current` move lands before its tag exists and `propagate_stack_pin.py` skips until the tag is on origin.
 
 ## Hard-coding a shared fact is a defect
 
