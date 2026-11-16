@@ -114,8 +114,18 @@ function loadCopy(name) {
   return fillCopy(yaml.load(fs.readFileSync(path.join(__dirname, 'copy', `${name}.yaml`), 'utf8')));
 }
 
+// The quickstart.json of the dfe-docker release this build pins, as aggregate.py saved it.
+function releaseQuickstart() {
+  const file = path.join(CONTENT, '_quickstart', `${build.name}.json`);
+  return fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : {};
+}
+
+// A release with a `login` key prints the console login from its second command.
+const LOGIN_LINE = 'The second command prints your admin username and password.';
+
 // The landing tab's block after <!-- landing -->, then the block's `then`.
 // Only aggregate.py's one-line compose fill writes that marker, so other builds show no command.
+// hyperi.io renders `then` alone, so the login line goes into it.
 function landingFrom({code_from: page, then}) {
   const file = path.join(CONTENT, build.name, page);
   const text = fs.readFileSync(file, 'utf8');
@@ -127,7 +137,8 @@ function landingFrom({code_from: page, then}) {
     .split('\n')
     .map((line) => line.replace(/\s+#.*$/, ''))
     .join('\n');
-  return [{code}, ...(then ? [{text: then}] : [])];
+  const after = releaseQuickstart().login && then ? `${LOGIN_LINE} ${then}` : then;
+  return [{code}, ...(after ? [{text: after}] : [])];
 }
 
 const siteCopy = loadCopy('site');
