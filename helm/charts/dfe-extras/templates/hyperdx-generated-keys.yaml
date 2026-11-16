@@ -1,13 +1,9 @@
 {{- define "dfe-extras.hyperdx.generatedKeys" -}}
 {{- /*
-HyperDX's two generated keys: the Express session signing key, and the key that
-encrypts the third-party tokens it stores. Unset, the first falls back to a key
-published in upstream's source and the second leaves those tokens in plain text.
-
-ESO writes each once, by the same mechanism and for the same reason as
-dfe-engine's JWT key (engine-jwt-secret.yaml): Argo renders with `helm template`,
-so a template-minted value would change on every sync. A new session key ends
-every live session; a new token key makes every stored token unreadable.
+HyperDX's two generated keys: the Express session signing key, and the key that encrypts the third-party tokens it
+stores. Unset, the first falls back to a key published in upstream's source and the second leaves those tokens in
+plain text. ESO writes each once (docs/deployment/README.md, Secrets store). A new session key ends every live
+session, and a new token key makes every stored token unreadable.
 */ -}}
 {{- if .Values.sessionSecret.create }}
 {{- $name := .Values.sessionSecret.name -}}

@@ -64,6 +64,8 @@ flowchart TB
 
 `config/` doesn't go through Argo CD: dfe-engine reads it, and the hunt runner's git-sync sidecar pulls its hunts and rules. Per-user state goes to dfe-hyperdx's document store, never to git.
 
+The hunt runner has no probes: it is a polling loop that opens no listener, so there is no endpoint to probe and a probe would only kill healthy pods. Its git-sync init container makes the first sync with a bound (`huntRunner.gitSync.initialMaxFailures`), because the sidecar retries forever and a bad credential would otherwise leave a Running runner with zero hunts. The failure shows as a pod that never starts.
+
 The engine writes the deploy repo alone, by commit, and never the base. Path-scoped credentials keep a bug from reaching it.
 
 `values/` is the one home for an app's Helm values. It holds one `{service}-{instance}-values.yaml` per app instance, and the file's presence enables the app. Operators edit it by pull request and the engine edits the same files. A base update never touches `values/`, `infra/` or `config/`, because provided and created state sit in separate repositories.

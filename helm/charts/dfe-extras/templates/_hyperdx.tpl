@@ -46,15 +46,8 @@ MONGO_URI, which the kubelet expands, stay in the thin chart's env.
 */}}
 {{- define "hyperdx.env" -}}
 {{- $clickhouseCa := include "hyperdx.clickhouseCa" . }}
-            # OFF unless a deployer opts in. HyperDX's usage-stats task defaults to
-            # ON (its config.ts reads `env.USAGE_STATS_ENABLED !== 'false'`) and ships
-            # upstream's own ingest key, so an unset value means this pod reports team
-            # /user/source counts and hostnames to https://in-otel.hyperdx.io -- a
-            # THIRD PARTY. DFE is a product other organisations deploy into their own
-            # estates; their telemetry is theirs, and nobody opted into that by
-            # installing DFE. The stack already self-monitors into the deployer's own
-            # ClickHouse via its own OTel pipeline, so this buys them nothing.
-            # Deployers who WANT to support upstream can set usageStats.enabled: true.
+            # Off unless a deployer opts in with usageStats.enabled. Upstream defaults it on, reporting team, user and source
+            # counts and hostnames to a third party (docs/observability/README.md).
             - name: USAGE_STATS_ENABLED
               value: {{ .Values.usageStats.enabled | default false | quote }}
             # A URL: HyperDX refuses webhooks aimed at this host:port only when the value parses as one, and a bare host name registers no refusal at all.
@@ -67,10 +60,8 @@ MONGO_URI, which the kubelet expands, stay in the thin chart's env.
               value: {{ printf "/etc/dfe/clickhouse-ca/%s" (.Values.clickhouse.tls.ca.dataKey | default "ca.crt") | quote }}
             {{- end }}
             {{- if .Values.mongodb.passwordSecretName }}
-            # Declared BEFORE MONGO_URI: kubelet $(VAR) expansion only reads
-            # previously-declared env. Only referenced when the deploy actually
-            # projects the secret: an absent one leaves the pod in
-            # CreateContainerConfigError.
+            # Declared before MONGO_URI: kubelet $(VAR) expansion reads only earlier env. Referenced only when the deploy
+            # projects the secret, since an absent one leaves the pod in CreateContainerConfigError.
             - name: MONGO_PASSWORD
               valueFrom:
                 secretKeyRef:

@@ -1,10 +1,8 @@
 {{- define "dfe-extras.engine.kedaShim" -}}
 {{- /*
-dfe-keda-shim -- the KEDA metrics-api -> ClickHouse query adapter, run as its OWN
-small pod on the engine image (`dfe-keda-shim run`). KEDA's pressure + hunt-backlog
-triggers poll its Service. It carries DISTINCT labels (app.kubernetes.io/name:
-dfe-keda-shim) so the engine's Service selector (name: dfe-engine) never routes to
-it and vice-versa -- the one reason it is not just another engine replica.
+dfe-keda-shim -- the KEDA metrics-api -> ClickHouse query adapter, its own pod on the engine image (`dfe-keda-shim
+run`). KEDA's pressure and hunt-backlog triggers poll its Service. Its labels differ (app.kubernetes.io/name:
+dfe-keda-shim) so the engine's Service selector never routes to it, which is why it is not another engine replica.
 */ -}}
 {{- if .Values.kedaShim.enabled }}
 {{- include "dfe-engine.sidecarServiceAccountObject" (dict "ctx" . "name" "dfe-keda-shim" "component" "keda-shim") }}
@@ -32,9 +30,8 @@ spec:
     spec:
       {{- include "dfe-common.podSecurityContext" . | nindent 6 }}
       serviceAccountName: {{ include "dfe-engine.sidecarServiceAccount" (dict "ctx" . "name" "dfe-keda-shim") }}
-      # This pod reads DFE_ENGINE_KEDA_SHIM_PORT, set below, as an int. Service links add a
-      # "tcp://IP:PORT" value per Service, and svc/dfe-engine's land under that same
-      # DFE_ENGINE_ prefix.
+      # Service links add a tcp://IP:PORT value per Service under the DFE_ENGINE_ prefix, which collides with the settings
+      # this pod reads (DFE_ENGINE_KEDA_SHIM_PORT is an int).
       enableServiceLinks: false
       {{- include "dfe-common.scheduling" . | nindent 6 }}
       # The engine creates the query reader at startup, so until it is Ready this user cannot log in.
@@ -43,26 +40,22 @@ spec:
         - name: keda-shim
           image: {{ include "dfe-common.image" . | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          # NO args. dfe-keda-shim's Typer app registers ONE command
-          # (keda_shim/cli.py @app.command("run")), which Typer collapses into a
-          # no-subcommand CLI, so "run" is an unexpected positional and exits 2.
-          # dfe-hunt-runner registers two (materialise + run), so its "run" is right.
+          # No args: dfe-keda-shim registers one command (keda_shim/cli.py), which Typer collapses into a no-subcommand CLI,
+          # so "run" would exit 2.
           {{- include "dfe-common.containerSecurityContext" . | nindent 10 }}
           command: ["dfe-keda-shim"]
           ports:
             - name: http
               containerPort: {{ .Values.kedaShim.port }}
           env:
-            # Same shared signing key as the engine and the hunt runner -- this
-            # pod cannot read the engine's store either.
+            # The shared signing key, as for the engine and the hunt runner.
             - name: DFE_ENGINE_API_JWT_SECRET
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.auth.jwtSecretName }}
                   key: {{ .Values.auth.jwtSecretKey }}
-            # The ClickHouse the engine reads, over the same transport. The shim
-            # only reads the pressure gauge and the hunt due-count, so it connects
-            # as the query reader.
+            # The engine's ClickHouse over the same transport. The shim reads only the pressure gauge and the hunt due-count, so
+            # it connects as the query reader.
             {{- include "dfe-engine.clickhouseEnv" . | nindent 12 }}
             {{- $reader := dig "serviceUsers" "queryReader" dict .Values.clickhouse }}
             {{- if or (not $reader.user) (not $reader.passwordSecretName) }}
@@ -80,9 +73,7 @@ spec:
             - name: OTEL_SERVICE_NAME
               value: dfe-keda-shim
           volumeMounts:
-            # Writable scratch: the container rootfs is read-only
-            # (dfe-common.containerSecurityContext), so anything writing /tmp
-            # needs this emptyDir.
+            # The rootfs is read-only, so /tmp needs this emptyDir.
             - name: tmp
               mountPath: /tmp
             {{- with (include "dfe-engine.clickhouseCaMount" .) }}

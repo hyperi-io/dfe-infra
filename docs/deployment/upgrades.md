@@ -67,6 +67,22 @@ The first commit has the whole pin move, and `target_revision` moves once, at th
 
 `dfe-ops upgrade migrate-values --deploy <dir>` writes the thin-chart keys beside a deploy repo's 2.2.0 value keys and commits nothing. `--check` writes nothing and exits 1 while a key is left to carry or needs a hand edit. It belongs to the 2.2.0 to 2.2.1-rc.1 step, the one listed path that crosses `since: "2.2.1-rc.1"` in `values-migrations.yaml`. A dfe-extras overlay with a 2.2.0 key and no thin-chart key beside it fails the render and names this command.
 
+`helm/charts/dfe-extras/files/values-migrations.yaml` holds the rules. The 2.2.0 charts named each object `{project}-{component}`. From `since` the thin charts name it `fullnameOverride`, else the chart's own name, so a deploy repo nothing rewrites renames every per-config workload, prunes the fetcher's cursor claim, moves the transforms' consumer groups and empties their file sets. Three readers take the rules from that one file:
+
+- `dfe-ops upgrade plan` lists each hit and reports BLOCKED on a `refuse` rule.
+- `dfe-ops upgrade apply` writes each new key beside its old one before the retarget, and drops a `move` rule's old key at `--finalise`. `migrate-values` does the same write on its own.
+- dfe-extras' `valuesMigrationGuard` fails the render of an overlay carrying an old key with no new key beside it, for each rule with a `guard`.
+
+Each rule has these keys:
+
+- `kind`: `move` (the new key takes the old one's value, and `--finalise` drops the old), `copy` (the same, and the old key stays because something still reads it), `derive-identity` (the new key is `prefix` plus the old value, and the old stays), `derive-entries` (an `enrichment_tables` entry for each table file, at `dir`), `refuse` (the plan is BLOCKED until a person takes the key out) or `report-dropped` (the thin charts read nothing in its place).
+- `apps`: the `deploy.service` names it applies to, or `*` for every one.
+- `files`: overlays (`values/*-values.yaml`), and `common` (`infra/common.yaml`) where named. The default is overlays.
+- `unless`: `pinned-override`, on a `refuse` rule. An `image.tag` or `image.digest` equal to the half of pins.yaml's `overrides.apps` entry for the file's service that `dfe-stack resolve --emit-values` writes is a deliberate pin, so it isn't refused.
+- `guard`: `empty` fails the render while the old key holds a value and the new key none. `equal` fails it while the old key holds a value the new key differs from, for a new key an integration layer always sets.
+
+The file holds maps and scalars only, so the stdlib reader `dfe-ops` uses (`scripts/yaml_subset.py`) reads it as Helm does. A list is a comma-separated scalar.
+
 ## Kafka version moves
 
 When the plan moves `services.kafka-version` on a Strimzi cluster, `apply` holds Kafka back. The first stage that moves an Argo-managed component writes `kafka.metadataVersion` (the live `status.kafkaMetadataVersion`) and `kafka.version` (the FROM version) into the deploy repo's `infra/kafka.yaml`, each marked `# dfe-ops upgrade hold`. Unpinned, Strimzi raises the metadata version the moment the roll finishes, which ends the soak before it starts.

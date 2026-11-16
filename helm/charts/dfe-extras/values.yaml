@@ -1,26 +1,19 @@
-# The component whose DFE-only objects render: its deploy.service, or dfe-hyperdx
-# for hyperdx. Empty, or a component with no DFE-only objects (dfe-fetcher,
-# dfe-transform-elastic), renders nothing, so every component's Application can
-# carry this chart.
+# The component whose DFE-only objects render: its deploy.service, or dfe-hyperdx. Empty, or a component with none
+# (dfe-fetcher, dfe-transform-elastic), renders nothing.
 chartName: ""
 
-# This chart's own settings. Every other key is a value the component reads: the
-# same layers reach this chart and the component's thin chart, so both read a key
-# at one path.
+# This chart's own settings. Every other key is one the component reads, at the same path.
 extras:
-  # The transport each profile's values are built for. dfe-common.transport derives
-  # the one a deployment runs from kafka.mode, and the render fails where the two
-  # disagree. A profile not listed here is not checked.
+  # The transport each profile is built for. The render fails where kafka.mode disagrees. An unlisted profile is not
+  # checked.
   transports:
     slim: direct
     single: bus
     scale: bus
     mesh: direct
 
-  # The version each component's objects are labelled with, and the engine image
-  # tag the hunt runner and keda shim run (image.tag empty takes it). Each is
-  # versions.yaml apps.<component> (content.dfe-hyperdx), checked by
-  # scripts/check_versions_drift.py.
+  # The version each component's objects are labelled with, and the engine image tag the hunt runner and keda shim run
+  # (image.tag empty takes it). Each is versions.yaml apps.<component>, checked by scripts/check_versions_drift.py.
   appVersions:
     dfe-engine: "v1.22.91"
     dfe-ui: "v1.7.45"
@@ -34,24 +27,19 @@ extras:
     culvert: "v2.1.30"
     dfe-hyperdx: "v0.3.25"
 
-  # Each component's defaults for the keys its objects read. A layer that sets a
-  # key wins, false and empty included.
+  # Each component's defaults. A layer that sets a key wins, false and empty included.
   defaults:
     dfe-receiver:
       project: dfe
       component: receiver
       env: local
       cloud: local
-      # The tunnel door's ingest NetworkPolicy opens the exposed ones, and the
-      # gateway door refuses an exposed listener other than http. A layer
-      # replaces the whole list. The receiver binds nothing on 8443, so no entry
-      # opens it.
+      # The tunnel door's ingest NetworkPolicy opens the exposed ones, and the gateway door refuses an exposed listener
+      # other than http. A layer replaces the whole list.
       listeners:
         - { name: http, port: 8080, protocol: TCP, exposed: true }
         - { name: pushgrpc, port: 6000, protocol: TCP, exposed: false, appProtocol: kubernetes.io/h2c }
-      # The door itself is exposure.groups.ingest, which argocd/values/common.yaml
-      # supplies in every cascade; this default, no public door, is what a render
-      # without that file gets.
+      # The door is exposure.groups.ingest (argocd/values/common.yaml). Without that file there is no public door.
       exposure:
         groups:
           ingest:
@@ -60,15 +48,12 @@ extras:
             deny: []
             door: tunnel
         vpn:
-          # Selector label of the tunnel pods the tunnel door's policy admits.
           podLabel: dfe-culvert
-          # The namespace they run in: the tunnel needs NET_ADMIN, a hostPath tun device
-          # and a privileged init container, so it has one of its own, labelled
-          # privileged (appsets/layer2-edge.yaml). Empty selects the receiver's own.
+          # The tunnel's own privileged namespace (appsets/layer2-edge.yaml). Empty selects the receiver's own.
           namespace: culvert
         networkPolicy:
           enabled: true
-      # The DFE-wide record cap in bytes: the largest request body the receiver admits.
+      # The DFE-wide record cap, in bytes.
       maxBodySize: 8000000
       kafka:
         mode: ""
@@ -147,8 +132,7 @@ extras:
       component: culvert
       env: local
       cloud: local
-      # The receiver's namespace, which appsets/layer2-edge.yaml passes. Empty selects the
-      # tunnel's own, as before the tunnel had a namespace of its own.
+      # The receiver's namespace, passed by appsets/layer2-edge.yaml. Empty selects the tunnel's own.
       dfeNamespace: ""
       # The tunnel policy admits the exposed ones. A layer replaces the whole list.
       listeners:
@@ -164,19 +148,16 @@ extras:
             # Where an admin reaches appliances from, on the pod's ethernet side.
             adminCIDRs: []
             peerCIDR: ""
-            # The appliance ports the admin rule admits.
             reach:
               - 22
               - 443
-      # The receiver pods and ports a tunnelled client may reach: its http ingest
-      # listener, the one the receiver's ingest NetworkPolicy admits the tunnel on.
+      # The receiver's http ingest listener, which a tunnelled client reaches.
       ingest:
         podLabel: dfe-receiver
         ports:
           - { port: 8080, protocol: TCP }
-      # The tunnel pods' whole egress surface: the receiver, DNS and telemetry. Set
-      # enabled false in a layer to drop it; never true, which also switches on the
-      # culvert chart's own policy of the same name.
+      # The tunnel pods' whole egress surface (docs/deployment/edge-vpn.md). Set enabled false in a layer to drop it, never
+      # true, which also switches on the culvert chart's own policy of the same name.
       networkPolicy:
         enabled: true
         otelNamespace: otel
@@ -185,8 +166,7 @@ extras:
         extraEgress: []
       otel:
         endpoint: ""
-      # The dfe-culvert-env ConfigMap and the refusals read these. One replica only:
-      # WireGuard mints its server key in the pod.
+      # One replica only: WireGuard mints its server key in the pod.
       replicas: 1
       vpn:
         clientCIDR: "100.64.0.0/10"
@@ -219,8 +199,7 @@ extras:
       cloud: local
       config:
         nextauthSecretName: dfe-ui-nextauth
-        # A ClusterSecretStore seeded with <project>/<env>/ui/nextauth. Empty
-        # generates the secret in-cluster, so the UI deploys on a bare cluster.
+        # A ClusterSecretStore seeded with <project>/<env>/ui/nextauth. Empty generates the secret in-cluster.
         secretStoreName: ""
     dfe-hyperdx:
       project: dfe
@@ -318,10 +297,9 @@ extras:
         host: ""
         port: 8123
         database: dfe
-        # Each app's own user and the Secret its password is minted into, beside
-        # the engine (argocd/values/common.yaml's clickhouse.serviceUsers).
-        # passwordSecretCreate false hands a Secret to the deployment, under the
-        # same name and key, and mints nothing.
+        # Each app's user and the Secret its password is minted into, beside the engine (docs/clickhouse-identity.md, and
+        # argocd/values/common.yaml's clickhouse.serviceUsers). passwordSecretCreate false hands a Secret to the deployment
+        # under the same name and key and mints nothing.
         serviceUsers:
           loader:
             user: dfe_loader
@@ -397,12 +375,12 @@ extras:
         jwtExpireMinutes: ""
         maxSessionMinutes: ""
         docsEnabled: ""
-      # The Secret the engine writes dfe-receiver's bearer tokens into off a
-      # Secrets Manager store (argocd/values/common.yaml's ingestBearer).
+      # The Secret the engine writes dfe-receiver's bearer tokens into off a Secrets Manager store (common.yaml's
+      # ingestBearer).
       ingestBearer:
         secretName: dfe-ingest-bearer-tokens
-      # The Secret the engine mirrors hunt alert destinations into off a Secrets
-      # Manager store (argocd/values/common.yaml's alertDestinations).
+      # The Secret the engine mirrors hunt alert destinations into off a Secrets Manager store (common.yaml's
+      # alertDestinations).
       alertDestinations:
         secretName: dfe-alert-destinations
       networkModel:
