@@ -196,6 +196,46 @@ startup, so both fail the render by name instead.
 {{- end -}}
 
 {{/*
+dfe-engine.optionalNumber -- an optional decimal engine setting, or empty when
+unset. Takes (dict "key" <values path> "value" <value>). The engine checks the
+range at startup; a value that is not a number fails the render by name.
+*/}}
+{{- define "dfe-engine.optionalNumber" -}}
+{{- $s := toString .value -}}
+{{- if not (has $s (list "" "<nil>")) -}}
+{{- if not (regexMatch "^[0-9]+(\\.[0-9]+)?$" $s) -}}
+{{- fail (printf "%s is %q -- it takes a number" .key $s) -}}
+{{- end -}}
+{{ $s }}
+{{- end -}}
+{{- end -}}
+
+{{/*
+dfe-engine.huntSmoothingEnv -- the hunts.smoothing settings from
+huntRunner.smoothing, for the engine and the hunt runner alike: the runner moves
+the offsets, and the engine API reads the same switch to report next due.
+*/}}
+{{- define "dfe-engine.huntSmoothingEnv" -}}
+{{- $sm := .Values.huntRunner.smoothing | default dict -}}
+{{- if eq (include "dfe-engine.optionalBool" (dict "key" "huntRunner.smoothing.enabled" "value" $sm.enabled)) "true" }}
+- name: DFE_ENGINE_HUNTS_SMOOTHING_ENABLED
+  value: "true"
+{{- end }}
+{{- range $pair := list (list "cycleSeconds" "CYCLE_SECONDS") (list "costQuantile" "COST_QUANTILE") (list "maxStepFraction" "MAX_STEP_FRACTION") (list "hysteresis" "HYSTERESIS") (list "weightMemory" "WEIGHT_MEMORY") }}
+{{- with (include "dfe-engine.optionalNumber" (dict "key" (printf "huntRunner.smoothing.%s" (index $pair 0)) "value" (get $sm (index $pair 0)))) }}
+- name: DFE_ENGINE_HUNTS_SMOOTHING_{{ index $pair 1 }}
+  value: {{ . | quote }}
+{{- end }}
+{{- end }}
+{{- range $c := list (list "bucketSeconds" "BUCKET_SECONDS" 1) (list "windowDays" "WINDOW_DAYS" 1) (list "cooldownCycles" "COOLDOWN_CYCLES" 0) (list "memoryCapBytes" "MEMORY_CAP_BYTES" 0) (list "horizonMaxSeconds" "HORIZON_MAX_SECONDS" 1) }}
+{{- with (include "dfe-engine.optionalCount" (dict "key" (printf "huntRunner.smoothing.%s" (index $c 0)) "value" (get $sm (index $c 0)) "min" (index $c 2))) }}
+- name: DFE_ENGINE_HUNTS_SMOOTHING_{{ index $c 1 }}
+  value: {{ . | quote }}
+{{- end }}
+{{- end }}
+{{- end -}}
+
+{{/*
 dfe-engine.e2eServer -- non-empty when this deployment runs in the e2e posture.
 
 The posture mounts the engine's unauthenticated /api/e2e routes, whose seed

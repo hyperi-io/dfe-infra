@@ -196,6 +196,7 @@ thin chart's env.
               value: {{ .Values.config.mountPath }}/rules
             - name: DFE_ENGINE_HUNTS_ALERT_DESTINATIONS_DIR
               value: {{ .Values.config.mountPath }}/alerts
+            {{- include "dfe-engine.huntSmoothingEnv" . | nindent 12 }}
             # The shared signing key. Supplying it means the engine adopts the
             # same key its sidecar pods read, instead of minting a private one
             # only it can see.
