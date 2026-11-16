@@ -4,7 +4,7 @@ dfe-infra is how DFE gets onto a bare Kubernetes cluster: the Helm charts, Argo 
 
 ## Where this repo sits in the suite
 
-This diagram shows the two git repos DFE's Argo CD deploys from.
+DFE's Argo CD deploys from two git repos: the deploy repo dfe-engine writes, and dfe-infra's charts.
 
 ```mermaid
 flowchart LR

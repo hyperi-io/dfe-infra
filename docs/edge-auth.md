@@ -18,7 +18,7 @@ Port-forwarding is the debug fallback, not the product access path. It works on 
 
 One Gateway fronts the whole HTTP plane. Each UI gets a hostname under the deployment's `domain`. The route lives in the backend's namespace, so only the parentRef crosses namespaces and no ReferenceGrant is needed. The gateway LB type/class is swappable per deployment (`envoyGateway.service` values).
 
-This diagram shows what the one Gateway routes to.
+The one Gateway routes each hostname to its backend, and sends a federated login out to the IdP.
 
 ```mermaid
 flowchart LR
@@ -74,7 +74,7 @@ There are two browser login paths, and both resolve to the same engine-owned ide
 - Local (default). dfe-ui serves its own login form and authenticates the user against the engine's account store.
 - Federated (opt-in). The Envoy edge fronts the dfe-engine route with a `SecurityPolicy` per configured external OIDC provider. Envoy is the OIDC client and the engine only reads the forwarded claim headers. Adding or removing a provider is a Helm values change plus an ArgoCD sync, never a dfe-engine API call.
 
-This diagram shows the federated login, where Envoy is the OIDC client.
+In a federated login Envoy is the OIDC client, and dfe-engine only reads the claims it forwards.
 
 ```mermaid
 sequenceDiagram
