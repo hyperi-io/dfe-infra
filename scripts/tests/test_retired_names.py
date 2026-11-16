@@ -11,8 +11,9 @@
 
 FerretDB was HyperDX's document store until DocumentDB replaced it on Kubernetes.
 Its name survives in the stacks that shipped it (constraints/ and the older stacks
-in versions.yaml) and in a few that parse those historical tags. Anywhere else it is a leftover that
-sends a reader to a component that no longer deploys.
+in versions.yaml) and in a few fixtures that parse those historical tags.
+Anywhere else it is a leftover that sends a reader to a component that no
+longer deploys.
 
     python3 -m pytest scripts/tests/test_retired_names.py -q
 
