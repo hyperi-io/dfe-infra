@@ -50,7 +50,7 @@ Every broker DFE writes to must accept at least 8 MiB (8,388,608 bytes), and the
 
 Where DFE runs the broker it sets 16 MiB, for headroom: enrichment re-enters Kafka at about 1.48 times the source event. DFE sets broker `message.max.bytes`, broker `replica.fetch.max.bytes` and every topic's `max.message.bytes` to that one figure (`kafka.messageMaxBytes`, overridden by the resolved sizing's `event.message_chain_bytes`). Raise one alone and a produce is rejected or a follower stalls. The figure is the largest record batch after compression.
 
-dfe-transform-elastic holds each outbound record to `sink.max_message_bytes`, 8,000,000 bytes by default. It drops a record that enriches past that and counts it on `events_oversize_total`. Where the broker takes 16 MiB you can raise the budget to match. On Confluent Basic or Standard, keep it at the default. For the odd large blob, send a pointer to object storage instead.
+dfe-transform-elastic holds each outbound record to `sink.max_message_bytes`, 8,000,000 bytes by default. A record that enriches past that goes to the DLQ, with its size and the budget as the reason, and is counted on `events_oversize_total`. Where the broker takes 16 MiB you can raise the budget to match. On Confluent Basic or Standard, keep it at the default. For the odd large blob, send a pointer to object storage instead.
 
 ## Settable vs locked, per platform
 
