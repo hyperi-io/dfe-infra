@@ -89,3 +89,13 @@ Hunts on one interval start at hash-chosen offsets inside it, so a busy interval
 On a 3-replica ClickHouse test cluster, with 30 hunts whose offsets all fell in one 30 s window, smoothing took the summed peak memory of the busiest 30 s from 8.07 GB to 3.30 GB over three hours, with no errors. It is not proven at PB/day. It makes one move per cycle across the fleet, so a large fleet settles over hours to days at the defaults.
 
 The tunables sit beside the switch under `huntRunner.smoothing` (`cycleSeconds`, `bucketSeconds`, `windowDays`, `costQuantile`, `maxStepFraction`, `hysteresis`, `cooldownCycles`, `weightMemory`, `memoryCapBytes`, `horizonMaxSeconds`). An empty one takes the engine's default, and a value the engine can't parse fails the render. The runner exports `dfe_hunt_smoothing_flatness`, `dfe_hunt_observed_mem_peak_bytes` and `dfe_hunt_observed_overlap_peak`.
+
+## Hunt auto-disable
+
+Status: on by default from 2.2.3, in the engine. The chart renders nothing until you set `huntRunner.autodisable.enabled`, `failures` or `windowSeconds` in the deployment's dfe-engine values.
+
+A hunt that busts a ClickHouse resource limit (memory, rows or quota) fails its neighbours too, and every retry fails again. The hunt runner counts those failures per hunt, and after `failures` of them inside `windowSeconds` (3 in 3600 s at the defaults) it stops the hunt. Other failures, such as a syntax or connection error, are not counted.
+
+The stop is its own `hunt_state` row keyed `<hunt_id>#stopped`, so it survives a runner restart. The hunt list and detail show `auto_disabled_at` and `auto_disabled_reason` (`resource_limit:<code>`). A PUT on the hunt with `enabled: true` clears it. The runner counts each stop in `hunt_autodisabled_total{hunt_id,reason}`.
+
+`huntRunner.autodisable.enabled: false` turns it off, and an empty value takes the engine's default. Only the hunt runner reads these, so the engine pod gets none of them. A value the engine can't parse fails the render.

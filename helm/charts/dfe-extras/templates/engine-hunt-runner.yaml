@@ -162,6 +162,7 @@ spec:
             # Alert destination URLs, read by name from the engine's secrets store.
             {{- include "dfe-engine.secretsStoreEnv" . | nindent 12 }}
             {{- include "dfe-engine.huntSmoothingEnv" . | nindent 12 }}
+            {{- include "dfe-engine.huntAutodisableEnv" . | nindent 12 }}
             # Its account mounts no token, so scalo's logs take the namespace from here.
             {{- include "dfe-common.podNamespaceEnv" . | nindent 12 }}
             # No DFE_ENGINE_SCHEMAS_DIR: nothing seeds a schemas volume in this pod, so

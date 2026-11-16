@@ -453,6 +453,12 @@ extras:
           weightMemory: ""
           memoryCapBytes: ""
           horizonMaxSeconds: ""
+        # Hunt auto-disable (docs/autoscaling.md), read by the hunt runner only.
+        # Empty means the engine's default, which is on, so nothing renders until set.
+        autodisable:
+          enabled: ""
+          failures: ""
+          windowSeconds: ""
         gitSync:
           enabled: true
           image:

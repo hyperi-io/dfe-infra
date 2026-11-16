@@ -236,6 +236,26 @@ the offsets, and the engine API reads the same switch to report next due.
 {{- end -}}
 
 {{/*
+dfe-engine.huntAutodisableEnv -- the hunts.autodisable settings from
+huntRunner.autodisable, for the hunt runner only: it stops the hunt, and the
+engine pod never reads them. A switch set to false renders "false", because the
+engine's default is on.
+*/}}
+{{- define "dfe-engine.huntAutodisableEnv" -}}
+{{- $ad := .Values.huntRunner.autodisable | default dict -}}
+{{- with (include "dfe-engine.optionalBool" (dict "key" "huntRunner.autodisable.enabled" "value" $ad.enabled)) }}
+- name: DFE_ENGINE_HUNTS_AUTODISABLE_ENABLED
+  value: {{ . | quote }}
+{{- end }}
+{{- range $c := list (list "failures" "FAILURES") (list "windowSeconds" "WINDOW_SECONDS") }}
+{{- with (include "dfe-engine.optionalCount" (dict "key" (printf "huntRunner.autodisable.%s" (index $c 0)) "value" (get $ad (index $c 0)) "min" 1)) }}
+- name: DFE_ENGINE_HUNTS_AUTODISABLE_{{ index $c 1 }}
+  value: {{ . | quote }}
+{{- end }}
+{{- end }}
+{{- end -}}
+
+{{/*
 dfe-engine.e2eServer -- non-empty when this deployment runs in the e2e posture.
 
 The posture mounts the engine's unauthenticated /api/e2e routes, whose seed
