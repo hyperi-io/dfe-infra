@@ -70,11 +70,10 @@ output "kms_key_arn" {
   description = "The deployment's customer-managed key, ordered against its POLICY as well as the key itself. Encrypts cluster secrets now; Kafka and block storage take the same one."
   value       = local.kms_key_arn
 
-  // aws_kms_key_policy.this is a sibling resource producing no value this ARN
-  // carries, so a consumer reading the ARN alone could apply before the grants
-  // exist -- which is how a managed broker's first log delivery to an
-  // encrypted sink fails. Declaring it here is what orders that consumer
-  // against the grants WITHOUT ordering it against the whole module.
+  // aws_kms_key_policy.this produces no value this ARN carries, so a consumer reading the ARN
+  // alone could apply before the grants exist, which fails a managed broker's first log delivery
+  // to an encrypted sink. Declaring it orders that consumer against the grants, not the whole
+  // module.
   depends_on = [aws_kms_key_policy.this]
 }
 
