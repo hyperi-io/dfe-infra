@@ -33,7 +33,7 @@ Argo: KEDA owns the `KafkaNodePool`'s `spec.replicas` once scaling, so Argo's `s
 
 Redpanda: the Redpanda CRD (the operator `versions.yaml` pins as `redpanda-operator`, `cluster.redpanda.com/v1alpha2`) declares no scale subresource, so Kubernetes' HPA can't target it. `spec.clusterSpec.statefulset.replicas` exists as a plain field, and scaling it stays manual until Redpanda ships one.
 
-MSK: [`aws-msk-operations.md`](aws-msk-operations.md#broker-count-autoscaling) covers its CloudWatch-alarm-and-Lambda scaler.
+MSK: [`aws-msk-operations.md`](aws-msk-operations.md#broker-count-autoscaling) covers its schedule-and-Lambda scaler.
 
 ## Cruise Control UI
 

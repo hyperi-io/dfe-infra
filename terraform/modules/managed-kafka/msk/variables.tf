@@ -1,5 +1,4 @@
-// The contract, as OpenTofu sees it. Every input is described in CONTRACT.md;
-// the validation blocks here are the half a reader cannot get from the types.
+// Inputs are described in CONTRACT.md. The validation blocks hold what the types cannot.
 
 variable "implementation" {
   description = "Which body of the managed-kafka contract the caller asked for. This one answers to msk and refuses anything else, so a mis-wired root fails at plan rather than building the wrong Kafka."
@@ -77,9 +76,6 @@ variable "resolved_shapes" {
   }
 
   validation {
-    // "express." is MSK's own prefix for the Express broker family; a kafka.*
-    // type is a Standard broker, and MSK cannot convert a Standard cluster to
-    // Express afterwards -- it has to be rebuilt.
     condition     = startswith(try(var.resolved_shapes[var.broker_shape_ref].instance_types[0], ""), "express.")
     error_message = "The broker shape must resolve to an MSK Express instance type (express.*). A kafka.* type builds a Standard cluster, which cannot be switched to Express later."
   }
@@ -110,9 +106,6 @@ variable "kafka_version" {
   type        = string
 
   validation {
-    // MSK names a KRaft version <major>.<minor>.x.kraft. The ZooKeeper spellings
-    // (3.9.x, 3.6.0) are the ones without the suffix, and KRaft is the only
-    // metadata plane this deployment supports.
     condition     = can(regex("^[0-9]+\\.[0-9]+\\.x\\.kraft$", var.kafka_version))
     error_message = "kafka_version must be an MSK KRaft version string like 4.2.x.kraft. A version without the .kraft suffix is a ZooKeeper cluster."
   }
@@ -195,9 +188,7 @@ variable "telemetry" {
   }
 
   validation {
-    // CloudWatch Logs takes a fixed set of retention periods and rejects
-    // anything else. S3's own lifecycle expiration takes any positive day
-    // count, so this only binds the cloudwatch sink.
+    // CloudWatch Logs rejects any other retention period. S3 lifecycle takes any positive count.
     condition = var.telemetry.sink != "cloudwatch" || contains(
       [1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1096, 1827, 2192, 2557, 2922, 3288, 3653],
       var.telemetry.retention_days
@@ -205,7 +196,6 @@ variable "telemetry" {
     error_message = "telemetry.retention_days must be one of the retention periods CloudWatch Logs accepts when sink is cloudwatch."
   }
 
-  // The scaler's Lambda log group is CloudWatch under either sink.
   validation {
     condition = contains(
       [1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1096, 1827, 2192, 2557, 2922, 3288, 3653],

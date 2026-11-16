@@ -139,6 +139,16 @@ output "cluster_api_url" {
 
 For the Dedicated / BYOC tier, point the local at `redpanda_cluster.dfe.cluster_api_url`. Then set cluster-level defaults (`log_retention_ms = 259200000`, `default_topic_partitions = 12`, `default_topic_replications = 3`) through the cluster config surface. They're the same Redpanda property names DFE's self-hosted Redpanda CR uses (`helm/charts/kafka/templates/redpanda.yaml`).
 
+## Module design notes
+
+`managed-kafka/redpanda-cloud` builds Serverless over AWS PrivateLink, the only tier this organisation can create. Dedicated and BYOC are quote-only, so the module refuses them at plan. Redpanda runs the brokers, so the module sizes and tunes nothing, and dfe-engine creates the topics. Serverless offers private connectivity on AWS alone, and takes the aws provider's region as its own.
+
+Redpanda publishes a VPC endpoint service and allows the deployment's own account to connect to it. The module creates the interface endpoint in the private subnets the DFE pods run on, and its security group opens 443, 8081 and 9092 to 9095 (Kafka bootstrap, brokers, schema registry, data plane API and Prometheus) from `client_cidrs`. The service publishes a verified private DNS name, so `private_dns_enabled` resolves the cluster inside the VPC and the module creates no hosted zone. Another VPC or an on-prem network resolves the cluster domain through a Route 53 Resolver inbound endpoint plus a forwarding rule, never a rule aimed at the VPC's own `.2` resolver, which Redpanda documents as not working.
+
+On private connectivity the data plane answers only through the endpoint, so the user and ACLs are written against the private URL and tofu has to run inside the VPC or behind that forwarding rule.
+
+The SCRAM user is one principal for the fleet, SCRAM-SHA-512 to match the on-prem user where the provider defaults to 256. Its password is a write-only argument, so it reaches Redpanda and never state, and `scram_password_version` tells the provider the value moved. Write-only arguments need OpenTofu 1.11. The grants are the on-prem set, topic `*` literal and groups under the `dfe-` prefix, because topic names belong to the deployment and a prefix rule would have to guess them.
+
 ## Wiring back to DFE
 
 - `kafka.mode=external`, `kafka.external.bootstrap=<the SASL bootstrap host:port>`. That's the seed brokers. It isn't the HTTP `cluster_api_url`, which is the admin/REST plane the Terraform provider uses. The client bootstrap is the Kafka SASL endpoint from the cluster's connectivity details.

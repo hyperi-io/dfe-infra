@@ -1,21 +1,6 @@
-// The contract, executable -- the msk/ body's half of it. Each body gets a
-// contract-<body>.tftest.hcl beside this one, asserting the SAME contract
-// against the same variables. A body that cannot satisfy an assertion has
-// changed the contract rather than implemented it, and CONTRACT.md is what
-// changes first.
-//
-// ONE FILE PER BODY, and not by preference: a file-level mock_provider has to
-// resolve against the required_providers of EVERY run's module in that file, so
-// a mock_provider "redpanda" alongside a run against ./msk resolves to a
-// hashicorp/redpanda that does not exist. Declaring the source in this
-// directory's own required_providers does not help -- a run block's module
-// replaces the root, and that is what the local name is matched against.
-//
-// A module source cannot be a variable, which is why each run block names its
-// body rather than the file being parameterised over them.
-//
-// Provider-free by construction: mock_provider means no credentials, no API
-// call and no cost, so it runs in CI and on a laptop with no cloud account.
+// The msk/ body's half of the contract. Each body has its own contract-<body>.tftest.hcl making the same assertions,
+// because a file-level mock_provider resolves against the required_providers of every run's module in that file.
+// Provider-free: mock_provider needs no credentials and no cloud account.
 
 mock_provider "aws" {
   // A policy document's generated default is a random string, and the provider
@@ -86,8 +71,7 @@ variables {
   name = "dfe-kafka-contract"
   env  = "test"
 
-  // 4.2.x.kraft is what `aws kafka list-kafka-versions --region us-west-2`
-  // reports ACTIVE, read at build time rather than defaulted in the module.
+  // An MSK KRaft version, pinned in tfvars rather than defaulted in the module.
   kafka_version = "4.2.x.kraft"
 
   network = {
@@ -280,8 +264,7 @@ run "msk_broker_security_group_is_scoped" {
   }
 }
 
-// B3: IAM for the bootstrap Job, SCRAM for DFE. Both on one cluster is what
-// lets the Job create the first ACL.
+// IAM for the bootstrap Job and SCRAM for DFE: both on one cluster lets the Job create the first ACL.
 run "msk_both_sasl_mechanisms" {
   command = plan
 
@@ -400,8 +383,7 @@ run "msk_rejects_standard_broker_type" {
   ]
 }
 
-// The scaler reads every broker through GetMetricData, which takes 500 queries,
-// so a cluster past the ten metrics one alarm could name still autoscales.
+// The scaler reads every broker through GetMetricData, which takes 500 queries, so a large cluster still autoscales.
 run "msk_a_large_cluster_still_autoscales" {
   command = plan
 
@@ -453,8 +435,7 @@ run "msk_a_large_cluster_plans_cleanly_with_autoscaling_off" {
   }
 }
 
-// S1: the per-broker threshold -- per_broker_capacity_mb_s x 1e6 x headroom,
-// the same at every broker count, with none of the factors a literal.
+// The per-broker threshold is per_broker_capacity_mb_s x 1e6 x headroom, the same at every broker count.
 run "msk_autoscaler_threshold_and_schedule" {
   command = plan
 
@@ -546,8 +527,7 @@ run "msk_autoscaler_refuses_a_period_that_is_not_whole_minutes" {
   expect_failures = [var.autoscaling]
 }
 
-// S2: the Lambda's env carries only what an increase can act on -- no
-// min_brokers, no scale-in dial of any kind.
+// The Lambda's env carries only what an increase can act on: no min_brokers, no scale-in dial.
 run "msk_autoscaler_lambda_is_increase_only" {
   command = plan
 
@@ -622,9 +602,7 @@ run "msk_scaler_runtime_is_checked_with_autoscaling_off" {
   expect_failures = [var.broker_scaler_runtime]
 }
 
-// otel is the default: DFE's monitoring goes to its own OTel feed and
-// HyperDX, never CloudWatch, so broker logs land in a bucket this body creates
-// instead of a log group.
+// otel is the default: broker logs land in a bucket this body creates instead of a log group.
 run "msk_telemetry_otel_ships_broker_logs_to_s3" {
   command = plan
 
@@ -663,19 +641,13 @@ run "msk_telemetry_otel_ships_broker_logs_to_s3" {
   }
 
   assert {
-    // rule and apply_server_side_encryption_by_default are both sets (order
-    // is not addressable), and one() reads the single element each carries.
+    // rule and apply_server_side_encryption_by_default are sets, so one() reads the single element.
     condition     = one(one(aws_s3_bucket_server_side_encryption_configuration.broker_logs[0].rule).apply_server_side_encryption_by_default).kms_master_key_id == var.kms_key_arn
     error_message = "the broker-log bucket must be encrypted with the deployment's own key"
   }
 
   assert {
-    // rule is a list here (unlike the SSE config's rule set above), so a
-    // direct index reaches .expiration without pulling the whole rule
-    // object through one() -- which would otherwise carry the AWS
-    // provider's deprecated rule.prefix attribute along for the ride and
-    // trip OpenTofu's "value derived from a deprecated source" warning
-    // even though this module never sets prefix.
+    // rule is a list here, so a direct index reaches .expiration without the deprecated rule.prefix attribute one() would pull in.
     condition     = one(aws_s3_bucket_lifecycle_configuration.broker_logs[0].rule[0].expiration).days == var.telemetry.retention_days
     error_message = "the lifecycle expiry must match telemetry.retention_days"
   }
@@ -728,7 +700,7 @@ run "msk_telemetry_cloudwatch_keeps_the_aws_native_path" {
   }
 }
 
-// S3: enabled = false renders none of it -- no schedule, no Lambda, no role.
+// enabled = false renders none of it: no schedule, no Lambda, no role.
 run "msk_autoscaler_disabled_renders_nothing" {
   command = plan
 

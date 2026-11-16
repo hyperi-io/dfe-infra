@@ -1,11 +1,5 @@
-// The contract, as OpenTofu sees it. Every input is described in CONTRACT.md;
-// the validation blocks here are the half a reader cannot get from the types.
-//
-// Redpanda Cloud sizes and tunes the cluster itself, so several contract inputs
-// arrive and are not applied. They are declared rather than dropped, because a
-// body that refuses an input the contract names has changed the contract; what
-// this implementation cannot pass on is named in the description and in
-// CONTRACT.md.
+// Inputs are described in CONTRACT.md. Inputs Redpanda manages itself are declared and not applied,
+// because a body that refuses a contract input has changed the contract.
 
 variable "implementation" {
   description = "Which body of the managed-kafka contract the caller asked for. This one answers to redpanda-cloud and refuses anything else, so a mis-wired root fails at plan rather than building the wrong Kafka."
@@ -49,10 +43,7 @@ variable "tier" {
   }
 
   validation {
-    // Dedicated and BYOC are behind Request access and have no public rate
-    // card, so neither can be provisioned from a deployment config. The shape
-    // is redpanda_network plus redpanda_cluster with cluster_type set to the
-    // tier; it lands here once a quote and access exist.
+    // Dedicated and BYOC are quote-only, so a deployment config cannot provision them.
     condition     = var.tier == "serverless"
     error_message = "Redpanda Dedicated and BYOC are quote-only: both are Request-access on this organisation and neither publishes a rate card, so this module cannot provision them. Use tier = serverless, or take the written quote to a Redpanda account team first."
   }
@@ -63,8 +54,7 @@ variable "name" {
   type        = string
 
   validation {
-    // Redpanda's resource group takes letters, digits and hyphens, which is the
-    // narrower of the two name rules this body has to satisfy.
+    // The resource group name rule is the narrower of the two this body satisfies.
     condition     = can(regex("^[a-zA-Z0-9-]{3,100}$", var.name))
     error_message = "name must be letters, digits and hyphens only, and at least 3 characters -- Redpanda's own floor for a cluster name."
   }
@@ -147,10 +137,6 @@ variable "allow_deletion" {
   type        = bool
   default     = true
 }
-
-// ---------------------------------------------------------------------------
-// Contract inputs Redpanda Cloud manages for us
-// ---------------------------------------------------------------------------
 
 variable "broker_shape_ref" {
   description = "NOT APPLIED. Redpanda Cloud sizes Serverless itself and exposes no instance type, so the resolver's shape has nothing to select here. Declared because the contract names it."

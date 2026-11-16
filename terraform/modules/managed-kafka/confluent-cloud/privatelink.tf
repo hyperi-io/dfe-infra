@@ -1,24 +1,12 @@
-// Enterprise's private handshake: AWS PrivateLink.
-//
-// Confluent publishes a VPC endpoint SERVICE through a private link attachment,
-// we create the interface endpoint that connects to it, and the attachment
-// connection tells Confluent which endpoint arrived. Private DNS is ours to
-// run here -- the endpoint service publishes no verified name, so the cluster's
-// domain is served from a private hosted zone in this VPC.
-//
-// The security group below serves both private shapes: the PrivateLink endpoint
-// on Enterprise and the Private Network Interfaces on Freight.
+// Enterprise's private handshake: AWS PrivateLink, with a private hosted zone for the cluster domain.
+// The security group below also serves Freight's interfaces. docs/deployment/kafka/confluent-cloud.md#module-design-notes.
 
 locals {
   privatelink = local.private && var.tier == "enterprise"
 
-  // An empty client_cidrs means the whole VPC -- the private network the DFE
-  // pods already sit on.
   private_client_cidrs = length(var.client_cidrs) > 0 ? var.client_cidrs : [var.network.cidr]
 
-  // 9092 carries the Kafka protocol and 443 the REST endpoint and the schema
-  // registry. Both are Confluent's. Port 80 is left out: it exists only to
-  // redirect to 443 and nothing in DFE speaks it.
+  // 9092 is the Kafka protocol, 443 the REST endpoint and schema registry. Port 80 only redirects to 443.
   private_ports = [443, 9092]
 
   private_ingress_rules = local.private ? {
@@ -50,13 +38,7 @@ resource "aws_vpc_security_group_ingress_rule" "private" {
   description = "Confluent Cloud clients on ${each.value.port}"
 }
 
-// No egress rule, deliberately. A security group tofu creates starts with none,
-// which denies all outbound, and that is what Confluent asks for: nothing in
-// Confluent Cloud should be able to open a connection INTO this network.
-
-// ---------------------------------------------------------------------------
-// Confluent's end of the attachment
-// ---------------------------------------------------------------------------
+// No egress rule, deliberately: nothing in Confluent Cloud may open a connection into this network.
 
 resource "confluent_private_link_attachment" "this" {
   count = local.privatelink ? 1 : 0
@@ -80,8 +62,7 @@ resource "aws_vpc_endpoint" "this" {
   subnet_ids         = var.network.private_subnet_ids
   security_group_ids = [aws_security_group.private[0].id]
 
-  // The endpoint service publishes no verified private DNS name, so AWS cannot
-  // resolve the cluster for us and the hosted zone below does it instead.
+  // The endpoint service has no verified private DNS name, so the hosted zone below resolves the cluster.
   private_dns_enabled = false
 
   tags = { Name = "${var.name}-confluent-privatelink" }
@@ -105,10 +86,6 @@ resource "confluent_private_link_attachment_connection" "this" {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Resolving the cluster inside the VPC
-// ---------------------------------------------------------------------------
-
 resource "aws_route53_zone" "privatelink" {
   count = local.privatelink ? 1 : 0
 
@@ -122,9 +99,7 @@ resource "aws_route53_zone" "privatelink" {
 }
 
 locals {
-  // The endpoint's regional DNS name, and the leading label a zonal name is
-  // built from -- vpce-0123-abcd.vpce-svc-0123.us-west-2.vpce.amazonaws.com
-  // becomes vpce-0123-abcd plus the rest.
+  // The endpoint's regional DNS name, and its leading label that the zonal names are built from.
   endpoint_dns_name = local.privatelink ? aws_vpc_endpoint.this[0].dns_entry[0]["dns_name"] : ""
   endpoint_prefix   = local.privatelink ? split(".", local.endpoint_dns_name)[0] : ""
 }
@@ -140,9 +115,7 @@ resource "aws_route53_record" "privatelink" {
   records = [local.endpoint_dns_name]
 }
 
-// The brokers advertise a zonal hostname as well as the wildcard one, so each
-// zone gets a record pointing at that zone's own endpoint interface -- which is
-// also what keeps a client's traffic inside its own availability zone.
+// Brokers advertise zonal hostnames too, and a record per zone keeps a client's traffic in its own zone.
 resource "aws_route53_record" "privatelink_zonal" {
   for_each = local.privatelink ? toset(var.network.azs) : toset([])
 

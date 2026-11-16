@@ -1,9 +1,5 @@
-// The contract, executable -- the confluent-cloud/ body's half of it. Same
-// assertions as contract.tftest.hcl makes of msk/, against the same variables.
-// The header of that file says why each body gets its own.
-//
-// Provider-free by construction: mock_provider means no credentials, no API
-// call and no cost, so it runs in CI and on a laptop with no cloud account.
+// The confluent-cloud/ body's half of the contract, with the same assertions as contract.tftest.hcl against the same variables.
+// Provider-free: mock_provider needs no credentials and no cloud account.
 
 mock_provider "aws" {
   // The account the interfaces live in, which the access point has to name.
@@ -41,15 +37,8 @@ mock_provider "aws" {
     }
   }
 
-  // aws_network_interface gets no mock_resource default, and the Freight runs
-  // below supply the interface IDs instead of having the module create them.
-  // A mock default is shared by EVERY instance of a type, and the access point
-  // takes the interfaces as a SET, so one ID repeated collapses to a single
-  // item and the provider refuses it for being under its six-interface floor.
-  // override_resource cannot fix it either -- it addresses a resource, not an
-  // instance. `tofu validate` passes on the module-created path, where the IDs
-  // are genuinely unknown rather than identical, and S3.T3b's apply is what
-  // settles it against the real API.
+  // aws_network_interface gets no mock default: a default is shared by every instance and the access point takes a set,
+  // so one repeated ID collapses below its six-interface floor. The Freight runs supply the IDs instead.
 }
 
 // Confluent's IDs carry their own prefixes -- env-, lkc-, sa-, gw-, platt- --
@@ -203,8 +192,7 @@ run "confluent_cloud_contract_outputs" {
     error_message = "bootstrap_port must be the port bootstrap actually advertises"
   }
 
-  // The correction to the earlier reading: Confluent does NOT do SCRAM on any
-  // tier. It is PLAIN over TLS, with the API key as the username.
+  // Confluent does not do SCRAM on any tier: PLAIN over TLS, with the API key as the username.
   assert {
     condition     = output.auth_type == "plain"
     error_message = "auth_type must be plain -- Confluent Cloud has no SCRAM mechanism on any tier"

@@ -1,9 +1,5 @@
-// Redpanda Cloud Serverless, reached over AWS PrivateLink. Serverless because
-// it is the only tier this organisation can create -- Dedicated and BYOC are
-// Request-access and quote-only, and variables.tf refuses them at plan.
-//
-// The vendor runs the brokers, so nothing here sizes, tunes or versions them,
-// and dfe-engine creates the topics.
+// Redpanda Cloud Serverless over AWS PrivateLink. It is the only tier this organisation can create, and variables.tf refuses the others.
+// Redpanda runs the brokers, so nothing here sizes or tunes them. docs/deployment/kafka/redpanda-cloud.md#module-design-notes.
 
 data "aws_caller_identity" "current" {}
 
@@ -14,33 +10,22 @@ data "aws_region" "current" {}
 locals {
   private = var.connectivity == "private"
 
-  // Redpanda names a serverless region with the cloud provider's own region
-  // token, so the region is whichever one the root pointed the aws provider at.
-  // That is also the only cloud where Serverless offers private connectivity.
+  // Serverless takes the cloud's own region token, here the aws provider's region, and offers private connectivity on AWS alone.
   region = data.aws_region.current.region
 
-  // Redpanda's own state words for the two halves of networking_config.
   network_state = {
     enabled  = "STATE_ENABLED"
     disabled = "STATE_DISABLED"
   }
 
-  // On private connectivity the data plane is reachable only through the
-  // endpoint, so the user and the ACLs are written against the
-  // private URL -- which means tofu itself has to run inside the VPC, or behind
-  // a Route 53 Resolver rule that forwards the cluster domain into it.
+  // Private connectivity reaches the data plane through the endpoint alone, so tofu must run inside the VPC or behind a Route 53 Resolver forwarding rule.
   cluster_api_url = local.private ? redpanda_serverless_cluster.this.dataplane_api.private_url : redpanda_serverless_cluster.this.dataplane_api.url
 
   seed_brokers = local.private ? redpanda_serverless_cluster.this.kafka_api.private_seed_brokers : redpanda_serverless_cluster.this.kafka_api.seed_brokers
 
-  // The contract wants bare host:port pairs. Redpanda returns a list, and the
-  // scheme is stripped rather than assumed absent.
+  // Redpanda returns a list with a scheme, and the contract wants bare host:port.
   bootstrap = join(",", [for broker in local.seed_brokers : replace(broker, "/^[a-zA-Z0-9+.-]+:\\/\\//", "")])
 }
-
-// ---------------------------------------------------------------------------
-// The cluster
-// ---------------------------------------------------------------------------
 
 resource "redpanda_resource_group" "this" {
   count = var.resource_group_id == "" ? 1 : 0
@@ -48,15 +33,13 @@ resource "redpanda_resource_group" "this" {
   name = var.name
 }
 
-// The group gained count; this keeps an existing deployment's group, the parent
-// of its cluster, from planning as a replacement.
+// Keeps an existing deployment's group from planning as a replacement.
 moved {
   from = redpanda_resource_group.this
   to   = redpanda_resource_group.this[0]
 }
 
 locals {
-  // The standing group when the caller names one, otherwise the one above.
   resource_group_id = var.resource_group_id != "" ? var.resource_group_id : redpanda_resource_group.this[0].id
 }
 
@@ -65,8 +48,7 @@ resource "redpanda_serverless_cluster" "this" {
   resource_group_id = local.resource_group_id
   serverless_region = local.region
 
-  // Set private_link_id and the cluster answers on the endpoint; leave it null
-  // and the private half of networking_config has nothing to attach to.
+  // Without private_link_id the private half of networking_config has nothing to attach to.
   private_link_id = local.private ? redpanda_serverless_private_link.this[0].id : null
 
   networking_config = {
@@ -83,13 +65,7 @@ resource "redpanda_serverless_cluster" "this" {
   }
 }
 
-// ---------------------------------------------------------------------------
-// The private handshake: Redpanda's end
-// ---------------------------------------------------------------------------
-
-// Redpanda publishes an AWS VPC endpoint SERVICE and allows this account to
-// connect to it. The account is read from the caller rather than written down,
-// because the deployment account is deployment config.
+// Allows this account, read from the caller, to connect to Redpanda's endpoint service.
 resource "redpanda_serverless_private_link" "this" {
   count = local.private ? 1 : 0
 
@@ -97,8 +73,7 @@ resource "redpanda_serverless_private_link" "this" {
   resource_group_id = local.resource_group_id
   serverless_region = local.region
 
-  // The vendor's own token for the deployment's cloud, from the managed-backends
-  // offering; var.cloud refuses all but the aws half this body builds.
+  // Redpanda's token for the deployment's cloud. var.cloud refuses all but aws.
   cloud_provider = var.cloud
 
   aws_config = {

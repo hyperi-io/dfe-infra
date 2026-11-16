@@ -1,5 +1,3 @@
-// No zookeeper output: Confluent Cloud runs Kora and has none to describe.
-
 output "bootstrap" {
   description = "The SASL_SSL bootstrap string DFE connects with, normalised to bare host:port. Confluent returns it with a SASL_SSL:// prefix, which is stripped here so every DFE reader downstream sees one spelling."
   value       = replace(confluent_kafka_cluster.this.bootstrap_endpoint, "/^[a-zA-Z0-9_+.-]+:\\/\\//", "")
