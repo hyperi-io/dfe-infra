@@ -37,6 +37,21 @@ here with no external source to cite.
 `spot_test` names the one ten-minute test that would promote the ratio to
 `measured`. Nothing here is sized by a scale test.
 
+## Reading the ratios
+
+`confidence` levels: `vendor-documented` (the vendor publishes the number), `benchmark-named-hardware` (a published benchmark on stated hardware), `rule-of-thumb` (judgement, not measured), `dfe-core-evidence` (carried over from the 2.1 estate), `measured` (our own spot test, recorded under `sizing/measurements/`) and `measure-only` (no constant exists, the value is `unmeasured` and the resolver reads it off the running system). `unit` is `formula` or `policy` where the value is an expression or a named policy.
+
+- Brokers size for the peak, which is the daily average times `event.peak_factor`. Broker storage sizes from the average, because a retention window of a day or more spans the whole diurnal curve and peak times retention would count the evening twice.
+- Broker disk holds every event raw on `<source>_land`, plus the `sizing.transformed_share` of them enriched on `<source>_load`, which is why the formula multiplies by `1 + transformed_share x enrichment_growth_factor`.
+- ClickHouse RAM sizes from the frequent-access band (`ram_to_compressed_frequent_access_*`) over `hunt_window_days` of retained data, because hunts read recent data. The long-retention band over the whole retention is printed beside it in the report.
+- Keeper IOPS are parts created a second (average ingest over `loader_flush_bytes`) times `raft_appends_per_part`, floored at `keeper_idle_iops` so a deployment with no estimate still gets a real volume. The spot test measured 14,782 Keeper packets received per GB at 1 MiB flushes against 1,061 at 16 MiB (13.9x fewer), and about 14.8 a part at either size. It is in `measurements/2026-09-13-clickhouse-spot-test.md`.
+- The root volume holds the OS, images and logs. `root_volume_demand_*` is what a quiet root disk asks of the instance. gp3's free minimum (3,000 IOPS / 125 MiB/s) is what it is provisioned at, never the demand.
+- `daemonset_*`, `node_memory_overhead_fraction` and `node_max_pods` set how much node memory is left for pods. The resolver reads no ENI limits, so it uses nodeadm's 110-pod fallback for the kubelet reserve.
+- `wire_to_disk_*` is uncompressed bytes in over compressed bytes on disk, which is not the parts-to-compressed ratio ClickHouse reports. `wire_to_disk_synthetic_floor` comes from a high-entropy synthetic corpus, a lower bound that does not replace `wire_to_disk_default` or the vendor band.
+- `merge_cpu_fraction` is the elapsed-time share of merges in `system.part_log`, which has no per-event CPU column. `jsoneachrow_parse_factor` and the ZSTD figures are synthetic runs, recorded in the same file.
+- The Kafka partition floor is `ceil(peak_mb_s / per_partition_mb_s_cap)` where a provider caps per-partition throughput, so it rises with `peak_factor`.
+- `mb_s_per_vcpu_kind_check` and `partition_scale_footprint_delta_kind_check` come from one kind run (`measurements/2026-09-13-kind-scale-proof.md`). They support the floors, they are not ceilings.
+
 ## No lists
 
 The ops scripts read YAML with `scripts/yaml_subset.py` -- nested maps and

@@ -1200,7 +1200,7 @@ def size_core(sizing: dict[str, object], dial: Dial) -> Core:
 
     # RAM sizes from the FREQUENT-ACCESS band over the hunt window, because DFE's
     # hunts run over recent data. The long-retention band over the whole dataset
-    # is printed beside it, as sizing.yaml's own comment asks.
+    # is printed beside it (sizing/README.md, "Reading the ratios").
     frequent_ratio = take("clickhouse", "ram_to_compressed_frequent_access_max")
     long_ratio = take("clickhouse", "ram_to_compressed_long_retention_min")
     memory_usable = take("clickhouse", "server_memory_usage_to_ram_ratio")
