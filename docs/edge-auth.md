@@ -59,10 +59,10 @@ flowchart LR
 
 *Figure 1. L4 Detail -- Edge exposure.* Up: [L2 Services -- DFE deployment](architecture.md#where-this-repo-sits-in-the-suite).
 
-Dashed boxes are external. A dotted arrow is optional: the IdP hop runs when a provider is configured, and dfe-hyperdx renders inside dfe-ui, never at its own URL. Local login is dfe-ui asking dfe-engine's account store, shown in Figure 2.
+Dashed boxes are external. A dotted arrow is optional: the IdP hop runs when a provider is configured, and dfe-ui frames dfe-hyperdx from its route on `hyperdx.{domain}`. Local login is dfe-ui asking dfe-engine's account store.
 
 - The plaintext `:80` listener has exactly one route: a 301 redirect to `https`. Every other `HTTPRoute` in the chart pins `parentRefs[].sectionName: https`, so nothing else can attach to `:80`. Without that, a `:80` request gets a 404 instead of a redirect to TLS, and on an internet-facing Gateway an admin UI's Host header reaches the cluster in cleartext with no certificate warning.
-- dfe-ui is always the landing page, with dfe-hyperdx embedded as an iframe inside it, never at a URL users open.
+- dfe-ui is always the landing page, with dfe-hyperdx embedded as an iframe inside it. The gateway publishes `hyperdx.{domain}` (`httproute-hyperdx.yaml`) as the iframe's source, and its CSP lets the dfe-ui origin frame it.
 - The links page is a convenience launch pad for admins (see below), never a landing page.
 
 Per-surface OIDC behaviour (Kafbat, dfe-engine's browser vs machine paths, and the rest) is in [Per-surface policy](#per-surface-policy) below.
@@ -74,12 +74,12 @@ There are two browser login paths, and both resolve to the same engine-owned ide
 - Local (default). dfe-ui serves a login form and authenticates the user against the engine's account store.
 - Federated (opt-in). The Envoy edge fronts the dfe-engine route with a `SecurityPolicy` per configured external OIDC provider. Adding or removing a provider is a Helm values change plus an ArgoCD sync, never a dfe-engine API call.
 
-In a federated login Envoy is the OIDC client and checks the groups claim itself. dfe-engine receives the subject alone, because Envoy Gateway can't forward the array `groups` claim as a header.
+In a federated login Envoy is the OIDC client and checks the groups claim itself. With `jwtAuthn.enabled` (off by default), dfe-engine receives the subject header alone, because Envoy Gateway can't forward the array `groups` claim as one. With it off, no claim header reaches the engine.
 
 ```mermaid
 sequenceDiagram
     accTitle: L4 Detail -- Federated login
-    accDescr: Envoy sends a browser with no session to the external IdP, exchanges the returned code for an ID token, checks its groups, and forwards the request to dfe-engine with the subject header alone.
+    accDescr: Envoy sends a browser with no session to the external IdP, exchanges the returned code for an ID token, checks its groups, and forwards the request to dfe-engine, with the subject header when jwtAuthn is enabled.
     participant browser as Browser
     participant envoy as Envoy Gateway
     participant idp as External IdP
@@ -91,7 +91,7 @@ sequenceDiagram
     browser->>envoy: /oauth2/callback
     envoy->>idp: /token with PKCE
     idp->>envoy: ID token and groups
-    envoy->>engine: Request, X-Oidc-Subject
+    envoy->>engine: X-Oidc-Subject, only with jwtAuthn.enabled
 ```
 
 *Figure 2. L4 Detail -- Federated login.* Up: [L2 Services -- DFE deployment](architecture.md#where-this-repo-sits-in-the-suite).

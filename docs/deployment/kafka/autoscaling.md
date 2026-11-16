@@ -1,6 +1,6 @@
 # Kafka broker autoscaling
 
-`kafka.autoscaling` drives a KEDA `ScaledObject` that scales the broker `KafkaNodePool`'s replica count directly. Strimzi 1.2.0 put a `/scale` subresource on `KafkaNodePool`, and moving `spec.replicas` is exactly what triggers Strimzi's `autoRebalance` (`kafka-rebalance-templates.yaml`). It renders at `kafka.provider: strimzi` and `kafka.mode: cluster` alone, because a single broker has nothing to scale. It's ON by default (`kafka.autoscaling.enabled`).
+`kafka.autoscaling` drives a KEDA `ScaledObject` that scales the broker `KafkaNodePool`'s replica count directly. `KafkaNodePool` has had a `/scale` subresource since node pools arrived in Strimzi 0.36.0, and moving `spec.replicas` is exactly what triggers Strimzi's `autoRebalance` (`kafka-rebalance-templates.yaml`). It renders at `kafka.provider: strimzi` and `kafka.mode: cluster` alone, because a single broker has nothing to scale. It's ON by default (`kafka.autoscaling.enabled`).
 
 ## When it renders
 

@@ -35,7 +35,7 @@ DFE is cake and eat it too. Here's what most people do, and what we do instead.
 
 That collapses three layers (index, ETL and object-relational mapping) into one native-Rust pass over the data, landed where you can JOIN it.
 
-Most pipelines make you bolt capabilities on and then babysit them. We build them in. IP enrichment is the obvious case: GeoIP, ASN, reputation and risk are normally a DIY collection of feeds, lookups and cron jobs that rot and leave the pipeline fragile. In DFE they ship in the loader, the GeoIP databases download for you, and you opt in per source. Reputation reads your blocklists, and the feeds behind its VPN, Tor, proxy and botnet flags aren't built yet (https://github.com/hyperi-io/dfe-loader/issues/342).
+Most pipelines make you bolt capabilities on and then babysit them. We build them in. IP enrichment is the obvious case: GeoIP, ASN, reputation and risk are normally a DIY collection of feeds, lookups and cron jobs that rot and leave the pipeline fragile. In DFE they ship in the loader, the GeoIP databases download for you, and you opt in per source. Reputation reads your blocklists, and the feeds behind its VPN, Tor, proxy and botnet flags aren't built yet (https://github.com/hyperi-io/dfe-loader/issues/357).
 
 Schema mapping by reflection, Elastic compatibility, OpenTelemetry observability and the generated deployment artefacts work the same way. You add capability by switching it on, not by wiring in and owning another part that can break.
 

@@ -13,8 +13,8 @@ armed-but-idle state it is.
 {{- if include "dfe-kafka.autoscalerRendered" . }}
 {{- $minReplicas := int (include "dfe-kafka.brokerCount" .) }}
 # The broker-count autoscaler: a KEDA ScaledObject whose scaleTargetRef is the
-# broker KafkaNodePool (kafka-nodepool.yaml), NOT the Kafka CR -- Strimzi 1.2.0
-# put the /scale subresource (specReplicasPath: .spec.replicas,
+# broker KafkaNodePool (kafka-nodepool.yaml), NOT the Kafka CR -- Strimzi has
+# had the /scale subresource since 0.36.0 (specReplicasPath: .spec.replicas,
 # statusReplicasPath: .status.replicas) on KafkaNodePool, and moving
 # spec.replicas there is exactly what triggers Strimzi's own autoRebalance
 # (kafka-rebalance-templates.yaml: add-brokers moves data onto a broker that

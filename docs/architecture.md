@@ -56,7 +56,7 @@ Why it works this way is in [design principles](design-principles.md#your-cluste
 
 | Component | Switch | Dial | Swap targets |
 |---|---|---|---|
-| Cluster | vanilla-cluster contract | (bootstrap preflight) | RKE2 (deployed onto, never built here) and EKS (built by the aws root), tested. AKS and GKE Standard, values overlays alone |
+| Cluster | vanilla-cluster contract | (bootstrap preflight) | RKE2 (deployed onto, never built here, #1123) and EKS (built by the aws root), tested. AKS and GKE Standard, values overlays alone |
 | DNS | external-dns / estate-managed | provider config, or the deployment's DNS | CoreDNS record (on-prem), Route53, ... |
 | Private CA / TLS | cert-manager ClusterIssuer | `tls.acme.*` or `tls.vault.*` (exactly one) | ACME/Let's Encrypt, Vault/OpenBao PKI, cloud CA issuer later |
 | Secrets manager | ESO ClusterSecretStore | bootstrap store template + env | OpenBao/Vault, AWS SM (+EKS Pod Identity), ... |
@@ -113,7 +113,7 @@ The pages in this area:
 | Doc | Covers |
 |---|---|
 | [deployment/README.md](deployment/README.md) | layers, tiers, values cascade, bootstrap contract |
-| [deployment/rke2.md](deployment/rke2.md) | RKE2, the hardened default distribution |
+| [deployment/rke2.md](deployment/rke2.md) | RKE2, the reference distribution, and its provisioning design (not built, #1123) |
 | [deployment/on-prem.md](deployment/on-prem.md) | build, deploy, test and tear down on an on-prem cluster (the `local` target) |
 | [deployment/kafka/](deployment/kafka/README.md) | managed-Kafka guides + Redpanda licence gate |
 | [deployment/clickhouse.md](deployment/clickhouse.md) | CH target matrix + operator history (official operator / ClickHouse Cloud, private-cloud swap, Altinity untested) |

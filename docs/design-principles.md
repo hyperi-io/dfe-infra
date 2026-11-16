@@ -29,7 +29,7 @@ That's how you move to DFE. Point your existing feeds at it, dfe-transform-elast
 
 ## Your cluster, your choice of parts
 
-DFE runs on any standard (CNCF-conformant) Kubernetes and assumes nothing special about it. Whatever the stack needs, it brings. With no cluster, the design is RKE2, which dfe-infra doesn't build yet ([rke2.md](deployment/rke2.md)).
+DFE runs on any standard (CNCF-conformant) Kubernetes and assumes nothing special about it. Whatever the stack needs, it brings. With no cluster, the design is RKE2, which dfe-infra doesn't build yet ([rke2.md](deployment/rke2.md), https://github.com/hyperi-io/dfe-infra/issues/1123).
 
 Every big piece is a config choice, not a code change: DNS, the certificate authority, the secrets store, Kafka, ClickHouse, the document store, the load balancer, the deploy repo. Want MSK instead of in-cluster Kafka, or ClickHouse Cloud instead of ours? Change the config. We never fork a chart to do it, and a part one provider alone can supply is a bug. The full list is in [architecture](architecture.md#swappable-components-the-modularity-contract). A dependency goes in that table before it merges.
 

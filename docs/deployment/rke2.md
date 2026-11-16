@@ -10,7 +10,7 @@ Copyright: (c) 2026 HYPERI PTY LIMITED
 
 # RKE2 - a primer (the DFE reference distribution)
 
-Status: dfe-infra deploys onto an RKE2 cluster and doesn't build one. Provisioning RKE2 where a customer has no cluster is the design, not built, with no tracking issue.
+Status: dfe-infra deploys onto an RKE2 cluster and doesn't build one. Provisioning RKE2 where a customer has no cluster, with its hardened profile and self-hosted OIDC issuer, is design only and not built (https://github.com/hyperi-io/dfe-infra/issues/1123).
 
 DFE targets any CNCF-conformant Kubernetes. RKE2 is the reference distribution. RKE2 on-prem and Amazon EKS are the tested targets, and the aws root builds the EKS cluster. Azure and GCP have values overlays (`argocd/values/azure.yaml`, `gcp.yaml`) and no cloud root, so a deployment there brings a cluster and sets the values by hand.
 
@@ -62,9 +62,9 @@ flowchart LR
 
 DFE never manages RKE2's control plane. Rancher/RKE2 own etcd, upgrades and hardening, and DFE deploys into the cluster they provide. What differs by cluster type:
 
-- On RKE2, the hardened profile gives you a FIPS, CIS and STIG-hardened cluster baseline. DFE's workloads are assessed separately, and the cluster baseline doesn't cover them.
-- On RKE2, the self-hosted OIDC issuer gives pods their cloud identity (AWS IRSA, GCP WIF, Azure Entra). So DFE's secrets and ESO flow works the same wherever RKE2 runs.
-- On managed targets, the cloud's mechanism gives pods their identity: EKS Pod Identity, Azure Workload Identity, GKE Workload Identity ([portability-matrix.md](portability-matrix.md)).
+- On an RKE2 cluster you bring, the hardening is whatever its operator configured. The design (#1123) provisions RKE2 with its hardened profile for a FIPS, CIS and STIG-hardened baseline, which wouldn't cover DFE's workloads, assessed separately.
+- On RKE2 on-prem today, pods have no cloud identity, and DFE's secrets come from OpenBao through ESO ([portability-matrix.md](portability-matrix.md)). The design adds a self-hosted OIDC issuer so RKE2 on a cloud's VMs gets cloud identity (AWS IRSA, GCP WIF, Azure Entra). Nothing builds it yet.
+- On managed targets, the cloud's mechanism gives pods their identity: EKS Pod Identity, Azure Workload Identity, GKE Workload Identity.
 
 ## Why RKE2 is the reference
 
@@ -105,7 +105,7 @@ flowchart TB
 
 *Figure 2. L4 Detail -- Where RKE2 runs. Dashed boxes are run by the cloud.* Up: [Deploying DFE with dfe-infra](README.md).
 
-One distro means one Kubernetes version matrix, one CNI/CSI, one hardening profile, one identity pattern, one debugging surface and one set of docs. The alternative is three divergent managed distros, because EKS, AKS and GKE differ on CNI, add-ons, auth and upgrade cadence. RKE2 runs on bare metal, any cloud's VMs and the edge, which is the widest customer reach, and Rancher handles the fleet lifecycle (etcd snapshots, rolling upgrades). The cost is that, on clusters we provision, we own etcd backup/restore, node OS patching, control-plane upgrades and the per-cloud OIDC webhook. That's work, but it's bounded and single-path.
+One distro means one Kubernetes version matrix, one CNI/CSI, one hardening profile, one identity pattern, one debugging surface and one set of docs. The alternative is three divergent managed distros, because EKS, AKS and GKE differ on CNI, add-ons, auth and upgrade cadence. RKE2 runs on bare metal, any cloud's VMs and the edge, which is the widest customer reach, and Rancher handles the fleet lifecycle (etcd snapshots, rolling upgrades). The cost, once we provision clusters (#1123), is that we'd own etcd backup/restore, node OS patching, control-plane upgrades and the per-cloud OIDC webhook. That's work, but it's bounded and single-path.
 
 RKE2 meets the federal and regulated requirements, which is a large part of the "why". Verify version specifics with Rancher Government per deployment:
 
