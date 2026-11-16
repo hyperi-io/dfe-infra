@@ -1,59 +1,59 @@
 # Why DFE
 
-> **Coming from Splunk, Elastic or a lakehouse?** DFE doesn't ask upstream suppliers for a data contract. It accepts every field, and one the schema doesn't map yet lands in the `_json` column with its own typed sub-column. A supplier changing a field doesn't become your outage, and you add the mapping later through the `dfe-schemas` meta-schema. The rest of what's different is in [coming from Splunk, Elastic or a lakehouse](../docs-site/content-root/coming-from.md).
+> **Coming from Splunk, Elastic or a lakehouse?** DFE doesn't ask upstream suppliers for a data contract. It accepts every field, and one the schema doesn't map yet lands in the `_json` column as a typed sub-column of its own. A supplier changing a field doesn't become your outage, and you add the mapping later through the `dfe-schemas` meta-schema. The rest of what's different is in [coming from Splunk, Elastic or a lakehouse](../docs-site/content-root/coming-from.md).
 
 DFE is a Data *Fusion* Engine. Plenty of tools can land a big pile of telemetry. The value is joining that pile with other data (context, state, reference), asking questions across all of it, and coping with change reliably.
 
-Telemetry (events, metrics, logs, syslog, netflow, Windows event logs) is the usual source of the huge *fact* table (the observability data). On its own it's only half the value, as any Elastic or Splunk user knows. You get what happened without *what the world looked like around it at the time*, and that context is what lets you narrow the field and save time and resources. The questions that matter correlate telemetry with something else: an asset inventory, an identity directory, a partner feed, a point-in-time snapshot. That cross-source JOIN is what index engines can't do and what data lakes are too slow to keep current. DFE is built to do exactly that, and to keep doing it as the sources change.
+Telemetry (events, metrics, logs, syslog, netflow, Windows event logs) is the usual source of the huge *fact* table (the observability data). By itself it's half the value, as any Elastic or Splunk user knows. You get what happened without *what the world looked like around it at the time*, and that context is what lets you narrow the field and save time and resources. The questions that matter correlate telemetry with something else: an asset inventory, an identity directory, a partner feed, a point-in-time snapshot. That cross-source JOIN is what index engines can't do and what data lakes are too slow to keep current. DFE is built to do exactly that, and to keep doing it as the sources change.
 
 ## The index-engine and data-lake taxes
 
-Index engines (Elastic and Splunk, for example) index data on the way in, whether or not anyone will ever search it. The indexes are large, expensive to build and expensive to keep hot. Retention becomes a budget decision instead of a capability or security one, and scaling out scales the bill badly. The flexibility is real. You pay for it on every byte, up front, forever, and you still can't JOIN cleanly across sources.
+Index engines (Elastic and Splunk, for example) index data on the way in, whether or not anyone will ever search it. The indexes are large, expensive to build and expensive to keep hot. Retention becomes a budget decision instead of a capability or security one, and scaling out scales the bill badly. The flexibility is there. You pay for it on every byte, up front, forever, and you still can't JOIN cleanly across sources.
 
 Data lakes (Snowflake and Databricks, for example) make storage cheap. The path to queryable data isn't. Schema management, schema-on-write and multi-stage ELT make change slow. A new source or a renamed field ripples through ingestion, transformation and modelling before anyone can query it. Flexible on paper, rigid in practice, and query time is metered.
 
 ## What DFE does instead
 
-> **Coming from Splunk, Elastic or a lakehouse?** DFE builds no index over each field. It lands each source as ClickHouse columns, and `dfe-loader` parses and enriches in flight, so there's no separate ETL stage to run first. The August 2025 test below measured both the cost and the retention.
+> **Coming from Splunk, Elastic or a lakehouse?** DFE builds no index over each field. It lands each source as ClickHouse columns, and `dfe-loader` parses and enriches in flight, so there's no separate ETL stage to run first. The August 2025 test below compared both the cost and the retention.
 
 DFE is cake and eat it too. Here's what most people do, and what we do instead.
 
 | What most do | What we do |
 |---|---|
 | Index everything up front | Land it as queryable, optimised columnar data in ClickHouse to start with. Cheap to write, fast to query, and you keep more for less. |
-| Bolt on a separate ETL tier | `dfe-loader` routes, parses and enriches in flight, then writes RowBinary so the store skips re-parsing. That's the common 80/20 of ETL on a batch-optimised hot path. Reflecting the destination schema automates the routine ETL-for-the-engine work, so you don't need it. Only the bespoke 20% goes to the optional `dfe-transform-*` apps. Pick your engine: VRL, Vector or Elastic. |
+| Bolt on a separate ETL tier | `dfe-loader` routes, parses and enriches in flight, then writes RowBinary so the store skips re-parsing. That's the common 80/20 of ETL on a batch-optimised hot path. Reflecting the destination schema automates the routine ETL-for-the-engine work, so you don't need it. The bespoke 20% alone goes to the optional `dfe-transform-*` apps. Pick your engine: VRL, Vector or Elastic. |
 | Model first, query later | A versioned meta-schema (`dfe-schemas`) compiles to table DDL. Change the meta-schema, not a chain of pipelines. You work with high-level primitives and use cases instead of engine DDL, so your data SMEs don't need to be tool and DB-engine experts. |
 | Rip and replace to migrate | Keep your sources. Existing Elastic ingest pipelines compile to native transforms (`dfe-transform-elastic`). |
 | Generic, sub-optimised everything | Heavily optimised, opinionated bookends in `dfe-receiver`, `dfe-fetcher` and `dfe-loader` instead of poor-performing generics. Generics stay where they're *required and beneficial*. See [purpose-built bookends](#purpose-built-bookends). |
 | An all-in walled garden | Components that each do one thing *completely*, and mix and match with other technology without friction. |
 | Medium scale, then try to scale up | Designed and proven at PB scale *first*, then *scaled down* for medium and small workloads. That's usually the secret sauce a SaaS provider keeps to itself. |
 | GitOps that pins every app to a fixed pod size | Built for Kubernetes autoscaling from the ground up, with self-regulating vertically scaling pods. |
-| Cloud and infra spend is the deployer's problem | Efficiency on the hot path is core to every component, and that cuts your spend. It's lean enough to run in the field or a theatre data centre, not only a cloud region. |
+| Cloud and infra spend is the deployer's problem | Efficiency on the hot path is core to every component, and that cuts your spend. It's lean enough to run in the field or a theatre data centre, not a cloud region alone. |
 | Constant serde, re-processing and row processing, which burns CPU cycles for no value | serde is the enemy. What can be zero copy, batched, SIMD and collapsed into a single app or cycle is. |
-| Wire in and babysit your own enrichment | GeoIP, ASN, IP reputation and risk, Community ID and user-agent parsing are built in, with the reference data kept current for you. Opt in per source. No fragile DIY feeds and cron jobs to maintain. |
-| Dump everything into the engine and fix it there (index engines, ELT) | Put the work close to what it's working on. Filter and correct at the edge, receiver, transform and loader, so a bad record goes where it costs least and ClickHouse stores only what survives. |
+| Wire in and babysit your enrichment | GeoIP, ASN, IP reputation and risk scoring are built into the loader, off by default and opt in per source, and the GeoIP databases download for you. Community ID and user-agent parsing run in `dfe-transform-elastic`. No fragile DIY feeds and cron jobs to maintain. |
+| Dump everything into the engine and fix it there (index engines, ELT) | Put the work close to what it's working on. Filter and correct at the edge, receiver, transform and loader, so a bad record goes where it costs least and ClickHouse stores what survives. |
 
 That collapses three layers (index, ETL and object-relational mapping) into one native-Rust pass over the data, landed where you can JOIN it.
 
-Most pipelines make you bolt capabilities on and then babysit them. We build them in and keep their moving parts current. IP enrichment is the obvious case. GeoIP, ASN, IP reputation and risk, Community ID and user-agent parsing are normally a DIY collection of feeds, lookups and cron jobs that quietly rot and leave the pipeline fragile. In DFE they ship in the loader, the reference data is refreshed for you, and you opt in per source. Turn on what you need, leave the rest off.
+Most pipelines make you bolt capabilities on and then babysit them. We build them in. IP enrichment is the obvious case: GeoIP, ASN, reputation and risk are normally a DIY collection of feeds, lookups and cron jobs that rot and leave the pipeline fragile. In DFE they ship in the loader, the GeoIP databases download for you, and you opt in per source. Reputation reads your blocklists, and the feeds behind its VPN, Tor, proxy and botnet flags aren't built yet (https://github.com/hyperi-io/dfe-loader/issues/342).
 
 Schema mapping by reflection, Elastic compatibility, OpenTelemetry observability and the generated deployment artefacts work the same way. You add capability by switching it on, not by wiring in and owning another part that can break.
 
-Efficiency is a design goal from day one, and it shows up on the bill and in how much you can keep queryable. Working with AWS and ClickHouse in August 2025, we ran two tests on DFE 2.1 to prove its schema models and ingest scale, with a fully tuned OpenSearch cluster running alongside. At petabyte-a-day throughput, OpenSearch couldn't keep up and DFE did. The 270-versus-14-days result came from the long-term analysis test, at terabyte scale. DFE with ClickHouse also used 10-25% of the resources there, counting the engine and ingestion pipeline together.
+Efficiency is a design goal from day one, and it shows up on the bill and in how much you can keep queryable. Working with AWS and ClickHouse in August 2025, we ran two tests on DFE 2.1 to test its schema models and ingest scale, with a fully tuned OpenSearch cluster running alongside. At petabyte-a-day throughput, OpenSearch couldn't keep up and DFE did. The 270-versus-14-days result came from the long-term analysis test, at terabyte scale. DFE with ClickHouse also used 10-25% of the resources there, counting the engine and ingestion pipeline together.
 
 Those tests drove a good part of the DFE 2.2 redesign over 2.1. Much of it came straight out of what they showed about where the spend is and where the cycles get consumed.
 
 ## Purpose-built bookends
 
-Every event lands through the loader, and most enter through the receiver or fetcher. Nearly every event pays for every cycle spent there, so they're purpose-built Rust. A general-purpose transform engine comes in only where the job needs one, in the optional `dfe-transform-*` apps. Only `dfe-transform-vrl` depends on the `vrl` crate.
+Every event lands through the loader, and most enter through the receiver or fetcher. Nearly every event pays for every cycle spent there, so they're purpose-built Rust. A general-purpose transform engine comes in where the job needs one, and nowhere else, in the optional `dfe-transform-*` apps. `dfe-transform-vrl` alone depends on the `vrl` crate.
 
 Why not one generic engine throughout? Because it interprets your program. VRL compiles it at startup into an expression tree, then walks that tree for every event. The Rust compiler optimises the interpreter when it builds the binary, but your program doesn't exist yet.
 
 Profile-guided optimisation widens the gap. We build the bookends with PGO and BOLT, which means 'run it under real load, record what's hot, rebuild around it'.
 
-A bookend's hot path is the same work in every deployment, so a profile trained on it carries over. An interpreter's profile only matches the programs it was trained on, and code it never saw is laid out cold.
+A bookend's hot path is the same work in every deployment, so a profile trained on it carries over. An interpreter's profile matches the programs it was trained on and no others, and code it never saw is laid out cold.
 
-Parsing is where it pays most, because grok and regex over a vendor message body are some of the most expensive per-event work in a pipeline. `dfe-transform-elastic` has no interpreter. Elastic ingest processors compile to Rust, one module per source, and Painless scripts run as Rust too: hand-transcribed per source, or matched to a known pattern. A script it doesn't recognise is counted and skipped.
+Parsing is where it pays most, because grok and regex over a device's message body are some of the most expensive per-event work in a pipeline. `dfe-transform-elastic` has no interpreter. Elastic ingest processors compile to Rust, one module per source, and Painless scripts run as Rust too: hand-transcribed per source, or matched to a known pattern. A script it doesn't recognise is counted and skipped.
 
 Zero-copy `dfe-parse` parsers replace two whole-pattern grok forms, and the rest fall back to compiled regex. The compiler sees that code, and so does the profile.
 
@@ -64,12 +64,12 @@ Hence purpose-built for the known path, and generics for the bespoke 20%.
 Sources aren't just streams. DFE treats databases and point-in-time state dumps as sources in their own right. A complete dump is loaded as a small *dimension* table (the context) and joined against the large fact table (the observability data). ClickHouse does that well as long as the dimension stays small.
 
 - Cyber (HyperI XDR). Pull a full point-in-time inventory of the network (a RunZero export, say, which is "what the estate looked like at time X", timestamped but not time-series) and JOIN it against the Windows, syslog and netflow fact table. That answers the question every defender has: *which hosts on my network are not sending me audit logs?* Index engines can't do that JOIN at all.
-- Defence and the field. Fuse loosely controlled, disparate sources (sensors, coalition partner feeds, weather, order of battle, damage assessments) alongside telemetry and streams, and keep working as they change. DFE is lean, so the same stack deploys in a theatre data centre or at the edge, not only a cloud region.
+- Defence and the field. Fuse loosely controlled, disparate sources (sensors, coalition partner feeds, weather, order of battle, damage assessments) alongside telemetry and streams, and keep working as they change. DFE is lean, so the same stack deploys in a theatre data centre or at the edge, not a cloud region alone.
 
 More worked examples are in [Use cases](use-cases.md).
 
 ## Land "it works", then make it better
 
-Adoption doesn't start with a rewrite. The compatibility transform (`dfe-transform-elastic`) accepts the data your existing Elastic integrations already produce, so the first milestone is "it works against my sources". From there you gain native-Rust throughput and a schema that adapts as those sources change. Improvement and change without re-platforming. That's the pitch.
+Adoption doesn't start with a rewrite. The compatibility transform (`dfe-transform-elastic`) accepts the data your existing Elastic integrations produce, so the first milestone is "it works against my sources". From there you gain native-Rust throughput and a schema that adapts as those sources change. Improvement and change without re-platforming. That's the pitch.
 
 Source data is rarely tightly controlled, and even when it is, nasty surprises happen. When they do, everything should keep working, lose nothing, and let you correct in minutes, not days or months of schema management. So all inbound data works by default, and schema management moves from an accept/reject hard gate to a *performance improvement*.

@@ -137,18 +137,18 @@ output "cluster_api_url" {
 }
 ```
 
-For the Dedicated / BYOC tier, point the local at `redpanda_cluster.dfe.cluster_api_url`. Then set cluster-level defaults (`log_retention_ms = 259200000`, `default_topic_partitions = 12`, `default_topic_replications = 3`) through the cluster config surface. They're the same Redpanda property names DFE's own self-hosted Redpanda CR uses (`helm/charts/kafka/templates/redpanda.yaml`).
+For the Dedicated / BYOC tier, point the local at `redpanda_cluster.dfe.cluster_api_url`. Then set cluster-level defaults (`log_retention_ms = 259200000`, `default_topic_partitions = 12`, `default_topic_replications = 3`) through the cluster config surface. They're the same Redpanda property names DFE's self-hosted Redpanda CR uses (`helm/charts/kafka/templates/redpanda.yaml`).
 
 ## Wiring back to DFE
 
 - `kafka.mode=external`, `kafka.external.bootstrap=<the SASL bootstrap host:port>`. That's the seed brokers. It isn't the HTTP `cluster_api_url`, which is the admin/REST plane the Terraform provider uses. The client bootstrap is the Kafka SASL endpoint from the cluster's connectivity details.
-- `kafka.securityProtocol=SASL_SSL`, the one dial every app chart and dfe-engine read their protocol from. Redpanda Cloud serves SCRAM-SHA-512 over TLS only. On the aws root you set none of the mode, the endpoint or this by hand. `DFE_KAFKA_PROVIDER=redpanda-cloud` reaches bootstrap, which puts all three on the Argo cluster secret for the layer 2 appsets to hand on.
+- `kafka.securityProtocol=SASL_SSL`, the one dial every app chart and dfe-engine read their protocol from. Redpanda Cloud serves SCRAM-SHA-512 over TLS alone. On the aws root you set none of the mode, the endpoint or this by hand. `DFE_KAFKA_PROVIDER=redpanda-cloud` reaches bootstrap, which puts all three on the Argo cluster secret for the layer 2 appsets to hand on.
 - Credentials: the `redpanda_user` name (username) and password go in the external secret in the deployment's secrets store (Secrets Manager on AWS, OpenBao elsewhere), with `kafka.external.auth.type=scram`.
 - Client config: `dfe kafka client-config --provider redpanda-cloud`.
 
 ## Verification: what is and isn't confirmed
 
-Confirmed by 2026 research (sources in the README):
+Confirmed against the platform's documentation (sources in the README):
 
 - The `redpanda` provider is GA.
 - `redpanda_serverless_cluster` (name, resource_group_id, serverless_region), `redpanda_cluster` (Dedicated/BYOC), `redpanda_topic` (partition_count, replication_factor, a `configuration` map with `cleanup.policy`, `retention.ms` and so on) and `redpanda_user` with `mechanism = "scram-sha-512"` are all current.

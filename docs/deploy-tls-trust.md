@@ -32,13 +32,13 @@ With `tls.internalCA.persist.enabled` on, the root persists across a rebuild, so
 
 The root is two entries, `<project>/<env>/pki/internal-ca-crt` (property `tls_crt`) and `<project>/<env>/pki/internal-ca-key` (property `tls_key`), because ESO checks `IfNotExists` per entry and the AWS provider checks the entry, not the property. The restore also reads `<project>/<env>/pki/internal-ca`, the single entry older releases wrote, and writes a complete pair from either layout or nothing. Properties are underscored because the Vault provider reads a property as a gjson path.
 
-On AWS Secrets Manager the external-secrets role can create, write, tag and describe secrets under `<project>/<env>/pki/` and nowhere else (`terraform/modules/secrets/aws-sm`). ESO creates the root under the account's `aws/secretsmanager` key, not the deployment's own, so it outlives the key a teardown schedules for deletion. The CA secrets carry the cloud root's governance tag set, run tags included (`DFE_RESOURCE_TAGS`). Surviving a teardown holds for a persistent deployment. A tagged test run's root carries that run's tags, so the run's own sweep deletes it and the next run mints its own.
+On AWS Secrets Manager the external-secrets role can create, write, tag and describe secrets under `<project>/<env>/pki/` and nowhere else (`terraform/modules/secrets/aws-sm`). ESO creates the root under the account's `aws/secretsmanager` key, not the deployment key, so it outlives the key a teardown schedules for deletion. The CA secrets have the cloud root's governance tag set, run tags included (`DFE_RESOURCE_TAGS`). Surviving a teardown holds for a persistent deployment. A tagged test run's root has that run's tags, so the run's sweep deletes it and the next run mints a fresh one.
 
 On a first bootstrap the restore ExternalSecret is `Ready=False` until the PushSecret stores the root. `CreatedOnce` then reads it once, writes it back, and stops. `bootstrap/smoke-test.sh` doesn't count a `CreatedOnce` ExternalSecret whose Secret exists.
 
 ## Estate-PKI mode (`tls.vault`)
 
-In an estate that already runs a PKI, point the edge issuer at it and every client already trusts the certificate. There's nothing to install and no root to persist. Set it in the deploy repo's own overlay (`infra/envoy-gateway-config.yaml`), never in a tracked dfe-infra values file:
+In an estate that runs a PKI, point the edge issuer at it and every client trusts the certificate from the start. There's nothing to install and no root to persist. Set it in the deploy repo's overlay (`infra/envoy-gateway-config.yaml`), never in a tracked dfe-infra values file:
 
 ```yaml
 tls:
@@ -55,20 +55,20 @@ Bootstrap seeds the AppRole SecretID from `DFE_CERTMANAGER_SECRET_ID` into Secre
 
 Three notes on the values:
 
-- `issuerName` must NOT be `tls.internalCA.issuerName`. That name already belongs to the internal mesh CA's ClusterIssuer, and `dfe-ops ca --status` reads the wildcard's `issuerRef` against it to decide the mode.
-- `caBundle` is the chain that verifies the PKI SERVER's own HTTPS, not the CA the PKI issues from. Take it off the handshake with `openssl s_client -connect <host>:<port> -showcerts`, keep every certificate after the leaf, and base64 the concatenation onto one line.
-- Nothing needs deleting to flip an existing deployment. The gateway-shim owns the `dfe-wildcard-tls` Certificate, so changing `tls.issuerName` rewrites its `issuerRef` and cert-manager re-issues in place. The new leaf's `notBefore` is the proof it went round again.
+- `issuerName` must NOT be `tls.internalCA.issuerName`. That name belongs to the internal mesh CA's ClusterIssuer, and `dfe-ops ca --status` reads the wildcard's `issuerRef` against it to decide the mode.
+- `caBundle` is the chain that verifies the PKI SERVER's HTTPS, not the CA the PKI issues from. Take it off the handshake with `openssl s_client -connect <host>:<port> -showcerts`, keep every certificate after the leaf, and base64 the concatenation onto one line.
+- Nothing needs deleting to flip an existing deployment. The gateway-shim owns the `dfe-wildcard-tls` Certificate, so changing `tls.issuerName` rewrites its `issuerRef` and cert-manager re-issues in place. The leaf's later `notBefore` shows it went round again.
 
-Vault signs from the CSR's SANs, so the leaf carries an empty subject and a critical `subjectAltName`. That's correct, not a truncated certificate.
+Vault signs from the CSR's SANs, so the leaf has an empty subject and a critical `subjectAltName`. That's correct, not a truncated certificate.
 
 ## In-cluster ClickHouse
 
-A deployment that carries a CA runs its in-cluster hops over TLS with verification on. One without stays on plain HTTP. For ClickHouse that's one block, `clickhouse.tls` in `argocd/values/common.yaml`, which the server chart and every client chart read and judge by the same rule: `enabled` and a CA to sign with. Nothing is installed on a developer box, because only pods verify this certificate.
+A deployment that has a CA runs its in-cluster hops over TLS with verification on. One without stays on plain HTTP. For ClickHouse that's one block, `clickhouse.tls` in `argocd/values/common.yaml`, which the server chart and every client chart read and apply by the same rule: `enabled` and a CA to sign with. Nothing is installed on a developer box, because pods alone verify this certificate.
 
 - With the edge module on (bootstrap's default) the certificate comes from `dfe-internal-ca`. The data and apps appsets set `clickhouse.tls.internalCA.present` from the cluster's `dfe.hyperi.io/edge` label, the same one that decides whether the gateway chart minting that issuer is deployed.
 - `clickhouse.tls.issuerRef` names another cert-manager issuer (an estate PKI, AWS Private CA or corporate CA) in the deploy repo's `infra/common.yaml`, and turns TLS on with the edge module on or off. It has to sign for in-cluster Service names such as `dfe-clickhouse-clickhouse-headless.clickhouse.svc.cluster.local`. Public ACME can't, and a Vault sign role has to allow those names and their `*.` form.
 - A cluster with the edge module off and no `issuerRef` stays on HTTP. No Certificate is requested, so nothing waits on one. dfe-docker Compose is HTTP the same way.
 - clickhouse-cluster issues `dfe-clickhouse-tls` and serves HTTPS on 8443 and native TLS on 9440 beside 8123 and 9000. A renewal lands in the same Secret, which both modes mount as a directory.
-- That Secret holds `tls.key`, so it's read only inside the clickhouse namespace, by a namespaced SecretStore that copies `ca.crt` into `dfe-clickhouse-tls-ca`. Only that CA-only Secret is copied into the app namespace, as `dfe-clickhouse-ca`, through a ClusterSecretStore whose conditions admit only the namespaces it copies into.
-- dfe-engine reads the CA as `DFE_ENGINE_CLICKHOUSE_CA_CERT`, dfe-hyperdx as `NODE_EXTRA_CA_CERTS`, and dfe-loader through `SSL_CERT_FILE`, pointed at the image's own roots with the CA appended. That variable replaces the trust store rather than adding to it.
-- An external ClickHouse sets `clickhouse.tls.port`, `verify` and `ca` for the server being dialled: `ca.configMapName` for a corporate CA bundle the deployment supplies, both `ca` names empty for a public certificate. dfe-loader can't skip verification and turns TLS on only for port 8443 or 9440 or a `clickhouse.cloud` host, so its chart refuses anything else.
+- That Secret holds `tls.key`, so it's read inside the clickhouse namespace alone, by a namespaced SecretStore that copies `ca.crt` into `dfe-clickhouse-tls-ca`. That Secret of the CA alone is copied into the app namespace, as `dfe-clickhouse-ca`, through a ClusterSecretStore with conditions that admit the namespaces it copies into and no others.
+- dfe-engine reads the CA as `DFE_ENGINE_CLICKHOUSE_CA_CERT`, dfe-hyperdx as `NODE_EXTRA_CA_CERTS`, and dfe-loader through `SSL_CERT_FILE`, pointed at the image's roots with the CA appended. That variable replaces the trust store rather than adding to it.
+- An external ClickHouse sets `clickhouse.tls.port`, `verify` and `ca` for the server being dialled: `ca.configMapName` for a corporate CA bundle the deployment supplies, both `ca` names empty for a public certificate. dfe-loader can't skip verification and turns TLS on for port 8443 or 9440 or a `clickhouse.cloud` host alone, so its chart rejects anything else.

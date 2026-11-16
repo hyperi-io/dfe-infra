@@ -2,7 +2,7 @@
 
 NiFi feeds DFE in two ways. It pushes records to `dfe-receiver` over HTTP with InvokeHTTP, or it writes NDJSON files that `dfe-fetcher` tails. DFE is not a NiFi node, and Site-to-Site is out of scope.
 
-Everything below was measured on 2026-11-13 with NiFi 2.12.0 on the Docker install, running the app versions stack 2.2.2 pins (`dfe-receiver` v1.15.67, `dfe-fetcher` v1.4.54).
+Everything below was tested on 2026-11-13 with NiFi 2.12.0 on the Docker install, running the app versions stack 2.2.2 pins (`dfe-receiver` v1.15.67, `dfe-fetcher` v1.4.54).
 
 ## Push with InvokeHTTP
 
@@ -20,7 +20,7 @@ Mint an ingest credential through the engine, `PUT /api/v1/orgs/{org}/ingest-cre
 
 NDJSON, a JSON array and gzipped NDJSON all answered 202.
 
-A record lands only in an org its token is bound to, and a token bound to one org puts every record there. A record sent with `"_org_id":"default"` in its body answered 202 and landed under the token's org, because `routing.source_org_id` is `disallow` by default.
+A record lands in an org its token is bound to and no other, and a token bound to one org puts every record there. A record sent with `"_org_id":"default"` in its body answered 202 and landed under the token's org, because `routing.source_org_id` is `disallow` by default.
 
 The receiver's answers, and the relationship each lands on in NiFi:
 
@@ -33,13 +33,13 @@ The receiver's answers, and the relationship each lands on in NiFi:
 | `429` | The per-client `server.rate_limit`, off by default, is exhausted | No Retry |
 | connection error | The receiver was down | Failure |
 
-Wire Retry and Failure back into InvokeHTTP. Wire No Retry to somewhere that keeps the batch, such as PutFile. InvokeHTTP doesn't penalise a 4xx by default (`Request Failure Penalization Enabled` is false), so a 413 goes straight there and is never retried in a loop. With the rate limit on, a 429 arrives on No Retry too. Set the property to true, test `${invokehttp.status.code}` and send the 429 batches back into InvokeHTTP, so each waits out the penalty first. A request stops at the first record the receiver refuses, so a retained 400 batch can hold records it already took. Deduplicate before replaying it.
+Wire Retry and Failure back into InvokeHTTP. Wire No Retry to somewhere that keeps the batch, such as PutFile. InvokeHTTP doesn't penalise a 4xx by default (`Request Failure Penalization Enabled` is false), so a 413 goes straight there and is never retried in a loop. With the rate limit on, a 429 arrives on No Retry as well. Set the property to true, test `${invokehttp.status.code}` and send the 429 batches back into InvokeHTTP, so each waits out the penalty first. A request stops at the first record the receiver refuses, so a retained 400 batch can hold records it took. Deduplicate before replaying it.
 
 The receiver's default `server.max_body_size` is 10,485,760 bytes and the Docker install sets 8,000,000 (`DFE_RECEIVER_MAX_BODY_SIZE`). It measures the body after gzip is undone, so compression doesn't get a batch past it. NiFi doesn't split a refused batch, so cap batch size upstream of InvokeHTTP. Batches of 152 to 154 KB (about 1,000 records) were all accepted.
 
 A stopped loader doesn't cause a 503, because Kafka holds the records and the receiver confirms them. A broker that stops answering does.
 
-On a Kubernetes deployment the receiver's ingest door is the deployment's own edge, described in [the ingest edge](../ingest-edge.md). The Docker install serves `/ingest` over plain HTTP, and the receiver logs `tls=false` at startup.
+On a Kubernetes deployment the receiver's ingest door is the deployment's edge, described in [the ingest edge](../ingest-edge.md). The Docker install serves `/ingest` over plain HTTP, and the receiver logs `tls=false` at startup.
 
 ## Pull with the fetcher
 
@@ -60,13 +60,13 @@ fetcher:
           data_dir: /var/lib/dfe-fetcher/tail/nifi
 ```
 
-`data_dir` is required. The engine accepts and deploys a tail unit without it, and the fetcher refuses it and keeps its old config.
+`data_dir` is required. The engine accepts and deploys a tail unit without it, and the fetcher rejects it and keeps its old config.
 
-The Docker `dfe-fetcher` service mounts only `dfe-app-config`, `dlq-spool` and `fetcher-cursors` (dfe-docker `docker-compose.yml:202-205`), so the directory NiFi writes to needs a compose overlay that mounts it read-only. Apply it with `make apply SERVICES=dfe-fetcher STORAGE_FLAGS="-f <overlay>"`, because a bare `docker compose up dfe-fetcher` has no Kafka broker list and exits.
+The Docker `dfe-fetcher` service mounts `dfe-app-config`, `dlq-spool` and `fetcher-cursors` alone (dfe-docker `docker-compose.yml`), so the directory NiFi writes to needs a compose overlay that mounts it read-only. Apply it with `make apply SERVICES=dfe-fetcher STORAGE_FLAGS="-f <overlay>"`, because a bare `docker compose up dfe-fetcher` has no Kafka broker list and exits.
 
 Rows from this source landed in the `default` org, because the engine renders `org_id: default` into the fetcher config and no ingest credential is involved.
 
-## What was measured
+## Test results
 
 | Item | Result | Number | Date |
 |---|---|---|---|

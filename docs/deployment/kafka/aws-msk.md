@@ -13,17 +13,17 @@ Copyright: HyperI / DFE contributors
 
 Operations (bootstrap Job, autoscaling, telemetry) are in [aws-msk-operations.md](aws-msk-operations.md).
 
-The aws root builds MSK Provisioned itself under `kafka.provider: msk` (`terraform/modules/managed-kafka/msk`). This guide is for an MSK you stand up yourself and then point DFE at with `kafka.mode=external`. DFE supports MSK Provisioned: fixed broker-hour capacity, KRaft and full `server.properties` control. It's DFE provider `msk`, with SASL/SCRAM-SHA-512 auth (Secrets Manager), and it's the closest managed cluster to DFE's own self-hosted brokers.
+The aws root builds MSK Provisioned itself under `kafka.provider: msk` (`terraform/modules/managed-kafka/msk`). This guide is for an MSK you stand up yourself and then point DFE at with `kafka.mode=external`. DFE supports MSK Provisioned: fixed broker-hour capacity, KRaft and full `server.properties` control. It's DFE provider `msk`, with SASL/SCRAM-SHA-512 auth (Secrets Manager), and it's the closest managed cluster to DFE's self-hosted brokers.
 
-MSK Serverless isn't supported. It takes IAM auth only, and DFE's Kafka clients can't produce the AWS IAM token, so scalo refuses provider `msk_iam` at startup ([#292](https://github.com/hyperi-io/dfe-infra/issues/292)).
+MSK Serverless isn't supported. It takes IAM auth alone, and DFE's Kafka clients can't produce the AWS IAM token, so scalo rejects provider `msk_iam` at startup ([#292](https://github.com/hyperi-io/dfe-infra/issues/292)).
 
-Read the baseline in [README.md](README.md) first. This guide only covers what MSK lets you apply and how.
+Read the baseline in [README.md](README.md) first. This guide covers what MSK lets you apply and how.
 
-MSK Provisioned is the slowest backend to create and delete, and you can't pause a cluster, so it bills for every hour it exists. Plan any test environment around that. DFE was tested on MSK once, with 2.2.1. We don't re-test there without explicit approval, which means only where a change needs a real MSK cluster to prove, or alongside AWS if they want to be involved ([cloud-cycle.md](../../cloud-cycle.md#msk-runs-last-and-rarely)).
+MSK Provisioned is the slowest backend to create and delete, and you can't pause a cluster, so it bills for every hour it exists. Plan any test environment around that. DFE was tested on MSK once, with 2.2.1, and is re-tested on explicit approval alone, for a change that needs a live MSK cluster ([cloud-cycle.md](../../cloud-cycle.md#msk-runs-last-and-rarely)).
 
 ## What MSK lets you set vs locks down
 
-MSK Provisioned gives you a real `server.properties` through an `aws_msk_configuration` attached to the cluster, so the broker-level DFE defaults apply directly.
+MSK Provisioned gives you a full `server.properties` through an `aws_msk_configuration` attached to the cluster, so the broker-level DFE defaults apply directly.
 
 | DFE default | On MSK Provisioned |
 |---|---|
@@ -136,20 +136,20 @@ Point DFE at the `bootstrap_brokers_sasl_scram` endpoint with provider `msk` (se
 
 ### Topics (the AWS provider does not manage topics)
 
-`aws_msk_cluster` creates no topics, and on a cluster carrying the DFE configuration nothing else will either. `auto.create.topics.enable` is false, so the partition count per source is an explicit number and not a broker default. dfe-engine creates the topics at startup from the topic set dfe-schemas declares, under the ACLs the bootstrap Job below writes. Leave them to it. A topic created any other way keeps its own partitions and configs, and the engine doesn't reshape them.
+`aws_msk_cluster` creates no topics, and on a cluster carrying the DFE configuration nothing else will either. `auto.create.topics.enable` is false, so the partition count per source is an explicit number and not a broker default. dfe-engine creates the topics at startup from the topic set dfe-schemas declares, under the ACLs the bootstrap Job below writes. Leave them to it. A topic created any other way keeps its partitions and configs, and the engine doesn't reshape them.
 
 [aws-msk-operations.md](aws-msk-operations.md) covers the bootstrap Job that writes the ACLs (and what you set to drive it by hand), broker-count autoscaling, telemetry routing and the broker security group's ports.
 
 ## Wiring back to DFE
 
 - `kafka.mode=external`, `kafka.external.bootstrap=<bootstrap endpoint>`.
-- `kafka.securityProtocol=SASL_SSL`. The SCRAM listener on 9096 is TLS only, and every app chart and dfe-engine read their protocol from this one dial. On the aws root you set none of this by hand. `DFE_KAFKA_PROVIDER=msk` reaches bootstrap, which puts the mode, the endpoint and `SASL_SSL` on the Argo cluster secret for the layer 2 appsets to hand on.
+- `kafka.securityProtocol=SASL_SSL`. The SCRAM listener on 9096 is TLS alone, and every app chart and dfe-engine read their protocol from this one dial. On the aws root you set none of this by hand. `DFE_KAFKA_PROVIDER=msk` reaches bootstrap, which puts the mode, the endpoint and `SASL_SSL` on the Argo cluster secret for the layer 2 appsets to hand on.
 - `kafka.external.provider` is the identity the chart derives the SASL mechanism from. `msk` gives `SASL_SSL` and `SCRAM-SHA-512`, and credentials come from the external secret in the deployment's secrets store, Secrets Manager on AWS (`kafka.external.auth.type=scram`).
 - Client config: `dfe kafka client-config --provider msk` prints the derived settings from the canonical provider table.
 
 ## Verification: what is and isn't confirmed
 
-Confirmed by 2026 research (sources in the README):
+Confirmed against the platform's documentation (sources in the README):
 
 - MSK Provisioned exposes `server_properties`, including all the DFE broker defaults.
 - Topic-level RF, `min.insync.replicas` and `unclean.leader.election.enable` are protected, and RF is forced to 3.
@@ -159,8 +159,8 @@ The bootstrap Job's pinned jar is verified. `versions.yaml` pins `services.aws-m
 
 NOT verified:
 
-- The bootstrap Job on any release after 2.2.1, the one DFE ran on MSK. It carries the same jar pin as that run.
-- The `broker_instance_type` and `broker_volume_gib` sizing for your throughput.
+- The bootstrap Job on any release after 2.2.1, the one DFE ran on MSK. It has the same jar pin as that run.
+- The broker type (`broker_shape_ref`) and count the resolver picks, against your throughput.
 - That every `server.properties` key above is permitted on the Kafka version you pick. The allowed set varies by version, so check the AWS "Custom MSK configurations" page.
 
 Treat the snippets as templates. Run `tofu validate` and plan against your account before you apply.
