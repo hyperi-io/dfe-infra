@@ -1,8 +1,6 @@
 {{- if and (eq .Values.clickhouse.mode "external") .Values.appNamespace }}
-{{- /* The apps' namespace and every extra consumer. */}}
 {{- $consumers := prepend (.Values.extraCredentialNamespaces | default list) .Values.appNamespace | uniq }}
-# The external server's admin password, read from the deployment's store straight
-# into each consumer namespace under the name dfe-engine reads.
+# The external server's admin password, read from the store into each consumer namespace.
 apiVersion: external-secrets.io/v1
 kind: ClusterExternalSecret
 metadata:

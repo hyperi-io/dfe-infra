@@ -1,12 +1,7 @@
 {{/*
-dfe-clickhouse.tlsEnabled -- "true" when this chart serves ClickHouse over TLS,
-empty otherwise.
+dfe-clickhouse.tlsEnabled -- "true" when this chart serves ClickHouse over TLS, empty otherwise.
 
-On only when clickhouse.tls.enabled is set AND there is a CA to sign with: an
-explicit issuerRef, or the edge module's internal CA. A deployment with neither
-stays on HTTP rather than waiting on a Certificate nothing can issue. External
-mode deploys no server, so it never does. dfe-engine, dfe-loader and hyperdx
-apply the same rule to the same block, so both ends agree on the scheme.
+On when clickhouse.tls.enabled is set and there is a CA to sign with. The clients apply the same rule to the same block. docs/deploy-tls-trust.md, In-cluster ClickHouse.
 */}}
 {{- define "dfe-clickhouse.tlsEnabled" -}}
 {{- $tls := .Values.clickhouse.tls | default dict -}}
@@ -15,8 +10,7 @@ apply the same rule to the same block, so both ends agree on the scheme.
 {{- end }}
 
 {{/*
-dfe-clickhouse.tlsIssuer -- the issuer name the server certificate is requested
-from: the explicit one, else the internal CA.
+dfe-clickhouse.tlsIssuer -- the issuer the certificate is requested from: the explicit one, else the internal CA.
 */}}
 {{- define "dfe-clickhouse.tlsIssuer" -}}
 {{- $tls := .Values.clickhouse.tls -}}
@@ -24,17 +18,14 @@ from: the explicit one, else the internal CA.
 {{- end }}
 
 {{/*
-dfe-clickhouse.tlsCaSecret -- the CA-only Secret in this namespace that the app
-namespaces copy from, so the Secret holding tls.key is read only from here.
+dfe-clickhouse.tlsCaSecret -- the CA-only Secret the app namespaces copy from.
 */}}
 {{- define "dfe-clickhouse.tlsCaSecret" -}}
 {{- printf "%s-ca" .Values.clickhouse.tls.secretName -}}
 {{- end }}
 
 {{/*
-dfe-clickhouse.clientService -- the Service a client dials: the StatefulSet's
-own in single mode, the operator's headless one in cluster mode. The operator
-emits no other client Service (argocd/values/profile-scale.yaml).
+dfe-clickhouse.clientService -- the Service a client dials: the StatefulSet's in single mode, the operator's headless one in cluster mode.
 */}}
 {{- define "dfe-clickhouse.clientService" -}}
 {{- if eq .Values.clickhouse.mode "cluster" -}}
@@ -45,9 +36,7 @@ emits no other client Service (argocd/values/profile-scale.yaml).
 {{- end }}
 
 {{/*
-dfe-clickhouse.tlsDnsNames -- every name the server certificate carries, one per
-line: each form of the client Service a resolver accepts, the per-pod names
-under it, localhost for clients inside the pod, then clickhouse.tls.dnsNames.
+dfe-clickhouse.tlsDnsNames -- every name on the certificate, one per line: the client Service in each form, its per-pod names, localhost, then clickhouse.tls.dnsNames.
 */}}
 {{- define "dfe-clickhouse.tlsDnsNames" -}}
 {{- $svc := include "dfe-clickhouse.clientService" . -}}
