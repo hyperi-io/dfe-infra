@@ -20,7 +20,7 @@ Three files at the root of this repo, one question each:
 
 `suite.yaml` carries no version literal, so it can never become a second place to look a pin up. Membership is declared there and nowhere else, so a repo absent from the file isn't a member, whatever its name. The test is release authority: if we don't cut its releases, it's not in.
 
-The diagrams on this page are generated from `suite.yaml` by `scripts/dfe-stack suite --render-docs` and compared against it by `scripts/check_suite_drift.py`. Edit the file, not the diagrams.
+The diagrams on this page are generated from `suite.yaml` by `scripts/dfe-stack suite --render-docs` and compared against it by `scripts/check_suite_drift.py`. Edit the file, not the diagrams. The two overview blocks deviate from the diagram standard's generated-diagram rule 5, which asks for a membership table at this size, until the standard says otherwise.
 
 That drift check has two halves. The in-repo half (structure, the charts, the pins, these diagrams) is binding wherever it runs. The cross-repo half reads each member's own cited file and its `Cargo.lock` and `uv.lock`. On a bare checkout with no member clones beside it, which is what CI has, that half is SKIPPED and says so. Run it on a box with the clones on disk and it gets checked, and `--strict` there turns a skip into a failure.
 
@@ -137,7 +137,7 @@ One diagram per producer whose release puts something in motion. Every producer 
 
 ### scalo-rs
 
-Two edges run from scalo-rs to each Rust member. One is the crate range. The other is that scalo GENERATES each Rust member's Dockerfile and supplies the runtime base image inside it, so a scalo-rs release can change a consumer's image with no Cargo range moving. The tooling walks both.
+Two edges run from scalo-rs to each Rust service. One is the crate range. The other is that scalo GENERATES each Rust service's Dockerfile and supplies the runtime base image inside it, so a scalo-rs release can change a consumer's image with no Cargo range moving. The tooling walks both.
 
 <!-- suite-graph:begin producer:scalo-rs -->
 ```mermaid
