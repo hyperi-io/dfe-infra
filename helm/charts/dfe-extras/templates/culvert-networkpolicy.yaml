@@ -1,27 +1,17 @@
 {{- define "dfe-extras.culvert.networkPolicy" -}}
 {{- if .Values.networkPolicy.enabled }}
 {{- /*
-  THE receiver-only rule. NetworkPolicies are additive, so this list is the
-  culvert pods' whole egress surface ONLY because the pod template carries
-  dfe.hyperi.io/egress-scoped, which takes them out of the namespace-wide
-  allow-baseline-egress policy (network-policies chart). Without that label the
-  baseline grants them the entire namespace and nothing here narrows anything.
+  The culvert pods' whole egress surface, because the pod template carries dfe.hyperi.io/egress-scoped, which takes
+  them out of the namespace-wide baseline (docs/deployment/edge-vpn.md). NetworkPolicies are additive, so without
+  that label the baseline grants the whole namespace and nothing here narrows it.
 
-  Client traffic is SNATed to the pod address on its way out of the tunnel, so
-  what the pod may reach is what a client may reach. culvert's own iptables
-  chain (CULVERT_ROUTING_CONTROL_ENABLED, routes.destinations) is the second
-  layer: it filters by CIDR inside the pod, where this policy selects the
-  receiver by label and needs no addressing at all.
+  Client traffic is SNATed to the pod address, so what the pod may reach is what a client may reach. culvert's own
+  iptables chain (CULVERT_ROUTING_CONTROL_ENABLED, routes.destinations) filters by CIDR inside the pod.
 
-  Ingress carries no client CIDRs: kube-proxy SNATs external traffic to a node
-  address under the default externalTrafficPolicy, so an ipBlock would match
-  the node rather than the client. exposure.loadBalancerSourceRanges is where
-  the client allow-list belongs.
-
-  The admin rule below is the one exception, and it is not a client CIDR: it
-  matches a machine on the pod's ethernet side whose packets arrive here
-  addressed to an appliance's tunnel address, which the listener-port rule
-  above does not admit.
+  Ingress carries no client CIDRs: kube-proxy SNATs external traffic to a node address, so an ipBlock would match
+  the node. exposure.loadBalancerSourceRanges is the client allow-list. The admin rule below is the one exception:
+  it matches a machine on the pod's ethernet side whose packets arrive addressed to an appliance's tunnel address,
+  which the listener-port rule above does not admit.
 */}}
 {{- $admin := .Values.peers.classes.admin }}
 apiVersion: networking.k8s.io/v1

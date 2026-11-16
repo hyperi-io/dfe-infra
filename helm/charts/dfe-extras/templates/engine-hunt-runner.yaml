@@ -24,21 +24,15 @@
 {{- end }}
 {{- define "dfe-extras.engine.huntRunner" -}}
 {{- /*
-dfe-hunt-runner -- the pull-based hunt executor, its OWN pod on the engine image
-(`dfe-hunt-runner run`). DISTINCT labels (app.kubernetes.io/name:
-dfe-hunt-runner) so the engine Service selector never routes to it. DEFAULT 1 pod;
-autoscaling is BETA + opt-in (huntRunner.autoscaling.enabled) on the due-hunt backlog
-via the fail-safe dfe-keda-shim.
+dfe-hunt-runner -- the pull-based hunt executor, its own pod on the engine image (`dfe-hunt-runner run`). Its
+labels differ (app.kubernetes.io/name: dfe-hunt-runner) so the engine Service never routes to it. One pod by
+default, and autoscaling (docs/autoscaling.md) is beta and opt-in.
 
-NO PROBES by design: the runner is a polling scheduler loop (dfe_engine.hunt_runner
-daemon), not a server -- it opens no HTTP listener, so there is no endpoint an
-httpGet probe could hit. A liveness signal would need an app-side surface first
-(scalo would have to serve /livez here); until then a probe would only kill
-healthy pods.
+No probes: the runner is a polling loop that opens no listener, so there is no endpoint to probe, and a probe on a
+healthy pod would only kill it.
 
-Hunt and rule YAML arrives on a shared volume a git-sync init container seeds and
-a git-sync sidecar keeps current (huntRunner.gitSync) -- the runner reads both off
-disk on every reload tick, and the engine governs them in that repo.
+Hunt and rule YAML arrives on a volume a git-sync init container seeds and a sidecar keeps current
+(huntRunner.gitSync). The runner rereads both on every reload tick.
 */ -}}
 {{- if .Values.huntRunner.enabled }}
 {{- $gs := .Values.huntRunner.gitSync }}
@@ -71,8 +65,7 @@ metadata:
     dfe.hyperi.io/env: {{ .Values.env | quote }}
     dfe.hyperi.io/cloud: {{ .Values.cloud | quote }}
 spec:
-  # DEFAULT 1 pod. When autoscaling is enabled the ScaledObject below owns the replica
-  # count instead (leases divvy work; KEDA picks N) -- so we omit replicas then.
+  # With autoscaling on, the ScaledObject below owns the replica count, so replicas is omitted.
   {{- if not .Values.huntRunner.autoscaling.enabled }}
   replicas: 1
   {{- end }}
@@ -89,9 +82,8 @@ spec:
     spec:
       {{- include "dfe-common.podSecurityContext" . | nindent 6 }}
       serviceAccountName: {{ include "dfe-engine.sidecarServiceAccount" (dict "ctx" . "name" "dfe-hunt-runner") }}
-      # The runner loads the engine's settings module, which reads DFE_ENGINE_KEDA_SHIM_PORT
-      # as an int. Service links add a "tcp://IP:PORT" value per Service, and svc/dfe-engine's
-      # land under that same DFE_ENGINE_ prefix.
+      # Service links add a tcp://IP:PORT value per Service under the DFE_ENGINE_ prefix, which collides with the settings
+      # the runner reads (DFE_ENGINE_KEDA_SHIM_PORT is an int).
       enableServiceLinks: false
       {{- include "dfe-common.scheduling" . | nindent 6 }}
       {{- /* The helper renders the initContainers key itself, so git-sync-init
@@ -103,9 +95,8 @@ spec:
       initContainers:
       {{- end }}
       {{- if $gitSync }}
-        # The FIRST sync, bounded. The sidecar retries forever, so on its own a bad
-        # credential leaves the link absent and the runner Running with zero hunts
-        # (dfe-infra#212); failing here surfaces it as a pod that never starts.
+        # The first sync, bounded. The sidecar retries forever, so a bad credential would leave the runner Running with zero
+        # hunts (dfe-infra#212). Failing here shows as a pod that never starts.
         - name: git-sync-init
           image: {{ $gsImage | quote }}
           imagePullPolicy: {{ $gs.image.pullPolicy }}
@@ -131,22 +122,18 @@ spec:
           command: ["dfe-hunt-runner"]
           args: ["run", "--poll", {{ .Values.huntRunner.poll | quote }}, "--cap", {{ .Values.huntRunner.cap | quote }}]
           env:
-            # The engine mints its key into its own store, which this pod
-            # cannot read; without the shared Secret it falls back to the dev
-            # placeholder and DFESettings rejects that under env=production.
+            # The engine mints its key into a store this pod cannot read. Without the shared Secret DFESettings rejects the dev
+            # placeholder under env=production.
             - name: DFE_ENGINE_API_JWT_SECRET
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.auth.jwtSecretName }}
                   key: {{ .Values.auth.jwtSecretKey }}
-            # The ClickHouse the engine uses, over the same transport. The runner
-            # coordinates leases/watermarks and runs hunt queries here, as its own
-            # user rather than the admin account (huntRunner.clickhouse).
+            # The engine's ClickHouse over the same transport, as the runner's own user (huntRunner.clickhouse).
             {{- include "dfe-engine.clickhouseEnv" . | nindent 12 }}
             {{- include "dfe-engine.huntRunnerClickhouseAuthEnv" . | nindent 12 }}
             {{- if $gitSync }}
-            # Through git-sync's link, which is swapped atomically, so a reload
-            # never reads a half-written worktree.
+            # Through git-sync's link, swapped atomically, so a reload never reads a half-written worktree.
             - name: DFE_ENGINE_HUNTS_DIR
               value: {{ printf "%s/repo/%s/%s" $gs.mountPath $gs.link $gs.huntsPath | quote }}
             - name: DFE_ENGINE_HUNTS_RULES_DIR
@@ -165,8 +152,7 @@ spec:
             {{- include "dfe-engine.huntAutodisableEnv" . | nindent 12 }}
             # Its account mounts no token, so scalo's logs take the namespace from here.
             {{- include "dfe-common.podNamespaceEnv" . | nindent 12 }}
-            # No DFE_ENGINE_SCHEMAS_DIR: nothing seeds a schemas volume in this pod, so
-            # ensure_schema() reads the tree the engine image ships.
+            # No DFE_ENGINE_SCHEMAS_DIR: nothing seeds a schemas volume here, so ensure_schema() reads the engine image's tree.
             {{- with (include "dfe-extras.otelEndpoint" .) }}
             - name: OTEL_EXPORTER_OTLP_ENDPOINT   # self-monitoring; telemetry.mode-resolved
               value: {{ . | quote }}
@@ -176,9 +162,7 @@ spec:
           volumeMounts:
             - name: config
               mountPath: {{ .Values.config.mountPath }}
-            # Writable scratch: the container rootfs is read-only
-            # (dfe-common.containerSecurityContext), so anything writing /tmp
-            # needs this emptyDir.
+            # The rootfs is read-only, so /tmp needs this emptyDir.
             - name: tmp
               mountPath: /tmp
             {{- if $alertSecret }}
@@ -200,9 +184,8 @@ spec:
           resources:
             {{- toYaml .Values.huntRunner.resources | nindent 12 }}
         {{- if $gitSync }}
-        # Pulls the deploy repo the engine commits hunts and rules to. Repo,
-        # branch and credential are the engine's own gitops.* values, so the two
-        # cannot end up on different repos and no second credential is minted.
+        # Repo, branch and credential are the engine's own gitops.* values, so the two cannot diverge and no second
+        # credential is minted.
         - name: git-sync
           image: {{ $gsImage | quote }}
           imagePullPolicy: {{ $gs.image.pullPolicy }}
@@ -221,8 +204,6 @@ spec:
             {{- toYaml $gs.resources | nindent 12 }}
         {{- end }}
       volumes:
-        # Scratch. Whether the runner reads hunts and rules from here or from the
-        # deploy-repo volume is the gitSync branch in the env block above.
         - name: config
           emptyDir: {}
         - name: tmp
@@ -236,7 +217,6 @@ spec:
             optional: true
         {{- end }}
         {{- if $gitSync }}
-        # Written by the git-sync sidecar, read by the runner.
         - name: deploy-repo
           emptyDir: {}
         # git-sync's HOME, kept off the runner's scratch.
@@ -267,9 +247,8 @@ spec:
   cooldownPeriod: {{ .Values.huntRunner.autoscaling.cooldownPeriod | default 300 }}
   pollingInterval: {{ .Values.huntRunner.autoscaling.pollingInterval | default 30 }}
   triggers:
-    {{- /* BETA: scale on the due-hunt backlog via the fail-safe dfe-keda-shim. Extensive
-           backlog -> AverageValue (ceil(due / targetBacklog)). A shim/CH outage holds
-           current (the shim returns last-good), never runs replicas up. */}}
+    {{- /* Scales on the due-hunt backlog (docs/autoscaling.md): AverageValue is ceil(due / targetBacklog). A shim or
+           ClickHouse outage holds the current count, since the shim returns its last good value. */}}
     - type: metrics-api
       metricType: AverageValue
       metadata:

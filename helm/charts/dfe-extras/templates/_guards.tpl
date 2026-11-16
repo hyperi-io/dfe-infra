@@ -66,29 +66,21 @@ template reads it.
 dfe-extras.receiverExposureGuard -- the receiver's door, refused where it would
 not do what it says.
 
-The door is exposure.groups.ingest (argocd/values/common.yaml), which the
-gateway chart reads too. exposure.mode is retired and refused by name, with no
-shim, so an overlay still carrying it fails rather than silently taking the
-new default door.
+The door is exposure.groups.ingest (argocd/values/common.yaml), which the gateway chart reads too. exposure.mode is
+retired and refused by name, with no shim.
 
-Door loadbalancer is the receiver's own load balancer, which
-argocd/values/apps/dfe-receiver renders from exposure.groups.ingest.allow and
-exposure.public as docs/ingest-edge.md documents them. scalo-service's own
-publicService reads none of them, so switched on it renders a second load
-balancer of the same name with no allow list, and any other key set under it
-reaches nothing. loadBalancerIP is the appset's, carrying the cluster secret's
-receiver address.
+Door loadbalancer is the receiver's own load balancer, which argocd/values/apps/dfe-receiver renders from
+exposure.groups.ingest.allow and exposure.public (docs/ingest-edge.md). scalo-service's own publicService reads none
+of them, so switched on it renders a second load balancer of the same name with no allow list, and any other key
+set under it reaches nothing. loadBalancerIP is the appset's, carrying the cluster secret's receiver address.
 
-Kubernetes filters on loadBalancerSourceRanges for a LoadBalancer only, a named
-AWS security group drops them, and a deny list on that door could land only in
-the receiver's server.ip_filter, which no values layer reaches, so each of
-those is refused rather than ignored.
+Kubernetes filters on loadBalancerSourceRanges for a LoadBalancer only, a named AWS security group drops
+them, and a deny list on that door could land only in the receiver's server.ip_filter, which no values layer
+reaches, so each is refused rather than ignored.
 
-Door gateway routes through the cluster Gateway, whose only path to the
-receiver is an HTTPRoute serving the listener named `http`. Any OTHER listener
-marked exposed has no path at all, so the render fails rather than deploy a
-listener that silently receives nothing. Door tunnel is not caught by this: the
-tunnel delivers a client onto the pod network and it dials the ClusterIP.
+Door gateway routes through an HTTPRoute serving the listener named `http`, so any other exposed listener has no
+path and the render fails. Door tunnel is not caught: the tunnel delivers a client onto the pod network and it
+dials the ClusterIP.
 */}}
 {{- define "dfe-extras.receiverExposureGuard" -}}
 {{- if not (kindIs "invalid" .Values.exposure.mode) }}
@@ -233,8 +225,7 @@ the old. A rule with a `guard` fails the render while its old key holds a value
 and its new key holds none (guard empty), or a different one (guard equal, for a
 new key an integration layer always sets). Rendered on, such an overlay renames
 each per-config workload, prunes the fetcher's cursor claim and empties the
-transforms' file sets. A failed render leaves the Application's live objects as
-they are, which Argo CD 3.5.x does for any source that fails to render.
+transforms' file sets. A failed render leaves the Application's live objects as they are.
 */}}
 {{- define "dfe-extras.valuesMigrationGuard" -}}
 {{- $map := .Files.Get "files/values-migrations.yaml" | fromYaml -}}

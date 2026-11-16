@@ -83,6 +83,10 @@ Which apps a tier deploys comes from `apps.yaml`, not the profile file. [composi
 
 By default every DFE image and thin chart pulls anonymously from `DFE_REGISTRY`, so no pod names a pull secret. A private mirror that needs a login takes `DFE_PULL_SECRET_TOKEN`, with `DFE_PULL_SECRET_USER` (default `token`) and `DFE_PULL_SECRET_SERVER` (default `DFE_REGISTRY`'s host). Bootstrap then creates `ghcr-pull-secret` in every DFE namespace, records it on the cluster secret (`dfe.hyperi.io/image_pull_secret`) for the appsets to hand their charts, and registers the token as Argo CD's read credential for each thin chart.
 
+The stack mints its own secrets in-cluster where nothing outside needs the value: the engine's JWT signing key, the admin and break-glass passwords, each app's ClickHouse password, HyperDX's session and token keys and dfe-ui's NextAuth secret. dfe-extras renders an ESO Password generator and an ExternalSecret with `refreshPolicy: CreatedOnce` for each. Argo renders with `helm template`, so a value minted in a template would change on every sync, and Reloader would roll pods onto a value another pod hadn't been handed yet. `refreshInterval: "0"` alone doesn't hold it, because any spec-generation bump (an Argo re-label is one) makes ESO try the generator again.
+
+The ExternalSecret carries `helm.sh/resource-policy: keep` and the Secret carries ESO's ownerReference, so deleting the ExternalSecret by hand garbage-collects the value with it. A pinned value (`auth.jwtSecret`, `auth.adminPassword`, `auth.breakglassPassword`, `huntRunner.clickhouse.password`) renders a plain Secret instead.
+
 ## The mesh tier
 
 Not supported in this release. The pieces below render and pass their chart tests, but no mesh deploy has run against a live cluster.

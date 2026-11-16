@@ -40,7 +40,7 @@ Each app runs in a separate pod and can't read the engine's secrets store, so it
 | keda shim, header-dev dfe-hyperdx | `dfe_query_reader` | `DFE_ENGINE_CLICKHOUSE_QUERY_READER_PASSWORD` | `query-reader-clickhouse` | `DFE_QUERY_READER_CLICKHOUSE_PASSWORD` |
 | OTel collector | `dfe_otel_writer` | `DFE_ENGINE_CLICKHOUSE_OTEL_WRITER_PASSWORD` | `otel-writer-clickhouse`, copied into the collector's namespace | `DFE_OTEL_WRITER_CLICKHOUSE_PASSWORD` |
 
-On k8s dfe-extras mints each Secret once beside the engine, with ESO's Password generator, from `clickhouse.serviceUsers` in `argocd/values/common.yaml` (the hunt runner's from `huntRunner.clickhouse`). They render with the engine, a wave before every app that reads one. On docker `make init` mints each into `.env`.
+On k8s dfe-extras mints each Secret once beside the engine, with ESO's Password generator, from `clickhouse.serviceUsers` in `argocd/values/common.yaml` (the hunt runner's from `huntRunner.clickhouse`). They render with the engine, a wave before every app that reads one. `passwordSecretCreate: false` on an entry hands the Secret to the deployment under the same name and key, and mints nothing. On docker `make init` mints each into `.env`.
 
 dfe-hyperdx never holds the admin password. Under `oidc-proxy` the engine hands each team the connection it reads as, and on k8s dfe-hyperdx is given no ClickHouse password. On docker `DEFAULT_CONNECTIONS` holds the query reader's password in every mode, and `header-dev` alone reads it.
 
