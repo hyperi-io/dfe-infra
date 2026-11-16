@@ -2,14 +2,11 @@
        (routes.<key>.publicListenerOf) asks for none of its own. */}}
 {{- $public := include "envoy-gateway-config.publicListenerRoutes" (dict "ctx" .) | fromJsonArray }}
 {{- if and $public .Values.tls.public.email }}
-# Let's Encrypt by DNS-01 on Route 53, for the handful of hostnames whose users
-# sit outside the VPC. Separate from tls.issuerName, which stays on the internal
-# CA and carries everything else.
-#
-# There is no key or secret here: the cluster module associates this
-# ServiceAccount with a role scoped to the PUBLIC zone alone, and the AWS SDK
-# inside cert-manager reads that association from the pod's own environment. A
-# credential in this file would be a second, weaker way in.
+# Let's Encrypt by DNS-01 on Route 53, for the hostnames whose users sit outside
+# the VPC. Separate from tls.issuerName, which stays on the internal CA. There is
+# no key or secret here: the cluster module gives this ServiceAccount a role scoped
+# to the PUBLIC zone alone, and a credential in this file would be a second, weaker
+# way in.
 apiVersion: cert-manager.io/v1
 kind: ClusterIssuer
 metadata:

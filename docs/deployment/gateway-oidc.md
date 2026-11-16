@@ -15,8 +15,22 @@ There's no single on/off switch, and deliberately no `auth.oidcEnabled`. The eng
 | dfe-engine | `auth.trustProxyHeaders` | whether the engine believes `X-Oidc-*` on an inbound request |
 | dfe-engine | `auth.proxyProvider` | the provider a gateway login is stamped with. Its `X-Oidc-Groups` link only to groups linked to that provider, so group files naming `dex` need `dex` here |
 | envoy-gateway-config | `oidc.enabled` + `oidc.providers` + `oidc.targetRoutes` | which routes get an OIDC SecurityPolicy, and against which IdP |
+| envoy-gateway-config | `oidc.loginProvider` | which provider owns the interactive login on every fronted route. A SecurityPolicy takes one OIDC provider and two on one route conflict, so the choice is declared, and empty takes the first entry. The others stay JWT issuers on the infra policy, so a session any of them minted is still accepted |
 
 `oidc.targetRoutes` names `dfe-engine`, and the engine's PUBLIC route follows it. So an edge policy on a cloud deploy fronts `GET /api/v1/auth/oidc/{provider}/callback`, which is where it collides with the engine's external-IdP login ([edge.md](edge.md#what-the-engine-apis-split-gets-wrong)).
+
+A public IdP needs the issuer and client alone. `jwksUrl` feeds the admin policy's claim checks and defaults to `{issuerUrl}/keys`, so set it for a provider with another layout:
+
+```yaml
+oidc:
+  providers:
+    - name: google-workspace
+      issuerUrl: https://accounts.google.com
+      clientId: "123456.apps.googleusercontent.com"
+      clientSecretName: dfe-oidc-google   # the Secret's key is always client-secret
+      scopes: [openid, email, profile, groups]
+      jwksUrl: https://www.googleapis.com/oauth2/v3/certs
+```
 
 ## A private-CA IdP is not discoverable
 
@@ -81,6 +95,7 @@ Argo CD signs in through the provider the gateway fronts it with. bootstrap read
 - The edge still decides who reaches Argo. A `dfe-infra-viewers` user needs that group in `adminGroups` as well, or the gateway rejects them first. That list is Kafbat's admin role as well, so a deployment admitting viewers at the edge names Kafbat's admins itself, in `rbac.roles.admin.subjects` of its deploy repo's `infra/kafbat.yaml`.
 - A private-CA IdP on the deployment's domain is verified against the CA that signed the gateway's certificate, set as Argo's `rootCA`. A public IdP keeps the system roots. The issuer hostname must resolve inside the cluster, as below.
 - An adopted Argo is never reconfigured.
+- Envoy forwards plain HTTP, so the route targets `argocd-server`'s HTTP port and `bootstrap.sh` installs Argo with `server.insecure`. An adopted Argo needs `server.insecure` in its `argocd-cmd-params-cm`, or a BackendTLSPolicy trusting `argocd-server`'s certificate. A TLS-serving server redirects plain HTTP to the same URL, which loops through the gateway.
 
 ## Reaching the gateway from inside the cluster
 

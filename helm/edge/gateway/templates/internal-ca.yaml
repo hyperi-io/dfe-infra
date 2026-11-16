@@ -1,9 +1,8 @@
 {{- if .Values.tls.internalCA.enabled }}
-# CNSA 2.0 internal mesh CA (Track 3). Self-signed bootstrap Issuer ->
-# ECDSA P-384 CA Certificate -> cluster-scoped CA ClusterIssuer. Backing
-# services issue their in-cluster TLS certs from `dfe-internal-ca` so the
-# whole data plane chains to one P-384 trust root. These are just
-# cert-manager resources: inert until a Certificate references the issuer.
+# Internal mesh CA: a self-signed bootstrap Issuer mints an ECDSA P-384 CA, whose
+# ClusterIssuer `dfe-internal-ca` signs the data plane's in-cluster certs so they
+# chain to one root (docs/cnsa-standard.md#certificates). Inert until a
+# Certificate references the issuer.
 apiVersion: cert-manager.io/v1
 kind: Issuer
 metadata:

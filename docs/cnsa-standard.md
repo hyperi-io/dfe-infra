@@ -32,7 +32,7 @@ The residual quantum exposure is the asymmetric layer. There are two risks. Harv
 
 ## Profiles
 
-`prod` and `highsec` are target postures, not a switch. The stack has no profile key. The gateway ships the `prod` floor (`tls.edge.minVersion: "1.2"` and `ui.tls.min_version: "1.2"` in `helm/edge/gateway`), and a deployment that needs TLS 1.3 alone sets both to `"1.3"` in its gateway overlay.
+`prod` and `highsec` are target postures, not a switch. The stack has no profile key. The gateway ships the `prod` floor (`tls.edge.minVersion: "1.2"` and `ui.tls.min_version: "1.2"` in `helm/edge/gateway`), and a deployment that needs TLS 1.3 alone sets both to `"1.3"` in its gateway overlay. Quote it: an unquoted `1.2` parses as a float and the chart rejects it.
 
 | Layer | `prod` (default, commercial-safe) | `highsec` (national-security) |
 |---|---|---|
@@ -83,7 +83,7 @@ The JWT signature is ES384 (ECDSA P-384 + SHA-384). It stays classical because M
 
 CNSA 2.0's asymmetric end-state is ML-KEM-1024 (FIPS 203) for key establishment and ML-DSA-87 (FIPS 204) for signatures.
 
-- Key establishment (live). DFE offers the hybrid X25519MLKEM768 group at the edge. It ships in mainstream TLS stacks (Chrome, Firefox, OpenSSL 3.5, Go 1.24, BoringSSL/aws-lc-rs) and gives harvest-now-decrypt-later protection with no custom code. Two caveats. Its post-quantum strength is ML-KEM-768 (NIST level 3), below CNSA 2.0's ML-KEM-1024. And its classical half is X25519, not a NIST curve. The CNSA-pure hybrid is SecP384r1MLKEM1024 (P-384 + ML-KEM-1024), which is specified but has far thinner deployment. X25519MLKEM768 is enabled because it interoperates widely, and SecP384r1MLKEM1024 becomes the preferred group once BoringSSL and Envoy support it. The key-exchange group is a config value, so that's a one-line change.
+- Key establishment (live). DFE offers the hybrid X25519MLKEM768 group at the edge. It ships in mainstream TLS stacks (Chrome, Firefox, OpenSSL 3.5, Go 1.24, BoringSSL/aws-lc-rs) and gives harvest-now-decrypt-later protection with no custom code. Two caveats. Its post-quantum strength is ML-KEM-768 (NIST level 3), below CNSA 2.0's ML-KEM-1024. And its classical half is X25519, not a NIST curve. The CNSA-pure hybrid is SecP384r1MLKEM1024 (P-384 + ML-KEM-1024), which is specified but has far thinner deployment. X25519MLKEM768 is enabled because it interoperates widely, and SecP384r1MLKEM1024 becomes the preferred group once BoringSSL and Envoy support it. The key-exchange group is a config value, so that's a one-line change. The group name Envoy accepts depends on the build (older builds used `X25519Kyber768Draft00`), so recheck it when the proxy image moves.
 - Signatures (roadmap). ES384 is in use across the chain. ML-DSA-87 replaces it once its JOSE binding standardises and the verifiers (Envoy, server and browser libraries) support it. With `kid`-tagged keys and a config-driven `alg`, the change is a key rotation.
 
 The state of commercial and open-source crypto is reviewed periodically against the full CNSA 2.0 target, and the floors, groups and algorithms on this page move up as the libraries, verifiers and managed services mature.

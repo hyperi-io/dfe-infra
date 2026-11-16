@@ -57,13 +57,16 @@ Public web access is default-deny on every cloud flavour ([edge-auth-cloud.md](.
 
 ### What the engine API's split gets wrong
 
-The families are chart data (`routes.dfeEngine`), not a dial list, because they move with every router the engine adds. The five cases:
+The families are chart data (`routes.dfeEngine`), not a dial list, because they move with every router the engine adds. The cases:
 
 - A `PathPrefix` matches whole path elements, so `/api/v1/auth` never matches `/api/v1/authoring` and `/api/v1/sample` never matches `/api/v1/samples`.
 - `GET /api/v1/auth/oidc/{provider}/callback` is a top-level browser navigation, so an edge login in front of it swallows the engine's external-IdP login. The two are ALTERNATIVES on a hostname.
 - The sampler is `POST /api/v1/sources/{source}/sample`, on the public `sources` prefix. Opening the `sample` family is a different thing.
 - dfe-hyperdx reaches `/api/v1/hyperdx` from in-cluster, so its engine origin stays the internal hostname or the Service.
 - `/api/v1/tasks` has the one SSE stream, and stays private until the console wants it.
+- `config/client` is two segments: the prefix is `/api/v1/config/client`, never `/api/v1/config`.
+- No key names `/api/e2e`, `/docs`, `/redoc`, `/livez` or `/readyz`, so no flag makes them public.
+- A family in neither `browserFamilies` nor `cliFamilies` answers nowhere.
 
 ### Response hardening
 
