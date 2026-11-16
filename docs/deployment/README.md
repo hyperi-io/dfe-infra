@@ -39,6 +39,8 @@ flowchart LR
 - Layer 1 (`argocd/appsets/layer1-addons.yaml`, `layer2-data.yaml` and, on `scale`, `layer-scale.yaml`) is the addons and the backing services: ClickHouse, DocumentDB and Kafka where the tier has one, from base charts plus the deploy repo's `infra/` overlay.
 - Layer 2 (`argocd/appsets/layer2-apps.yaml`) is one Application per deploy-repo `values/*-values.yaml`, dfe-hyperdx included. Each is the component's thin chart over OCI, pinned by digest, beside `helm/charts/dfe-extras`, with the `$values` overlay layered last.
 
+The reasoning behind each ApplicationSet is in [ApplicationSets](appsets.md).
+
 ## Tiers and the values cascade
 
 The cluster secret's `dfe.hyperi.io/profile` picks the tier. Values merge in this order, and later wins:

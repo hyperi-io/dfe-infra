@@ -1,11 +1,5 @@
-# Operators the scale tiers need, selected by dfe.hyperi.io/profile.
-# dfe-scale-operators: Strimzi + the ClickHouse operator, profile scale only.
-# dfe-mesh-operators: the ClickHouse operator alone, profile mesh only
-# (that tier runs no broker).
-# dfe-redpanda-operator: scale plus an explicit redpanda provider opt-in.
-# The transforms deploy from their thin charts through layer2-apps.yaml.
-# slim + single clusters match none of these: slim has no Kafka at all, and single
-# runs a NON-operator single broker (kafka-single.yaml) that needs no operator.
+# Operators for the scale tiers, selected by dfe.hyperi.io/profile. See docs/deployment/appsets.md#scale-operators.
+# dfe-scale-operators: profile scale. dfe-mesh-operators: profile mesh. dfe-redpanda-operator: scale with kafka-provider redpanda.
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
@@ -32,29 +26,16 @@ spec:
                   wave: "3"
                   appProject: infra
                   chartValuesYaml: ""
-                # Official ClickHouse operator (clickhouse.com CRDs) -- cluster
-                # mode only. Single mode uses a plain StatefulSet (no operator).
-                # OCI chart; wave 3 so CRDs exist before the ClickHouseCluster CR
-                # (layer2-data, wave 4). Pinned 0.0.8 @sha256:61d97bb4... .
-                # Swappable: the HyperI private cloud may replace this with the
-                # internal n-tier cached operator + CH fork (docs/deployment/
-                # clickhouse.md). The Altinity operator is NOT tested with this
-                # stack -- do not substitute it and expect the CRs to hold.
-                # Namespace is upstream's own and MUST match common.yaml
-                # operatorNamespaces.clickhouse, which is what opens the
-                # NetworkPolicy the operator needs to probe Keeper and run DDL.
-                # dfe-mesh-operators below carries the same pin and the same
-                # chartValuesYaml; both move together.
+                # Wave 3 so the CRDs exist before layer2-data's wave 4.
+                # The namespace must match common.yaml operatorNamespaces.clickhouse, which opens the NetworkPolicy the operator needs.
+                # dfe-mesh-operators below carries the same pin and chartValuesYaml.
                 - chart: clickhouse-operator-helm
                   repo: ghcr.io/clickhouse
                   version: "0.0.8"
                   namespace: clickhouse-operator-system
                   wave: "3"
                   appProject: infra
-                  # The operator builds its logger in zap development mode, which
-                  # is debug level (cmd/main.go, v0.0.8). manager.args is appended
-                  # to the chart's own flags but replaces its default list, so
-                  # --leader-elect has to be restated.
+                  # manager.args replaces the chart's default list, so --leader-elect is restated.
                   chartValuesYaml: |
                     manager:
                       args:
@@ -73,8 +54,7 @@ spec:
         chart: '{{ .chart }}'
         targetRevision: '{{ .version }}'
         helm:
-          # A string, not valuesObject: the template is parsed as YAML before it
-          # is Go-templated, so only a string can carry an element's chartValuesYaml.
+          # A string: the template is parsed as YAML before Go templating, so only a string carries chartValuesYaml.
           values: |
             global:
               domain: '{{ index .metadata.annotations "dfe.hyperi.io/domain" }}'
@@ -98,10 +78,7 @@ spec:
           - ServerSideApply=true
           - RespectIgnoreDifferences=true
 ---
-# The mesh tier runs a ClickHouse cluster and no broker, so it needs the
-# ClickHouse operator without Strimzi. A separate ApplicationSet rather than a
-# wider selector on dfe-scale-operators: moving an element between ApplicationSets
-# orphans the Applications a running scale cluster already owns by name.
+# The mesh tier runs ClickHouse and no broker. A separate ApplicationSet, because moving an element would orphan the Applications a running scale cluster owns by name.
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
@@ -121,8 +98,7 @@ spec:
                   dfe.hyperi.io/profile: mesh
           - list:
               elements:
-                # Same pin and chartValuesYaml as dfe-scale-operators above; the
-                # two move together.
+                # Same pin and chartValuesYaml as dfe-scale-operators.
                 - chart: clickhouse-operator-helm
                   repo: ghcr.io/clickhouse
                   version: "0.0.8"
@@ -147,8 +123,7 @@ spec:
         chart: '{{ .chart }}'
         targetRevision: '{{ .version }}'
         helm:
-          # A string, not valuesObject: the template is parsed as YAML before it
-          # is Go-templated, so only a string can carry an element's chartValuesYaml.
+          # A string: the template is parsed as YAML before Go templating, so only a string carries chartValuesYaml.
           values: |
             global:
               domain: '{{ index .metadata.annotations "dfe.hyperi.io/domain" }}'
@@ -175,14 +150,7 @@ spec:
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
-  # Redpanda operator -- installed ONLY when a deployer runs the scale profile
-  # AND has explicitly chosen the redpanda kafka provider (cluster label
-  # dfe.hyperi.io/kafka-provider: redpanda). Strimzi (default, Apache-2.0) is in
-  # dfe-scale-operators above and lands on every scale cluster; redpanda is BSL,
-  # so its operator only appears on an explicit opt-in (the same choice the kafka
-  # chart's acceptLicense gate enforces). Serves the Redpanda + User CRDs that the
-  # kafka chart's redpanda path uses. Wave 3 so CRDs exist before layer2-data
-  # (wave 4) creates the Redpanda CR.
+  # Only on scale with kafka-provider redpanda, an explicit opt-in because redpanda is BSL. Wave 3 so the CRDs exist before layer2-data's wave 4.
   name: dfe-redpanda-operator
   namespace: argocd
 spec:
