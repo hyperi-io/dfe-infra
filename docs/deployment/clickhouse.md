@@ -52,7 +52,7 @@ The Altinity operator is unsupported. DFE never adopted it or ran a validation c
 
 > **Coming from Splunk or Elastic?** The TTL on each table sets retention here, and the storage model sets where parts sit while they wait. The storage policy is server-wide, so the engine's DDL needs no per-table `storage_policy` and queries use the same table and SQL across both tiers.
 
-`clickhouse.storageModel` is a separate axis from `clickhouse.mode` and is fixed for the life of the deployment. It ships as `auto` and is derived: `cached-object` when `clickhouse.objectStore.endpoint` is supplied, `local` otherwise, where the PVC is the capacity ceiling. An empty value means the same, and a model written here overrides the derivation. Models are named `<family>-<bulk>`. The family says whether parts MOVE to the bulk store or are COPIED to it, and the bulk half says what that store is. Every combination and its evidence: [storage.md](storage.md).
+`clickhouse.storageModel` is a separate axis from `clickhouse.mode` and is fixed for the life of the deployment. It ships as `auto` and is derived: `cached-object` when `clickhouse.objectStore.endpoint` is supplied, `local` otherwise, where the PVC is the capacity ceiling. An empty value means the same, and a model written here overrides the derivation. `tiered-block` is never derived and is reached only by setting it. Models are named `<family>-<bulk>`. The family says whether parts MOVE to the bulk store or are COPIED to it, and the bulk half says what that store is. Every combination and its evidence: [storage.md](storage.md).
 
 `cached-object` renders a `storage_configuration` with an `s3` disk, a `cache` disk in front of it, and a `s3_cached` policy set as the server-wide `merge_tree.storage_policy`. The cache is a separate volume, chosen by `clickhouse.objectStore.cache.volume`. The default `pvc` places it on the data PVC alongside the part metadata. `instance-store` puts it on an `emptyDir` over the node's local NVMe instead, sized by `clickhouse.objectStore.cacheSize`. See "Dimension 4: cache placement" in [storage.md](storage.md) for both.
 
@@ -63,6 +63,29 @@ Credentials are never in the values. The disk sets `use_environment_credentials`
 `tiered-block` needs no object store at all. It claims a second, cheaper volume and replaces the default storage policy with a ranked one, so new parts land on the fast volume and the oldest are demoted once free space there falls below `clickhouse.tieredBlock.moveFactor`. Data MOVES rather than being copied, so both volumes must be durable. Full surface, the naming trap that inverts the tiers, and the demotion test evidence: [clickhouse-tiering.md](clickhouse-tiering.md).
 
 Changing the model on a live deployment strands every part written. So the engine holds `clickhouse.storageModel`, `clickhouse.objectStore.*` and `clickhouse.tieredBlock.*` as protected vars and rejects the edit.
+
+## Placement and identity
+
+`clickhouse.podSpread` spreads each shard's replicas, and separately the keepers, across nodes with `maxSkew: 1` on `kubernetes.io/hostname`. It is `DoNotSchedule`, so a replica stays Pending rather than land on a node holding more of its shard than the emptiest eligible node. A one-node cluster is one domain and schedules every replica. Nodes a pod doesn't tolerate still count as domains, because Kubernetes defaults `nodeTaintsPolicy` to `Ignore`. `scripts/tests/test_clickhouse_replica_spread.py` pins the selectors, which match the labels the operator writes.
+
+`nodeScheduling.tolerations` tolerates the `clickhouse` and `keeper` pool taints and does nothing where no node has them. An overlay's list replaces the chart's, because Helm replaces a list rather than merging it. `nodeScheduling.dedicatedPools` makes a pool required: servers on `clickhouse`, Keeper on `keeper`. `layer2-data` fills it from the tainted pools on the cluster secret, and an `instance-store` cache always requires the `clickhouse` pool for its NVMe.
+
+The server pods run as `dfe-clickhouse` and Keeper as `dfe-keeper`, never the release namespace's default account. On AWS the Pod Identity role binds the server account alone, so its name must equal the module variable `clickhouse_object_store_service_account` (`scripts/tests/test_pod_identity_accounts.py` pins it). Keeper never calls S3 and has no association, but a later grant aimed at `default` would otherwise reach it. Neither account mounts a token, because the server calls S3 and Keeper and never the Kubernetes API.
+
+The deploy layer owns one credential, the `default` user's password. ESO generates it in-cluster and copies it into `appNamespace`, which is where dfe-engine reads it to create every other user, and into each of `extraCredentialNamespaces`. Only `default` takes its password from a Secret (`defaultUserPassword`). Any other user needs it inline in the CR. `clickhouse.tls.ca.extraNamespaces` get the CA copy and never the admin credential, so a client outside the app namespace, the OTel collector, can verify the server without being able to log in as `default`.
+
+## Server and Keeper settings
+
+Both modes have these.
+
+- **Tenant isolation.** `custom_settings_prefixes` allows `SQL_`, because the per-`_org_id` RESTRICTIVE row policy reads `getSetting('SQL_current_tenant_id')`, pinned on each tenant's user by dfe-engine. A server refusing the prefix silently applies no tenant scoping. Cluster mode also allows `custom_`: the operator injects `custom_operator_reload_revision` into its profile, and without the prefix the server fails to load its users with `CANNOT_LOAD_CONFIG`. The `system` and `information_schema` databases are deny-by-default, and dfe-engine grants back only what the embedded HyperDX reads (`governance/ch/models.py`, `TENANT_SYSTEM_TABLES`).
+- **Async inserts.** The `default` profile sets `async_insert` and `wait_for_async_insert` to 1 for every writer, because async insert has no table-level form. Both match ClickHouse's defaults and are written out so a `compatibility` setting or a later re-default can't move them. `wait_for_async_insert: 0` is refused at render: dfe-loader commits its Kafka offset on the ack, so the rows would be lost with no error. The flush size and timeout stay on ClickHouse's adaptive defaults.
+- **Server log.** `clickhouse.serverLog` sets `level` (`trace` to `fatal`), `size` and `count` for the log and its `err.log`, so the disk bound is `2 x (count + 1) x size`, 400M per replica as shipped. Unset, cluster mode takes the operator's trace level with 50 files of 1000M on the data PVC and prints the same trace to stdout, which the OTel collector ships into `otel_logs`. Single mode takes the image's trace level with 10 files of 1000M on the node's disk.
+
+Cluster mode alone:
+
+- **Server profile.** `clickhouse.serverProfile` goes in through the operator CR, and single mode runs no operator. Concurrent query threads are capped at 2 per core of the replica's CPU request, where the default 0 is unbounded and hunts, engine queries and merges share a node. `max_server_memory_usage_to_ram_ratio` is 0.8, since 0.9 of a cgroup limit ends in an OOMKill rather than a `MEMORY_LIMIT_EXCEEDED`. The merge pool is the larger of 16 and 2 threads per requested core, so a 24-core node merges with 48 threads. `parts_to_delay_insert`, `parts_to_throw_insert` and `max_parts_in_total` are left alone, because raising them hides a partition-key fault. `max_server_memory_usage` is derived from the cgroup limit by ClickHouse.
+- **Keeper.** The memory limit is 3Gi because Keeper's default log caches are 1 GiB and 500 MiB before it serves a request, so 1Gi would OOMKill under load. The liveness probe is `ruok`, replacing the operator's TCP probe, which opens 2181 and sends nothing, so Keeper logs a Warning on every probe. An empty `keeper.livenessProbe` keeps the operator's. `keeper.fourLetterWords` is limited to read-only words: the operator sends `mntr` to read each keeper's state and the probe sends `ruok`. `keeper.log` takes the fields of `serverLog`, and unset, the operator keeps 50 trace-level files of up to 1000M on the data PVC.
 
 ## Retention
 
@@ -126,5 +149,6 @@ Add the rows up for `D`. `F` for your servers is `sum(bytes_on_disk)` over `syst
 - SSD tiering over a bulk volume, opt-in per deployment: [clickhouse-tiering.md](clickhouse-tiering.md).
 - Storage-model assertions: `scripts/tests/test_storage_model.py`.
 - Server log bounds and system log TTLs: `scripts/tests/test_clickhouse_server_log.py`.
+- Replica spread selectors: `scripts/tests/test_clickhouse_replica_spread.py`. Service accounts: `scripts/tests/test_pod_identity_accounts.py`.
 - Operator install: `argocd/appsets/layer-scale.yaml` (wave 3, scale tier alone, since single mode needs no operator).
 - Version pins and the operator decision record: `versions.yaml` (`operators.clickhouse-operator`, `services.clickhouse-version`).

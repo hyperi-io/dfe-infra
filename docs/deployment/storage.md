@@ -153,6 +153,8 @@ Kafka's flavour isn't a chart dimension. `kafka.tieredObject.config` passes plug
 
 Both charts read the credential from the environment, wired from a Secret the secrets store materialises. Nothing is inline in the CR or the ConfigMap, both of which live in git.
 
+On AWS, `clickhouse.objectStore.usePodIdentity: true` renders neither the ClickHouse Secret nor its environment variables, and the disk's `use_environment_credentials` resolves through EKS Pod Identity alone. A static `AWS_ACCESS_KEY_ID` in the pod's environment would shadow the credentials the Pod Identity Agent injects, because the AWS SDK checks environment variables first.
+
 ## Dimension 4: granularity of the opt-in
 
 | Cell | Status | Proof |
