@@ -4,13 +4,35 @@ dfe-infra is how DFE gets onto a bare Kubernetes cluster: the Helm charts, Argo 
 
 ## Where this repo sits in the suite
 
+This diagram shows the two git repos DFE's Argo CD deploys from.
+
 ```mermaid
 flowchart LR
-    ENG[dfe-engine<br/>config control plane] -->|compiled values + DDL| DREPO[(deploy repo)]
-    INF[dfe-infra<br/>this repo] -->|bootstrap + charts + appsets| ARGO[DFE's Argo CD<br/>dfe-system]
-    DREPO --> ARGO
-    ARGO -->|helm, base + overlay| APPS[backing services +<br/>dfe-* Rust apps + UIs]
+    accTitle: L2 Services -- DFE deployment
+    accDescr: dfe-engine writes compiled values and DDL to the deploy repo. DFE's Argo CD reads the overlays from the deploy repo and the charts and ApplicationSets from dfe-infra, and applies them with Helm to the backing services, the dfe apps and the UIs.
+
+    engine["dfe-engine"]
+
+    deployrepo[("Deploy repo")]
+    infrarepo[("dfe-infra")]
+
+    argocd["DFE's Argo CD"]
+
+    services["Backing services,<br/>apps and UIs"]
+
+    engine -->|values, DDL| deployrepo
+    deployrepo -->|overlays| argocd
+    infrarepo -->|charts, appsets| argocd
+    argocd -->|helm| services
+
+    classDef default fill:#F8FAFC,stroke:#64748B,stroke-width:1px,color:#0F172A
+    classDef store fill:#DDF3EC,stroke:#00785A,stroke-width:1px,color:#0B3327
+    class deployrepo,infrarepo store
 ```
+
+*Figure 1. L2 Services -- DFE deployment.* Up: top of dfe-infra. Down: [L4 Detail -- Edge exposure](edge-auth.md#exposure-topology), [L4 Detail -- Federated login](edge-auth.md#the-identity-plane-engine-authority--external-oidc).
+
+Bootstrap installs DFE's own Argo CD in `dfe-system` before any of this runs.
 
 The suite rule is **dfe-infra deploys, dfe-engine configures.** The engine never installs backing services or authors Argo Applications. This repo never reads or writes engine config. The whole-suite map lives in the dfe-engine repo (`docs/architecture.md` there). This page covers the infra side only.
 
