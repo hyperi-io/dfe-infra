@@ -8,30 +8,17 @@ sidebar_label: The demo
 Raw firewall syslog in, one parsed ClickHouse table per product out, on one host. The fetcher pulls two live API feeds beside it: Wikipedia's recent changes, and the latest GitHub release of each public DFE component.
 
 <!-- docker-quickstart: demo -->
-<!-- landing -->
+You need Docker with Compose v2, Python 3, git and make. It runs the newest DFE release, and `VERSION=` on the make line pins another.
+
 ```bash
-docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:demo up -d
-docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:demo run --rm secrets-init login
+git clone https://github.com/hyperi-io/dfe-docker && cd dfe-docker
+make demo      # start the stack, self test, stream firewall syslog
 ```
 
-A throwaway stack that seeds its own sources and streams vendor syslog into one table per vendor, beside its fetchers. Point your browser to http://localhost:3000 and log in with the name and password the second command prints. The console makes you change it at first login. It takes the Docker install's ports, so stop that first, and `docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:demo down -v` removes it all.
-
-Other demo use cases:
-
-- [Cyber](https://hyperi.io/solutions/security-monitoring/): `docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:demo-cyber up -d && docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:demo-cyber run --rm secrets-init login`
-- [Telco](https://hyperi.io/solutions/telco/): `docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:demo-telco up -d && docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:demo-telco run --rm secrets-init login`
-- [Theatre and battlespace](https://hyperi.io/solutions/theatre-and-battlespace/): `docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:demo-theatre up -d && docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:demo-theatre run --rm secrets-init login`
+Watch it in the console at http://localhost:3000. `make creds` in a terminal prints the login.
 <!-- /docker-quickstart -->
 
 If `docker compose version` shows a release below 2.34, as Debian's own packages do, install Docker from [Docker's own repository](https://docs.docker.com/engine/install/) first.
-
-The second command prints the login again whenever you run it. When you're done, this removes the demo and its data:
-
-```bash
-docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:demo down -v
-```
-
-A demo pack uses its own tag in place of `demo`: `demo-cyber`, `demo-telco` or `demo-theatre`. Plain `down` stops it and keeps the data.
 
 ## From a checkout
 
