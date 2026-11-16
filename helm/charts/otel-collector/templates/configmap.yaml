@@ -461,11 +461,7 @@ data:
             {{- if .Values.exporters.hyperdx.enabled }}
             - otlp/hyperdx
             {{- end }}
-        {{- /*
-          One pipeline per source that needs its own resource processor. A single
-          pipeline cannot tag k8s_cluster, ClickHouse and Kafka with different
-          service.name values, and the exporter fan-out is shared regardless.
-        */}}
+        {{- /* One pipeline per source, because each needs its own service.name. */}}
         {{- if .Values.clusterTelemetry.k8sCluster.enabled }}
         metrics/k8s_cluster:
           receivers: [k8s_cluster]
