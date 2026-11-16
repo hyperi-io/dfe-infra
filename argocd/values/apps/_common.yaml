@@ -1,34 +1,18 @@
-# DFE wiring every component's thin chart takes, layered after common.yaml, the
-# cloud file and the profile file and before the component's own apps/<service>/
-# files. A key one component sets differently goes in that component's directory,
-# never here. The keys are the ones the scalo-service library reads (its README,
-# "Values").
+# Wiring every thin chart takes, layered before the component's files. See docs/deployment/values-tiers-apps.md#per-app-notes.
 partOf: dfe
 
-# A rotated Secret or ConfigMap reaches a running pod through Stakater Reloader.
 reload:
   enabled: true
 
-# Values go through tpl in scalo-service. env comes from the layer 2 appset's env
-# parameter. cloud comes from a cloud parameter when the appset passes one, else
-# from global.cloud in the cloud values file.
+# Values go through tpl in scalo-service.
 commonLabels:
   dfe.hyperi.io/env: '{{ .Values.env }}'
   dfe.hyperi.io/cloud: '{{ .Values.cloud | default .Values.global.cloud }}'
-  # The app's chart name, which a per-config instance's app.kubernetes.io/name
-  # (<app>-<source>) is not. network-policies' appLabel selects on it.
+  # network-policies' appLabel selects on this, because a per-config instance's app.kubernetes.io/name is <app>-<source>.
   dfe.hyperi.io/app: '{{ .Chart.Name }}'
 
 telemetry:
-  # The OTLP endpoint common.yaml's telemetry.mode selects, over global.project
-  # because a thin chart has no top-level project. scalo-service sets no OTLP
-  # variable for an empty otel.endpoint, which leaves an app on its own default, so
-  # the endpoint is resolved here and carried by extraEnv. prometheus mode renders
-  # the variable set and empty, which scalo's OTLP exporters read as off.
-  # receiver mode with no receiverEndpoint derives the receiver's OTLP/gRPC port (the
-  # otlp-grpc port of its contract, 4317) in the namespace dfeNamespace names, else the
-  # release's. The receiver binds it only while its config.otlp.enabled is true.
-  # scripts/tests/test_apps_common.py holds every mode and app to its known endpoint.
+  # Resolved here because scalo-service sets no OTLP variable for an empty otel.endpoint. See docs/deployment/values-shared.md#telemetry.
   otlpEndpointTemplate: |-
     {{- $t := .Values.telemetry | default dict -}}
     {{- $mode := $t.mode | default "hyperdx" -}}
@@ -45,8 +29,6 @@ telemetry:
     {{- end -}}
     {{- $ep -}}
 
-# otel.endpoint stays the per-deployment override. Once set, scalo-service derives
-# the variable from it (with the protocol) and drops this entry, so the override
-# is exported as written.
+# otel.endpoint overrides this entry and is exported as written.
 extraEnv:
   OTEL_EXPORTER_OTLP_ENDPOINT: '{{ tpl .Values.telemetry.otlpEndpointTemplate . }}'

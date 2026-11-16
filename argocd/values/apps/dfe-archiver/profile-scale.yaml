@@ -1,4 +1,3 @@
-# The bus: the archiver's own flat env contract, bare KAFKA_* and DLQ_*.
 extraEnv:
   DFE_ARCHIVER_KAFKA_BROKERS: '{{ .Values.kafka.bootstrapServers }}'
   DFE_ARCHIVER_KAFKA_SECURITY_PROTOCOL: '{{ .Values.kafka.securityProtocol }}'

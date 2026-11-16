@@ -1,9 +1,5 @@
-# Profile: single -- single node of EVERYTHING, but WITH Kafka (the difference
-# from slim). All components run one replica; pods are sized for RELIABILITY (more
-# headroom than slim's minimum-viable). Merged after common.yaml + <cloud>.yaml.
-# Keys unknown to a chart are ignored by Helm.
+# One node of everything, with Kafka. See docs/deployment/values-tiers-apps.md#tier-profiles.
 
-# DFE service deployments -- 1 pod each, reliability-sized.
 replicaCount: 1
 resources:
   requests:
@@ -13,47 +9,30 @@ resources:
     cpu: "1"
     memory: 1Gi
 
-# Pressure stays on (the chart default): this tier carries a broker, so the
-# composite's kafka_lag term measures the real backlog the cpu trigger misses on an
-# I/O-bound loader. The ceiling matches defaultTopic.partitions (3) -- a group
-# assigns at most one consumer per partition, so a 4th replica joins and idles.
+# The ceiling matches defaultTopic.partitions: a group assigns one consumer per partition. See docs/deployment/values-tiers-apps.md#tier-profiles.
 keda:
   minReplicaCount: 1
   maxReplicaCount: 3
   pressure:
     targetValue: 70
 
-# ClickHouse -- single standalone node, Keeper embedded, a cluster of one.
-# mode and storageModel are TIER DEFAULTS: the deploy repo's infra/ overlay is
-# layered after this file, so a deployer reaches external, cached-object or
-# tiered-block there.
+# Tier defaults: the deploy repo's infra/ overlay layers after this file.
 clickhouse:
   mode: single
   replicas: 1
   shardsCount: 1
 
-# Kafka -- ENABLED, single broker. (This is what makes `single` != `slim`.)
-# The kafka chart renders a NON-operator StatefulSet in this mode
-# (templates/kafka-single.yaml) -- a plain broker of the chosen provider, mirroring
-# ClickHouse-single. So the single tier needs NO Kafka operator; the Strimzi CR path
-# (and its operator, installed scale-only via layer-scale.yaml) is used ONLY at scale.
+# A plain broker StatefulSet, with no operator at this tier. See docs/deployment/values-tiers-apps.md#tier-profiles.
 kafka:
   mode: single
-  # Both dials are pinned to this tier's KEDA maxReplicaCount of 3 so the chart's
-  # partition derivation lands on 3 here, where the scale tier's defaults (a
-  # consumer ceiling of 10 over three brokers) would give a one-broker deployment
-  # 10 partitions that no consumer can reach.
+  # Pinned to the KEDA ceiling so partitions land on 3, not on the scale default.
   sizing:
     consumerCeiling: 3
     minPartitionsPerBroker: 3
 
-# Kafbat (Kafka UI) -- deployed with Kafka. Scoped under `kafbat:` (see profile-slim)
-# so the toggle never leaks to other charts in the cascade.
 kafbat:
   enabled: true
 
-# Observability collection -- full set. Kafka exists at this tier, and one node's
-# worth of container series is affordable.
 clusterTelemetry:
   kubeletStats:
     enabled: true

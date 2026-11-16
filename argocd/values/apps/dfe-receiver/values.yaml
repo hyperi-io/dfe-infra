@@ -1,11 +1,5 @@
-# dfe-receiver's integration values over its thin chart, layered after
-# apps/_common.yaml: the receiver's wiring, under the keys the scalo-service
-# library reads. The keys below them are the receiver's own dials, read here
-# through tpl and by dfe-extras, which renders the ingest NetworkPolicy, the mesh
-# listener and the dfe-receiver-env ConfigMap.
+# dfe-receiver's wiring over its thin chart. See docs/deployment/values-tiers-apps.md#per-app-notes.
 
-# The env dfe-extras renders under conditionals, so a variable stays absent
-# where its condition is off. Reloader restarts the pod when the ConfigMap changes.
 extraEnvFrom:
   - configMapRef:
       name: '{{ include "scalo-service.fullname" . }}-env'
@@ -13,8 +7,6 @@ reload:
   configmaps:
     - dfe-receiver-env
 
-# The contract's kafka group on the Secret the stack's broker user writes. Its
-# keys are named as that Secret names them; the library's key names take no tpl.
 secrets:
   kafka:
     existingSecret: '{{ .Values.kafka.saslSecretName }}'
@@ -25,23 +17,9 @@ secrets:
 kafka:
   saslSecretName: dfe-kafka-user
 
-# The receiver's front door, from exposure.groups.ingest (argocd/values/common.yaml)
-# and the load balancer's shape in exposure.public, as docs/ingest-edge.md
-# documents them. scalo-service's publicService reads none of them, so it stays
-# off and dfe-extras refuses it switched on.
+# The front door is exposure.groups.ingest (common.yaml), documented in docs/ingest-edge.md. publicService stays off.
 publicService:
   enabled: false
-# Door loadbalancer renders the load balancers and the ingest NetworkPolicy from
-# one list, the contract's public ports the config turns on, and only while
-# exposure.groups.ingest.allow names someone: an empty list is no public door.
-# The allow list is each load balancer's loadBalancerSourceRanges, and a /0 in it
-# marks the Service dfe.hyperi.io/ingest-fence: allow-all. The TCP door takes
-# publicService.loadBalancerIP, the cluster secret's receiver address the appset
-# hands in, else exposure.public.loadBalancerIP, and the Elastic IPs the appset
-# hands in as exposure.public.eipAllocations, one per subnet in
-# exposure.public.subnets. The policy names no source, because the allow list
-# is the load balancer's. exposure.networkPolicy.enabled: false drops the policy,
-# and dfe-extras renders the tunnel door's policy of the same name.
 extraObjects:
   - |
     {{- $exposure := .Values.exposure | default dict -}}
@@ -93,11 +71,7 @@ extraObjects:
     {{- end -}}
     {{- end -}}
 
-# The ingest bearer tokens dfe-engine writes into ingestBearer.secretName while it
-# keeps what it mints on its own volume, one file per listener, the file: sources
-# the engine compiles. A directory mount, never subPath, so a rewritten key reaches
-# the file the receiver re-reads. Optional, because an engine store in Secrets
-# Manager renders no Secret and the receiver reads aws: sources instead.
+# Ingest bearer tokens dfe-engine writes. A directory mount, never subPath, so a rewritten key reaches the file. Optional: a Secrets Manager store renders no Secret.
 extraVolumes:
   - name: ingest-bearer-tokens
     secret:
@@ -108,10 +82,7 @@ extraVolumeMounts:
     mountPath: /var/run/secrets/dfe/ingest-bearer-tokens
     readOnly: true
 
-# Keys written into the config file that no overlay beats: the
-# gRPC Push listener dfe-fetcher sends to on the direct transport, and the buffer
-# figure the app reads only with acknowledgements off. The app's own default for
-# both is off and auto-detect.
+# Fixed in the config file, beyond any overlay: the Push listener dfe-fetcher sends to, and the buffer figure.
 configOverrides:
   buffer:
     memory_limit: 0
@@ -119,8 +90,7 @@ configOverrides:
     enabled: true
     bind_address: "0.0.0.0:6000"
 
-# Syslog binds 514 once an operator switches it on. The pod runs as uid 1000 with
-# every capability dropped, so this sysctl is what lets it bind a port below 1024.
+# uid 1000 with no capabilities needs this sysctl to bind a port below 1024.
 podSecurityContext:
   sysctls:
     - name: net.ipv4.ip_unprivileged_port_start
@@ -129,7 +99,7 @@ podSecurityContext:
 keda:
   cpu:
     targetUtilization: 70
-  # profile-slim.yaml clears it.
+  # Cleared by profile-slim.yaml.
   extraTriggers:
     # BEGIN fragment pressure-trigger -- rendered by `python3 scripts/composition.py --write-fragments`
     - type: metrics-api
@@ -178,7 +148,6 @@ initContainers:
 
 waitForEngine:
   service: dfe-engine
-  # Empty is the release's own namespace.
   namespace: ""
   port: 8000
   timeoutSeconds: 600

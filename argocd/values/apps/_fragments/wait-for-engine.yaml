@@ -1,8 +1,4 @@
-# An init container holding the app back until dfe-engine reports ready, which is
-# when every ClickHouse object and bootstrap topic exists. It runs the app's own
-# image and reads waitForEngine.* from the app's values.yaml. Bounded: on expiry
-# it exits non-zero and the pod waits in Init:CrashLoopBackOff.
-# scripts/composition.py copies it into each app file's marked block.
+# Copied into each app file's marked block by scripts/composition.py. See docs/deployment/values-tiers-apps.md#fragments-and-culvert.
 - name: wait-for-engine
   image: '{{ include "scalo-service.image" . }}'
   imagePullPolicy: '{{ .Values.image.pullPolicy | default "IfNotPresent" }}'
