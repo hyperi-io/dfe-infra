@@ -470,3 +470,9 @@ html[data-theme='dark'] {
 .markdown table thead tr {
   background: var(--role-tint);
 }
+
+/* A display formula wider than the column scrolls inside its own box, not under the TOC. */
+.markdown .katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+}
