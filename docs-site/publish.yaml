@@ -23,7 +23,7 @@ docs_refs:
     dfe-schemas: "0feaee595c09b0496b582f787cd2ccfc0038e74c"
     dfe-transform-elastic: "7aec4d9877831f91890d55e6d13f554d0c956fba"  # branch docs/2.2.2, which must stay
     dfe-transform-vector: "58bf4a371da4279c3900f491dbd9daf3d7de8e4b"
-    dfe-transform-vrl: "01ed6768130469a62de42311c467f9b9e85e82af"
+    dfe-transform-vrl: "d31c9b5227ef8c550d9244d1f14479d4e149975b"  # branch docs/2.2.2, which must stay
 
 # A member whose docs mount inside another member's section rather than at the
 # top of the sidebar: member -> the member it mounts under. The parent mounts at
