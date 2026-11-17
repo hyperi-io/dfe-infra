@@ -435,17 +435,21 @@ def test_unknown_slice_names_what_exists() -> None:
             expect(f"{label} names what exists", False, "did not raise")
 
 
-# The class lines of diagrams.md "Colour", byte for byte. A block copies the ones
-# it uses, so each must equal the standard's own line.
-STANDARD_CLASS_LINES = {
-    "default": "classDef default fill:#F8FAFC,stroke:#64748B,stroke-width:1px,color:#0F172A",
-    "core": "classDef core fill:#DCEBF7,stroke:#0072B2,stroke-width:2px,color:#0B2A3F",
-    "group": "classDef group fill:none,stroke:#64748B,stroke-width:1px,stroke-dasharray:2 4",
+# The house class lines, byte for byte. A block copies all of them, so each must
+# equal the line the diagram house style gives.
+HOUSE_CLASS_LINES = {
+    "ext": "classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A",
+    "ingest": "classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A",
+    "xform": "classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A",
+    "load": "classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A",
+    "bus": "classDef bus fill:#FFFFFF,stroke:#A8517F,stroke-width:3px,color:#0F172A",
+    "store": "classDef store fill:#FFFFFF,stroke:#00785A,stroke-width:3px,color:#0F172A",
+    "ui": "classDef ui fill:#FFFFFF,stroke:#D9480F,stroke-width:3px,color:#0F172A",
+    "decision": "classDef decision fill:#FFFFFF,stroke:#9A6700,stroke-width:3px,color:#0F172A",
+    "error": "classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A",
+    "control": "classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A",
+    "part": "classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A",
 }
-# The hyperi-ai standard, where this host has it installed.
-INSTALLED_STANDARD = (
-    Path.home() / ".local/share/hyperi-ai/standards/universal/diagrams.md"
-)
 
 
 def block_lines(block: str) -> list[str]:
@@ -460,39 +464,36 @@ def test_mermaid_and_docs_render() -> None:
         "the services overview holds the service nodes, boxed by language",
         'subgraph rust_services["Rust services"]' in services
         and 'subgraph python_services["Python services"]' in services
-        and '"lib-a"' not in services,
+        and "<b>lib-a</b>" not in services,
         services,
     )
     expect(
         "the platform overview holds every other node, boxed by role",
         'subgraph libraries["Libraries"]' in platform
-        and '"app-b"' not in platform
-        and '"lib-a"' in platform,
+        and "<b>app-b</b>" not in platform
+        and "<b>lib-a</b>" in platform,
         platform,
     )
     expect(
-        "an optional member keeps its label suffix and takes no colour of its own",
-        '["side-c (optional)"]' in services
-        and not any(
-            "side_c" in line
-            for line in block_lines(services)
-            if line.startswith("class")
-        ),
+        "an optional member says so in a subtitle and takes its role colour",
+        'side_c("<b>side-c</b><br/><span>optional</span>")' in services
+        and "class app_b,side_c part" in block_lines(services),
         services,
     )
     producer = suite_graph.mermaid_producer(g, "lib-a")
     lines = block_lines(producer)
     expect(
         "a producer block opens flowchart LR with an accTitle and a one-line accDescr",
-        lines[0] == "flowchart LR"
-        and lines[1] == "accTitle: L4 Detail -- lib-a build cycle"
-        and lines[2].startswith("accDescr: ")
-        and ":" not in lines[2].removeprefix("accDescr: "),
+        lines[lines.index("flowchart LR") + 1]
+        == "accTitle: L4 Detail -- lib-a build cycle"
+        and lines[lines.index("flowchart LR") + 2].startswith("accDescr: ")
+        and ":"
+        not in lines[lines.index("flowchart LR") + 2].removeprefix("accDescr: "),
         producer,
     )
     expect(
-        "the producer is core and a one-consumer block draws one solid labelled arrow",
-        "class lib_a core" in lines and "lib_a -->|cargo-dep| app_b" in lines,
+        "the producer takes its colour and a one-consumer block draws one solid labelled arrow",
+        "class lib_a,app_b part" in lines and "lib_a -->|cargo-dep| app_b" in lines,
         producer,
     )
     g["edges"].append(dict(g["edges"][0], evidence="app-b/other:1"))
@@ -633,22 +634,13 @@ def _live_blocks() -> list[tuple[str, str]]:
     ]
 
 
-def test_class_lines_are_the_standards() -> None:
-    """A block copies the standard's class lines byte for byte, and adds no other."""
+def test_class_lines_are_the_house_style() -> None:
+    """A block copies the house frontmatter and class lines byte for byte."""
     expect(
-        "the generator's class lines are the standard's",
-        suite_graph.CLASS_LINES == STANDARD_CLASS_LINES,
+        "the generator's class lines are the house style's",
+        suite_graph.CLASS_LINES == HOUSE_CLASS_LINES,
         str(suite_graph.CLASS_LINES),
     )
-    if INSTALLED_STANDARD.is_file():
-        text = INSTALLED_STANDARD.read_text(encoding="utf-8")
-        section = text.split("\n## Colour\n", 1)[1].split("\n## ", 1)[0]
-        in_standard = {ln.strip() for ln in section.splitlines() if "classDef" in ln}
-        expect(
-            "the installed standard still carries each of them",
-            set(STANDARD_CLASS_LINES.values()) <= in_standard,
-            str(set(STANDARD_CLASS_LINES.values()) - in_standard),
-        )
     g = suite_graph.parse_block_yaml(SAMPLE)
     blocks = [
         suite_graph.mermaid_overview(g, "services"),
@@ -657,11 +649,17 @@ def test_class_lines_are_the_standards() -> None:
         *(block for _, block in _live_blocks()),
     ]
     for block in blocks:
+        expect(
+            "a block opens with the house frontmatter",
+            block.startswith(
+                suite_graph.HOUSE_FRONTMATTER.rstrip("\n") + "\nflowchart"
+            ),
+            block[:80],
+        )
         defined = [ln for ln in block_lines(block) if ln.startswith("classDef")]
         expect(
-            "every classDef in a block is one of the standard's, and default is first",
-            set(defined) <= set(STANDARD_CLASS_LINES.values())
-            and defined[0] == STANDARD_CLASS_LINES["default"],
+            "every house classDef is in a block, in order",
+            defined == list(HOUSE_CLASS_LINES.values()),
             block,
         )
         used = {ln.split()[2] for ln in block_lines(block) if ln.startswith("class ")}
@@ -672,9 +670,15 @@ def test_class_lines_are_the_standards() -> None:
             block,
         )
         expect(
-            "no thick arrow, style, linkStyle or per-diagram configuration",
-            not re.search(
-                r"==>|^\s*(style|linkStyle|click)\b|%%\{", block, re.MULTILINE
+            "no thick arrow, linkStyle, click or init directive, and style only draws a boundary",
+            not re.search(r"==>|^\s*(linkStyle|click)\b|%%\{", block, re.MULTILINE)
+            and all(
+                re.fullmatch(
+                    r"style \w+ fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4",
+                    ln,
+                )
+                for ln in block_lines(block)
+                if ln.startswith("style ")
             ),
             block,
         )
@@ -685,11 +689,11 @@ def test_generated_blocks_follow_the_standard() -> None:
     g = suite_graph.load()
     for name, block in _live_blocks():
         lines = block_lines(block)
-        expect(f"{name} opens flowchart LR", lines[0] == "flowchart LR", lines[0])
+        at = lines.index("flowchart LR")
         expect(
             f"{name} has an accTitle at L4 and an accDescr on one line",
-            lines[1].startswith("accTitle: L4 Detail -- ")
-            and lines[2].startswith("accDescr: "),
+            lines[at + 1].startswith("accTitle: L4 Detail -- ")
+            and lines[at + 2].startswith("accDescr: "),
             block,
         )
         labels = re.findall(r"-(?:->|\.->)\|([^|]*)\|", block)
@@ -699,7 +703,7 @@ def test_generated_blocks_follow_the_standard() -> None:
             and not any(c in label for label in labels for c in '("'),
             str(labels),
         )
-        nodes = re.findall(r'^\s*\w+\["', block, re.MULTILINE)
+        nodes = re.findall(r'^\s*\w+\("<b>', block, re.MULTILINE)
         expect(f"{name} stays within 12 nodes", len(nodes) <= 12, str(len(nodes)))
         expect(
             f"{name} renders the same twice",
@@ -805,7 +809,7 @@ def main() -> int:
         test_mermaid_and_docs_render()
         test_consumers_with_the_same_arrow_share_one_box()
         test_block_names_and_unknown_blocks()
-        test_class_lines_are_the_standards()
+        test_class_lines_are_the_house_style()
         test_generated_blocks_follow_the_standard()
         test_live_page_is_in_sync()
         test_an_unmatched_marker_is_refused()

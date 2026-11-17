@@ -406,12 +406,96 @@ def slice_graph(
 # Mermaid -- the blocks docs/suite-graph.md carries between markers
 # ---------------------------------------------------------------------------
 
-# The class lines the diagram standard's "Colour" section gives, byte for byte.
-# A block copies the ones it uses, and `default` always.
+# The house frontmatter and class lines every Mermaid diagram in the DFE docs
+# carries, byte for byte. A block copies all of them, used or not.
+HOUSE_FRONTMATTER = """---
+config:
+  theme: base
+  look: neo
+  fontFamily: Inter, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif
+  flowchart:
+    curve: linear
+    nodeSpacing: 40
+    rankSpacing: 64
+    padding: 18
+    wrappingWidth: 280
+    htmlLabels: true
+  elk:
+    preset: modelOrder
+  themeVariables:
+    fontSize: 15px
+    lineColor: "#64748B"
+    primaryTextColor: "#0F172A"
+    clusterBorder: "#0072B2"
+    edgeLabelBackground: "#FFFFFF"
+  themeCSS: >-
+    p{margin:0}
+    .node[data-look] rect,.node[data-look] path,.node[data-look] polygon,.node[data-look] .outer-path{filter:drop-shadow(0 1px 2px rgba(15,23,42,.10)) drop-shadow(0 6px 14px rgba(15,23,42,.10))}
+    .node rect{rx:10px;ry:10px}
+    .cluster rect{rx:16px;ry:16px}
+    .node .label div{min-width:150px}
+    .node.decision .label div{min-width:0}
+    .cluster[data-look] rect{filter:none}
+    .nodeLabel{line-height:1.35}
+    .nodeLabel b{font-weight:600;font-size:15px;letter-spacing:-0.01em}
+    .nodeLabel span{font-size:12.5px;font-weight:400;color:#334155}
+    .cluster-label span.nodeLabel{display:inline-block;background:#FFFFFF;color:#0B2A3F;border:1.5px solid #0072B2;border-radius:999px;padding:2px 12px;font-size:11.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase}
+    .flowchart-link{stroke-width:1.75px}
+    .labelBkg{background:transparent!important}
+    span.edgeLabel{display:inline-block;background:#FFFFFF!important;color:#1E293B;border:1px solid #94A3B8;border-radius:999px;padding:2px 10px;font-size:12px;font-weight:500}
+    span.edgeLabel p{background:transparent!important}
+    .label-icon{width:20px;height:20px;vertical-align:-4px;margin-right:6px}
+    .ingest .label-icon{color:#0E8A7D}
+    .xform .label-icon{color:#7B4FB0}
+    .load .label-icon{color:#0072B2}
+    .bus .label-icon{color:#A8517F}
+    .store .label-icon{color:#00785A}
+    .ui .label-icon{color:#D9480F}
+    .ext .label-icon{color:#64748B}
+---
+"""
 CLASS_LINES = {
-    "default": "classDef default fill:#F8FAFC,stroke:#64748B,stroke-width:1px,color:#0F172A",
-    "core": "classDef core fill:#DCEBF7,stroke:#0072B2,stroke-width:2px,color:#0B2A3F",
-    "group": "classDef group fill:none,stroke:#64748B,stroke-width:1px,stroke-dasharray:2 4",
+    "ext": "classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A",
+    "ingest": "classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A",
+    "xform": "classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A",
+    "load": "classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A",
+    "bus": "classDef bus fill:#FFFFFF,stroke:#A8517F,stroke-width:3px,color:#0F172A",
+    "store": "classDef store fill:#FFFFFF,stroke:#00785A,stroke-width:3px,color:#0F172A",
+    "ui": "classDef ui fill:#FFFFFF,stroke:#D9480F,stroke-width:3px,color:#0F172A",
+    "decision": "classDef decision fill:#FFFFFF,stroke:#9A6700,stroke-width:3px,color:#0F172A",
+    "error": "classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A",
+    "control": "classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A",
+    "part": "classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A",
+}
+# The dashed boundary line a subgraph takes.
+BOUNDARY_STYLE = (
+    "style {id} fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4"
+)
+
+# A named DFE component keeps its own colour in every diagram. Any other node
+# takes the colour of its role.
+IDENTITY_CLASS = {
+    "dfe-receiver": "ingest",
+    "dfe-fetcher": "ingest",
+    "dfe-transform-vrl": "xform",
+    "dfe-transform-vector": "xform",
+    "dfe-transform-elastic": "xform",
+    "dfe-loader": "load",
+    "dfe-archiver": "load",
+    "dfe-ui": "ui",
+    "dfe-hyperdx": "ui",
+    "dfe-engine": "control",
+    "dfe-infra": "control",
+    "dfe-docker": "control",
+    "dfe-deploy": "control",
+    "culvert": "control",
+}
+ROLE_CLASS = {
+    "service": "part",
+    "library": "part",
+    "infra": "control",
+    "content": "store",
+    "ui": "ui",
 }
 
 INDENT = "    "
@@ -439,6 +523,24 @@ def _mid(name: str) -> str:
 
 def _label(name: str, node: dict) -> str:
     return name + (" (optional)" if node.get("optional") else "")
+
+
+def _node(name: str, node: dict) -> str:
+    """`id("<b>name</b>")`, with an `optional` subtitle where the node is."""
+    sub = "<br/><span>optional</span>" if node.get("optional") else ""
+    return f'{_mid(name)}("<b>{name}</b>{sub}")'
+
+
+def _class_of(name: str, node: dict) -> str:
+    return IDENTITY_CLASS.get(name) or ROLE_CLASS.get(node["role"], "part")
+
+
+def _class_lines(members: list[str], graph: dict) -> dict[str, list[str]]:
+    """Node ids by class, for every named member."""
+    out: dict[str, list[str]] = {}
+    for name in members:
+        out.setdefault(_class_of(name, graph["nodes"][name]), []).append(_mid(name))
+    return out
 
 
 def _names(names: list[str]) -> str:
@@ -485,30 +587,27 @@ def _block(
     descr: str,
     body: list[str],
     *,
-    core: list[str],
+    classes: dict[str, list[str]],
     groups: list[str],
 ) -> str:
-    """One flowchart: header, nodes and arrows in `body`, then the class lines."""
-    lines = ["flowchart LR", f"{INDENT}accTitle: {LEVEL} -- {title}"]
+    """One flowchart: frontmatter, header, nodes and arrows in `body`, then the house class lines."""
+    lines = [*HOUSE_FRONTMATTER.rstrip("\n").split("\n")]
+    lines += ["flowchart LR", f"{INDENT}accTitle: {LEVEL} -- {title}"]
     lines.append(f"{INDENT}accDescr: {descr}")
     lines.append("")
     lines += [f"{INDENT}{line}" if line else "" for line in body]
     lines.append("")
-    used = ["default", *(["core"] if core else []), *(["group"] if groups else [])]
-    lines += [f"{INDENT}{CLASS_LINES[name]}" for name in used]
-    if core:
-        lines.append(f"{INDENT}class {','.join(core)} core")
-    if groups:
-        lines.append(f"{INDENT}class {','.join(groups)} group")
+    lines += [
+        f"{INDENT}class {','.join(ids)} {name}" for name, ids in sorted(classes.items())
+    ]
+    lines += [f"{INDENT[:2]}{line}" for line in CLASS_LINES.values()]
+    lines += [f"{INDENT[:2]}{BOUNDARY_STYLE.format(id=gid)}" for gid in groups]
     return "\n".join(lines)
 
 
 def _subgraph(gid: str, title: str, members: list[str], graph: dict) -> list[str]:
     lines = [f'subgraph {gid}["{title}"]', f"{INDENT}direction LR"]
-    lines += [
-        f'{INDENT}{_mid(name)}["{_label(name, graph["nodes"][name])}"]'
-        for name in members
-    ]
+    lines += [f"{INDENT}{_node(name, graph['nodes'][name])}" for name in members]
     lines += [f"{INDENT}{chain}" for chain in _grid([_mid(n) for n in members])]
     lines.append("end")
     return lines
@@ -543,8 +642,9 @@ def mermaid_overview(graph: dict, block: str) -> str:
         key, titles = "role", _ROLE_TITLE
         picked = [n for n in nodes if nodes[n]["role"] != "service"]
         scope = "Suite overview, platform"
+    picked_sorted = sorted(picked)
     boxes: dict[str, list[str]] = {}
-    for name in sorted(picked):
+    for name in picked_sorted:
         boxes.setdefault(nodes[name][key], []).append(name)
     order = sorted(boxes, key=lambda k: (-len(boxes[k]), k))
     body: list[str] = []
@@ -564,7 +664,7 @@ def mermaid_overview(graph: dict, block: str) -> str:
         scope,
         f"The suite has {len(picked)} {what}, in {len(order)} boxes. {' '.join(descr)}",
         body,
-        core=[],
+        classes=_class_lines(picked_sorted, graph),
         groups=ids,
     )
 
@@ -600,7 +700,8 @@ def mermaid_producer(graph: dict, producer: str) -> str:
     for consumer, arrow in arrows.items():
         shared.setdefault(arrow, []).append(consumer)
     items = sorted(shared.items(), key=lambda item: item[1][0])
-    body = [f'{_mid(producer)}["{_label(producer, nodes[producer])}"]']
+    body = [_node(producer, nodes[producer])]
+    named = [producer]
     links: list[str] = []
     groups: list[str] = []
     taken = {_mid(n) for n in nodes}
@@ -608,7 +709,7 @@ def mermaid_producer(graph: dict, producer: str) -> str:
     for (label, arrow), members in items:
         if len(members) == 1:
             target = _mid(members[0])
-            body.append(f'{target}["{_label(members[0], nodes[members[0]])}"]')
+            body.append(_node(members[0], nodes[members[0]]))
         else:
             title = _group_title(members, graph)
             target = _slug(title)
@@ -617,6 +718,7 @@ def mermaid_producer(graph: dict, producer: str) -> str:
             taken.add(target)
             groups.append(target)
             body += _subgraph(target, title, members, graph)
+        named += members
         links.append(f"{_mid(producer)} {arrow}|{label}| {target}")
         listed = [_label(m, nodes[m]) for m in members]
         take = "takes" if len(members) == 1 else "take"
@@ -627,7 +729,7 @@ def mermaid_producer(graph: dict, producer: str) -> str:
         f"A {producer} release puts {consumers} consumer{'s' * (consumers != 1)} "
         f"in motion. {' '.join(descr)}",
         [*body, "", *links],
-        core=[_mid(producer)],
+        classes=_class_lines(named, graph),
         groups=groups,
     )
 

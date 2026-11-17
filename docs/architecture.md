@@ -7,27 +7,82 @@ dfe-infra is how DFE gets onto a bare Kubernetes cluster: the Helm charts, Argo 
 DFE's Argo CD deploys from two git repos: the deploy repo dfe-engine writes, and dfe-infra's charts.
 
 ```mermaid
+---
+config:
+  theme: base
+  look: neo
+  fontFamily: Inter, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif
+  flowchart:
+    curve: linear
+    nodeSpacing: 40
+    rankSpacing: 64
+    padding: 18
+    wrappingWidth: 280
+    htmlLabels: true
+  elk:
+    preset: modelOrder
+  themeVariables:
+    fontSize: 15px
+    lineColor: "#64748B"
+    primaryTextColor: "#0F172A"
+    clusterBorder: "#0072B2"
+    edgeLabelBackground: "#FFFFFF"
+  themeCSS: >-
+    p{margin:0}
+    .node[data-look] rect,.node[data-look] path,.node[data-look] polygon,.node[data-look] .outer-path{filter:drop-shadow(0 1px 2px rgba(15,23,42,.10)) drop-shadow(0 6px 14px rgba(15,23,42,.10))}
+    .node rect{rx:10px;ry:10px}
+    .cluster rect{rx:16px;ry:16px}
+    .node .label div{min-width:150px}
+    .node.decision .label div{min-width:0}
+    .cluster[data-look] rect{filter:none}
+    .nodeLabel{line-height:1.35}
+    .nodeLabel b{font-weight:600;font-size:15px;letter-spacing:-0.01em}
+    .nodeLabel span{font-size:12.5px;font-weight:400;color:#334155}
+    .cluster-label span.nodeLabel{display:inline-block;background:#FFFFFF;color:#0B2A3F;border:1.5px solid #0072B2;border-radius:999px;padding:2px 12px;font-size:11.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase}
+    .flowchart-link{stroke-width:1.75px}
+    .labelBkg{background:transparent!important}
+    span.edgeLabel{display:inline-block;background:#FFFFFF!important;color:#1E293B;border:1px solid #94A3B8;border-radius:999px;padding:2px 10px;font-size:12px;font-weight:500}
+    span.edgeLabel p{background:transparent!important}
+    .label-icon{width:20px;height:20px;vertical-align:-4px;margin-right:6px}
+    .ingest .label-icon{color:#0E8A7D}
+    .xform .label-icon{color:#7B4FB0}
+    .load .label-icon{color:#0072B2}
+    .bus .label-icon{color:#A8517F}
+    .store .label-icon{color:#00785A}
+    .ui .label-icon{color:#D9480F}
+    .ext .label-icon{color:#64748B}
+---
 flowchart LR
     accTitle: L2 Services -- DFE deployment
     accDescr: dfe-engine writes compiled values and DDL to the deploy repo. DFE's Argo CD reads the overlays from the deploy repo and the charts and ApplicationSets from dfe-infra, and applies them with Helm to the backing services, the dfe apps and the UIs.
 
-    engine["dfe-engine"]
+    engine("<b>dfe-engine</b>")
 
-    deployrepo[("Deploy repo")]
-    infrarepo[("dfe-infra")]
+    deployrepo("<b>Deploy repo</b>")
+    infrarepo("<b>dfe-infra</b>")
 
-    argocd["DFE's Argo CD"]
+    argocd("<b>DFE's Argo CD</b>")
 
-    services["Backing services,<br/>apps and UIs"]
+    services("<b>Backing services, apps and UIs</b>")
 
     engine -->|values, DDL| deployrepo
     deployrepo -->|overlays| argocd
     infrarepo -->|charts, appsets| argocd
     argocd -->|helm| services
 
-    classDef default fill:#F8FAFC,stroke:#64748B,stroke-width:1px,color:#0F172A
-    classDef store fill:#DDF3EC,stroke:#00785A,stroke-width:1px,color:#0B3327
-    class deployrepo,infrarepo store
+    class engine,deployrepo,infrarepo,argocd control
+    class services part
+  classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
+  classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A
+  classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A
+  classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A
+  classDef bus fill:#FFFFFF,stroke:#A8517F,stroke-width:3px,color:#0F172A
+  classDef store fill:#FFFFFF,stroke:#00785A,stroke-width:3px,color:#0F172A
+  classDef ui fill:#FFFFFF,stroke:#D9480F,stroke-width:3px,color:#0F172A
+  classDef decision fill:#FFFFFF,stroke:#9A6700,stroke-width:3px,color:#0F172A
+  classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
+  classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
+  classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
 ```
 
 *Figure 1. L2 Services -- DFE deployment.* Up: top of dfe-infra. Down: [L4 Detail -- Deployment layers](deployment/README.md#the-three-layers), [L4 Detail -- The deploy repo](deployment/state-and-repos.md#the-repositories), [L4 Detail -- Edge exposure](edge-auth.md#exposure-topology), [L4 Detail -- Federated login](edge-auth.md#the-identity-plane-engine-authority--external-oidc).
