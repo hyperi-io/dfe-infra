@@ -66,25 +66,30 @@ config:
 ---
 flowchart TB
   accTitle: L2 Services -- DFE data path
-  accDescr: Senders post JSON to dfe-receiver and dfe-fetcher pulls from APIs, databases and files. Both write to a source topic that dfe-loader inserts into ClickHouse, optionally through a transform, and the DFE console reads ClickHouse.
-  S("<b>Your senders</b><br/><span>JSON over HTTP or HTTPS</span>")
-  F("<b>dfe-fetcher</b><br/><span>pulls from APIs, databases and files</span>")
-  R("<b>dfe-receiver</b><br/><span>takes what is sent</span>")
-  K1("<b>Source topic</b><br/><span>*_land</span>")
-  T("<b>dfe-transform</b><br/><span>optional</span>")
-  K2("<b>Transformed topic</b><br/><span>*_load</span>")
-  L("<b>dfe-loader</b><br/><span>inserts into tables</span>")
-  C[("<b>ClickHouse</b>")]
-  H("<b>DFE console</b><br/><span>search, dashboards, rules</span>")
-  S --> R
-  R -->|Kafka| K1
-  F --> K1
-  K1 --> L
-  K1 -.-> T -.-> K2 -.-> L
-  R -->|direct gRPC| L
-  R -.->|direct gRPC| T -.->|direct gRPC| L
-  L --> C
-  C --> H
+  accDescr: dfe-receiver takes what your senders post and dfe-fetcher pulls from APIs, databases and files. Both write to Kafka, where an optional transform turns the source topic into a transformed one. dfe-loader inserts into ClickHouse, and the DFE console reads it. Lean profiles skip Kafka over direct gRPC.
+  subgraph IN["Collect"]
+    direction LR
+    S("<b>Your senders</b><br/><span>JSON over HTTP or HTTPS</span>")
+    R("<b>dfe-receiver</b><br/><span>takes what is sent</span>")
+    F("<b>dfe-fetcher</b><br/><span>pulls from APIs, databases and files</span>")
+    S --> R
+  end
+  subgraph BUS["Kafka"]
+    direction LR
+    K1("<b>Source topic</b><br/><span>*_land</span>")
+    T("<b>dfe-transform</b><br/><span>optional</span>")
+    K2("<b>Transformed topic</b><br/><span>*_load</span>")
+    K1 -.-> T -.-> K2
+  end
+  subgraph OUT["Store and query"]
+    direction LR
+    L("<b>dfe-loader</b><br/><span>inserts into tables</span>")
+    C[("<b>ClickHouse</b>")]
+    H("<b>DFE console</b><br/><span>search, dashboards, rules</span>")
+    L --> C --> H
+  end
+  IN --> BUS --> OUT
+  IN -.->|direct gRPC, lean profiles| OUT
   class S ext
   class R,F ingest
   class K1,K2 bus
@@ -103,6 +108,9 @@ flowchart TB
   classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
   classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
   classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+  style IN fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
+  style BUS fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
+  style OUT fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
 ```
 
 *Figure 1. L2 Services -- DFE data path.* Dotted lines are optional paths. Up: top of the DFE docs.
