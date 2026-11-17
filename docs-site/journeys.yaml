@@ -60,6 +60,7 @@ placement:
     README.md: ""
     history.md: "Evaluate / How DFE fits together"
     quickstart/demo.md: "Evaluate / Try the demo"
+    quickstart/demo-tour.md: "Evaluate / Try the demo"
     quickstart/docker.md: "Evaluate / Try the demo"
     quickstart/kubernetes.md: "Deploy / Kubernetes on-prem"
     quickstart/aws.md: "Deploy / AWS"

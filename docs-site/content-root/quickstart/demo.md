@@ -5,7 +5,7 @@ sidebar_label: The demo
 
 # Quickstart: the demo
 
-Raw firewall syslog in, one parsed ClickHouse table per product out, on one host. The fetcher pulls two live API feeds beside it: Wikipedia's recent changes, and the latest GitHub release of each public DFE component.
+Raw firewall syslog in, one parsed ClickHouse table per product out, on one host. The fetcher pulls two live API feeds beside it: the abuse.ch Feodo Tracker botnet blocklist, and the latest GitHub release of each public DFE component.
 
 <!-- docker-quickstart: demo -->
 You need Docker with Compose v2, Python 3, git and make. It runs the newest DFE release, and `VERSION=` on the make line pins another.
@@ -45,6 +45,7 @@ make clean        # stop everything and DELETE the volumes, ClickHouse included
 
 Next:
 
+- What to open in each demo pack, and how its data got there: [Where to look in the demo](demo-tour.md).
 - Feed it your own data: [Docker quickstart](docker.md).
 - What the demo creates, and its rate and protocol settings: [Taking DFE for a first look](../dfe-docker/evaluating.md).
 - How the pieces fit: [how the Compose stack fits together](../dfe-docker/architecture.md).
