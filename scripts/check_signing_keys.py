@@ -51,8 +51,8 @@ HELD = (
     ),
     (
         f"{NPA_ISSUE} is closed",
-        datetime.date(2026, 11, 24),
-        "vpc-cni v1.23.3 carries the fix, pinned once its 7-day cooldown ends 2026-11-17",
+        datetime.date(2026, 12, 18),
+        "vpc-cni v1.23.3 carries the fix. #1160 pins it and lifts the hold with the 2.2.3 cut",
     ),
 )
 PGP_BLOCK = re.compile(
