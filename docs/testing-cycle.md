@@ -50,19 +50,24 @@ config:
     .ui .label-icon{color:#D9480F}
     .ext .label-icon{color:#64748B}
 ---
-flowchart LR
+flowchart TB
     accTitle: L4 Detail -- The validation cycle
     accDescr: capacity-check asks whether the lane may start, preflight checks the cluster read-only, stack-deploy bootstraps and syncs the stack and runs the readiness gate and two E2E tests, verify runs the smoke suite, and teardown destroys it. The cycle repeats per change.
-
-    capacity("<b>capacity-check</b>")
-    preflight("<b>preflight</b><br/><span>read-only</span>")
-    deploy("<b>stack-deploy</b><br/><span>readiness, 2 E2E</span>")
-    verify("<b>verify</b><br/><span>smoke suite</span>")
-    teardown("<b>teardown</b>")
-
-    capacity --> preflight --> deploy --> verify --> teardown
-    teardown -.->|next change| capacity
-
+    subgraph check["Check"]
+        direction LR
+        capacity("<b>capacity-check</b>")
+        preflight("<b>preflight</b><br/><span>read-only</span>")
+        capacity --> preflight
+    end
+    subgraph prove["Deploy and prove"]
+        direction LR
+        deploy("<b>stack-deploy</b><br/><span>readiness, 2 E2E</span>")
+        verify("<b>verify</b><br/><span>smoke suite</span>")
+        teardown("<b>teardown</b>")
+        deploy --> verify --> teardown
+    end
+    check --> prove
+    check <-.-|next change| prove
     class capacity,preflight,deploy,verify,teardown part
   classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
   classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A
@@ -75,6 +80,8 @@ flowchart LR
   classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
   classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
   classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+  style check fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
+  style prove fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
 ```
 
 *Figure 1. L4 Detail -- The validation cycle. The dotted arrow is the next run, and `--keep` skips the teardown.* Up: [dfe-infra documentation](README.md).

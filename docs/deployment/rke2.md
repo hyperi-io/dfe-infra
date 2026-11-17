@@ -79,23 +79,23 @@ config:
     .ui .label-icon{color:#D9480F}
     .ext .label-icon{color:#64748B}
 ---
-flowchart LR
+flowchart TB
     accTitle: L4 Detail -- DFE on an RKE2 cluster
     accDescr: Rancher, or the cloud on a managed cluster, manages the control plane. The control plane schedules DFE's three layers as workloads: bootstrap's Layer 0, the Layer 1 backing services and the Layer 2 apps.
-
-    owner("<b>Rancher or the cloud</b>")
-    cp("<b>Control plane</b><br/><span>etcd, apiserver</span>")
-
+    subgraph mgmt["Cluster management"]
+        direction LR
+        owner("<b>Rancher or the cloud</b>")
+        cp("<b>Control plane</b><br/><span>etcd, apiserver</span>")
+        owner -->|manages| cp
+    end
     subgraph dfe["DFE workloads"]
+        direction LR
         layer0("<b>Layer 0</b><br/><span>cert-manager, ESO, Argo CD</span>")
         layer1("<b>Layer 1</b><br/><span>backing services</span>")
         layer2("<b>Layer 2</b><br/><span>DFE apps</span>")
         layer0 ~~~ layer1 ~~~ layer2
     end
-
-    owner -->|manages| cp
-    cp -->|schedules| dfe
-
+    mgmt -->|schedules| dfe
     class owner ext
     class cp,layer0,layer1,layer2 part
   classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
@@ -109,6 +109,7 @@ flowchart LR
   classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
   classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
   classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+  style mgmt fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
   style dfe fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
 ```
 
@@ -175,16 +176,15 @@ config:
 flowchart TB
     accTitle: L4 Detail -- Where RKE2 runs
     accDescr: Where there is no cluster, RKE2 is the one distribution on on-prem hardware, AWS EC2, GCP Compute and Azure VMs. On a managed cluster, EKS, AKS or GKE Standard, DFE deploys onto what the cloud runs.
-
     subgraph rke2["RKE2, where there is no cluster"]
         direction LR
         onprem("<b>On-prem, air-gapped, edge</b>")
         ec2("<b>AWS EC2</b>")
         gce("<b>GCP Compute</b>")
         azvm("<b>Azure VMs</b>")
-        onprem ~~~ ec2 ~~~ gce ~~~ azvm
+        onprem ~~~ ec2
+        gce ~~~ azvm
     end
-
     subgraph managed["Managed, DFE deploys onto"]
         direction LR
         eks("<b>EKS</b>")
@@ -192,9 +192,7 @@ flowchart TB
         gke("<b>GKE Standard</b>")
         eks ~~~ aks ~~~ gke
     end
-
     rke2 ~~~ managed
-
     class onprem,ec2,gce,azvm part
     class eks,aks,gke ext
   classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A

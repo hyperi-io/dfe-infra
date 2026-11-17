@@ -48,26 +48,25 @@ config:
     .ui .label-icon{color:#D9480F}
     .ext .label-icon{color:#64748B}
 ---
-flowchart LR
+flowchart TB
     accTitle: L4 Detail -- Autoscaling layers
     accDescr: On every target the HPA KEDA drives reads a CPU trigger and a pressure trigger through dfe-keda-shim and takes the higher. Pods it cannot place go Pending, and the node layer adds nodes with a static pool on-prem, Karpenter on AWS or cluster-autoscaler as the portable fallback.
-
     subgraph pods["Pod scaling, every target"]
+        direction LR
         cpu("<b>CPU trigger</b>")
         shim("<b>Pressure trigger</b><br/><span>via dfe-keda-shim</span>")
         hpa("<b>HPA</b><br/><span>takes the higher</span>")
+        cpu --> hpa
+        shim --> hpa
     end
-
     subgraph nodes["Node scaling, per target"]
+        direction LR
         static("<b>Static pool</b><br/><span>on-prem</span>")
         karpenter("<b>Karpenter</b><br/><span>AWS</span>")
         ca("<b>cluster-autoscaler</b><br/><span>fallback</span>")
+        static ~~~ karpenter ~~~ ca
     end
-
-    cpu --> hpa
-    shim --> hpa
-    hpa -->|pods Pending| nodes
-
+    pods -->|pods Pending| nodes
     class cpu,shim,hpa,static,karpenter,ca part
   classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
   classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A

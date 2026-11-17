@@ -66,33 +66,32 @@ config:
     .ui .label-icon{color:#D9480F}
     .ext .label-icon{color:#64748B}
 ---
-flowchart LR
+flowchart TB
     accTitle: L4 Detail -- Edge exposure
-    accDescr: A browser reaches the dfe-gateway over HTTPS. The gateway routes the console hostname to dfe-ui and dfe-engine and each admin hostname to its admin UI, and sends federated logins to an external identity provider. dfe-ui embeds dfe-hyperdx in an iframe.
-
-    browser("<b>Browser</b>")
-
-    gateway("<b>dfe-gateway</b><br/><span>port 443</span>")
-
+    accDescr: A browser reaches the dfe-gateway over HTTPS, and the gateway sends federated logins to an external identity provider. The gateway routes the console hostname to dfe-ui and dfe-engine and each admin hostname to its admin UI. dfe-ui embeds dfe-hyperdx in an iframe.
+    subgraph edge["Edge"]
+        direction TB
+        browser("<b>Browser</b>")
+        gateway("<b>dfe-gateway</b><br/><span>port 443</span>")
+        idp("<b>External IdPs</b>")
+        browser -->|HTTPS| gateway
+        gateway -.->|federated login| idp
+    end
     subgraph console["Console dfe.{domain}"]
+        direction LR
         ui("<b>dfe-ui</b>")
+        hyperdx("<b>dfe-hyperdx</b>")
         engine("<b>dfe-engine</b>")
+        ui -.->|iframe| hyperdx
     end
     subgraph admin["Admin hostnames"]
+        direction LR
         links("<b>Links page</b>")
         argocd("<b>Argo CD</b>")
         kafbat("<b>Kafbat</b>")
     end
-    idp("<b>External IdPs</b>")
-
-    hyperdx("<b>dfe-hyperdx</b>")
-
-    browser -->|HTTPS| gateway
-    gateway -->|console host| console
-    gateway -->|admin hosts| admin
-    gateway -.->|federated login| idp
-    ui -.->|iframe| hyperdx
-
+    edge -->|console host| console
+    edge -->|admin hosts| admin
     class browser,idp ext
     class gateway,links,kafbat part
     class ui,hyperdx ui
@@ -108,11 +107,12 @@ flowchart LR
   classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
   classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
   classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+  style edge fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
   style console fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
   style admin fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
 ```
 
-*Figure 1. L4 Detail -- Edge exposure.* Up: [L2 Services -- DFE deployment](architecture.md#where-this-repo-sits-in-the-suite).
+*Figure 1. L4 Detail -- Edge exposure.* Up: [L2 Services -- DFE suite](architecture.md).
 
 Dashed boxes are external. A dotted arrow is optional: the IdP hop runs when a provider is configured, and dfe-ui frames dfe-hyperdx from its route on `hyperdx.{domain}`. Local login is dfe-ui asking dfe-engine's account store.
 
@@ -166,7 +166,7 @@ sequenceDiagram
     envoy->>engine: X-Oidc-Subject, only with jwtAuthn.enabled
 ```
 
-*Figure 2. L4 Detail -- Federated login.* Up: [L2 Services -- DFE deployment](architecture.md#where-this-repo-sits-in-the-suite).
+*Figure 2. L4 Detail -- Federated login.* Up: [L2 Services -- DFE suite](architecture.md).
 
 The local login, the default, is three steps: dfe-ui shows a form, dfe-engine checks the credentials against its account store, and dfe-engine returns the session in the `dfe_token` cookie.
 

@@ -79,23 +79,31 @@ config:
     .ui .label-icon{color:#D9480F}
     .ext .label-icon{color:#64748B}
 ---
-flowchart LR
+flowchart TB
     accTitle: L4 Detail -- Tunnel client reach
     accDescr: An appliance dials in to the public LoadBalancer, or the NodePort on AWS, and its tunnel ends in the culvert pod. From there records reach dfe-receiver, and the paths to dfe-engine and ClickHouse are denied.
-
-    appliance("<b>Appliance</b>")
-    door("<b>LoadBalancer</b><br/><span>or NodePort</span>")
-    culvert("<b>culvert pod</b>")
-    receiver("<b>dfe-receiver</b>")
-    engine("<b>dfe-engine</b>")
-    clickhouse[("<b>ClickHouse</b>")]
-
-    appliance -->|dials in| door
-    door -->|tunnel| culvert
-    culvert -->|records| receiver
-    culvert -.->|denied| engine
-    culvert -.->|denied| clickhouse
-
+    subgraph outside["Outside the cluster"]
+        direction LR
+        appliance("<b>Appliance</b>")
+        door("<b>LoadBalancer</b><br/><span>or NodePort</span>")
+        appliance -->|dials in| door
+    end
+    subgraph tunnel["Tunnel end"]
+        direction LR
+        culvert("<b>culvert pod</b>")
+    end
+    subgraph allowed["Allowed"]
+        direction LR
+        receiver("<b>dfe-receiver</b>")
+    end
+    subgraph denied["Denied"]
+        direction LR
+        engine("<b>dfe-engine</b>")
+        clickhouse[("<b>ClickHouse</b>")]
+    end
+    outside -->|tunnel| tunnel
+    tunnel -->|records| allowed
+    tunnel -.->|denied| denied
     class appliance ext
     class door part
     class culvert,engine control
@@ -112,6 +120,10 @@ flowchart LR
   classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
   classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
   classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+  style outside fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
+  style tunnel fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
+  style allowed fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
+  style denied fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
 ```
 
 *Figure 1. L4 Detail -- Tunnel client reach. Dotted arrows are the paths both layers deny.* Up: [Deploying DFE with dfe-infra](README.md).

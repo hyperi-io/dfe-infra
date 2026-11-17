@@ -118,18 +118,23 @@ config:
     .ui .label-icon{color:#D9480F}
     .ext .label-icon{color:#64748B}
 ---
-flowchart LR
+flowchart TB
     accTitle: L4 Detail -- Argo CD sync waves
     accDescr: Waves 1 to 3 install the operators and addons. Wave 4 brings up the data platform. Wave 5 is dfe-engine, which applies the schema. Wave 6 is the OTel collector and wave 7 the DFE apps.
-
-    ops("<b>Waves 1-3</b><br/><span>operators, addons</span>")
-    data("<b>Wave 4</b><br/><span>data platform</span>")
-    engine("<b>Wave 5</b><br/><span>dfe-engine</span>")
-    otel("<b>Wave 6</b><br/><span>OTel collector</span>")
-    apps("<b>Wave 7</b><br/><span>DFE apps</span>")
-
-    ops --> data --> engine --> otel --> apps
-
+    subgraph platform["Platform"]
+        direction LR
+        ops("<b>Waves 1-3</b><br/><span>operators, addons</span>")
+        data("<b>Wave 4</b><br/><span>data platform</span>")
+        ops --> data
+    end
+    subgraph stack["DFE"]
+        direction LR
+        engine("<b>Wave 5</b><br/><span>dfe-engine</span>")
+        otel("<b>Wave 6</b><br/><span>OTel collector</span>")
+        apps("<b>Wave 7</b><br/><span>DFE apps</span>")
+        engine --> otel --> apps
+    end
+    platform --> stack
     class ops,data,otel,apps part
     class engine control
   classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
@@ -143,6 +148,8 @@ flowchart LR
   classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
   classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
   classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+  style platform fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
+  style stack fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
 ```
 
 *Figure 1. L4 Detail -- Argo CD sync waves.* Up: [Deploying DFE with dfe-infra](README.md).

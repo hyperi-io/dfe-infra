@@ -32,7 +32,9 @@ Design and the repo-by-repo map: [docs/architecture.md](docs/architecture.md).
 | `versions.yaml` | Every chart, operator and image pin, plus `digests:`, lockstep `content:` tags and `stack:` release metadata. |
 | `helm/charts/` | The backing-service and platform charts, over `helm/library/dfe-common`, and `dfe-extras`, the DFE-only objects beside each service's published thin chart. |
 | `argocd/appsets/` | The layer ApplicationSets. `argocd/values/` holds the cascade: `common.yaml`, then the environment file, then the profile. |
+| `helm/library/dfe-common` | Shared chart templates: image, names, labels, security context, the Kafka provider table, the mesh pool listener, the wait-for-engine init container. |
 | `bootstrap/` | Idempotent cluster bootstrap, including the templates that WRITE the Argo cluster secret. |
+| `terraform/` | The per-cloud base in OpenTofu: the EKS cluster, managed brokers, secrets and IAM. |
 | `scripts/dfe-stack` | The stack CLI: render, pins, upgrade graph, release gate. |
 | `scripts/dfe-ops` | The cluster CLI: kubeconfig, deploy, teardown, verify, acceptance, and a local kind cluster (`kind up/status/down`). |
 
