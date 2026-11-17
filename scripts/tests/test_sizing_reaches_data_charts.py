@@ -79,7 +79,7 @@ k8s:
   cloud: aws
 """
 
-# A broker sized to every core of an m8g.xlarge, the shape the floor broker takes.
+# A broker sized to every core of an m9g.xlarge, the shape the floor broker takes.
 FOUR_CORE_BROKER = "  overrides:\n    kafka-broker:\n      cpu: 4\n"
 
 
@@ -710,8 +710,8 @@ def test_the_scale_in_dial_reaches_the_base(
 
 
 def test_the_floor_broker_takes_the_shape_that_holds_its_memory(resolved: Path) -> None:
-    """8 GiB of an m8g.large is more than it leaves a pod, so the floor broker takes an xlarge."""
-    assert _shapes(resolved)["kafka-broker"]["instance_types"][0] == "m8g.xlarge"
+    """8 GiB of an m9g.large is more than it leaves a pod, so the floor broker takes an xlarge."""
+    assert _shapes(resolved)["kafka-broker"]["instance_types"][0] == "m9g.xlarge"
     assert _base(resolved)["kafka"]["resources"]["requests"] == {
         "cpu": "2",
         "memory": "8Gi",
@@ -743,7 +743,7 @@ def test_a_broker_on_every_core_of_its_node_keeps_the_thread_dials(
 ) -> None:
     """4 vCPU on an m8g.xlarge schedules at 3620m, and the dials read the 4-core limit."""
     assert _resolve(tmp_path, sizing_extra=FOUR_CORE_BROKER) == 0
-    assert _shapes(tmp_path)["kafka-broker"]["instance_types"][0] == "m8g.xlarge"
+    assert _shapes(tmp_path)["kafka-broker"]["instance_types"][0] == "m9g.xlarge"
     resources = _base(tmp_path)["kafka"]["resources"]
     assert resources["requests"]["cpu"] == "3620m"
     assert resources["limits"]["cpu"] == "4"
