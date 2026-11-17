@@ -112,8 +112,8 @@ NPA = f"{watch.NPA_ISSUE} is closed: check the pinned vpc-cni carries the fix"
             datetime.date(2026, 11, 15),
             False,
         ),
-        (NPA, datetime.date(2026, 11, 24), True),
-        (NPA, datetime.date(2026, 11, 25), False),
+        (NPA, datetime.date(2026, 12, 18), True),
+        (NPA, datetime.date(2026, 12, 19), False),
         ("tools/vendored.asc: key AB has expired", datetime.date(2026, 11, 15), False),
     ],
     ids=[
