@@ -64,7 +64,7 @@ config:
     .ui .label-icon{color:#D9480F}
     .ext .label-icon{color:#64748B}
 ---
-flowchart LR
+flowchart TB
   accTitle: L2 Services -- DFE data path
   accDescr: Senders post JSON to dfe-receiver and dfe-fetcher pulls from APIs, databases and files. Both write to a source topic that dfe-loader inserts into ClickHouse, optionally through a transform, and the DFE console reads ClickHouse.
   S("<b>Your senders</b><br/><span>JSON over HTTP or HTTPS</span>")
