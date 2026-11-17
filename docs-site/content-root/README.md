@@ -16,6 +16,8 @@ Under the hood, DFE is a data pipeline you run yourself. Your agents and shipper
 
 Every page here comes from a suite repository's own `docs/`, at the version one DFE release pins. The version menu switches the whole suite between releases. Each repository has its own section in the sidebar.
 
+Data moves one way, from your senders through Kafka or gRPC into ClickHouse, where the DFE console reads it.
+
 ```mermaid
 ---
 config:
@@ -63,6 +65,8 @@ config:
     .ext .label-icon{color:#64748B}
 ---
 flowchart LR
+  accTitle: L2 Services -- DFE data path
+  accDescr: Senders post JSON to dfe-receiver and dfe-fetcher pulls from APIs, databases and files. Both write to a source topic that dfe-loader inserts into ClickHouse, optionally through a transform, and the DFE console reads ClickHouse.
   S("<b>Your senders</b><br/><span>JSON over HTTP or HTTPS</span>")
   F("<b>dfe-fetcher</b><br/><span>pulls from APIs, databases and files</span>")
   R("<b>dfe-receiver</b><br/><span>takes what is sent</span>")
@@ -100,6 +104,8 @@ flowchart LR
   classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
   classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
 ```
+
+*Figure 1. L2 Services -- DFE data path.* Dotted lines are optional paths. Up: top of the DFE docs.
 
 This is the default path. The leaner profiles skip Kafka and go receiver to loader over gRPC. A transform app (dfe-transform-vrl, dfe-transform-vector or dfe-transform-elastic) is optional. On Kafka a source that needs grok or your own logic gets one: it reads the source's `*_land` topic and writes a `*_load` one, and the loader reads that one instead. Over gRPC the receiver sends to the transform and the transform sends to the loader, and the lean gRPC profiles run only the fixed transforms a deployment ships, not one per source, so a source that needs its own is refused there. Every component also sends its own logs and metrics over OpenTelemetry into ClickHouse, so the console shows the stack's health before your first event arrives.
 

@@ -54,6 +54,8 @@ config:
     .ext .label-icon{color:#64748B}
 ---
 flowchart LR
+  accTitle: L4 Detail -- Rules and hunts
+  accDescr: A rule is SQL on a source's table. The hunt runner runs rules on their schedule and writes matches to the alerts table, which a rule can read in turn.
   R("<b>Rule</b><br/><span>SQL on a source's table</span>")
   H("<b>Hunt runner</b><br/><span>runs rules on their schedule</span>")
   A[("<b>Alerts table</b>")]
@@ -75,6 +77,8 @@ flowchart LR
   classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
   classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
 ```
+
+*Figure 1. L4 Detail -- Rules and hunts.* Up: [L2 Services -- DFE data path](../README.md).
 
 The `alerts` table is itself a source. It has the same schema management, retention and query surface as any other, and a rule written against it is how you express correlation.
 

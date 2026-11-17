@@ -108,17 +108,19 @@ config:
     .ext .label-icon{color:#64748B}
 ---
 flowchart LR
-  subgraph OBS["Observability: fact tables (large, time-series)"]
-    F1("<b>Device events</b>")
-    F2("<b>Application logs</b>")
-    F3("<b>Metrics</b>")
-  end
+  accTitle: L4 Detail -- Fact and dimension tables
+  accDescr: Fact tables hold device events, application logs and metrics. Dimension tables hold the asset inventory, identity directory and CMDB. A JOIN in ClickHouse SQL combines them to answer questions such as which devices stopped reporting.
   subgraph CTX["Context: dimension tables (small, point-in-time)"]
-    D1("<b>Asset inventory</b>")
-    D2("<b>Identity directory</b>")
     D3("<b>CMDB</b>")
+    D2("<b>Identity directory</b>")
+    D1("<b>Asset inventory</b>")
   end
-  OBS --> J{{"<b>JOIN</b><br/><span>in ClickHouse SQL</span>"}}
+  subgraph OBS["Observability: fact tables (large, time-series)"]
+    F3("<b>Metrics</b>")
+    F2("<b>Application logs</b>")
+    F1("<b>Device events</b>")
+  end
+  OBS --> J{"<b>JOIN</b><br/><span>in ClickHouse SQL</span>"}
   CTX --> J
   J --> Q("<b>Answers</b><br/><span>Which devices stopped reporting?</span><br/><span>Errors by customer tier</span>")
   class F1,F2,F3,D1,D2,D3 store
@@ -138,6 +140,8 @@ flowchart LR
   style OBS fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
   style CTX fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
 ```
+
+*Figure 1. L4 Detail -- Fact and dimension tables.* Up: [L2 Services -- DFE data path](README.md).
 
 "Which devices in my inventory stopped reporting this week?" is one query.
 
