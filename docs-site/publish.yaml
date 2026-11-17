@@ -14,8 +14,6 @@ dropped_versions:
 # entry also picks the release whose quickstart.json fills the install pages.
 docs_refs:
   2.2.2:
-    # The one-line installs print the console login, and list the demo packs.
-    dfe-docker: "v1.0.8"
     dfe-archiver: "c8509175dcc2842c7abae2d9bf576c9bdec565ed"
     dfe-loader: "ecdb5a3aa7d85bf5a7cbc75937b8de1e8c522b33"  # says record throughout, lists memory as restart-only
     dfe-receiver: "de94eb83b44ae390a165462026cda5a94c609bd9"

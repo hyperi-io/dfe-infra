@@ -10632,7 +10632,7 @@ stacks:
       # renovate: datasource=github-tags depName=hyperi-io/dfe-deploy
       dfe-deploy: "v1.0.24"              # 2026-11-16. The deploy-repo template, seeded from this tag. Its pins.yaml names stack 2.2.2 on the release channel.
       # Contains bbf19bf1, the Docker-only installer image and quickstart.json, which the docs site's quickstart pages render.
-      dfe-docker: "v1.0.5"                # 2026-11-12, tag at cf2e8d35a. Installs with one line, docker compose -f oci://ghcr.io/hyperi-io/dfe-docker:compose up -d, and the demo from :demo. Runs every fetcher source in one container (#373). Its compose is built against 2.2.2-rc.5, so the console reports that stack until 2.2.3.
+      dfe-docker: "v1.0.9"                # 2026-11-17, tag at 3b518b080. Verifies each demo pack in CI (#411), takes Spamhaus DROP out of demo-cyber (#416), replays a feed that answers with no rows (#417), and keeps ClickHouse merges from taking the memory inserts need (#414).
       dfe-hyperdx: "v0.3.26"             # 2026-11-16, amd64 and arm64. Merges upstream HyperDX 2.45.0. Hides null and blank fields in the row view by default (#221) and shows a capped hunt run's summary row as its counts (#227).
 
     # The dfe-toolbox operator shell images (docker/dfe-toolbox/), not part of the deployed stack.
