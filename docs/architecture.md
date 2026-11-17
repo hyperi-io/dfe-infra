@@ -82,6 +82,7 @@ flowchart TB
     D[("<b>Deploy repo</b>")]
     G("<b>Argo CD</b><br/><span>applies the repo</span>")
     H --> E
+    E --> D
     D --> G
   end
   S --> IN
