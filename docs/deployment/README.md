@@ -54,25 +54,28 @@ config:
     .ui .label-icon{color:#D9480F}
     .ext .label-icon{color:#64748B}
 ---
-flowchart LR
+flowchart TB
     accTitle: L4 Detail -- Deployment layers
     accDescr: bootstrap.sh installs DFE's Argo CD as Layer 0. Argo CD reads the charts and ApplicationSets from dfe-infra and the overlays from the deploy repo, and applies Layer 1, the backing services, and Layer 2, the dfe apps.
-
-    boot("<b>bootstrap.sh</b><br/><span>Layer 0</span>")
-    infrarepo("<b>dfe-infra</b>")
-    deployrepo("<b>Deploy repo</b>")
-
-    argocd("<b>DFE's Argo CD</b>")
-
-    layer1("<b>Layer 1</b><br/><span>backing services</span>")
-    layer2("<b>Layer 2</b><br/><span>dfe apps</span>")
-
-    boot -->|installs| argocd
-    infrarepo -->|charts, appsets| argocd
-    deployrepo -->|overlays| argocd
-    argocd -->|helm| layer1
-    argocd -->|helm| layer2
-
+    subgraph src["Layer 0 and sources"]
+        direction LR
+        boot("<b>bootstrap.sh</b><br/><span>Layer 0, installs Argo CD</span>")
+        infrarepo("<b>dfe-infra</b><br/><span>charts, appsets</span>")
+        deployrepo("<b>Deploy repo</b><br/><span>overlays</span>")
+        boot ~~~ infrarepo ~~~ deployrepo
+    end
+    subgraph argo["DFE's Argo CD"]
+        direction LR
+        argocd("<b>DFE's Argo CD</b>")
+    end
+    subgraph layers["Applied by helm"]
+        direction LR
+        layer1("<b>Layer 1</b><br/><span>backing services</span>")
+        layer2("<b>Layer 2</b><br/><span>dfe apps</span>")
+        layer1 ~~~ layer2
+    end
+    src --> argo
+    argo -->|helm| layers
     class boot,infrarepo,deployrepo,argocd control
     class layer1,layer2 part
   classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
@@ -86,9 +89,12 @@ flowchart LR
   classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
   classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
   classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+  style src fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
+  style argo fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
+  style layers fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
 ```
 
-*Figure 1. L4 Detail -- Deployment layers.* Up: [L2 Services -- DFE deployment](../architecture.md#where-this-repo-sits-in-the-suite).
+*Figure 1. L4 Detail -- Deployment layers.* Up: [L3 Components -- Argo CD](../argo-cd.md).
 
 - Bootstrap (`bootstrap/bootstrap.sh`) probes each dependency: StorageClass, cert-manager, External Secrets and Argo CD. A healthy controller on the cluster is adopted, otherwise we install our copy. The Argo CD we installed (release `argocd` in namespace `argocd`) is upgraded in place on every re-run, so a chart pin or an install flag reaches a live cluster. An adopted Argo is never reconfigured.
 - Layer 1 (`argocd/appsets/layer1-addons.yaml`, `layer2-data.yaml` and, on `scale`, `layer-scale.yaml`) is the addons and the backing services: ClickHouse, DocumentDB and Kafka where the tier has one, from base charts plus the deploy repo's `infra/` overlay.

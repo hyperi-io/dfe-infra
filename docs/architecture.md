@@ -1,10 +1,6 @@
-# dfe-infra architecture
+# DFE architecture
 
-dfe-infra is how DFE gets onto a bare Kubernetes cluster: the Helm charts, Argo CD ApplicationSets and bootstrap. Every deployment starts from its pinned base. It never writes config. The engine writes overlays and DDL into the deploy repo, and this repo's appsets reconcile them. Never the reverse.
-
-## Where this repo sits in the suite
-
-DFE's Argo CD deploys from two git repos: the deploy repo dfe-engine writes, and dfe-infra's charts.
+DFE takes events from your agents, products and APIs, carries them over Kafka, and lands them in ClickHouse, where you search them in the DFE console. This page is the map of the whole suite, and dfe-infra is the repo that deploys it onto Kubernetes.
 
 ```mermaid
 ---
@@ -52,26 +48,57 @@ config:
     .ui .label-icon{color:#D9480F}
     .ext .label-icon{color:#64748B}
 ---
-flowchart LR
-    accTitle: L2 Services -- DFE deployment
-    accDescr: dfe-engine writes compiled values and DDL to the deploy repo. DFE's Argo CD reads the overlays from the deploy repo and the charts and ApplicationSets from dfe-infra, and applies them with Helm to the backing services, the dfe apps and the UIs.
-
-    engine("<b>dfe-engine</b>")
-
-    deployrepo("<b>Deploy repo</b>")
-    infrarepo("<b>dfe-infra</b>")
-
-    argocd("<b>DFE's Argo CD</b>")
-
-    services("<b>Backing services, apps and UIs</b>")
-
-    engine -->|values, DDL| deployrepo
-    deployrepo -->|overlays| argocd
-    infrarepo -->|charts, appsets| argocd
-    argocd -->|helm| services
-
-    class engine,deployrepo,infrarepo,argocd control
-    class services part
+flowchart TB
+  accTitle: L2 Services -- DFE suite
+  accDescr: Your senders and sources feed dfe-receiver and dfe-fetcher, which write a source topic on Kafka. dfe-loader inserts into ClickHouse and dfe-archiver writes files to object storage. An optional transform turns the source topic into a transformed one, and direct gRPC skips Kafka. The DFE console queries ClickHouse and sends every change through dfe-engine, which commits it to the deploy repo that Argo CD applies.
+  S("<b>Your senders and sources</b><br/><span>agents, products, APIs, databases, files</span>")
+  subgraph IN["Collect"]
+    direction LR
+    R("<b>dfe-receiver</b><br/><span>takes what is sent</span>")
+    F("<b>dfe-fetcher</b><br/><span>pulls what is not</span>")
+  end
+  subgraph BUS["Kafka"]
+    K1("<b>Source topic</b><br/><span>*_land</span>")
+  end
+  subgraph XF["Optional transform"]
+    direction LR
+    T("<b>Transforms</b><br/><span>grok or custom logic</span>")
+    K2("<b>Transformed topic</b><br/><span>*_load</span>")
+    T --> K2
+  end
+  subgraph OUT["Store"]
+    direction LR
+    L("<b>dfe-loader</b><br/><span>inserts into tables</span>")
+    C[("<b>ClickHouse</b>")]
+    A("<b>dfe-archiver</b><br/><span>writes compressed files</span>")
+    O[("<b>Object storage</b>")]
+    L --> C
+    A --> O
+  end
+  subgraph CTL["Control"]
+    direction LR
+    H("<b>DFE console</b><br/><span>search, dashboards, rules</span>")
+    E("<b>dfe-engine</b><br/><span>commits every change</span>")
+    D[("<b>Deploy repo</b>")]
+    G("<b>Argo CD</b><br/><span>applies the repo</span>")
+    H --> E
+    D --> G
+  end
+  S --> IN
+  IN --> BUS
+  BUS --> OUT
+  BUS -.-> XF
+  XF -.-> OUT
+  IN -.->|direct gRPC, no Kafka| OUT
+  OUT --> CTL
+  class S ext
+  class R,F ingest
+  class K1,K2 bus
+  class T xform
+  class L,A load
+  class C,O store
+  class H ui
+  class E,D,G control
   classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
   classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A
   classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A
@@ -83,100 +110,112 @@ flowchart LR
   classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
   classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
   classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+  style IN fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
+  style BUS fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
+  style XF fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
+  style OUT fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
+  style CTL fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
 ```
 
-*Figure 1. L2 Services -- DFE deployment.* Up: top of dfe-infra. Down: [L4 Detail -- Deployment layers](deployment/README.md#the-three-layers), [L4 Detail -- The deploy repo](deployment/state-and-repos.md#the-repositories), [L4 Detail -- Edge exposure](edge-auth.md#exposure-topology), [L4 Detail -- Federated login](edge-auth.md#the-identity-plane-engine-authority--external-oidc).
+*Figure 1. L2 Services -- DFE suite.* Dotted paths are optional. Up: top of the DFE docs. Down: [L3 Components -- Argo CD](argo-cd.md), and each repo's architecture page in [Components](#components).
 
-Bootstrap installs DFE's Argo CD (release `argocd` in namespace `argocd`) before any of this runs, or adopts a healthy Argo CD the cluster has.
+## How data flows
 
-The suite rule is **dfe-infra deploys, dfe-engine configures.** The engine never installs backing services or authors Argo Applications. This repo never reads or writes engine config. The whole-suite map lives in the dfe-engine repo (`docs/architecture.md` there). This page covers the infra side.
+1. Agents and products post to dfe-receiver over HTTP or HTTPS in the protocol they already speak: Splunk HEC, Elastic bulk, OTLP, syslog and more. dfe-fetcher pulls from cloud and SaaS APIs, databases and files. Both write each source to a `*_land` topic of its own.
+2. A source that needs grok or custom logic gets a transform. It reads `*_land` and writes `*_load`. Most sources need none.
+3. dfe-loader inserts each topic's records into ClickHouse tables. Every field lands, mapped or not. dfe-archiver writes the landing topics to compressed files in object storage, so a replay never depends on Kafka retention.
+4. The DFE console queries ClickHouse. Every change you make there, a source, a rule or a user, goes through dfe-engine.
+5. dfe-engine commits each change to the deploy repo, and Argo CD applies it. dfe-engine also creates every ClickHouse table and Kafka topic when it starts.
 
-One exception to "this repo owns its charts": dfe-engine is the controlling repository for dfe-hyperdx, the search fork embedded in the DFE console.
+On the `slim` tier there is no Kafka, and each stage sends to the next over gRPC. A per-source transform needs Kafka, so `slim` runs just the transforms a deployment ships.
 
-This repo owns:
+## Components
 
-| Area | Where | What it does |
+| Part | Role | Its page |
 |---|---|---|
-| Bootstrap | `bootstrap/` | bare-cluster Layer 0: detect-or-install for StorageClass, cert-manager, ESO, Argo CD |
-| ApplicationSets | `argocd/appsets/` | layer1 addons, layer2 data + apps (git-files fan-out over the deploy repo's `values/*-values.yaml`), scale-tier operators |
-| Tier values | `argocd/values/` | `profile-{slim,single,scale}.yaml` + `common.yaml` + per-cloud overlays |
-| Charts | `helm/charts/` | backing services (clickhouse-cluster, kafka, documentdb, forgejo, kafbat, otel-collector), platform charts and dfe-extras. Each dfe-* service deploys from its published thin chart |
-| Chart library | `helm/library/dfe-common` | shared templates for the charts in this repo (image, names, labels, security context, the Kafka provider table, the mesh pool listener, the wait-for-engine init container) |
-| Version pins | `versions.yaml` | single source for chart/operator/image versions |
-| Cloud base | `terraform/` (OpenTofu) | the per-cloud base: the EKS cluster, managed brokers, secrets and IAM |
+| dfe-receiver | Takes what senders post, in their protocol, and hands on JSON | [dfe-receiver](https://github.com/hyperi-io/dfe-receiver/blob/main/docs/architecture.md) |
+| dfe-fetcher | Pulls from APIs, databases, files and containers on a schedule | [dfe-fetcher](https://github.com/hyperi-io/dfe-fetcher/blob/main/docs/architecture.md) |
+| Source topic | One `*_land` topic per source, created by dfe-engine | [Kafka providers](deployment/kafka/README.md) |
+| Transforms | Optional per-source parsing: VRL, Vector, or compiled Elastic ingest pipelines | [vrl](https://github.com/hyperi-io/dfe-transform-vrl/blob/main/docs/architecture.md), [vector](https://github.com/hyperi-io/dfe-transform-vector/blob/main/docs/architecture.md), [elastic](https://github.com/hyperi-io/dfe-transform-elastic/blob/main/docs/architecture.md) |
+| Transformed topic | The `*_load` topic a transform writes and the loader reads instead | [Kafka providers](deployment/kafka/README.md) |
+| dfe-loader | Inserts records into ClickHouse without a mapping first | [dfe-loader](https://github.com/hyperi-io/dfe-loader/blob/main/docs/architecture.md) |
+| dfe-archiver | Writes streams to compressed files in a local path or object store | [dfe-archiver](https://github.com/hyperi-io/dfe-archiver/blob/main/docs/architecture.md) |
+| ClickHouse | Every table you search, plus the stack's own logs and metrics | [ClickHouse](deployment/clickhouse.md) |
+| Object storage | The archive, one compressed file per topic and org per roll | [Archiving](https://github.com/hyperi-io/dfe-archiver/blob/main/docs/archiving.md) |
+| DFE console | Search, dashboards, sources, rules and admin | [dfe-ui](https://github.com/hyperi-io/dfe-ui/blob/main/docs/architecture.md) |
+| dfe-engine | The config API, schema and topic owner, and the token issuer every DFE service trusts | [dfe-engine](https://github.com/hyperi-io/dfe-engine/blob/main/docs/architecture.md) |
+| Deploy repo | One git repo per environment: pins, values, backing-service settings and config | [State, storage and repositories](deployment/state-and-repos.md) |
+| Argo CD | Applies dfe-infra's charts and the deploy repo to the cluster | [Argo CD](argo-cd.md) |
 
-## Swappable components (the modularity contract)
+## External dependencies
 
-Why it works this way is in [design principles](design-principles.md#your-cluster-your-choice-of-parts). This table is where each part gets switched in this repo.
+Every backend is a config choice, not a code change. We never fork a chart to swap one, and a part just one provider can supply is a bug. A dependency goes in this table before it merges.
 
-| Component | Switch | Dial | Swap targets |
-|---|---|---|---|
-| Cluster | vanilla-cluster contract | (bootstrap preflight) | RKE2 (deployed onto, never built here, #1123) and EKS (built by the aws root), tested. AKS and GKE Standard, values overlays alone |
-| DNS | external-dns / estate-managed | provider config, or the deployment's DNS | CoreDNS record (on-prem), Route53, ... |
-| Private CA / TLS | cert-manager ClusterIssuer | `tls.acme.*` or `tls.vault.*` (exactly one) | ACME/Let's Encrypt, Vault/OpenBao PKI, cloud CA issuer later |
-| Secrets manager | ESO ClusterSecretStore | bootstrap store template + env | OpenBao/Vault, AWS SM (+EKS Pod Identity), ... |
-| Kafka | chart mode + endpoint | `kafka` chart mode, `kafka.bootstrapServers` | in-k8s single/Strimzi cluster, MSK, Redpanda (licence gate) |
-| ClickHouse | chart mode + endpoint | `clickhouse.mode` single/cluster/external, `clickhouse.host` | in-k8s, ClickHouse Cloud SaaS, private cloud |
-| Document store | mongo-protocol endpoint | documentdb chart (a DocumentDB CR on the DocumentDB operator's CloudNativePG -- the stack's one postgres), `mongodb.uri` in the hyperdx values | bundled DocumentDB, external mongo-protocol service |
-| Edge / LB | Gateway API + EnvoyProxy CR | `envoyGateway.service.*` (type, class, annotations, externalIPs) | MetalLB, cloud NLB, NodePort behind HW LB, externalIPs with no LB controller |
-| Deploy repo | provider mode | `DFE_BUNDLED_DEPLOY_REPO` + creds | bundled Forgejo, GitHub/GitLab |
+| Backend | Switch | Choices |
+|---|---|---|
+| Cluster | the vanilla-cluster contract, checked by bootstrap preflight | RKE2 and EKS, tested. AKS and GKE Standard through values overlays |
+| Kafka | `kafka` chart mode, `kafka.bootstrapServers` | in-cluster single broker or Strimzi, Amazon MSK, Confluent Cloud, Redpanda (licence gate) |
+| ClickHouse | `clickhouse.mode` single, cluster or external, `clickhouse.host` | in-cluster, ClickHouse Cloud |
+| Object storage | the archiver's destination settings | local path, MinIO, S3, GCS, Azure Blob |
+| Document store | `mongodb.uri` in the dfe-hyperdx values | bundled DocumentDB on CloudNativePG, any external MongoDB-protocol service |
+| Deploy repo | `DFE_BUNDLED_DEPLOY_REPO` and its credentials | bundled Forgejo, GitHub, GitLab |
+| Secrets | External Secrets `ClusterSecretStore` | OpenBao or Vault, AWS Secrets Manager |
+| TLS | cert-manager `ClusterIssuer`, `tls.acme.*` or `tls.vault.*` | ACME, Vault or OpenBao PKI |
+| DNS | external-dns provider, or the deployment's DNS | CoreDNS on-premises, Route 53 |
+| Load balancer | `envoyGateway.service.*` | MetalLB, a cloud NLB, NodePort behind a hardware balancer, external IPs |
+| Login | the external OIDC issuer in the deploy repo's `config/` | any OIDC identity provider |
 
-Two files hold the shared facts (the hyperi-ci versions.yaml pattern). `versions.yaml` holds every pin. `argocd/values/common.yaml` holds every shared deploy-config fact, including the canonical `hostnames:` map (service subdomains by role: `dfe`, `hyperdx`, `argocd`, `git`, `kafbat`, `cruiseControl`, `links`, `otel`, `receiver`, `vpn`) that the gateway routes, links page and dfe-ui embed URLs all resolve from. A shared fact defined anywhere else is config sprawl, and we merge it into one of those two.
+`versions.yaml` holds every pin. `argocd/values/common.yaml` holds every other shared fact, including the `hostnames:` map each surface's DNS name comes from.
 
-## Schema and topics: dfe-engine is the controller
+## Deployment variants
 
-Nothing in this repo creates, alters or drops a ClickHouse database, table, view or role, or a Kafka topic. `dfe-schemas` declares every one of them and dfe-engine applies them at startup, from the wheel pinned inside its image, on both tiers and every broker provider. A CI guard (`scripts/tests/test_engine_only_schema_control.py`) fails the build if DDL or a topic-creation step turns up under `helm/`, `argocd/`, `bootstrap/`, `scripts/` or `terraform/`.
+| Tier | Between stages | What runs |
+|---|---|---|
+| `slim` | gRPC | one replica of each core app and the archiver, a single ClickHouse node |
+| `single` | one Kafka broker, no operator | adds the VRL and Elastic transforms |
+| `scale` | Strimzi or Redpanda through an operator, or a managed broker | two replicas up, KEDA to 12, a ClickHouse cluster through its operator |
 
-> **Coming from Splunk or Elastic?** You don't set up indexes or mappings on these clusters. dfe-engine applies the schema from the versioned `dfe-schemas` definition when it starts, and the CI guard fails the build if this repo tries to. You change a schema by changing its definition, never by editing a table in place. More in [what's different](../docs-site/content-root/coming-from.md).
+The cluster secret's `dfe.hyperi.io/profile` label picks the tier. What a tier deploys comes from `apps.yaml`, and sizing from the deploy repo, so a tier is a default, not a lock.
 
-What that leaves this repo:
+On Docker, [dfe-docker](https://github.com/hyperi-io/dfe-docker) runs the same images on one host as `slim` or `single` profiles over Kafka or gRPC. Compose can't scale out, so there's no `scale` there.
 
-- The clusters themselves. ClickHouse and Kafka are deployed, sized, backed up and upgraded here. The schema inside them moved to the engine.
-- The managed-broker ACLs. `terraform/modules/managed-kafka/` writes the DFE principal's grants on confluent-cloud and redpanda-cloud, topic Create among them, and creates no topic. dfe-engine creates those topics at startup like every other provider's.
-- The MSK first ACL. `msk-bootstrap-job.yaml` writes the SCRAM principal's ACLs over SASL/IAM. On a cluster that has stopped granting by default, nothing can write the FIRST ACL unless it's permitted. The job creates no topic. Its grants match `kafka-user.yaml`'s, grant for grant: Read, Write, Create, Describe, Alter, Delete, DescribeConfigs and AlterConfigs on topic `*`, and Read and Describe on consumer groups prefixed `dfe-`. Create makes the bootstrap topic set, Alter raises a partition count, and Delete lets deleting a source take that source's `_land`/`_load` pair with it. Every cluster operation is withheld.
-- The ordering. dfe-engine syncs at Argo wave 5, the otel collector at 6 and every other app at 7. Each app pod runs a `wait-for-engine` init container (`dfe-common.waitForEngine`) that polls the engine Service's `/readyz`. Ready means the last schema pass converged, so an app can't start against an absent table. That failure reads as data loss and is really start ordering. The hunt runner ships in the engine's chart (dfe-extras) and syncs in its wave, so the same init container holds it until its coordination tables exist.
+The edge VPN is optional on `scale`. [culvert](https://github.com/hyperi-io/culvert) lets appliances behind carrier NAT dial in and post through the tunnel ([edge-fleet VPN](deployment/edge-vpn.md)).
 
-`bootstrap/smoke-test-integration.sh` asserts the engine's `schema` readiness check (CORE 0) before it looks at any pipeline. The per-object record is `GET /api/v1/system/schema` on the engine.
+## Design considerations
 
-## Dead-letter queues
+**Security.** The stack is an OIDC relying party to your identity provider. dfe-engine issues the tokens the DFE services check, and publishes the keys they check them with. Every record carries `_org_id`, and an `org_viewer` login sees its org's rows and no others, enforced by its ClickHouse role. Every UI with a login is reachable from outside by default, and the infra UIs have a kill switch ([edge exposure and auth](edge-auth.md)). Secrets come from your secrets store through External Secrets, never from git.
 
-Every k8s-deployed app dead-letters to a Kafka topic dfe-engine creates: `dfe_receiver_dlq`, `dfe_loader_dlq`, `dfe_archiver_dlq`, `dfe_fetcher_dlq`, and one shared `dfe_transform_dlq` for the transforms (a transform overrides it when it needs a separate topic). Kafka is the DEFAULT DLQ target because the file fallback can't work under the charts' read-only rootfs and silently drops. In dfe-docker, DLQs are opt-IN per component, EXCEPT the single-node full deploy, which has the same DLQ topics as k8s.
+**Reliability.** Kafka is the buffer between stages. Its retention covers consumer downtime plus archiver lag, and the archive covers anything older. A record no stage can handle goes to a dead-letter topic and stays 7 days ([dead-letter topics](deployment/kafka/dead-letter-topics.md)). An app pod waits for dfe-engine's `/readyz` before it starts, so nothing writes to a table that isn't there yet.
 
-The five names and their retention are declared in dfe-schemas and created by dfe-engine at startup, on every tier and every provider. A DLQ write happens AT failure time, the one moment nothing can be creating topics, so the engine's wave-5 sync is what guarantees they're there before an app can poison one. DLQ topics keep 7 days, against the in-cluster broker's 24-hour data-topic default. A poisoned message is exactly the record an operator must still find days later, and once its source offset commits it exists nowhere else. Chart env points the four fleet apps at their topic (the same `DLQ_TOPIC` / `DLQ_MODE` on every app, each in the app's env regime). Chart env doesn't point the transforms at `dfe_transform_dlq` in this release.
+**Operations.** What runs is what's in git. A change made live outside it is reverted by the next sync. Every component sends its logs and metrics over OpenTelemetry into ClickHouse, so the console shows the stack's health before your first event lands ([observability](observability/README.md)).
 
-The charts set `dlq.mode: kafka_only` for all four (`argocd/values/apps/dfe-archiver/values.yaml`, `argocd/values/apps/dfe-fetcher/values.yaml`, and the receiver and loader blocks in `helm/charts/dfe-extras/values.yaml`), so Kafka is the one DLQ backend. An entry over the producer's `message.max.bytes`, counting its base64 payload a third larger than the record, fits no backend and is dropped and counted (`messages_dropped_total`, reason `dlq_too_large` on the archiver). `cascade` would fall through to the file backend, which the read-only rootfs rules out.
+**Performance.** The receiver, fetcher and loader handle nearly every event, so they're purpose-built Rust with profile-guided builds. A general transform engine runs where a source needs one, and nowhere else ([design principles](design-principles.md#the-hot-path-zero-copy-simd-batches)). KEDA scales each app on its pressure signal ([autoscaling](autoscaling.md)).
 
-## How engine dials land here
+## Why it's built this way
 
-> **Coming from Splunk or Elastic?** The engine writes every config change, from the console or the API, to the deploy repo, and Argo CD reconciles it, so what's running is what's in git. More in [what's different](../docs-site/content-root/coming-from.md#gitops-by-design-from-the-ground-up).
+**dfe-infra deploys, dfe-engine configures.** The engine never installs a backing service or writes an Argo Application, and dfe-infra never reads or writes engine config. Each concern has one writer, so a deploy and a config change can't fight over the same object.
 
-One mechanism does it. layer2-apps generates one Argo Application per `values/<service>-<instance>-values.yaml` in the deploy repo, from four sources:
+**dfe-engine alone owns the schema and topics.** `dfe-schemas` declares every ClickHouse object and Kafka topic, and the engine applies them at startup on every tier and broker. An app can then wait on one readiness check instead of racing a migration job. `scripts/tests/test_engine_only_schema_control.py` fails the build if DDL or a topic-creation step turns up anywhere in this repo.
 
-- the component's thin chart over OCI, pinned by digest (`chart-digests` in `versions.yaml`)
-- `helm/charts/dfe-extras`, its DFE objects
-- this repo as ref `infra`, for the value files
-- the deploy repo as ref `values`, its overlay file layered last
+**Config lives in git, not a database.** A system definition gets review, rollback and an audit trail for free. Per-user state, such as saved searches, is the one thing kept in a database.
 
-Add a values file and you add the app. Remove it and the app goes. The engine turns dials and this repo defines what dials exist, so every dial must be a chart value.
+**Kafka between stages, except on `slim`.** A broker lets each stage fail, restart or scale alone, and gives the archiver a separate read of every topic. `slim` drops it to fit the core path on a small footprint.
 
-The overlay entry is `$values/{{ .path.path }}/{{ .path.filename }}` (`argocd/appsets/layer2-apps.yaml`), the directory and name of the file the generator matched, so each Application layers its file and no other.
+**No MongoDB.** Its SSPL licence rules it out of the product, test scaffolds included. The console's search metadata lives in DocumentDB, which speaks the same protocol.
 
-Each Application is named `<service>-<instance>-<cluster>`, and that name is its Helm release name and the `app.kubernetes.io/instance` label on its objects. Helm rejects a release name past 53 characters, so a longer Application name installs under its first 44 characters, a `-` and the first 8 hex characters of its sha256.
+## Diagram map
 
-The pages in this area:
+- [Figure 1. L2 Services -- DFE suite](#dfe-architecture)
+  - [L3 Components -- Argo CD](argo-cd.md)
+    - [L4 Detail -- Deployment layers](deployment/README.md#the-three-layers)
+    - [L4 Detail -- The deploy repo](deployment/state-and-repos.md#the-repositories)
+    - [L4 Detail -- Edge exposure](edge-auth.md#exposure-topology)
+    - [L4 Detail -- Federated login](edge-auth.md#the-identity-plane-engine-authority--external-oidc)
+  - Each component's architecture page, linked from [Components](#components), with a diagram map of its own.
 
-| Doc | Covers |
-|---|---|
-| [deployment/README.md](deployment/README.md) | layers, tiers, values cascade, bootstrap contract |
-| [deployment/rke2.md](deployment/rke2.md) | RKE2, the reference distribution, and its provisioning design (not built, #1123) |
-| [deployment/on-prem.md](deployment/on-prem.md) | build, deploy, test and tear down on an on-prem cluster (the `local` target) |
-| [deployment/kafka/](deployment/kafka/README.md) | managed-Kafka guides + Redpanda licence gate |
-| [deployment/clickhouse.md](deployment/clickhouse.md) | CH target matrix + operator history (official operator / ClickHouse Cloud, private-cloud swap, Altinity untested) |
-| [deployment/deployment-logs/](deployment/deployment-logs/template.md) | per-deploy log template |
-| [testing-cycle.md](testing-cycle.md) | THE validation loop (preflight -> deploy+E2E -> smoke -> destroy), the env-file contract, the vanilla-cluster contract |
-| [cloud-cycle.md](cloud-cycle.md), [release-rounds.md](release-rounds.md), [failure-evidence.md](failure-evidence.md) | the cycle on a cloud account, how a release candidate is proven, and what the readiness gate rejects and a failed stage leaves |
-| [source-suite.md](source-suite.md) | the post-deploy source tests the cycle's `acceptance --suite source` runs: the two cases, what proves each, the reload-and-restart rule |
-| [autoscaling.md](autoscaling.md) | KEDA pod scaling vs the per-target node-autoscaler fork decision |
-| [edge-auth.md](edge-auth.md) | web-plane exposure + auth: every UI with a login external by default, route class (product/infra/ingest), the infra kill switch, edge OIDC + group RBAC, per-surface policy |
-| [ingest-edge.md](ingest-edge.md) | the dfe-receiver data door: public LoadBalancers vs the Gateway route, source ranges, why an empty allow-list is the whole internet |
-| [design-principles.md](design-principles.md) | the rules every DFE app follows: any source on day one, swappable parts, who owns the schema, where parsing happens |
+## What's next
+
+- Install: [on-premises](deployment/on-prem.md), [AWS](deployment/aws.md), or [Docker](https://github.com/hyperi-io/dfe-docker).
+- Configure: [deployment and the values cascade](deployment/README.md), [shared values](deployment/values-shared.md) and [managed backends](deployment/managed-backends.md).
+- Prove a deployment: [the testing cycle](testing-cycle.md).
+- Change dfe-infra itself: the Context section of [CONTRIBUTING.md](../CONTRIBUTING.md#context).

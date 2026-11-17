@@ -31,7 +31,7 @@ That's how you move to DFE. Point your existing feeds at it, dfe-transform-elast
 
 DFE runs on any standard (CNCF-conformant) Kubernetes and assumes nothing special about it. Whatever the stack needs, it brings. With no cluster, the design is RKE2, which dfe-infra doesn't build yet ([rke2.md](deployment/rke2.md), https://github.com/hyperi-io/dfe-infra/issues/1123).
 
-Every big piece is a config choice, not a code change: DNS, the certificate authority, the secrets store, Kafka, ClickHouse, the document store, the load balancer, the deploy repo. Want MSK instead of in-cluster Kafka, or ClickHouse Cloud instead of ours? Change the config. We never fork a chart to do it, and a part one provider alone can supply is a bug. The full list is in [architecture](architecture.md#swappable-components-the-modularity-contract). A dependency goes in that table before it merges.
+Every big piece is a config choice, not a code change: DNS, the certificate authority, the secrets store, Kafka, ClickHouse, the document store, the load balancer, the deploy repo. Want MSK instead of in-cluster Kafka, or ClickHouse Cloud instead of ours? Change the config. We never fork a chart to do it, and a part one provider alone can supply is a bug. The full list is in [architecture](architecture.md#external-dependencies). A dependency goes in that table before it merges.
 
 Nothing about your deployment is baked in. No hostnames, credentials or cluster ids in the product. No instance types, counts, volume sizes or retention as literals in OpenTofu either. They come from tfvars, and `scripts/check_tofu_literals.py` fails the build if one sneaks in ([terraform/README.md](../terraform/README.md)).
 
@@ -39,7 +39,7 @@ Each shared setting lives in one place. Versions go in `versions.yaml`, every ot
 
 ## dfe-engine owns the schema
 
-dfe-engine alone creates or changes ClickHouse databases, tables, views and roles, and Kafka topics. The definitions live in `dfe-schemas` and the engine applies them when it starts. Our charts, scripts and OpenTofu run the clusters but never touch what's inside them, and `scripts/tests/test_engine_only_schema_control.py` fails the build if they try. More in [architecture](architecture.md#schema-and-topics-dfe-engine-is-the-controller).
+dfe-engine alone creates or changes ClickHouse databases, tables, views and roles, and Kafka topics. The definitions live in `dfe-schemas` and the engine applies them when it starts. Our charts, scripts and OpenTofu run the clusters but never touch what's inside them, and `scripts/tests/test_engine_only_schema_control.py` fails the build if they try. More in [architecture](architecture.md#why-its-built-this-way).
 
 ## Parse once, at the right layer
 
@@ -95,19 +95,22 @@ config:
     .ui .label-icon{color:#D9480F}
     .ext .label-icon{color:#64748B}
 ---
-flowchart LR
+flowchart TB
     accTitle: L4 Detail -- Where parsing happens
     accDescr: A source sends to dfe-receiver or dfe-fetcher, which parse the transport layer and emit JSON with the payload in message beside the header fields. A transform parses the message body, and dfe-loader writes the result.
-
-    source("<b>Source</b>")
-    edge("<b>dfe-receiver, dfe-fetcher</b>")
-    transform("<b>Transform</b>")
-    loader("<b>dfe-loader</b>")
-
-    source --> edge
-    edge -->|JSON| transform
-    transform --> loader
-
+    subgraph hop["First hop: the transport"]
+        direction LR
+        source("<b>Source</b>")
+        edge("<b>dfe-receiver, dfe-fetcher</b>")
+        source --> edge
+    end
+    subgraph body["Transform: the body"]
+        direction LR
+        transform("<b>Transform</b>")
+        loader("<b>dfe-loader</b>")
+        transform --> loader
+    end
+    hop -->|JSON| body
     class source ext
     class edge ingest
     class transform xform
@@ -123,6 +126,8 @@ flowchart LR
   classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
   classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
   classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+  style hop fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
+  style body fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
 ```
 
 *Figure 1. L4 Detail -- Where parsing happens. The first hop parses the transport, the transform parses the body.* Up: [dfe-infra documentation](README.md).

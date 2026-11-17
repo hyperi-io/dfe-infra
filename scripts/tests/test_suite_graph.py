@@ -456,6 +456,13 @@ def block_lines(block: str) -> list[str]:
     return [line.strip() for line in block.splitlines()]
 
 
+def header_at(lines: list[str]) -> int:
+    """Index of the `flowchart TB` or `flowchart LR` line."""
+    return next(
+        i for i, line in enumerate(lines) if line in ("flowchart TB", "flowchart LR")
+    )
+
+
 def test_mermaid_and_docs_render() -> None:
     g = suite_graph.parse_block_yaml(SAMPLE)
     services = suite_graph.mermaid_overview(g, "services")
@@ -483,12 +490,10 @@ def test_mermaid_and_docs_render() -> None:
     producer = suite_graph.mermaid_producer(g, "lib-a")
     lines = block_lines(producer)
     expect(
-        "a producer block opens flowchart LR with an accTitle and a one-line accDescr",
-        lines[lines.index("flowchart LR") + 1]
-        == "accTitle: L4 Detail -- lib-a build cycle"
-        and lines[lines.index("flowchart LR") + 2].startswith("accDescr: ")
-        and ":"
-        not in lines[lines.index("flowchart LR") + 2].removeprefix("accDescr: "),
+        "a producer block opens its flowchart with an accTitle and a one-line accDescr",
+        lines[header_at(lines) + 1] == "accTitle: L4 Detail -- lib-a build cycle"
+        and lines[header_at(lines) + 2].startswith("accDescr: ")
+        and ":" not in lines[header_at(lines) + 2].removeprefix("accDescr: "),
         producer,
     )
     expect(
@@ -689,7 +694,7 @@ def test_generated_blocks_follow_the_standard() -> None:
     g = suite_graph.load()
     for name, block in _live_blocks():
         lines = block_lines(block)
-        at = lines.index("flowchart LR")
+        at = header_at(lines)
         expect(
             f"{name} has an accTitle at L4 and an accDescr on one line",
             lines[at + 1].startswith("accTitle: L4 Detail -- ")

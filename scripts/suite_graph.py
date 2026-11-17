@@ -500,9 +500,9 @@ ROLE_CLASS = {
 
 INDENT = "    "
 LEVEL = "L4 Detail"
-# The most a group's grid holds. Four columns beside one more box stay inside
-# the standard's five-column limit.
-GRID_COLUMNS = 4
+# The most a group's grid holds. Three columns keep a block under the docs
+# column's 860 px at full text size.
+GRID_COLUMNS = 3
 GRID_ROWS = 3
 
 _LANGUAGE = {"rust": "Rust", "python": "Python", "typescript": "TypeScript"}
@@ -592,7 +592,12 @@ def _block(
 ) -> str:
     """One flowchart: frontmatter, header, nodes and arrows in `body`, then the house class lines."""
     lines = [*HOUSE_FRONTMATTER.rstrip("\n").split("\n")]
-    lines += ["flowchart LR", f"{INDENT}accTitle: {LEVEL} -- {title}"]
+    # Groups stack top to bottom with their members in rows, which keeps the block
+    # inside 860 px. A block with no group is a short chain and reads left to right.
+    lines += [
+        f"flowchart {'TB' if groups else 'LR'}",
+        f"{INDENT}accTitle: {LEVEL} -- {title}",
+    ]
     lines.append(f"{INDENT}accDescr: {descr}")
     lines.append("")
     lines += [f"{INDENT}{line}" if line else "" for line in body]

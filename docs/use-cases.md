@@ -48,31 +48,29 @@ config:
     .ui .label-icon{color:#D9480F}
     .ext .label-icon{color:#64748B}
 ---
-flowchart LR
+flowchart TB
     accTitle: L4 Detail -- Fact and dimension join
     accDescr: Large time-series fact tables, such as device events, application logs and metrics, and small point-in-time dimension tables, such as an asset inventory, an identity directory and a CMDB, meet in one JOIN in ClickHouse SQL that answers the question.
-
     subgraph facts["Fact tables, observability"]
         direction LR
         events[("<b>Device events</b>")]
         applogs[("<b>Application logs</b>")]
         metrics[("<b>Metrics</b>")]
     end
-
     subgraph dims["Dimension tables, context"]
         direction LR
         assets[("<b>Asset inventory</b>")]
         directory[("<b>Identity directory</b>")]
         cmdb[("<b>CMDB</b>")]
     end
-
-    join("<b>JOIN</b><br/><span>in ClickHouse SQL</span>")
-    answer("<b>Which devices stopped reporting?</b>")
-
-    facts -->|events| join
-    dims -->|context| join
-    join -->|answer| answer
-
+    subgraph query["The question"]
+        direction LR
+        join("<b>JOIN</b><br/><span>in ClickHouse SQL</span>")
+        answer("<b>Which devices stopped reporting?</b>")
+        join -->|answer| answer
+    end
+    facts -->|events| query
+    dims -->|context| query
     class events,applogs,metrics,assets,directory,cmdb,join store
     class answer part
   classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
@@ -88,6 +86,7 @@ flowchart LR
   classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
   style facts fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
   style dims fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
+  style query fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
 ```
 
 *Figure 1. L4 Detail -- Fact and dimension join.* Up: [dfe-infra documentation](README.md).

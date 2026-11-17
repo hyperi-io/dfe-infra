@@ -31,7 +31,7 @@ That's one of the biggest efficiency gains in DFE. A second copy of every record
 
 Most stacks are built as closed stacks: their agent, their pipeline, their store and their UI, each made to work with the others. DFE is consciously built as a set of loosely coupled parts with a standard protocol at every joint.
 
-Senders use their own protocols, so Vector, Fluent Bit, Fluentd, the OpenTelemetry Collector, Beats, Logstash and anything that speaks Splunk HEC send to dfe-receiver unchanged. Between the stages it's plain Kafka, whether that's in your cluster, Amazon MSK, Confluent Cloud or Redpanda Cloud. The store is ClickHouse, in your cluster or ClickHouse Cloud. Transforms run the engine you pick: VRL, Vector, or your Elastic pipelines. DNS, the certificate authority, the secrets store and the git host are each a config choice ([architecture](dfe-infra/architecture.md#swappable-components-the-modularity-contract)).
+Senders use their own protocols, so Vector, Fluent Bit, Fluentd, the OpenTelemetry Collector, Beats, Logstash and anything that speaks Splunk HEC send to dfe-receiver unchanged. Between the stages it's plain Kafka, whether that's in your cluster, Amazon MSK, Confluent Cloud or Redpanda Cloud. The store is ClickHouse, in your cluster or ClickHouse Cloud. Transforms run the engine you pick: VRL, Vector, or your Elastic pipelines. DNS, the certificate authority, the secrets store and the git host are each a config choice ([architecture](dfe-infra/architecture.md#external-dependencies)).
 
 We built it that way so no single part, ours included, locks you in. You can swap one without replacing the rest, use the managed cloud services you already pay for, and put your own tools at any joint.
 
@@ -107,22 +107,29 @@ config:
     .ui .label-icon{color:#D9480F}
     .ext .label-icon{color:#64748B}
 ---
-flowchart LR
+flowchart TB
   accTitle: L4 Detail -- Fact and dimension tables
   accDescr: Fact tables hold device events, application logs and metrics. Dimension tables hold the asset inventory, identity directory and CMDB. A JOIN in ClickHouse SQL combines them to answer questions such as which devices stopped reporting.
-  subgraph CTX["Context: dimension tables (small, point-in-time)"]
-    D3("<b>CMDB</b>")
-    D2("<b>Identity directory</b>")
-    D1("<b>Asset inventory</b>")
-  end
-  subgraph OBS["Observability: fact tables (large, time-series)"]
-    F3("<b>Metrics</b>")
-    F2("<b>Application logs</b>")
+  subgraph OBS["Facts: large, time-series"]
+    direction LR
     F1("<b>Device events</b>")
+    F2("<b>Application logs</b>")
+    F3("<b>Metrics</b>")
   end
-  OBS --> J{"<b>JOIN</b><br/><span>in ClickHouse SQL</span>"}
-  CTX --> J
-  J --> Q("<b>Answers</b><br/><span>Which devices stopped reporting?</span><br/><span>Errors by customer tier</span>")
+  subgraph CTX["Context: small, point-in-time"]
+    direction LR
+    D1("<b>Asset inventory</b>")
+    D2("<b>Identity directory</b>")
+    D3("<b>CMDB</b>")
+  end
+  subgraph ASK["The question"]
+    direction LR
+    J{"<b>JOIN</b><br/><span>in ClickHouse SQL</span>"}
+    Q("<b>Answers</b><br/><span>Which devices stopped reporting?</span><br/><span>Errors by customer tier</span>")
+    J --> Q
+  end
+  OBS --> ASK
+  CTX --> ASK
   class F1,F2,F3,D1,D2,D3 store
   class J decision
   class Q part
@@ -139,6 +146,7 @@ flowchart LR
   classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
   style OBS fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
   style CTX fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
+  style ASK fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
 ```
 
 *Figure 1. L4 Detail -- Fact and dimension tables.* Up: [L2 Services -- DFE data path](README.md).

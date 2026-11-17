@@ -81,23 +81,25 @@ config:
 flowchart TB
     accTitle: L4 Detail -- The deploy repo
     accDescr: dfe-engine commits to the deploy repo, one per environment. It holds pins.yaml, values/ with one file per app instance, infra/ for the backing services and config/ for sources, schemas, transforms, rules and OIDC. Argo CD reads the pin, the values and the infra overlays from it.
-
-    engine("<b>dfe-engine</b>")
-
+    subgraph writer["Writer"]
+        direction LR
+        engine("<b>dfe-engine</b>")
+    end
     subgraph deploy["Deploy repo, one per environment"]
         direction LR
         pins[("<b>pins.yaml</b>")]
         values[("<b>values/</b>")]
         infradir[("<b>infra/</b>")]
         config[("<b>config/</b>")]
-        pins ~~~ values ~~~ infradir ~~~ config
+        pins ~~~ values
+        infradir ~~~ config
     end
-
-    argocd("<b>Argo CD</b>")
-
-    engine -->|commits| deploy
-    deploy -->|overlays| argocd
-
+    subgraph reader["Reader"]
+        direction LR
+        argocd("<b>Argo CD</b>")
+    end
+    writer -->|commits| deploy
+    deploy -->|overlays| reader
     class engine,argocd control
     class pins,values,infradir,config store
   classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
@@ -111,10 +113,12 @@ flowchart TB
   classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
   classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
   classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+  style writer fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
   style deploy fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
+  style reader fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
 ```
 
-*Figure 1. L4 Detail -- The deploy repo.* Up: [L2 Services -- DFE deployment](../architecture.md#where-this-repo-sits-in-the-suite).
+*Figure 1. L4 Detail -- The deploy repo.* Up: [L3 Components -- Argo CD](../argo-cd.md).
 
 `config/` doesn't go through Argo CD: dfe-engine reads it, and the hunt runner's git-sync sidecar pulls its hunts and rules. Per-user state goes to dfe-hyperdx's document store, never to git.
 

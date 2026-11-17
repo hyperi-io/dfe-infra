@@ -90,7 +90,7 @@ config:
     .ui .label-icon{color:#D9480F}
     .ext .label-icon{color:#64748B}
 ---
-flowchart LR
+flowchart TB
     accTitle: L4 Detail -- Suite overview, services
     accDescr: The suite has 9 services, in 2 boxes. dfe-archiver, dfe-fetcher, dfe-loader, dfe-receiver, dfe-transform-elastic, dfe-transform-vector and dfe-transform-vrl sit in Rust services. culvert (optional) and dfe-engine sit in Python services.
 
@@ -103,8 +103,9 @@ flowchart LR
         dfe_transform_elastic("<b>dfe-transform-elastic</b>")
         dfe_transform_vector("<b>dfe-transform-vector</b>")
         dfe_transform_vrl("<b>dfe-transform-vrl</b>")
-        dfe_archiver ~~~ dfe_fetcher ~~~ dfe_loader ~~~ dfe_receiver
-        dfe_transform_elastic ~~~ dfe_transform_vector ~~~ dfe_transform_vrl
+        dfe_archiver ~~~ dfe_fetcher ~~~ dfe_loader
+        dfe_receiver ~~~ dfe_transform_elastic
+        dfe_transform_vector ~~~ dfe_transform_vrl
     end
     subgraph python_services["Python services"]
         direction LR
@@ -184,7 +185,7 @@ config:
     .ui .label-icon{color:#D9480F}
     .ext .label-icon{color:#64748B}
 ---
-flowchart LR
+flowchart TB
     accTitle: L4 Detail -- Suite overview, platform
     accDescr: The suite has 12 members that are not services, in 4 boxes. dfe-clickhouse-rs, factbook-rs, logreducer, scalo-py, scalo-rs and vector-vrl sit in Libraries. dfe-deploy and dfe-schemas sit in Content. dfe-docker and dfe-infra sit in Infra. dfe-hyperdx and dfe-ui sit in UI.
 
@@ -306,7 +307,7 @@ config:
     .ui .label-icon{color:#D9480F}
     .ext .label-icon{color:#64748B}
 ---
-flowchart LR
+flowchart TB
     accTitle: L4 Detail -- scalo-rs build cycle
     accDescr: A scalo-rs release puts 7 consumers in motion. dfe-archiver, dfe-fetcher, dfe-loader, dfe-receiver, dfe-transform-elastic, dfe-transform-vector and dfe-transform-vrl take cargo-dep and generated-file.
 
@@ -320,8 +321,9 @@ flowchart LR
         dfe_transform_elastic("<b>dfe-transform-elastic</b>")
         dfe_transform_vector("<b>dfe-transform-vector</b>")
         dfe_transform_vrl("<b>dfe-transform-vrl</b>")
-        dfe_archiver ~~~ dfe_fetcher ~~~ dfe_loader ~~~ dfe_receiver
-        dfe_transform_elastic ~~~ dfe_transform_vector ~~~ dfe_transform_vrl
+        dfe_archiver ~~~ dfe_fetcher ~~~ dfe_loader
+        dfe_receiver ~~~ dfe_transform_elastic
+        dfe_transform_vector ~~~ dfe_transform_vrl
     end
 
     scalo_rs -->|cargo-dep, generated-file| rust_services
@@ -398,7 +400,7 @@ config:
     .ui .label-icon{color:#D9480F}
     .ext .label-icon{color:#64748B}
 ---
-flowchart LR
+flowchart TB
     accTitle: L4 Detail -- scalo-py build cycle
     accDescr: A scalo-py release puts 3 consumers in motion. culvert (optional) and vector-vrl take python-dep. dfe-engine takes contract-guard and python-dep.
 
@@ -802,7 +804,7 @@ config:
     .ui .label-icon{color:#D9480F}
     .ext .label-icon{color:#64748B}
 ---
-flowchart LR
+flowchart TB
     accTitle: L4 Detail -- dfe-clickhouse-rs build cycle
     accDescr: A dfe-clickhouse-rs release puts 2 consumers in motion. dfe-fetcher and dfe-loader take cargo-dep.
 
