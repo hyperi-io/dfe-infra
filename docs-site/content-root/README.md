@@ -64,7 +64,7 @@ config:
 ---
 flowchart TB
   accTitle: L2 Services -- DFE data path
-  accDescr: dfe-receiver takes what your senders post and dfe-fetcher pulls from APIs, databases and files. Both write to Kafka, where an optional transform turns the source topic into a transformed one. dfe-loader inserts into ClickHouse, and the DFE console reads it.
+  accDescr: dfe-receiver takes what your senders post and dfe-fetcher pulls from APIs, databases and files. Both write a source topic on Kafka that dfe-loader inserts into ClickHouse, which the DFE console reads. An optional transform turns the source topic into a transformed one for the loader, and direct gRPC skips Kafka.
   subgraph IN["Collect"]
     direction LR
     S("<b>Your senders</b><br/><span>JSON over HTTP or HTTPS</span>")
@@ -73,11 +73,13 @@ flowchart TB
     S --> R
   end
   subgraph BUS["Kafka"]
-    direction LR
     K1("<b>Source topic</b><br/><span>*_land</span>")
-    T("<b>dfe-transform</b><br/><span>optional</span>")
+  end
+  subgraph XF["Optional transform"]
+    direction LR
+    T("<b>dfe-transform</b><br/><span>grok or your own logic</span>")
     K2("<b>Transformed topic</b><br/><span>*_load</span>")
-    K1 -.-> T -.-> K2
+    T --> K2
   end
   subgraph OUT["Store and query"]
     direction LR
@@ -86,7 +88,11 @@ flowchart TB
     H("<b>DFE console</b><br/><span>search, dashboards, rules</span>")
     L --> C --> H
   end
-  IN --> BUS --> OUT
+  IN --> BUS
+  BUS --> OUT
+  BUS -.-> XF
+  XF -.-> OUT
+  IN -.->|direct gRPC, no Kafka| OUT
   class S ext
   class R,F ingest
   class K1,K2 bus
@@ -107,10 +113,11 @@ flowchart TB
   classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
   style IN fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
   style BUS fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
+  style XF fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
   style OUT fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
 ```
 
-*Figure 1. L2 Services -- DFE data path.* The dotted path is optional. Up: top of the DFE docs.
+*Figure 1. L2 Services -- DFE data path.* Dotted paths are optional. Up: top of the DFE docs.
 
 This is the default path. The leaner profiles skip Kafka and go receiver to loader over gRPC. A transform app (dfe-transform-vrl, dfe-transform-vector or dfe-transform-elastic) is optional. On Kafka a source that needs grok or your own logic gets one: it reads the source's `*_land` topic and writes a `*_load` one, and the loader reads that one instead. Over gRPC the receiver sends to the transform and the transform sends to the loader, and the lean gRPC profiles run only the fixed transforms a deployment ships, not one per source, so a source that needs its own is refused there. Every component also sends its own logs and metrics over OpenTelemetry into ClickHouse, so the console shows the stack's health before your first event arrives.
 
