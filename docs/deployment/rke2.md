@@ -34,28 +34,82 @@ RKE2 runs each control-plane component (apiserver, scheduler, controller-manager
 DFE sits on top of whichever cluster you have. It assumes a conformant, running Kubernetes cluster and deploys onto it. Where there's no cluster, RKE2 is how a bare machine or cloud VM becomes one. DFE's layers run as workloads on the cluster, and Rancher or the cloud manages the control plane under them.
 
 ```mermaid
+---
+config:
+  theme: base
+  look: neo
+  fontFamily: Inter, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif
+  flowchart:
+    curve: linear
+    nodeSpacing: 40
+    rankSpacing: 64
+    padding: 18
+    wrappingWidth: 280
+    htmlLabels: true
+  elk:
+    preset: modelOrder
+  themeVariables:
+    fontSize: 15px
+    lineColor: "#64748B"
+    primaryTextColor: "#0F172A"
+    clusterBorder: "#0072B2"
+    edgeLabelBackground: "#FFFFFF"
+  themeCSS: >-
+    p{margin:0}
+    .node[data-look] rect,.node[data-look] path,.node[data-look] polygon,.node[data-look] .outer-path{filter:drop-shadow(0 1px 2px rgba(15,23,42,.10)) drop-shadow(0 6px 14px rgba(15,23,42,.10))}
+    .node rect{rx:10px;ry:10px}
+    .cluster rect{rx:16px;ry:16px}
+    .node .label div{min-width:150px}
+    .node.decision .label div{min-width:0}
+    .cluster[data-look] rect{filter:none}
+    .nodeLabel{line-height:1.35}
+    .nodeLabel b{font-weight:600;font-size:15px;letter-spacing:-0.01em}
+    .nodeLabel span{font-size:12.5px;font-weight:400;color:#334155}
+    .cluster-label span.nodeLabel{display:inline-block;background:#FFFFFF;color:#0B2A3F;border:1.5px solid #0072B2;border-radius:999px;padding:2px 12px;font-size:11.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase}
+    .flowchart-link{stroke-width:1.75px}
+    .labelBkg{background:transparent!important}
+    span.edgeLabel{display:inline-block;background:#FFFFFF!important;color:#1E293B;border:1px solid #94A3B8;border-radius:999px;padding:2px 10px;font-size:12px;font-weight:500}
+    span.edgeLabel p{background:transparent!important}
+    .label-icon{width:20px;height:20px;vertical-align:-4px;margin-right:6px}
+    .ingest .label-icon{color:#0E8A7D}
+    .xform .label-icon{color:#7B4FB0}
+    .load .label-icon{color:#0072B2}
+    .bus .label-icon{color:#A8517F}
+    .store .label-icon{color:#00785A}
+    .ui .label-icon{color:#D9480F}
+    .ext .label-icon{color:#64748B}
+---
 flowchart LR
     accTitle: L4 Detail -- DFE on an RKE2 cluster
     accDescr: Rancher, or the cloud on a managed cluster, manages the control plane. The control plane schedules DFE's three layers as workloads: bootstrap's Layer 0, the Layer 1 backing services and the Layer 2 apps.
 
-    owner["Rancher or<br/>the cloud"]
-    cp["Control plane<br/>etcd, apiserver"]
+    owner("<b>Rancher or the cloud</b>")
+    cp("<b>Control plane</b><br/><span>etcd, apiserver</span>")
 
     subgraph dfe["DFE workloads"]
-        layer0["Layer 0<br/>cert-manager, ESO, Argo CD"]
-        layer1["Layer 1<br/>backing services"]
-        layer2["Layer 2<br/>DFE apps"]
+        layer0("<b>Layer 0</b><br/><span>cert-manager, ESO, Argo CD</span>")
+        layer1("<b>Layer 1</b><br/><span>backing services</span>")
+        layer2("<b>Layer 2</b><br/><span>DFE apps</span>")
         layer0 ~~~ layer1 ~~~ layer2
     end
 
     owner -->|manages| cp
     cp -->|schedules| dfe
 
-    classDef default fill:#F8FAFC,stroke:#64748B,stroke-width:1px,color:#0F172A
-    classDef ext fill:#EEF0F2,stroke:#6B7280,stroke-width:1px,stroke-dasharray:4 3,color:#1F2937
-    classDef group fill:none,stroke:#64748B,stroke-width:1px,stroke-dasharray:2 4
     class owner ext
-    class dfe group
+    class cp,layer0,layer1,layer2 part
+  classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
+  classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A
+  classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A
+  classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A
+  classDef bus fill:#FFFFFF,stroke:#A8517F,stroke-width:3px,color:#0F172A
+  classDef store fill:#FFFFFF,stroke:#00785A,stroke-width:3px,color:#0F172A
+  classDef ui fill:#FFFFFF,stroke:#D9480F,stroke-width:3px,color:#0F172A
+  classDef decision fill:#FFFFFF,stroke:#9A6700,stroke-width:3px,color:#0F172A
+  classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
+  classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
+  classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+  style dfe fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
 ```
 
 *Figure 1. L4 Detail -- DFE on an RKE2 cluster. The dashed box is external.* Up: [Deploying DFE with dfe-infra](README.md).
@@ -73,34 +127,89 @@ DFE is a product suite other organisations deploy. Where we provision the cluste
 Where there's no cluster, the design puts RKE2 on every kind of host. On a managed cluster, DFE deploys onto what the cloud runs.
 
 ```mermaid
+---
+config:
+  theme: base
+  look: neo
+  fontFamily: Inter, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif
+  flowchart:
+    curve: linear
+    nodeSpacing: 40
+    rankSpacing: 64
+    padding: 18
+    wrappingWidth: 280
+    htmlLabels: true
+  elk:
+    preset: modelOrder
+  themeVariables:
+    fontSize: 15px
+    lineColor: "#64748B"
+    primaryTextColor: "#0F172A"
+    clusterBorder: "#0072B2"
+    edgeLabelBackground: "#FFFFFF"
+  themeCSS: >-
+    p{margin:0}
+    .node[data-look] rect,.node[data-look] path,.node[data-look] polygon,.node[data-look] .outer-path{filter:drop-shadow(0 1px 2px rgba(15,23,42,.10)) drop-shadow(0 6px 14px rgba(15,23,42,.10))}
+    .node rect{rx:10px;ry:10px}
+    .cluster rect{rx:16px;ry:16px}
+    .node .label div{min-width:150px}
+    .node.decision .label div{min-width:0}
+    .cluster[data-look] rect{filter:none}
+    .nodeLabel{line-height:1.35}
+    .nodeLabel b{font-weight:600;font-size:15px;letter-spacing:-0.01em}
+    .nodeLabel span{font-size:12.5px;font-weight:400;color:#334155}
+    .cluster-label span.nodeLabel{display:inline-block;background:#FFFFFF;color:#0B2A3F;border:1.5px solid #0072B2;border-radius:999px;padding:2px 12px;font-size:11.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase}
+    .flowchart-link{stroke-width:1.75px}
+    .labelBkg{background:transparent!important}
+    span.edgeLabel{display:inline-block;background:#FFFFFF!important;color:#1E293B;border:1px solid #94A3B8;border-radius:999px;padding:2px 10px;font-size:12px;font-weight:500}
+    span.edgeLabel p{background:transparent!important}
+    .label-icon{width:20px;height:20px;vertical-align:-4px;margin-right:6px}
+    .ingest .label-icon{color:#0E8A7D}
+    .xform .label-icon{color:#7B4FB0}
+    .load .label-icon{color:#0072B2}
+    .bus .label-icon{color:#A8517F}
+    .store .label-icon{color:#00785A}
+    .ui .label-icon{color:#D9480F}
+    .ext .label-icon{color:#64748B}
+---
 flowchart TB
     accTitle: L4 Detail -- Where RKE2 runs
     accDescr: Where there is no cluster, RKE2 is the one distribution on on-prem hardware, AWS EC2, GCP Compute and Azure VMs. On a managed cluster, EKS, AKS or GKE Standard, DFE deploys onto what the cloud runs.
 
     subgraph rke2["RKE2, where there is no cluster"]
         direction LR
-        onprem["On-prem, air-gapped,<br/>edge"]
-        ec2["AWS EC2"]
-        gce["GCP Compute"]
-        azvm["Azure VMs"]
+        onprem("<b>On-prem, air-gapped, edge</b>")
+        ec2("<b>AWS EC2</b>")
+        gce("<b>GCP Compute</b>")
+        azvm("<b>Azure VMs</b>")
         onprem ~~~ ec2 ~~~ gce ~~~ azvm
     end
 
     subgraph managed["Managed, DFE deploys onto"]
         direction LR
-        eks["EKS"]
-        aks["AKS"]
-        gke["GKE Standard"]
+        eks("<b>EKS</b>")
+        aks("<b>AKS</b>")
+        gke("<b>GKE Standard</b>")
         eks ~~~ aks ~~~ gke
     end
 
     rke2 ~~~ managed
 
-    classDef default fill:#F8FAFC,stroke:#64748B,stroke-width:1px,color:#0F172A
-    classDef ext fill:#EEF0F2,stroke:#6B7280,stroke-width:1px,stroke-dasharray:4 3,color:#1F2937
-    classDef group fill:none,stroke:#64748B,stroke-width:1px,stroke-dasharray:2 4
+    class onprem,ec2,gce,azvm part
     class eks,aks,gke ext
-    class rke2,managed group
+  classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
+  classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A
+  classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A
+  classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A
+  classDef bus fill:#FFFFFF,stroke:#A8517F,stroke-width:3px,color:#0F172A
+  classDef store fill:#FFFFFF,stroke:#00785A,stroke-width:3px,color:#0F172A
+  classDef ui fill:#FFFFFF,stroke:#D9480F,stroke-width:3px,color:#0F172A
+  classDef decision fill:#FFFFFF,stroke:#9A6700,stroke-width:3px,color:#0F172A
+  classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
+  classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
+  classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+  style rke2 fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
+  style managed fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
 ```
 
 *Figure 2. L4 Detail -- Where RKE2 runs. Dashed boxes are run by the cloud.* Up: [Deploying DFE with dfe-infra](README.md).

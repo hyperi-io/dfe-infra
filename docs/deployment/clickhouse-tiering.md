@@ -21,34 +21,89 @@ The constraint that decides between the two non-default models: **ClickHouse can
 In `tiered-block` a part lives on one of two volumes and moves down as the hot one fills. In `cached-object` the object store holds every part and the cache holds copies.
 
 ```mermaid
+---
+config:
+  theme: base
+  look: neo
+  fontFamily: Inter, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif
+  flowchart:
+    curve: linear
+    nodeSpacing: 40
+    rankSpacing: 64
+    padding: 18
+    wrappingWidth: 280
+    htmlLabels: true
+  elk:
+    preset: modelOrder
+  themeVariables:
+    fontSize: 15px
+    lineColor: "#64748B"
+    primaryTextColor: "#0F172A"
+    clusterBorder: "#0072B2"
+    edgeLabelBackground: "#FFFFFF"
+  themeCSS: >-
+    p{margin:0}
+    .node[data-look] rect,.node[data-look] path,.node[data-look] polygon,.node[data-look] .outer-path{filter:drop-shadow(0 1px 2px rgba(15,23,42,.10)) drop-shadow(0 6px 14px rgba(15,23,42,.10))}
+    .node rect{rx:10px;ry:10px}
+    .cluster rect{rx:16px;ry:16px}
+    .node .label div{min-width:150px}
+    .node.decision .label div{min-width:0}
+    .cluster[data-look] rect{filter:none}
+    .nodeLabel{line-height:1.35}
+    .nodeLabel b{font-weight:600;font-size:15px;letter-spacing:-0.01em}
+    .nodeLabel span{font-size:12.5px;font-weight:400;color:#334155}
+    .cluster-label span.nodeLabel{display:inline-block;background:#FFFFFF;color:#0B2A3F;border:1.5px solid #0072B2;border-radius:999px;padding:2px 12px;font-size:11.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase}
+    .flowchart-link{stroke-width:1.75px}
+    .labelBkg{background:transparent!important}
+    span.edgeLabel{display:inline-block;background:#FFFFFF!important;color:#1E293B;border:1px solid #94A3B8;border-radius:999px;padding:2px 10px;font-size:12px;font-weight:500}
+    span.edgeLabel p{background:transparent!important}
+    .label-icon{width:20px;height:20px;vertical-align:-4px;margin-right:6px}
+    .ingest .label-icon{color:#0E8A7D}
+    .xform .label-icon{color:#7B4FB0}
+    .load .label-icon{color:#0072B2}
+    .bus .label-icon{color:#A8517F}
+    .store .label-icon{color:#00785A}
+    .ui .label-icon{color:#D9480F}
+    .ext .label-icon{color:#64748B}
+---
 flowchart LR
     accTitle: L4 Detail -- ClickHouse storage models
     accDescr: A query reads through the storage policy. Under tiered-block a part sits on the hot SSD volume until moveFactor demotes it to the cold bulk volume. Under cached-object the cache disk answers and fetches a miss from the object store, which holds the durable copy.
 
-    query["Query"]
+    query("<b>Query</b>")
 
     subgraph tiered["storageModel: tiered-block"]
         direction LR
-        hot[("Hot volume<br/>SSD PVC")]
-        cold[("Cold volume<br/>bulk PVC")]
+        hot[("<b>Hot volume</b><br/><span>SSD PVC</span>")]
+        cold[("<b>Cold volume</b><br/><span>bulk PVC</span>")]
         hot -.->|moveFactor| cold
     end
 
     subgraph cached["storageModel: cached-object"]
         direction LR
-        cache[("Cache disk<br/>PVC or NVMe")]
-        objstore[("Object store<br/>durable copy")]
+        cache[("<b>Cache disk</b><br/><span>PVC or NVMe</span>")]
+        objstore[("<b>Object store</b><br/><span>durable copy</span>")]
         cache -->|miss| objstore
     end
 
     query --> tiered
     query --> cached
 
-    classDef default fill:#F8FAFC,stroke:#64748B,stroke-width:1px,color:#0F172A
-    classDef store fill:#DDF3EC,stroke:#00785A,stroke-width:1px,color:#0B3327
-    classDef group fill:none,stroke:#64748B,stroke-width:1px,stroke-dasharray:2 4
+    class query part
     class hot,cold,cache,objstore store
-    class tiered,cached group
+  classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
+  classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A
+  classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A
+  classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A
+  classDef bus fill:#FFFFFF,stroke:#A8517F,stroke-width:3px,color:#0F172A
+  classDef store fill:#FFFFFF,stroke:#00785A,stroke-width:3px,color:#0F172A
+  classDef ui fill:#FFFFFF,stroke:#D9480F,stroke-width:3px,color:#0F172A
+  classDef decision fill:#FFFFFF,stroke:#9A6700,stroke-width:3px,color:#0F172A
+  classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
+  classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
+  classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+  style tiered fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
+  style cached fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
 ```
 
 *Figure 1. L4 Detail -- ClickHouse storage models. The dotted arrow is a demotion, not a read.* Up: [Deploying DFE with dfe-infra](README.md).
