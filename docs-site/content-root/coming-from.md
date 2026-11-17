@@ -31,7 +31,7 @@ That's one of the biggest efficiency gains in DFE. A second copy of every record
 
 Most stacks are built as closed stacks: their agent, their pipeline, their store and their UI, each made to work with the others. DFE is consciously built as a set of loosely coupled parts with a standard protocol at every joint.
 
-Senders use their own protocols, so Vector, Fluent Bit, Fluentd, the OpenTelemetry Collector, Beats, Logstash and anything that speaks Splunk HEC send to dfe-receiver unchanged. Between the stages it's plain Kafka, whether that's in your cluster, Amazon MSK, Confluent Cloud or Redpanda Cloud. The store is ClickHouse, in your cluster or ClickHouse Cloud. Transforms run the engine you pick: VRL, Vector, or your Elastic pipelines. DNS, the certificate authority, the secrets store and the git host are each a config choice ([architecture](dfe-infra/architecture.md#external-dependencies)).
+Senders use their own protocols, so Vector, Fluent Bit, Fluentd, the OpenTelemetry Collector, Beats, Logstash and anything that speaks Splunk HEC send to dfe-receiver unchanged. Between the stages it's plain Kafka, whether that's in your cluster, Amazon MSK, Confluent Cloud or Redpanda Cloud. The store is ClickHouse, in your cluster or ClickHouse Cloud. Transforms run the engine you pick: VRL, Vector, or your Elastic pipelines. DNS, the certificate authority, the secrets store and the git host are each a config choice ([architecture](dfe-infra/architecture.md)).
 
 We built it that way so no single part, ours included, locks you in. You can swap one without replacing the rest, use the managed cloud services you already pay for, and put your own tools at any joint.
 
