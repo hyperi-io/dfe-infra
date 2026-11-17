@@ -465,15 +465,16 @@ html[data-theme='dark'] {
 }
 
 /* Mermaid's dark theme puts a grey plate behind edge labels, so labels sit on the page canvas
-   instead, in the page's ink: mid-render a label is black, which vanishes on the dark canvas. */
-.docusaurus-mermaid-container .edgeLabel,
-.docusaurus-mermaid-container .edgeLabel p,
-.docusaurus-mermaid-container .labelBkg {
+   instead, in the page's ink: mid-render a label is black, which vanishes on the dark canvas.
+   A house-style diagram (neo look) draws its own white label pills, so it is left alone. */
+.docusaurus-mermaid-container svg:not(:has(.node[data-look='neo'])) .edgeLabel,
+.docusaurus-mermaid-container svg:not(:has(.node[data-look='neo'])) .edgeLabel p,
+.docusaurus-mermaid-container svg:not(:has(.node[data-look='neo'])) .labelBkg {
   background-color: var(--role-canvas) !important;
   color: var(--role-body) !important;
 }
 
-.docusaurus-mermaid-container .edgeLabel rect {
+.docusaurus-mermaid-container svg:not(:has(.node[data-look='neo'])) .edgeLabel rect {
   fill: var(--role-canvas) !important;
   opacity: 1 !important;
 }
