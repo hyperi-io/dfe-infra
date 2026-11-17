@@ -237,7 +237,7 @@ spec:
         volumeSize: "40Gi"
         volumeType: gp3
         iops: 3000
-        throughput: 156
+        throughput: 187
         encrypted: true
         # The deployment's own key, the same one EKS secrets and Kafka take.
         kmsKeyID: "arn:aws:kms:us-west-2:000000000000:key/00000000-0000-0000-0000-000000000000"
@@ -297,7 +297,7 @@ spec:
         volumeSize: "40Gi"
         volumeType: gp3
         iops: 3000
-        throughput: 125
+        throughput: 250
         encrypted: true
         # The deployment's own key, the same one EKS secrets and Kafka take.
         kmsKeyID: "arn:aws:kms:us-west-2:000000000000:key/00000000-0000-0000-0000-000000000000"
@@ -415,12 +415,13 @@ spec:
           operator: In
           values:
             - "c8gd"
-        # The pinned override: this pool stays on the named generation rather
-        # than following the shape policy's floor.
+            - "c9gd"
+        # The floor, one below the oldest family named above -- a guard against a
+        # family the policy has not seen, not the selector itself.
         - key: karpenter.k8s.aws/instance-generation
-          operator: In
+          operator: Gt
           values:
-            - "8"
+            - "7"
         # Set only during a test run, whose account may deny every other size at
         # RunInstances (pools.aws.runInstanceSizes).
         - key: karpenter.k8s.aws/instance-size
@@ -494,11 +495,11 @@ spec:
         - key: karpenter.k8s.aws/instance-family
           operator: In
           values:
-            - "r8gd"
-        # The pinned override: this pool stays on the named generation rather
-        # than following the shape policy's floor.
+            - "r9gd"
+        # The floor, one below the oldest family named above -- a guard against a
+        # family the policy has not seen, not the selector itself.
         - key: karpenter.k8s.aws/instance-generation
-          operator: In
+          operator: Gt
           values:
             - "8"
         # Set only during a test run, whose account may deny every other size at
@@ -578,11 +579,11 @@ spec:
         - key: karpenter.k8s.aws/instance-family
           operator: In
           values:
-            - "m8g"
-        # The pinned override: this pool stays on the named generation rather
-        # than following the shape policy's floor.
+            - "m9g"
+        # The floor, one below the oldest family named above -- a guard against a
+        # family the policy has not seen, not the selector itself.
         - key: karpenter.k8s.aws/instance-generation
-          operator: In
+          operator: Gt
           values:
             - "8"
         # Set only during a test run, whose account may deny every other size at
@@ -660,7 +661,7 @@ spec:
         - key: karpenter.k8s.aws/instance-family
           operator: In
           values:
-            - "m8g"
+            - "m9g"
         # The floor, one below the oldest family named above -- a guard against a
         # family the policy has not seen, not the selector itself.
         - key: karpenter.k8s.aws/instance-generation
@@ -755,11 +756,11 @@ spec:
         - key: karpenter.k8s.aws/instance-family
           operator: In
           values:
-            - "m8g"
-        # The pinned override: this pool stays on the named generation rather
-        # than following the shape policy's floor.
+            - "m9g"
+        # The floor, one below the oldest family named above -- a guard against a
+        # family the policy has not seen, not the selector itself.
         - key: karpenter.k8s.aws/instance-generation
-          operator: In
+          operator: Gt
           values:
             - "8"
         # Set only during a test run, whose account may deny every other size at
@@ -839,11 +840,11 @@ spec:
         - key: karpenter.k8s.aws/instance-family
           operator: In
           values:
-            - "m8g"
-        # The pinned override: this pool stays on the named generation rather
-        # than following the shape policy's floor.
+            - "m9g"
+        # The floor, one below the oldest family named above -- a guard against a
+        # family the policy has not seen, not the selector itself.
         - key: karpenter.k8s.aws/instance-generation
-          operator: In
+          operator: Gt
           values:
             - "8"
         # Set only during a test run, whose account may deny every other size at
