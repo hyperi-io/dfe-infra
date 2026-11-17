@@ -21,7 +21,7 @@ docs_refs:
     dfe-loader: "4d5a0cacc5342505e23cdb909c3cee49e66f3555"  # says record throughout, lists memory as restart-only
     dfe-receiver: "de94eb83b44ae390a165462026cda5a94c609bd9"
     dfe-schemas: "0feaee595c09b0496b582f787cd2ccfc0038e74c"
-    dfe-transform-elastic: "4809783d58673f7d67ee6af5d131926b167c1409"
+    dfe-transform-elastic: "7aec4d9877831f91890d55e6d13f554d0c956fba"  # branch docs/2.2.2, which must stay
     dfe-transform-vector: "58bf4a371da4279c3900f491dbd9daf3d7de8e4b"
     dfe-transform-vrl: "01ed6768130469a62de42311c467f9b9e85e82af"
 
