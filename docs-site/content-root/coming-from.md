@@ -6,7 +6,7 @@ slug: /coming-from
 
 # Coming from Splunk or Elastic
 
-If you've run Splunk, Elastic or OpenSearch, or several of them, you'll bring assumptions about how a data platform works. Everything this page says about Elastic holds for OpenSearch too. The one difference from DFE's side is licensing: OpenSearch is Apache-2.0, the more permissive of the two. DFE can take the place of more than one, with one platform to run instead of several. DFE does several things differently, and the rest of the docs assume you know them. Coming from Snowflake, Databricks, BigQuery or Athena instead? That page is [coming from a lakehouse](coming-from-lakehouse.md).
+If you've run Splunk, Elastic or OpenSearch, or several of them, you'll bring assumptions about how a data platform works. Everything this page says about Elastic holds for OpenSearch too. DFE does several things differently, and the rest of the docs assume you know them. Coming from Snowflake, Databricks, BigQuery or Athena instead? That page is [coming from a lakehouse](coming-from-lakehouse.md).
 
 ## Nothing breaks when a source changes
 
@@ -178,6 +178,8 @@ You don't rip anything out to start. dfe-receiver speaks the protocols your agen
 So point a copy of one feed at DFE and keep the rest where it is. Logstash, Vector, Fluent Bit and the OpenTelemetry Collector can send to two outputs at once. Filebeat sends to one, so copy its feed at a relay. Compare the two side by side, then move the next feed.
 
 Two limits to know. Elastic Agent isn't tested yet. And DFE doesn't write back into an Elastic cluster, so it runs beside one rather than in front of it.
+
+Running more than one of Splunk, Elastic and OpenSearch? DFE can take the place of several, with one platform to run. From DFE's side the one difference between Elastic and OpenSearch is licensing: OpenSearch is Apache-2.0, the more permissive of the two.
 
 ## Lift and shift
 
