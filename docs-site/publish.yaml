@@ -15,8 +15,12 @@ dropped_versions:
 docs_refs:
   2.2.2:
     dfe-archiver: "c8509175dcc2842c7abae2d9bf576c9bdec565ed"
+    dfe-engine: "4baa2adf9c169c194029d6e1f285428a30130ecc"
+    dfe-fetcher: "205963dd680ec3f50b52ed83e24b570b7cfe6e26"
+    dfe-hyperdx: "9d95682d862e2309d34e12213c3954742dadc95d"
     dfe-loader: "ecdb5a3aa7d85bf5a7cbc75937b8de1e8c522b33"  # says record throughout, lists memory as restart-only
     dfe-receiver: "de94eb83b44ae390a165462026cda5a94c609bd9"
+    dfe-schemas: "08d71f3441f190ef02f671faf446b87906af2e7d"
     dfe-transform-elastic: "4809783d58673f7d67ee6af5d131926b167c1409"
     dfe-transform-vector: "58bf4a371da4279c3900f491dbd9daf3d7de8e4b"
     dfe-transform-vrl: "01ed6768130469a62de42311c467f9b9e85e82af"
