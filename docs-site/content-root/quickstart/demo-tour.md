@@ -5,7 +5,7 @@ sidebar_label: Where to look
 
 # Where to look in the demo
 
-Each demo pack opens its console at http://localhost:3000 with its dashboards, saved searches and hunts already made. The pointers below name what to open, what it shows and how the data got there. Start a pack from [the demo quickstart](demo.md).
+Each demo pack opens its console at http://localhost:3000 with its dashboards, saved searches and hunts already made. The pointers below name what to open, what it shows and how the data got there. Start a pack from [the demo quickstart](demo.md). Click a screenshot to open it full size.
 
 Dashboards are under **Dashboards** in the console's left bar, hunt hits under **Hunt Results** (http://localhost:3000/observe/hunt-results) and each source's flow and sample events under **Sources** (http://localhost:3000/sources).
 
@@ -26,9 +26,9 @@ Three paths bring the data in:
 | `demo-component-releases` | The latest release of each DFE component | dfe-fetcher polls the GitHub releases API every 15 minutes |
 | Hunt Results | Hits from `demo-asa-logon-failed` and `demo-fortinet-ssh-denied` | The hunt runner over the ASA and FortiGate tables |
 
-![demo-feodo-c2: five command-and-control servers, by malware family, country and network](img/demo-feodo-c2.png)
+[![demo-feodo-c2: five command-and-control servers, by malware family, country and network](./img/demo-feodo-c2.png)](./img/demo-feodo-c2.png)
 
-![demo-cisco-asa: events per second, allowed and denied over time, top sources, destinations and ports](img/demo-cisco-asa.png)
+[![demo-cisco-asa: events per second, allowed and denied over time, top sources, destinations and ports](./img/demo-cisco-asa.png)](./img/demo-cisco-asa.png)
 
 ## demo-cyber: a SOC's day on Elastic integration data
 
@@ -40,9 +40,9 @@ Three paths bring the data in:
 | `demo-cyber-denied`, `demo-cyber-bad-networks` | Firewall denies, and traffic from known-bad networks | ASA and FortiGate syslog, as in `demo`, with some outside addresses moved onto a list of known-bad networks |
 | Hunt Results | `demo-cyber-bad-network-sign-in`, `demo-cyber-anonymous-link`, `demo-cyber-ransomware` | The hunt runner over `okta`, `o365` and `crowdstrike` |
 
-![demo-cyber-sign-ins: Okta sign-ins per minute, failures by country and by user](img/cyber-sign-ins.png)
+[![demo-cyber-sign-ins: Okta sign-ins per minute, failures by country and by user](./img/cyber-sign-ins.png)](./img/cyber-sign-ins.png)
 
-![Hunt Results: hits from the three cyber hunts, by severity and source table](img/cyber-hunt-results.png)
+[![Hunt Results: hits from the three cyber hunts, by severity and source table](./img/cyber-hunt-results.png)](./img/cyber-hunt-results.png)
 
 ## demo-telco: a mobile network and the routes around it
 
@@ -56,7 +56,7 @@ Three paths bring the data in:
 
 The replay puts a full generated day behind the moment the pack starts, so the cell faults and the probe failures land in the hour before it started, and at that time each day after. Set the time range back over that hour, or the faulted tiles and the RFO timeline read "No data found".
 
-![demo-telco-bgp-paths: the latest AS path changes, path churn per prefix and changes per minute](img/telco-bgp-paths.png)
+[![demo-telco-bgp-paths: the latest AS path changes, path churn per prefix and changes per minute](./img/telco-bgp-paths.png)](./img/telco-bgp-paths.png)
 
 ## demo-theatre: live aircraft and ships
 
@@ -68,7 +68,7 @@ The replay puts a full generated day behind the moment the pack starts, so the c
 
 When a feed is down or has nothing to report, the pack serves a captured poll with its times moved to now, so the picture never sits empty.
 
-![demo-theatre-picture: aircraft and ships in the picture, reports by feed, the last report per track](img/theatre-picture.png)
+[![demo-theatre-picture: aircraft and ships in the picture, reports by feed, the last report per track](./img/theatre-picture.png)](./img/theatre-picture.png)
 
 ## Tiles that stay empty
 
