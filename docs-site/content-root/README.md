@@ -16,8 +16,6 @@ Under the hood, DFE is a data pipeline you run yourself. Your agents and shipper
 
 Every page here comes from a suite repository's own `docs/`, at the version one DFE release pins. The version menu switches the whole suite between releases. Each repository has its own section in the sidebar.
 
-Data moves one way, from your senders through Kafka or gRPC into ClickHouse, where the DFE console reads it.
-
 ```mermaid
 ---
 config:
@@ -64,27 +62,31 @@ config:
     .ui .label-icon{color:#D9480F}
     .ext .label-icon{color:#64748B}
 ---
-flowchart LR
+flowchart TB
   accTitle: L2 Services -- DFE data path
-  accDescr: Senders post JSON to dfe-receiver and dfe-fetcher pulls from APIs, databases and files. Both write to a source topic that dfe-loader inserts into ClickHouse, optionally through a transform, and the DFE console reads ClickHouse.
-  S("<b>Your senders</b><br/><span>JSON over HTTP or HTTPS</span>")
-  F("<b>dfe-fetcher</b><br/><span>pulls from APIs, databases and files</span>")
-  R("<b>dfe-receiver</b><br/><span>takes what is sent</span>")
-  K1("<b>Source topic</b><br/><span>*_land</span>")
-  T("<b>dfe-transform</b><br/><span>optional</span>")
-  K2("<b>Transformed topic</b><br/><span>*_load</span>")
-  L("<b>dfe-loader</b><br/><span>inserts into tables</span>")
-  C[("<b>ClickHouse</b>")]
-  H("<b>DFE console</b><br/><span>search, dashboards, rules</span>")
-  S --> R
-  R -->|Kafka| K1
-  F --> K1
-  K1 --> L
-  K1 -.-> T -.-> K2 -.-> L
-  R -->|direct gRPC| L
-  R -.->|direct gRPC| T -.->|direct gRPC| L
-  L --> C
-  C --> H
+  accDescr: dfe-receiver takes what your senders post and dfe-fetcher pulls from APIs, databases and files. Both write to Kafka, where an optional transform turns the source topic into a transformed one. dfe-loader inserts into ClickHouse, and the DFE console reads it.
+  subgraph IN["Collect"]
+    direction LR
+    S("<b>Your senders</b><br/><span>JSON over HTTP or HTTPS</span>")
+    R("<b>dfe-receiver</b><br/><span>takes what is sent</span>")
+    F("<b>dfe-fetcher</b><br/><span>pulls from APIs, databases and files</span>")
+    S --> R
+  end
+  subgraph BUS["Kafka"]
+    direction LR
+    K1("<b>Source topic</b><br/><span>*_land</span>")
+    T("<b>dfe-transform</b><br/><span>optional</span>")
+    K2("<b>Transformed topic</b><br/><span>*_load</span>")
+    K1 -.-> T -.-> K2
+  end
+  subgraph OUT["Store and query"]
+    direction LR
+    L("<b>dfe-loader</b><br/><span>inserts into tables</span>")
+    C[("<b>ClickHouse</b>")]
+    H("<b>DFE console</b><br/><span>search, dashboards, rules</span>")
+    L --> C --> H
+  end
+  IN --> BUS --> OUT
   class S ext
   class R,F ingest
   class K1,K2 bus
@@ -103,9 +105,12 @@ flowchart LR
   classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
   classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
   classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+  style IN fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
+  style BUS fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
+  style OUT fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
 ```
 
-*Figure 1. L2 Services -- DFE data path.* Dotted lines are optional paths. Up: top of the DFE docs.
+*Figure 1. L2 Services -- DFE data path.* The dotted path is optional. Up: top of the DFE docs.
 
 This is the default path. The leaner profiles skip Kafka and go receiver to loader over gRPC. A transform app (dfe-transform-vrl, dfe-transform-vector or dfe-transform-elastic) is optional. On Kafka a source that needs grok or your own logic gets one: it reads the source's `*_land` topic and writes a `*_load` one, and the loader reads that one instead. Over gRPC the receiver sends to the transform and the transform sends to the loader, and the lean gRPC profiles run only the fixed transforms a deployment ships, not one per source, so a source that needs its own is refused there. Every component also sends its own logs and metrics over OpenTelemetry into ClickHouse, so the console shows the stack's health before your first event arrives.
 
