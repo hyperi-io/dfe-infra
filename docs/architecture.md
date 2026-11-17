@@ -206,7 +206,7 @@ The edge VPN is optional on `scale`. [culvert](https://github.com/hyperi-io/culv
 
 ## Diagram map
 
-- [Figure 1. L2 Services -- DFE suite](#dfe-architecture)
+- Figure 1. L2 Services -- DFE suite, at the top of this page
   - [L3 Components -- Argo CD](argo-cd.md)
     - [L4 Detail -- Deployment layers](deployment/README.md#the-three-layers)
     - [L4 Detail -- The deploy repo](deployment/state-and-repos.md#the-repositories)
