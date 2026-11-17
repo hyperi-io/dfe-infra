@@ -1804,13 +1804,21 @@ def test_cmd_upgrade_apply_dry_run_prints_ordered_commands_and_touches_nothing(
     assert (deploy / "pins.yaml").read_text(encoding="utf-8") == before_pins
 
 
+@pytest.mark.parametrize(
+    ("target_revision", "nothing_to_apply"),
+    [(None, True), ("1.0.0-fix-branch", False)],
+    ids=["no-ref", "explicit-ref-still-retargets"],
+)
 def test_cmd_upgrade_apply_nothing_to_apply(
     monkeypatch: pytest.MonkeyPatch,
     deploy: Path,
     order_path: Path,
     versions_path: Path,
     capsys: pytest.CaptureFixture,
+    target_revision: str | None,
+    nothing_to_apply: bool,
 ) -> None:
+    """Equal pins skip the run, unless --target-revision asks for the secret to move."""
     monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
     monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
     args = _Args(
@@ -1834,12 +1842,15 @@ def test_cmd_upgrade_apply_nothing_to_apply(
         finalise=False,
         stop_before=None,
         from_stack=None,
-        target_revision=None,
+        target_revision=target_revision,
         namespace=None,
     )
     rc = u.cmd_upgrade_apply(args)
     assert rc == u.EXIT_OK
-    assert "nothing to apply" in capsys.readouterr().out
+    out, err = capsys.readouterr()
+    assert ("nothing to apply" in out) is nothing_to_apply
+    if not nothing_to_apply:
+        assert "only the stack name moves" in err
 
 
 def test_cmd_upgrade_apply_refuses_when_compat_check_fails(

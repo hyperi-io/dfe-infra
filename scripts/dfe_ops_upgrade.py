@@ -3760,7 +3760,7 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
     steps = load_steps()
     moves = plan_moves(steps, flatten_stack(from_pins), flatten_stack(to_pins))
     if not moves:
-        if _norm_ref(from_name) == _norm_ref(to_name):
+        if _norm_ref(from_name) == _norm_ref(to_name) and not args.target_revision:
             print(
                 f"dfe-ops upgrade apply: {from_name} already matches {to_name} -- nothing to apply"
             )
