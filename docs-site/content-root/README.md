@@ -16,8 +16,6 @@ Under the hood, DFE is a data pipeline you run yourself. Your agents and shipper
 
 Every page here comes from a suite repository's own `docs/`, at the version one DFE release pins. The version menu switches the whole suite between releases. Each repository has its own section in the sidebar.
 
-Data moves one way, from your senders through Kafka or gRPC into ClickHouse, where the DFE console reads it.
-
 ```mermaid
 ---
 config:
