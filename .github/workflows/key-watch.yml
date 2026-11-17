@@ -1,5 +1,4 @@
-# Weekly check of the toolbox's pinned signing keys and the upstream fix the gen-8 instance hold waits on
-# (scripts/check_signing_keys.py). A failed run is the notice.
+# Weekly check of the toolbox's pinned signing keys (scripts/check_signing_keys.py). A failed run is the notice.
 name: Key Watch
 
 on:
@@ -12,7 +11,7 @@ permissions:
 
 jobs:
   watch:
-    name: signing keys and upstream holds
+    name: signing keys
     runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
@@ -20,7 +19,5 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Check keys and holds
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Check keys
         run: python3 scripts/check_signing_keys.py --online
