@@ -37,6 +37,22 @@ const releaseNotes = site.newest
   : null;
 const GRAPHICS = 'https://graphics.hyperi.io';
 
+// hyperi.io's Plausible site, split per host by the dashboard's hostname filter. Nothing loads under Do Not Track or GPC.
+const PLAUSIBLE = `(function () {
+  try {
+    var dnt = navigator.doNotTrack === '1' || window.doNotTrack === '1' || navigator.msDoNotTrack === '1';
+    var gpc = navigator.globalPrivacyControl === true;
+    if (dnt || gpc) return;
+    var pa = document.createElement('script');
+    pa.async = true;
+    pa.src = 'https://plausible.io/js/pa-q4IMLUamXTyMwys_1kKop.js';
+    document.head.appendChild(pa);
+    window.plausible = window.plausible || function () { (plausible.q = plausible.q || []).push(arguments); };
+    plausible.init = plausible.init || function (i) { plausible.o = i || {}; };
+    plausible.init();
+  } catch (e) {}
+})();`;
+
 // The navbar label beside the version picker: Latest on the newest release, a warning elsewhere.
 // A warning stays in the bar on a phone (custom.css), where Latest moves into the menu.
 function releaseLabel() {
@@ -343,6 +359,7 @@ module.exports = async function createConfig() {
   favicon: `${GRAPHICS}/product-dfe/tertiary/product-dfe_square.svg`,
   // The brand tokens and @font-face rules, read anonymously like every other build input.
   stylesheets: [`${GRAPHICS}/tokens/tokens.css`],
+  headTags: [{tagName: 'script', attributes: {}, innerHTML: PLAUSIBLE}],
   customFields: {landing: landingCopy},
   url: site.url,
   baseUrl: build.base_url,
