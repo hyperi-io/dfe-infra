@@ -37,6 +37,7 @@ from dfe_suite.rebuild import (
     _release_timeout,
     _suite_node,
 )
+from dfe_suite.repos import remove_worktree, walk_worktree
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -1158,6 +1159,55 @@ class SyncMainTests(unittest.TestCase):
         _git(self.work, "worktree", "add", str(holder), "main")
         sf.sync_main(holder, dry_run=False)
         assert (holder / "b.txt").exists()
+
+    def test_the_walk_worktree_leaves_a_checkout_whose_main_another_worktree_holds(
+        self,
+    ) -> None:
+        # dfe-fetcher's main sat in a worktree while its checkout was on a branch.
+        _git(self.work, "switch", "-c", "some-side-branch")
+        (self.work / "a.txt").write_text("1\nmy wip\n", encoding="utf-8")
+        holder = Path(self._tmp.name) / "holder"
+        _git(self.work, "worktree", "add", str(holder), "main")
+        wt = walk_worktree(self.work, "walk")
+        assert wt == self.work / ".worktrees" / "walk" / "work"
+        assert sf.current_branch(wt) == "HEAD"
+        assert sf.head_sha(wt) == _git(self.work, "rev-parse", "origin/main")
+        assert (wt / "b.txt").exists()
+        assert sf.current_branch(self.work) == "some-side-branch"
+        assert "my wip" in (self.work / "a.txt").read_text(encoding="utf-8")
+        remove_worktree(self.work, wt)
+        assert not wt.exists()
+
+    def test_the_walk_worktree_left_by_an_interrupted_run_is_reset(self) -> None:
+        wt = walk_worktree(self.work, "walk")
+        _git(wt, "switch", "-c", "scalo/rebuild-1-0-0")
+        (wt / "a.txt").write_text("half a bump\n", encoding="utf-8")
+        again = walk_worktree(self.work, "walk")
+        assert again == wt
+        assert sf.current_branch(wt) == "HEAD"
+        assert (wt / "a.txt").read_text(encoding="utf-8") == "1\n"
+
+    def test_the_walk_reads_origin_main_not_a_checkout_behind_it(self) -> None:
+        # dfe-fetcher's checkout sat 46 commits behind, and a preflight read it.
+        assert not (self.work / "b.txt").exists()
+        wt = walk_worktree(self.work, "walk")
+        assert (wt / "b.txt").exists()
+        assert not (self.work / "b.txt").exists()
+
+    def test_a_checkout_with_no_origin_is_read_as_it_stands(self) -> None:
+        bare = Path(self._tmp.name) / "no-origin"
+        bare.mkdir()
+        _git(bare, "init", "-q", "-b", "main")
+        assert walk_worktree(bare, "walk") == bare
+        assert not (bare / ".worktrees").exists()
+        missing = Path(self._tmp.name) / "missing"
+        assert walk_worktree(missing, "walk") == missing
+
+    def test_a_walk_worktree_with_changes_in_it_is_kept(self) -> None:
+        wt = walk_worktree(self.work, "walk")
+        (wt / "a.txt").write_text("unmerged\n", encoding="utf-8")
+        remove_worktree(self.work, wt)
+        assert (wt / "a.txt").read_text(encoding="utf-8") == "unmerged\n"
 
 
 class PyConstraintTests(unittest.TestCase):
