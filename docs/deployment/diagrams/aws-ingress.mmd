@@ -20,21 +20,18 @@ config:
     .nodeLabel span{font-size:12px;color:#334155}
 ---
 flowchart LR
-  accTitle: L4 Detail -- DFE on AWS, network
-  accDescr: Edge clients reach the cluster's nodes through the receiver's Network Load Balancer, or the optional tunnel forwarder, in the public subnets. The nodes and the Amazon MSK brokers sit in the private subnets. S3 traffic leaves through a gateway endpoint, and traffic for a managed Kafka outside AWS through the NAT gateway. The EKS control plane is AWS-managed, outside the VPC.
+  accTitle: L4 Detail -- DFE on AWS, ingress
+  accDescr: Users reach the UIs through the gateway's internet-facing Network Load Balancer. Edge clients send events through the receiver's own NLB, which renders once senders are allowed, or the optional tunnel forwarder. All three sit in the public subnets, and the nodes and Amazon MSK brokers in the private subnets.
+  users@{ icon: "aws:res-users", label: "Users", pos: "b", h: 48 }
   clients@{ icon: "aws:res-users", label: "Edge clients", pos: "b", h: 48 }
-  saas("<b>Confluent or Redpanda Cloud</b><br/><span>optional</span>")
   subgraph cloud["AWS Cloud"]
     subgraph region["Region"]
-      eks@{ icon: "aws:amazon-elastic-kubernetes-service", label: "Amazon EKS<br/>control plane", pos: "b", h: 80 }
-      s3@{ icon: "aws:amazon-simple-storage-service", label: "Amazon S3<br/>object store and logs", pos: "b", h: 80 }
       subgraph vpc["VPC"]
-        s3ep@{ icon: "aws:res-amazon-vpc-endpoints", label: "S3 gateway endpoint", pos: "b", h: 48 }
         subgraph az["Availability Zones x az_count"]
           subgraph pub["Public subnets"]
-            nlb@{ icon: "aws:res-elastic-load-balancing-network-load-balancer", label: "Receiver NLB<br/>made by the LB controller", pos: "b", h: 48 }
+            gwnlb@{ icon: "aws:res-elastic-load-balancing-network-load-balancer", label: "Gateway NLB<br/>UIs", pos: "b", h: 48 }
+            nlb@{ icon: "aws:res-elastic-load-balancing-network-load-balancer", label: "Receiver NLB<br/>once senders are allowed", pos: "b", h: 48 }
             fwd@{ icon: "aws:res-amazon-ec2-instance", label: "Tunnel forwarder<br/>optional", pos: "b", h: 48 }
-            nat@{ icon: "aws:res-amazon-vpc-nat-gateway", label: "NAT gateway<br/>one or one per zone", pos: "b", h: 48 }
           end
           subgraph priv["Private subnets"]
             nodes@{ icon: "aws:res-amazon-ec2-instances", label: "EKS nodes<br/>managed group and Karpenter", pos: "b", h: 48 }
@@ -44,17 +41,13 @@ flowchart LR
       end
     end
   end
+  users -->|"HTTPS"| gwnlb
   clients -->|"events"| nlb
   clients -.->|"tunnel"| fwd
-  eks -->|"schedules"| priv
+  gwnlb --> nodes
   nlb --> nodes
   fwd -.-> nodes
   nodes --> msk
-  nodes --> s3ep
-  s3ep --> s3
-  nodes -.-> nat
-  nat -.->|"Kafka"| saas
-  class saas part
   classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A
   classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A
   classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A

@@ -23,14 +23,21 @@ What the AWS root builds, how the dial sizes it, and the Kafka and ClickHouse ch
 
 `terraform/environments/aws` builds an EKS cluster and hands it to the same bootstrap and Argo CD layers every other cluster uses. Layer 1 and Layer 2 are the same on AWS.
 
-Only the receiver's load balancer, the optional tunnel forwarder and the NAT gateway touch the internet. Everything DFE runs sits in the private subnets.
+The receiver gets an NLB of its own, apart from the gateway's, because it takes terabytes a day and an NLB bills per GB processed ([aws.md](aws.md#receiver-ingress)). Everything DFE runs sits in the private subnets.
 
-![L4 Detail -- DFE on AWS, network. Edge clients reach the cluster's nodes through the receiver's Network Load Balancer, or the optional tunnel forwarder, in the public subnets. The nodes and the Amazon MSK brokers sit in the private subnets. S3 traffic leaves through a gateway endpoint, and traffic for a managed Kafka outside AWS through the NAT gateway. The EKS control plane is AWS-managed, outside the VPC.](diagrams/aws-network-light.svg#gh-light-mode-only)
-![L4 Detail -- DFE on AWS, network. Edge clients reach the cluster's nodes through the receiver's Network Load Balancer, or the optional tunnel forwarder, in the public subnets. The nodes and the Amazon MSK brokers sit in the private subnets. S3 traffic leaves through a gateway endpoint, and traffic for a managed Kafka outside AWS through the NAT gateway. The EKS control plane is AWS-managed, outside the VPC.](diagrams/aws-network-dark.svg#gh-dark-mode-only)
+![L4 Detail -- DFE on AWS, ingress. Users reach the UIs through the gateway's internet-facing Network Load Balancer. Edge clients send events through the receiver's own NLB, which renders once senders are allowed, or the optional tunnel forwarder. All three sit in the public subnets, and the nodes and Amazon MSK brokers in the private subnets.](diagrams/aws-ingress-light.svg#gh-light-mode-only)
+![L4 Detail -- DFE on AWS, ingress. Users reach the UIs through the gateway's internet-facing Network Load Balancer. Edge clients send events through the receiver's own NLB, which renders once senders are allowed, or the optional tunnel forwarder. All three sit in the public subnets, and the nodes and Amazon MSK brokers in the private subnets.](diagrams/aws-ingress-dark.svg#gh-dark-mode-only)
 
-*Figure 1. L4 Detail -- DFE on AWS, network.* Up: [Deploying DFE with dfe-infra](README.md).
+*Figure 1. L4 Detail -- DFE on AWS, ingress.* Up: [Deploying DFE with dfe-infra](README.md).
 
-The toolbox instance, when enabled, sits in the private subnets too ([toolbox.md](toolbox.md)). The diagram's source is [diagrams/aws-network.yaml](diagrams/aws-network.yaml). Regenerate the `.mmd` and both SVGs with `merrow graph render docs/deployment/diagrams/aws-network.yaml --out docs/deployment/diagrams --profile aws`.
+S3 traffic never pays the NAT gateway's per-GB charge. Image pulls the [registry cache](aws-operations.md#registry-cache) doesn't serve do, and so does a managed Kafka outside AWS.
+
+![L4 Detail -- DFE on AWS, egress. S3 traffic from the nodes leaves through a gateway endpoint and never crosses the NAT gateway. Everything else bound for the internet, such as image pulls the registry cache does not serve and a managed Kafka outside AWS, leaves through the NAT gateway in the public subnets.](diagrams/aws-egress-light.svg#gh-light-mode-only)
+![L4 Detail -- DFE on AWS, egress. S3 traffic from the nodes leaves through a gateway endpoint and never crosses the NAT gateway. Everything else bound for the internet, such as image pulls the registry cache does not serve and a managed Kafka outside AWS, leaves through the NAT gateway in the public subnets.](diagrams/aws-egress-dark.svg#gh-dark-mode-only)
+
+*Figure 2. L4 Detail -- DFE on AWS, egress.* Up: [Deploying DFE with dfe-infra](README.md).
+
+The toolbox instance, when enabled, sits in the private subnets too ([toolbox.md](toolbox.md)). The sources are [diagrams/aws-ingress.yaml](diagrams/aws-ingress.yaml) and [diagrams/aws-egress.yaml](diagrams/aws-egress.yaml). Regenerate each `.mmd` and its SVGs with `merrow graph render docs/deployment/diagrams/<name>.yaml --out docs/deployment/diagrams --profile aws`.
 
 - ARM only. Every node pool, and the MSK brokers when a cluster is built, resolve to Graviton. The cluster module rejects a `shape_ref` that resolves to anything but arm64.
 - Nodes and the data plane sit in private subnets. By default they share one NAT gateway (`network.nat: single`). Use one per availability zone (`per-az`) when a zone failure or the cross-zone charge costs more than the extra gateway.

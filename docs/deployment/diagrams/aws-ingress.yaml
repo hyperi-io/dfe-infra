@@ -1,0 +1,25 @@
+title: L4 Detail -- DFE on AWS, ingress
+description: Users reach the UIs through the gateway's internet-facing Network Load Balancer. Edge clients send events through the receiver's own NLB, which renders once senders are allowed, or the optional tunnel forwarder. All three sit in the public subnets, and the nodes and Amazon MSK brokers in the private subnets.
+groups:
+  - {id: cloud, label: "", object: aws.cloud}
+  - {id: region, label: "", object: aws.region, parent: cloud}
+  - {id: vpc, label: "", object: aws.vpc, parent: region}
+  - {id: az, label: "Availability Zones x az_count", object: aws.az, parent: vpc}
+  - {id: pub, label: Public subnets, object: aws.public-subnet, parent: az}
+  - {id: priv, label: Private subnets, object: aws.private-subnet, parent: az}
+nodes:
+  - {id: users, object: aws.users, label: Users}
+  - {id: clients, object: aws.users, label: Edge clients}
+  - {id: gwnlb, object: aws.nlb, label: Gateway NLB, subtitle: UIs, group: pub}
+  - {id: nlb, object: aws.nlb, label: Receiver NLB, subtitle: once senders are allowed, group: pub}
+  - {id: fwd, object: aws.ec2-instance, label: Tunnel forwarder, subtitle: optional, group: pub}
+  - {id: nodes, object: aws.ec2, label: EKS nodes, subtitle: managed group and Karpenter, group: priv}
+  - {id: msk, object: aws.msk, subtitle: when kafka.provider is msk, group: priv}
+edges:
+  - {source: users, target: gwnlb, label: HTTPS}
+  - {source: clients, target: nlb, label: events}
+  - {source: clients, target: fwd, label: tunnel, optional: true}
+  - {source: gwnlb, target: nodes}
+  - {source: nlb, target: nodes}
+  - {source: fwd, target: nodes, optional: true}
+  - {source: nodes, target: msk}
