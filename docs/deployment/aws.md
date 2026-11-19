@@ -103,16 +103,31 @@ Run it where the `aws` CLI is installed, because `tofu destroy` calls it. It run
 
 ## How costs are described
 
-Costs here are T-shirt buckets, not figures. A bucket is relative to the deployment's compute, never a currency. XS is negligible beside the cluster's compute. S is a small fraction of it. M is about one dedicated node. L is about the whole cluster's compute, and XL is more than that.
+Costs here are T-shirt buckets, not figures. A bucket is relative to the deployment's compute, never a currency.
+
+| Bucket | Beside the cluster's compute |
+|---|---|
+| XS | negligible |
+| S | a small fraction |
+| M | about one dedicated node |
+| L | about the whole cluster's compute |
+| XL | more than the whole cluster's compute |
 
 Where the pricing model decides whether an option is safe, we name it: hourly, per GB processed, per request, per LCU-hour, per broker-hour. We never give a rate. Rates move by region, account and discount, so price your account. [edge.md](edge.md) puts every edge door on this scale.
 
 ## Receiver ingress
 
-The receiver takes terabytes a day, and every AWS front door bills by volume. A Network Load Balancer charges per LCU-hour (1 GB processed), a Classic ELB per GB, CloudFront and Global Accelerator per GB, WAF per request. So the receiver gets an NLB of its own, and nothing in front of it bills by volume or request.
+The receiver takes terabytes a day, and every AWS front door bills by volume or request. So the receiver gets an NLB of its own, and nothing in front of it.
+
+| Front door | Bills by |
+|---|---|
+| Network Load Balancer | the hour, plus per LCU-hour, one LCU-hour being 1 GB processed for TCP/UDP (AWS's Elastic Load Balancing pricing page) |
+| Classic ELB | per GB |
+| CloudFront, Global Accelerator | per GB |
+| WAF | per request |
+
+The NLB's hourly half is XS. Its processing half is what ingest costs to move through this door. AWS data transfer out applies to the replies on every path, culvert included.
 
 A fresh deploy renders no NLB. The receiver stays on a ClusterIP, because the default is `exposure.groups.ingest.door: loadbalancer` with an empty `allow` list. Name the senders in the deploy repo's `exposure.groups.ingest.allow` and the NLB renders. It uses the AWS Load Balancer Controller with IP targets, keeps the client address, and holds the list in its frontend security group. It sits on the Elastic IPs the AWS root allocates, one per public subnet.
-
-An NLB bills an hourly charge plus a per-LCU-hour charge, one LCU-hour being 1 GB processed for TCP/UDP (AWS's Elastic Load Balancing pricing page). The hourly half is XS. The processing half is what ingest costs to move through this door. AWS data transfer out applies to the replies on every path, culvert included.
 
 AWS bills those Elastic IPs while the ingest door is closed and no NLB exists. `edge.aws.receiver_eips: false` turns them off. [ingest-edge.md](../ingest-edge.md) describes the doors. [edge.md](edge.md) has the AWS tier table: every door, its group, its tier, the dial key that turns it and its cost bucket.
