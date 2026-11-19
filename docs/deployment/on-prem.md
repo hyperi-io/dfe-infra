@@ -91,6 +91,7 @@ config:
     fontSize: 15px
     lineColor: "#64748B"
     primaryTextColor: "#0F172A"
+    nodeBorder: "#334155"
     clusterBorder: "#0072B2"
     edgeLabelBackground: "#FFFFFF"
   themeCSS: >-
@@ -110,6 +111,8 @@ config:
     span.edgeLabel{display:inline-block;background:#FFFFFF!important;color:#1E293B;border:1px solid #94A3B8;border-radius:999px;padding:2px 10px;font-size:12px;font-weight:500}
     span.edgeLabel p{background:transparent!important}
     .label-icon{width:20px;height:20px;vertical-align:-4px;margin-right:6px}
+    .icon-shape path[stroke-width="0"][fill="none"]{fill:#FFFFFF;stroke:#FFFFFF;stroke-width:12px;stroke-linejoin:round}
+    .icon-shape p{background:transparent!important;color:#0F172A}
     .ingest .label-icon{color:#0E8A7D}
     .xform .label-icon{color:#7B4FB0}
     .load .label-icon{color:#0072B2}
@@ -189,6 +192,9 @@ config:
     actorLineColor: "#64748B"
     signalColor: "#64748B"
     signalTextColor: "#0F172A"
+    noteBkgColor: "#FFFFFF"
+    noteBorderColor: "#94A3B8"
+    noteTextColor: "#0F172A"
   themeCSS: >-
     .messageText{paint-order:stroke;stroke:#FFFFFF;stroke-width:3px;stroke-linejoin:round}
 ---
@@ -205,7 +211,7 @@ sequenceDiagram
     gateway->>service: Matched HTTPRoute
 ```
 
-*Figure 2. L4 Detail -- On-prem request path. Solid arrows are requests, the dashed arrow is the answer.* Up: [Deploying DFE with dfe-infra](README.md).
+*Figure 2. L4 Detail -- On-prem request path.* Up: [Deploying DFE with dfe-infra](README.md).
 
 Every UI and the engine API answer through the Envoy Gateway (`helm/edge/gateway/`) on the wildcard `*.<DFE_DOMAIN>`. The console is `dfe.<DFE_DOMAIN>`. cert-manager issues the TLS, and [deploy-tls-trust.md](../deploy-tls-trust.md) covers trusting it.
 
