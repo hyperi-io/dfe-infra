@@ -23,6 +23,15 @@ What the AWS root builds, how the dial sizes it, and the Kafka and ClickHouse ch
 
 `terraform/environments/aws` builds an EKS cluster and hands it to the same bootstrap and Argo CD layers every other cluster uses. Layer 1 and Layer 2 are the same on AWS.
 
+Only the receiver's load balancer, the optional tunnel forwarder and the NAT gateway touch the internet. Everything DFE runs sits in the private subnets.
+
+![L4 Detail -- DFE on AWS, network. Edge clients reach the cluster's nodes through the receiver's Network Load Balancer, or the optional tunnel forwarder, in the public subnets. The nodes and the Amazon MSK brokers sit in the private subnets. S3 traffic leaves through a gateway endpoint, and traffic for a managed Kafka outside AWS through the NAT gateway. The EKS control plane is AWS-managed, outside the VPC.](diagrams/aws-network-light.svg#gh-light-mode-only)
+![L4 Detail -- DFE on AWS, network. Edge clients reach the cluster's nodes through the receiver's Network Load Balancer, or the optional tunnel forwarder, in the public subnets. The nodes and the Amazon MSK brokers sit in the private subnets. S3 traffic leaves through a gateway endpoint, and traffic for a managed Kafka outside AWS through the NAT gateway. The EKS control plane is AWS-managed, outside the VPC.](diagrams/aws-network-dark.svg#gh-dark-mode-only)
+
+*Figure 1. L4 Detail -- DFE on AWS, network.* Up: [Deploying DFE with dfe-infra](README.md).
+
+The toolbox instance, when enabled, sits in the private subnets too ([toolbox.md](toolbox.md)). The diagram's source is [diagrams/aws-network.yaml](diagrams/aws-network.yaml). Regenerate the `.mmd` and both SVGs with `merrow graph render docs/deployment/diagrams/aws-network.yaml --out docs/deployment/diagrams --profile aws`.
+
 - ARM only. Every node pool, and the MSK brokers when a cluster is built, resolve to Graviton. The cluster module rejects a `shape_ref` that resolves to anything but arm64.
 - Nodes and the data plane sit in private subnets. By default they share one NAT gateway (`network.nat: single`). Use one per availability zone (`per-az`) when a zone failure or the cross-zone charge costs more than the extra gateway.
 - `network.az_count` (default 3, range 2-6) sizes the VPC and is one of the six fields `sizing.yaml` locks once resolved ([Sizing dials and locks](#sizing-dials-and-locks)). A Strimzi or MSK broker count steps up to at least the AZ count. So a deployment spanning more zones than the tyre-kick floor's three brokers still gets one broker per zone.

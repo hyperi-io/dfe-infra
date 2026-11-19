@@ -1,0 +1,31 @@
+title: L4 Detail -- DFE on AWS, network
+description: Edge clients reach the cluster's nodes through the receiver's Network Load Balancer, or the optional tunnel forwarder, in the public subnets. The nodes and the Amazon MSK brokers sit in the private subnets. S3 traffic leaves through a gateway endpoint, and traffic for a managed Kafka outside AWS through the NAT gateway. The EKS control plane is AWS-managed, outside the VPC.
+groups:
+  - {id: cloud, label: "", object: aws.cloud}
+  - {id: region, label: "", object: aws.region, parent: cloud}
+  - {id: vpc, label: "", object: aws.vpc, parent: region}
+  - {id: az, label: "Availability Zones x az_count", object: aws.az, parent: vpc}
+  - {id: pub, label: Public subnets, object: aws.public-subnet, parent: az}
+  - {id: priv, label: Private subnets, object: aws.private-subnet, parent: az}
+nodes:
+  - {id: clients, object: aws.users, label: Edge clients}
+  - {id: eks, object: aws.eks, subtitle: control plane, group: region}
+  - {id: nlb, object: aws.nlb, label: Receiver NLB, subtitle: made by the LB controller, group: pub}
+  - {id: fwd, object: aws.ec2-instance, label: Tunnel forwarder, subtitle: optional, group: pub}
+  - {id: nat, object: aws.nat-gateway, subtitle: one or one per zone, group: pub}
+  - {id: nodes, object: aws.ec2, label: EKS nodes, subtitle: managed group and Karpenter, group: priv}
+  - {id: msk, object: aws.msk, subtitle: when kafka.provider is msk, group: priv}
+  - {id: s3ep, object: aws.vpc-endpoint, label: S3 gateway endpoint, group: vpc}
+  - {id: s3, object: aws.s3, subtitle: object store and logs, group: region}
+  - {id: saas, label: Confluent or Redpanda Cloud, subtitle: optional}
+edges:
+  - {source: clients, target: nlb, label: events}
+  - {source: clients, target: fwd, label: tunnel, optional: true}
+  - {source: eks, target: priv, label: schedules}
+  - {source: nlb, target: nodes}
+  - {source: fwd, target: nodes, optional: true}
+  - {source: nodes, target: msk}
+  - {source: nodes, target: s3ep}
+  - {source: s3ep, target: s3}
+  - {source: nodes, target: nat, optional: true}
+  - {source: nat, target: saas, label: Kafka, optional: true}
