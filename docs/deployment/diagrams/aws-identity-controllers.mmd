@@ -1,0 +1,52 @@
+---
+config:
+  theme: base
+  look: classic
+  fontFamily: Inter, Helvetica, Arial, sans-serif
+  flowchart:
+    curve: linear
+    nodeSpacing: 28
+    rankSpacing: 44
+    padding: 14
+    wrappingWidth: 280
+    htmlLabels: true
+  themeVariables:
+    fontSize: 14px
+    lineColor: "#545B64"
+    primaryTextColor: "#000000"
+    edgeLabelBackground: "#FFFFFF"
+    clusterBkg: transparent
+  themeCSS: >-
+    .nodeLabel span{font-size:12px;color:#334155}
+---
+flowchart TB
+  accTitle: L4 Detail -- DFE on AWS, controller identities
+  accDescr: Three cluster controllers hold an AWS identity through EKS Pod Identity. external-dns and cert-manager write records in the private and public Route 53 zones, Karpenter reads its SQS interruption queue, and the Load Balancer Controller creates the gateway and receiver NLBs.
+  subgraph cloud["AWS Cloud"]
+    r53@{ icon: "aws:amazon-route-53", label: "Amazon Route 53<br/>both zones", pos: "b", h: 80 }
+    sqs@{ icon: "aws:amazon-simple-queue-service", label: "Amazon SQS<br/>interruption queue", pos: "b", h: 80 }
+    nlb@{ icon: "aws:res-elastic-load-balancing-network-load-balancer", label: "NLBs", pos: "b", h: 48 }
+    subgraph cluster["EKS cluster, Pod Identity"]
+      dns("<b>external-dns</b><br/><span>and cert-manager</span>")
+      karp("<b>Karpenter</b>")
+      lbc("<b>LB controller</b>")
+    end
+  end
+  dns -->|"records"| r53
+  karp -->|"interruptions"| sqs
+  lbc -->|"creates"| nlb
+  class dns,karp,lbc part
+  classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A
+  classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A
+  classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A
+  classDef bus fill:#FFFFFF,stroke:#A8517F,stroke-width:3px,color:#0F172A
+  classDef store fill:#FFFFFF,stroke:#00785A,stroke-width:3px,color:#0F172A
+  classDef ui fill:#FFFFFF,stroke:#D9480F,stroke-width:3px,color:#0F172A
+  classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
+  classDef decision fill:#FFFFFF,stroke:#9A6700,stroke-width:3px,color:#0F172A
+  classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
+  classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
+  classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+  style cloud fill:none,stroke:#000000,stroke-width:1.5px,color:#000000
+  style cluster fill:none,stroke:#545B64,stroke-width:1.5px,color:#000000
+  %% merrow:group-icon cloud aws:group-aws-cloud-logo

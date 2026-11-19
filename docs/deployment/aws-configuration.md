@@ -37,7 +37,7 @@ S3 traffic never pays the NAT gateway's per-GB charge. Image pulls the [registry
 
 *Figure 2. L4 Detail -- DFE on AWS, egress.* Up: [Deploying DFE with dfe-infra](README.md).
 
-The toolbox instance, when enabled, sits in the private subnets too ([toolbox.md](toolbox.md)). The sources are [diagrams/aws-ingress.yaml](diagrams/aws-ingress.yaml) and [diagrams/aws-egress.yaml](diagrams/aws-egress.yaml). Regenerate each `.mmd` and its SVGs with `merrow graph render docs/deployment/diagrams/<name>.yaml --out docs/deployment/diagrams`.
+The toolbox instance, when enabled, sits in the private subnets too ([toolbox.md](toolbox.md)). Each diagram on this page is drawn from its YAML in [diagrams/](diagrams/). Regenerate each `.mmd` and its SVGs with `merrow graph render docs/deployment/diagrams/<name>.yaml --out docs/deployment/diagrams`.
 
 - ARM only. Every node pool, and the MSK brokers when a cluster is built, resolve to Graviton. The cluster module rejects a `shape_ref` that resolves to anything but arm64.
 - Nodes and the data plane sit in private subnets. By default they share one NAT gateway (`network.nat: single`). Use one per availability zone (`per-az`) when a zone failure or the cross-zone charge costs more than the extra gateway.
@@ -50,6 +50,20 @@ The toolbox instance, when enabled, sits in the private subnets too ([toolbox.md
 - `cloudtrail.enabled` (on by default) builds one trail for the deployment's region with management events only and global service events included. Its bucket is versioned and encrypted under the deployment key, and its policy is AWS's documented one, scoped to this trail's ARN. Versioning means a principal with `s3:DeleteObject` can't remove a trail file with nothing to recover it from. It stands in for Object Lock, which can't be turned off once enabled and in compliance mode blocks the ephemeral teardown. Objects expire after `telemetry.retention_days`. The trail writes to a CloudWatch log group too, kept `telemetry.forced_retention_days` under the `otel` sink, where the collector reads it into the otel database, and `telemetry.retention_days` under `cloudwatch`.
 - Karpenter's controller policy is AWS's published one with the instance-profile lifecycle statements dropped, because the module creates the profile, and the two profile reads kept. It adds a KMS statement, which the published policy lacks, so the controller can launch nodes with encrypted root volumes, and an `aws:SourceAccount` condition on the interruption queue that the published CloudFormation omits, so no other account's EventBridge rule can enqueue a forged interruption. The managed node group stays because Karpenter's chart keeps the controller off Karpenter nodes.
 - One file drives all of it, the deployment dial `deployment.yaml`. Copy it from `deployment.example.yaml` or let `dfe-ops init` write it ([wizard.md](wizard.md)).
+
+The data workloads hold an AWS identity of their own too, so no DFE pod carries a static key.
+
+![L4 Detail -- DFE on AWS, data identities. Three data workloads hold an AWS identity through EKS Pod Identity. ClickHouse writes its parts to its S3 object store, ESO and dfe-engine read and write secrets in Secrets Manager, and the otel collector reads the EKS audit and CloudTrail log groups in CloudWatch.](diagrams/aws-identity-data-light.svg#gh-light-mode-only)
+![L4 Detail -- DFE on AWS, data identities. Three data workloads hold an AWS identity through EKS Pod Identity. ClickHouse writes its parts to its S3 object store, ESO and dfe-engine read and write secrets in Secrets Manager, and the otel collector reads the EKS audit and CloudTrail log groups in CloudWatch.](diagrams/aws-identity-data-dark.svg#gh-dark-mode-only)
+
+*Figure 3. L4 Detail -- DFE on AWS, data identities.* Up: [Deploying DFE with dfe-infra](README.md).
+
+![L4 Detail -- DFE on AWS, controller identities. Three cluster controllers hold an AWS identity through EKS Pod Identity. external-dns and cert-manager write records in the private and public Route 53 zones, Karpenter reads its SQS interruption queue, and the Load Balancer Controller creates the gateway and receiver NLBs.](diagrams/aws-identity-controllers-light.svg#gh-light-mode-only)
+![L4 Detail -- DFE on AWS, controller identities. Three cluster controllers hold an AWS identity through EKS Pod Identity. external-dns and cert-manager write records in the private and public Route 53 zones, Karpenter reads its SQS interruption queue, and the Load Balancer Controller creates the gateway and receiver NLBs.](diagrams/aws-identity-controllers-dark.svg#gh-dark-mode-only)
+
+*Figure 4. L4 Detail -- DFE on AWS, controller identities.* Up: [Deploying DFE with dfe-infra](README.md).
+
+Not drawn: Karpenter's EC2 launches, the EBS CSI driver's identity for volumes, the MSK bootstrap job's for broker IAM auth, and the dfe-receiver and dfe-hunt-runner readers of the secrets dfe-engine writes.
 
 ### external-dns
 

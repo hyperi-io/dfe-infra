@@ -28,7 +28,7 @@ flowchart LR
     subgraph vpc["VPC"]
       subgraph az["AZs x az_count"]
         subgraph pub["Public subnets"]
-          gwnlb@{ icon: "aws:res-elastic-load-balancing-network-load-balancer", label: "Gateway NLB<br/>UIs", pos: "b", h: 48 }
+          gwnlb@{ icon: "aws:res-elastic-load-balancing-network-load-balancer", label: "Gateway NLB", pos: "b", h: 48 }
           nlb@{ icon: "aws:res-elastic-load-balancing-network-load-balancer", label: "Receiver NLB<br/>opt-in", pos: "b", h: 48 }
           fwd@{ icon: "aws:res-amazon-ec2-instance", label: "Tunnel forwarder<br/>optional", pos: "b", h: 48 }
         end
@@ -39,7 +39,7 @@ flowchart LR
       end
     end
   end
-  users -->|"HTTPS"| gwnlb
+  users -->|"UIs"| gwnlb
   clients -->|"events"| nlb
   clients -.->|"tunnel"| fwd
   gwnlb --> nodes
