@@ -1,0 +1,17 @@
+title: L4 Detail -- DFE on AWS, egress
+profile: aws
+description: S3 traffic from the nodes leaves through a gateway endpoint and never crosses the NAT gateway. Everything else bound for the internet, such as image pulls the registry cache does not serve and a managed Kafka outside AWS, leaves through the NAT gateway in the public subnets.
+groups:
+  - {id: cloud, label: "", object: aws.cloud}
+  - {id: vpc, label: "", object: aws.vpc, parent: cloud}
+  - {id: priv, label: Private subnets, object: aws.private-subnet, parent: vpc}
+  - {id: pub, label: Public subnets, object: aws.public-subnet, parent: vpc}
+nodes:
+  - {id: nodes, object: aws.ec2, label: EKS nodes, subtitle: incl. Karpenter, group: priv}
+  - {id: s3ep, object: aws.vpc-endpoint, label: S3 gateway endpoint, group: vpc}
+  - {id: nat, object: aws.nat-gateway, subtitle: "image pulls, SaaS Kafka", group: pub}
+  - {id: s3, object: aws.s3, subtitle: stores and logs, group: cloud}
+edges:
+  - {source: nodes, target: s3ep}
+  - {source: nodes, target: nat}
+  - {source: s3ep, target: s3}

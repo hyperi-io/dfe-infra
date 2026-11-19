@@ -1,0 +1,52 @@
+---
+config:
+  theme: base
+  look: classic
+  fontFamily: Inter, Helvetica, Arial, sans-serif
+  flowchart:
+    curve: linear
+    nodeSpacing: 28
+    rankSpacing: 44
+    padding: 14
+    wrappingWidth: 280
+    htmlLabels: true
+  themeVariables:
+    fontSize: 14px
+    lineColor: "#545B64"
+    primaryTextColor: "#000000"
+    edgeLabelBackground: "#FFFFFF"
+    clusterBkg: transparent
+  themeCSS: >-
+    .nodeLabel span{font-size:12px;color:#334155}
+---
+flowchart TB
+  accTitle: L4 Detail -- DFE on AWS, data identities
+  accDescr: Three data workloads hold an AWS identity through EKS Pod Identity. ClickHouse writes its parts to its S3 object store, ESO and dfe-engine read and write secrets in Secrets Manager, and the otel collector reads the EKS audit and CloudTrail log groups in CloudWatch.
+  subgraph cloud["AWS Cloud"]
+    s3@{ icon: "aws:amazon-simple-storage-service", label: "Amazon S3<br/>object store", pos: "b", h: 80 }
+    sm@{ icon: "aws:aws-secrets-manager", label: "AWS Secrets Manager", pos: "b", h: 80 }
+    cw@{ icon: "aws:amazon-cloudwatch", label: "Amazon CloudWatch<br/>audit, CloudTrail logs", pos: "b", h: 80 }
+    subgraph cluster["EKS cluster, Pod Identity"]
+      ch("<b>ClickHouse</b>")
+      eso("<b>ESO</b><br/><span>and dfe-engine</span>")
+      otel("<b>otel collector</b><br/><span>sink otel</span>")
+    end
+  end
+  ch -->|"parts"| s3
+  eso -->|"secrets"| sm
+  otel -->|"reads"| cw
+  class ch,eso,otel part
+  classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A
+  classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A
+  classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A
+  classDef bus fill:#FFFFFF,stroke:#A8517F,stroke-width:3px,color:#0F172A
+  classDef store fill:#FFFFFF,stroke:#00785A,stroke-width:3px,color:#0F172A
+  classDef ui fill:#FFFFFF,stroke:#D9480F,stroke-width:3px,color:#0F172A
+  classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
+  classDef decision fill:#FFFFFF,stroke:#9A6700,stroke-width:3px,color:#0F172A
+  classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
+  classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
+  classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+  style cloud fill:none,stroke:#000000,stroke-width:1.5px,color:#000000
+  style cluster fill:none,stroke:#545B64,stroke-width:1.5px,color:#000000
+  %% merrow:group-icon cloud aws:group-aws-cloud-logo
