@@ -496,3 +496,9 @@ html[data-theme='dark'] {
   overflow-x: auto;
   overflow-y: hidden;
 }
+
+/* GitHub's theme fragments: a page pairs a light and a dark image, and each theme hides the other. */
+[data-theme='light'] img[src$='#gh-dark-mode-only'],
+[data-theme='dark'] img[src$='#gh-light-mode-only'] {
+  display: none;
+}
