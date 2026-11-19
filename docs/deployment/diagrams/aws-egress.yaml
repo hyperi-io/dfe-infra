@@ -4,9 +4,8 @@ description: S3 traffic from the nodes leaves through a gateway endpoint and nev
 groups:
   - {id: cloud, label: "", object: aws.cloud}
   - {id: vpc, label: "", object: aws.vpc, parent: cloud}
-  - {id: az, label: "AZs x az_count", object: aws.az, parent: vpc}
-  - {id: priv, label: Private subnets, object: aws.private-subnet, parent: az}
-  - {id: pub, label: Public subnets, object: aws.public-subnet, parent: az}
+  - {id: priv, label: Private subnets, object: aws.private-subnet, parent: vpc}
+  - {id: pub, label: Public subnets, object: aws.public-subnet, parent: vpc}
 nodes:
   - {id: nodes, object: aws.ec2, label: EKS nodes, subtitle: incl. Karpenter, group: priv}
   - {id: s3ep, object: aws.vpc-endpoint, label: S3 gateway endpoint, group: vpc}

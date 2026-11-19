@@ -26,13 +26,11 @@ flowchart LR
     s3@{ icon: "aws:amazon-simple-storage-service", label: "Amazon S3<br/>stores and logs", pos: "b", h: 80 }
     subgraph vpc["VPC"]
       s3ep@{ icon: "aws:res-amazon-vpc-endpoints", label: "S3 gateway endpoint", pos: "b", h: 48 }
-      subgraph az["AZs x az_count"]
-        subgraph priv["Private subnets"]
-          nodes@{ icon: "aws:res-amazon-ec2-instances", label: "EKS nodes<br/>incl. Karpenter", pos: "b", h: 48 }
-        end
-        subgraph pub["Public subnets"]
-          nat@{ icon: "aws:res-amazon-vpc-nat-gateway", label: "NAT gateway<br/>image pulls, SaaS Kafka", pos: "b", h: 48 }
-        end
+      subgraph priv["Private subnets"]
+        nodes@{ icon: "aws:res-amazon-ec2-instances", label: "EKS nodes<br/>incl. Karpenter", pos: "b", h: 48 }
+      end
+      subgraph pub["Public subnets"]
+        nat@{ icon: "aws:res-amazon-vpc-nat-gateway", label: "NAT gateway<br/>image pulls, SaaS Kafka", pos: "b", h: 48 }
       end
     end
   end
@@ -52,7 +50,6 @@ flowchart LR
   classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
   style cloud fill:none,stroke:#000000,stroke-width:1.5px,color:#000000
   style vpc fill:none,stroke:#8C4FFF,stroke-width:1.5px,color:#000000
-  style az fill:none,stroke:#00A4A6,stroke-width:1.5px,stroke-dasharray:8 6,color:#000000
   style priv fill:none,stroke:#00A4A6,stroke-width:1.5px,color:#000000
   style pub fill:none,stroke:#7AA116,stroke-width:1.5px,color:#000000
   %% merrow:group-icon cloud aws:group-aws-cloud-logo

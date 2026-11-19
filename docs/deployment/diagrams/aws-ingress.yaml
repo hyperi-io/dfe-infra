@@ -4,15 +4,14 @@ description: Users reach the UIs through the gateway's internet-facing Network L
 groups:
   - {id: cloud, label: "", object: aws.cloud}
   - {id: vpc, label: "", object: aws.vpc, parent: cloud}
-  - {id: az, label: "AZs x az_count", object: aws.az, parent: vpc}
-  - {id: pub, label: Public subnets, object: aws.public-subnet, parent: az}
-  - {id: priv, label: Private subnets, object: aws.private-subnet, parent: az}
+  - {id: pub, label: Public subnets, object: aws.public-subnet, parent: vpc}
+  - {id: priv, label: Private subnets, object: aws.private-subnet, parent: vpc}
 nodes:
   - {id: users, object: aws.users, label: Users}
   - {id: clients, object: aws.users, label: Edge clients}
   - {id: gwnlb, object: aws.nlb, label: Gateway NLB, group: pub}
   - {id: nlb, object: aws.nlb, label: Receiver NLB, subtitle: opt-in, group: pub}
-  - {id: fwd, object: aws.ec2-instance, label: Tunnel forwarder, subtitle: optional, group: pub}
+  - {id: fwd, object: aws.ec2-instance, label: Tunnel forwarder, group: pub}
   - {id: nodes, object: aws.ec2, label: EKS nodes, subtitle: incl. Karpenter, group: priv}
   - {id: msk, object: aws.msk, subtitle: if provider msk, group: priv}
 edges:
