@@ -25,18 +25,16 @@ flowchart LR
   users@{ icon: "aws:res-users", label: "Users", pos: "b", h: 48 }
   clients@{ icon: "aws:res-users", label: "Edge clients", pos: "b", h: 48 }
   subgraph cloud["AWS Cloud"]
-    subgraph region["Region"]
-      subgraph vpc["VPC"]
-        subgraph az["Availability Zones x az_count"]
-          subgraph pub["Public subnets"]
-            gwnlb@{ icon: "aws:res-elastic-load-balancing-network-load-balancer", label: "Gateway NLB<br/>UIs", pos: "b", h: 48 }
-            nlb@{ icon: "aws:res-elastic-load-balancing-network-load-balancer", label: "Receiver NLB<br/>once senders are allowed", pos: "b", h: 48 }
-            fwd@{ icon: "aws:res-amazon-ec2-instance", label: "Tunnel forwarder<br/>optional", pos: "b", h: 48 }
-          end
-          subgraph priv["Private subnets"]
-            nodes@{ icon: "aws:res-amazon-ec2-instances", label: "EKS nodes<br/>managed group and Karpenter", pos: "b", h: 48 }
-            msk@{ icon: "aws:amazon-managed-streaming-for-apache-kafka", label: "Amazon MSK<br/>when kafka.provider is msk", pos: "b", h: 80 }
-          end
+    subgraph vpc["VPC"]
+      subgraph az["AZs x az_count"]
+        subgraph pub["Public subnets"]
+          gwnlb@{ icon: "aws:res-elastic-load-balancing-network-load-balancer", label: "Gateway NLB<br/>UIs", pos: "b", h: 48 }
+          nlb@{ icon: "aws:res-elastic-load-balancing-network-load-balancer", label: "Receiver NLB<br/>opt-in", pos: "b", h: 48 }
+          fwd@{ icon: "aws:res-amazon-ec2-instance", label: "Tunnel forwarder<br/>optional", pos: "b", h: 48 }
+        end
+        subgraph priv["Private subnets"]
+          nodes@{ icon: "aws:res-amazon-ec2-instances", label: "EKS nodes<br/>incl. Karpenter", pos: "b", h: 48 }
+          msk@{ icon: "aws:amazon-managed-streaming-for-apache-kafka", label: "Amazon MSK<br/>if provider msk", pos: "b", h: 80 }
         end
       end
     end
@@ -60,13 +58,11 @@ flowchart LR
   classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
   classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
   style cloud fill:none,stroke:#000000,stroke-width:1.5px,color:#000000
-  style region fill:none,stroke:#00A4A6,stroke-width:1.5px,stroke-dasharray:3 3,color:#000000
   style vpc fill:none,stroke:#8C4FFF,stroke-width:1.5px,color:#000000
   style az fill:none,stroke:#00A4A6,stroke-width:1.5px,stroke-dasharray:8 6,color:#000000
   style pub fill:none,stroke:#7AA116,stroke-width:1.5px,color:#000000
   style priv fill:none,stroke:#00A4A6,stroke-width:1.5px,color:#000000
   %% merrow:group-icon cloud aws:group-aws-cloud-logo
-  %% merrow:group-icon region aws:group-region
   %% merrow:group-icon vpc aws:group-virtual-private-cloud-vpc
   %% merrow:group-icon pub aws:group-public-subnet
   %% merrow:group-icon priv aws:group-private-subnet
