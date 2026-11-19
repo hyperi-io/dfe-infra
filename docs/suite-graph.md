@@ -216,7 +216,9 @@ flowchart TB
         dfe_hyperdx("<b>dfe-hyperdx</b>")
         dfe_ui("<b>dfe-ui</b>")
     end
-    libraries ~~~ content ~~~ infra ~~~ ui
+    libraries ~~~ content
+    libraries ~~~ infra
+    libraries ~~~ ui
 
     class dfe_deploy,dfe_docker,dfe_infra control
     class dfe_clickhouse_rs,factbook_rs,logreducer,scalo_py,scalo_rs,vector_vrl part

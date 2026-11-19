@@ -79,11 +79,11 @@ config:
     .ui .label-icon{color:#D9480F}
     .ext .label-icon{color:#64748B}
 ---
-flowchart TB
+flowchart LR
     accTitle: L4 Detail -- Tunnel client reach
     accDescr: An appliance dials in to the public LoadBalancer, or the NodePort on AWS, and its tunnel ends in the culvert pod. From there records reach dfe-receiver, and the paths to dfe-engine and ClickHouse are denied.
     subgraph outside["Outside the cluster"]
-        direction LR
+        direction TB
         appliance("<b>Appliance</b>")
         door("<b>LoadBalancer</b><br/><span>or NodePort</span>")
         appliance -->|dials in| door

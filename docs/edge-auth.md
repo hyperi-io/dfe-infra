@@ -66,7 +66,7 @@ config:
     .ui .label-icon{color:#D9480F}
     .ext .label-icon{color:#64748B}
 ---
-flowchart TB
+flowchart LR
     accTitle: L4 Detail -- Edge exposure
     accDescr: A browser reaches the dfe-gateway over HTTPS, and the gateway sends federated logins to an external identity provider. The gateway routes the console hostname to dfe-ui and dfe-engine and each admin hostname to its admin UI. dfe-ui embeds dfe-hyperdx in an iframe.
     subgraph edge["Edge"]
