@@ -383,8 +383,9 @@ def _walk_consumer(
 ) -> int:
     """Check one consumer's edges and rebuild it if the graph says so.
 
-    The rebuild runs in a worktree of the consumer at ``origin/main``, so the
-    consumer's own checkout keeps its branch and its uncommitted work. It merges
+    The edge checks and the rebuild both read a worktree of the consumer at
+    ``origin/main``, a dry run's included, so a stale checkout decides nothing,
+    and the checkout keeps its branch and its uncommitted work. The rebuild merges
     with no release trailer, and appends ``(checkout, release argv)`` to
     ``releases``. A consumer whose CI runs self-hosted holds one of
     ``self_hosted_slots`` for the whole rebuild.
@@ -395,11 +396,44 @@ def _walk_consumer(
     """
     try:
         repo = _consumer_repo(consumer, args.repos)
+        worktree = walk_worktree(repo, WALK_WORKTREE)
     except FleetError as exc:
         print(f"{consumer} | - | - | unknown | {ACTION_HUMAN_READ} | {exc}", flush=True)
         left.append((consumer, ACTION_HUMAN_READ, str(exc)))
         return 0
+    rc = _walk_worktree(
+        consumer,
+        group,
+        args,
+        repo=repo,
+        worktree=worktree,
+        package=package,
+        left=left,
+        gate_lock=gate_lock,
+        releases=[] if releases is None else releases,
+        self_hosted_slots=self_hosted_slots,
+    )
+    if rc == 0:
+        remove_worktree(repo, worktree)
+    elif worktree != repo:
+        say(f"left the worktree at {worktree} as it stands")
+    return rc
 
+
+def _walk_worktree(
+    consumer: str,
+    group: list[dict],
+    args: argparse.Namespace,
+    *,
+    repo: Path,
+    worktree: Path,
+    package: str | None,
+    left: list[tuple[str, str, str]],
+    gate_lock: AbstractContextManager[object] | None,
+    releases: list[tuple[str, list[str]]],
+    self_hosted_slots: AbstractContextManager[object] | None,
+) -> int:
+    """The body of :func:`_walk_consumer`, reading ``worktree`` and naming ``repo`` in the release lines."""
     acting: list[tuple[dict, CheckResult]] = []
     rebuild_action: str | None = None
     for edge in group:
@@ -407,7 +441,7 @@ def _walk_consumer(
             result = check_edge(
                 edge,
                 producer_version=args.version,
-                consumer_repo=repo,
+                consumer_repo=worktree,
                 package=package,
                 dry_run=args.dry_run,
             )
@@ -455,8 +489,6 @@ def _walk_consumer(
             left.append((consumer, result.action or ACTION_HUMAN_READ, result.detail))
 
     say(f"{consumer}: rebuilding onto {args.producer} {args.version}")
-    if releases is None:
-        releases = []
 
     def landed(argv: list[str]) -> None:
         releases.append((str(repo), argv))
@@ -476,27 +508,21 @@ def _walk_consumer(
     if args.runner_mode:
         mode, why = args.runner_mode, "--runner-mode or GH_RUNNER_MODE"
     else:
-        mode, why = runner_mode(repo, repo_slug(repo, args.org))
+        mode, why = runner_mode(worktree, repo_slug(repo, args.org))
     slot: AbstractContextManager[object] = nullcontext()
     if mode == SELF_HOSTED and self_hosted_slots is not None:
         slot = self_hosted_slots
     say(f"CI runs {mode} ({why})")
-    worktree = repo
     try:
         with slot:
-            worktree = walk_worktree(repo, WALK_WORKTREE, dry_run=args.dry_run)
             rc = rebuild(worktree, args.version, **kwargs)
     except FleetError as exc:
         say(f"{consumer}: rebuild failed -- {exc}")
-        if worktree != repo:
-            say(f"{consumer}: left the worktree at {worktree} as it stands")
         left.append((consumer, rebuild_action, str(exc)))
         return 1
     if rc != 0:
         say(f"{consumer}: rebuild returned {rc} -- no further rebuilds start")
-        return rc
-    remove_worktree(repo, worktree)
-    return 0
+    return rc
 
 
 def _gather(member: str, repo: Path) -> dict:

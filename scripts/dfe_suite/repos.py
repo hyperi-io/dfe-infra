@@ -12,6 +12,7 @@ different places, so a repo is resolved through an explicit env var first
 and a short list of roots after that.
 """
 
+import contextlib
 import os
 from pathlib import Path
 
@@ -203,20 +204,31 @@ def sync_main(repo: Path, *, dry_run: bool) -> None:
     git("pull", "--rebase", "--autostash", "origin", "main", cwd=repo)
 
 
-def walk_worktree(repo: Path, name: str, *, dry_run: bool) -> Path:
-    """A linked worktree of ``repo`` at ``.worktrees/<name>``, detached at ``origin/main``.
+def walk_worktree(repo: Path, name: str) -> Path:
+    """A linked worktree of ``repo`` at ``.worktrees/<name>/<repo dir>``, detached at ``origin/main``.
 
-    The repo's own checkout is never switched, so a ``main`` another worktree
-    holds and uncommitted work in the checkout both stay as they are. A
-    worktree of that name left by an interrupted run is ours, and is reset.
+    The last path part stays the repo's directory name, which edge evidence
+    matches a consumer by.
+
+    Every read a walk makes goes through it, a dry run's included, so a stale
+    local checkout cannot decide a rebuild or fail a preflight. The repo's own
+    checkout is never switched, so a ``main`` another worktree holds and
+    uncommitted work in the checkout both stay as they are. A worktree of that
+    name left by an interrupted run is ours, and is reset.
 
     Returns:
-        The worktree, or ``repo`` itself on a dry run, which creates nothing.
+        The worktree, or ``repo`` itself when it has no ``origin`` remote to
+        read ``main`` from, which is then read as it stands.
+
+    Raises:
+        FleetError: If the fetch or the worktree fails.
     """
-    path = repo / ".worktrees" / name
-    if dry_run:
-        say(f"[dry-run] would work in {path}, detached at origin/main")
+    if not repo.is_dir():
         return repo
+    if run(["git", "remote", "get-url", "origin"], cwd=repo, check=False).returncode:
+        say(f"{repo} has no origin remote -- reading it as it stands")
+        return repo
+    path = repo / ".worktrees" / name / repo.name
     git("fetch", "origin", "main", "--tags", "--quiet", cwd=repo)
     if path.exists():
         say(f"resetting the worktree at {path} to origin/main")
@@ -234,6 +246,9 @@ def remove_worktree(repo: Path, path: Path) -> None:
     gone = run(["git", "worktree", "remove", str(path)], cwd=repo, check=False)
     if gone.returncode != 0:
         say(f"kept the worktree at {path}: {gone.stderr.strip()}")
+        return
+    with contextlib.suppress(OSError):
+        path.parent.rmdir()
 
 
 def return_to_main(repo: Path) -> None:

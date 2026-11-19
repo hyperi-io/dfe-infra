@@ -559,9 +559,10 @@ def rebuild_rust(
 
     configured = _skip_optimize(repo)
     unoptimized = release_unoptimized or configured
-    say(
-        f"release path: {_release_path(forced=release_unoptimized, configured=configured)}"
-    )
+    path = _release_path(forced=release_unoptimized, configured=configured)
+    if on_landed is not None and not unoptimized:
+        path = "hyperi-ci release after the merge, handed back to the caller"
+    say(f"release path: {path}")
 
     dispatch: list[str] = []
     if unoptimized:

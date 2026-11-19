@@ -645,14 +645,41 @@ class WalkActsTests(unittest.TestCase):
         os.environ["PATH"] = f"{bin_dir}{os.pathsep}{saved}"
         self.addCleanup(os.environ.__setitem__, "PATH", saved)
 
-    def _walk(self, *edges: dict) -> tuple[int, str]:
+    def _walk(self, *edges: dict, local_only: str = "") -> tuple[int, str]:
+        """Dry-run the walk on a consumer whose origin/main holds its files.
+
+        ``local_only`` is a ``.hyperi-ci.yaml`` written to the checkout after
+        the push, which origin/main never sees.
+        """
         slice_ = dict(SLICE)
         if edges:
             slice_["edges"] = list(edges)
         infra = _stub_infra(self.root, slice_=slice_)
         repo = _consumer(self.root, 'scalo = { version = ">=2.10.14, <3" }')
-        if not (repo / ".git").exists():
-            subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
+        origin = self.root / "origin.git"
+        if not origin.exists():
+            for argv in (
+                ["git", "init", "-q", "--bare", "-b", "main", str(origin)],
+                ["git", "-C", str(repo), "init", "-q", "-b", "main"],
+                ["git", "-C", str(repo), "add", "-A"],
+                [
+                    "git",
+                    "-C",
+                    str(repo),
+                    "-c",
+                    "user.name=t",
+                    "-c",
+                    "user.email=t@example.com",
+                    "commit",
+                    "-qm",
+                    "seed",
+                ],
+                ["git", "-C", str(repo), "remote", "add", "origin", str(origin)],
+                ["git", "-C", str(repo), "push", "-q", "origin", "main"],
+            ):
+                subprocess.run(argv, check=True)
+        if local_only:
+            (repo / ".hyperi-ci.yaml").write_text(local_only, encoding="utf-8")
         buffer = io.StringIO()
         with contextlib.redirect_stdout(buffer):
             code = ds.main(
@@ -676,13 +703,20 @@ class WalkActsTests(unittest.TestCase):
         assert "DRY RUN -- nothing will be changed or pushed" in output
         assert "would pin scalo to 2.11.0" in output
         assert "dry run complete" in output
-        assert "would work in" in output
-        assert ".worktrees/dfe-suite-walk" in output
+        assert "adding the worktree" in output
         assert "without the release trailer, and hand back: hyperi-ci release" in output
         assert "follow the release" not in output
         repo = self.root / "suite-consumer-xyzzy"
         tail = output.split("Release each one:", 1)[1].splitlines()
         assert tail[1:3] == [f"  cd {repo}", "  hyperi-ci release"]
+        assert not (repo / ".worktrees" / "dfe-suite-walk").exists()
+
+    def test_a_setting_only_the_stale_checkout_carries_decides_nothing(self) -> None:
+        # dfe-fetcher's checkout carried a skip_optimize origin/main no longer has.
+        code, output = self._walk(local_only="build:\n  skip_optimize: true\n")
+        assert code == 0, output
+        assert "consented workflow_dispatch" not in output
+        assert "hand back: hyperi-ci release" in output
 
     def test_a_rebuild_does_not_swallow_a_siblings_edge_in_either_order(self) -> None:
         # The regression: a rebuild dispatched by one edge used to discard
