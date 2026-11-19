@@ -78,7 +78,7 @@ config:
     .ui .label-icon{color:#D9480F}
     .ext .label-icon{color:#64748B}
 ---
-flowchart TB
+flowchart LR
     accTitle: L4 Detail -- The deploy repo
     accDescr: dfe-engine commits to the deploy repo, one per environment. It holds pins.yaml, values/ with one file per app instance, infra/ for the backing services and config/ for sources, schemas, transforms, rules and OIDC. Argo CD reads the pin, the values and the infra overlays from it.
     subgraph writer["Writer"]

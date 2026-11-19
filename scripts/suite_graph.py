@@ -663,7 +663,9 @@ def mermaid_overview(graph: dict, block: str) -> str:
         body += _subgraph(ids[-1], title, boxes[k], graph)
         listed = [_label(n, nodes[n]) for n in boxes[k]]
         descr.append(f"{_names(listed)} sit in {title}.")
-    body.append(" ~~~ ".join(ids))
+    # The largest box takes the top row and the rest share the row under it, so
+    # four boxes stay under the page's 600 px height.
+    body += [f"{ids[0]} ~~~ {gid}" for gid in ids[1:]]
     what = "services" if key == "language" else "members that are not services"
     return _block(
         scope,

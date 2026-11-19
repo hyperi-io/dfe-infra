@@ -48,7 +48,7 @@ config:
     .ui .label-icon{color:#D9480F}
     .ext .label-icon{color:#64748B}
 ---
-flowchart TB
+flowchart LR
     accTitle: L4 Detail -- Fact and dimension join
     accDescr: Large time-series fact tables, such as device events, application logs and metrics, and small point-in-time dimension tables, such as an asset inventory, an identity directory and a CMDB, meet in one JOIN in ClickHouse SQL that answers the question.
     subgraph facts["Fact tables, observability"]
@@ -56,15 +56,17 @@ flowchart TB
         events[("<b>Device events</b>")]
         applogs[("<b>Application logs</b>")]
         metrics[("<b>Metrics</b>")]
+        events ~~~ applogs ~~~ metrics
     end
     subgraph dims["Dimension tables, context"]
         direction LR
         assets[("<b>Asset inventory</b>")]
         directory[("<b>Identity directory</b>")]
         cmdb[("<b>CMDB</b>")]
+        assets ~~~ directory ~~~ cmdb
     end
     subgraph query["The question"]
-        direction LR
+        direction TB
         join("<b>JOIN</b><br/><span>in ClickHouse SQL</span>")
         answer("<b>Which devices stopped reporting?</b>")
         join -->|answer| answer

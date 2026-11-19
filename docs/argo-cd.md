@@ -58,7 +58,7 @@ config:
     .ui .label-icon{color:#D9480F}
     .ext .label-icon{color:#64748B}
 ---
-flowchart TB
+flowchart LR
   accTitle: L3 Components -- Argo CD
   accDescr: bootstrap.sh installs or adopts DFE's Argo CD. Argo CD reads charts, ApplicationSets and tier values from dfe-infra, dfe-engine's overlays from the deploy repo and each app's thin chart by digest. Layer 1 and the platform sync first, then Layer 2's backing services and apps, and Helm applies them to your cluster.
   subgraph SRC["Reads"]
@@ -71,13 +71,13 @@ flowchart TB
     B ~~~ O
   end
   subgraph ARGO["Argo CD"]
-    direction LR
+    direction TB
     A1("<b>Layer 1 and platform</b><br/><span>waves 1-3</span>")
     A4("<b>Layer 2</b><br/><span>data at 4 and 6, apps at 5 and 7</span>")
     A1 --> A4
   end
   subgraph K8S["Your cluster"]
-    direction LR
+    direction TB
     S[("<b>Backing services</b><br/><span>ClickHouse, Kafka, DocumentDB</span>")]
     P("<b>DFE apps</b><br/><span>one Application each</span>")
     S ~~~ P
