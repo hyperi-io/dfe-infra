@@ -37,7 +37,7 @@ S3 traffic never pays the NAT gateway's per-GB charge. Image pulls the [registry
 
 *Figure 2. L4 Detail -- DFE on AWS, egress.* Up: [Deploying DFE with dfe-infra](README.md).
 
-The toolbox instance, when enabled, sits in the private subnets too ([toolbox.md](toolbox.md)). Each diagram on this page is drawn from its YAML in [diagrams/](diagrams/). Regenerate each `.mmd` and its SVGs with `merrow graph render docs/deployment/diagrams/<name>.yaml --out docs/deployment/diagrams`.
+The toolbox instance, when enabled, sits in the private subnets too ([toolbox.md](toolbox.md)). Each diagram on this page is drawn from its YAML in `docs/deployment/diagrams/`. Regenerate each `.mmd` and its SVGs with `merrow graph render docs/deployment/diagrams/<name>.yaml --out docs/deployment/diagrams`.
 
 - ARM only. Every node pool, and the MSK brokers when a cluster is built, resolve to Graviton. The cluster module rejects a `shape_ref` that resolves to anything but arm64.
 - Nodes and the data plane sit in private subnets. By default they share one NAT gateway (`network.nat: single`). Use one per availability zone (`per-az`) when a zone failure or the cross-zone charge costs more than the extra gateway.
