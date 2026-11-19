@@ -230,6 +230,11 @@
 #   app's id. Absent means the id is shown. It changes the label only: the id
 #   stays the name of the chart, the Service, the routes and the telemetry.
 #
+# telemetry
+#   scalo (the default) or none. A scalo app reports the info gauge a console
+#   reads to say it is up. An app built on another stack sets none, and its
+#   reporting state is unknown rather than not reporting.
+#
 # kinds
 #   What KIND of thing an artefact in the versioned library is. The library CRUD
 #   is generic over these, so supporting a new authored language is an edit here
@@ -799,6 +804,7 @@ apps:
 
   dfe-ui:
     multiplicity: single
+    telemetry: none
     scale_deployed: true
     transports: []
     hot_reload: false
@@ -808,6 +814,7 @@ apps:
   dfe-hyperdx:
     display_name: Search
     multiplicity: single
+    telemetry: none
     scale_deployed: false
     transports: []
     hot_reload: false
