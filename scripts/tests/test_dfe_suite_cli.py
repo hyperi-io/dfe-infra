@@ -14,6 +14,7 @@ import importlib.util
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -537,8 +538,59 @@ class WalkConcurrencyTests(unittest.TestCase):
         code, _ = self._run(0, walk_one)
         assert code == 0
 
-    def test_the_default_caps_concurrent_rebuilds(self) -> None:
-        assert ds.build_parser().parse_args(["walk", "p", "1.0.0"]).jobs == ds.WALK_JOBS
+    def test_the_default_puts_no_cap_on_concurrent_rebuilds(self) -> None:
+        args = ds.build_parser().parse_args(["walk", "p", "1.0.0"])
+        assert args.jobs == 0
+        assert args.runner_mode is None
+
+    def test_self_hosted_consumers_take_turns_and_free_ones_do_not(self) -> None:
+        # Six consumers is one more than the self-hosted slots allow at once.
+        consumers = [f"c{n}" for n in range(ds.SELF_HOSTED_JOBS + 1)]
+        for mode, peak_wanted in (
+            ("free", len(consumers)),
+            ("self-hosted", ds.SELF_HOSTED_JOBS),
+        ):
+            with self.subTest(mode=mode):
+                peak = self._peak(consumers, mode)
+                assert peak == peak_wanted
+
+    def _peak(self, consumers: list[str], mode: str) -> int:
+        """Most rebuilds in flight at once when every consumer runs ``mode``."""
+        lock = threading.Lock()
+        live = [0, 0]
+        everyone = threading.Barrier(len(consumers), timeout=1)
+
+        def rebuild(*_: object, **__: object) -> int:
+            with lock:
+                live[0] += 1
+                live[1] = max(live)
+            try:
+                everyone.wait()
+            except threading.BrokenBarrierError:
+                pass
+            with lock:
+                live[0] -= 1
+            return 0
+
+        edges = [{"from": "p", "to": name, "kind": "cargo-dep"} for name in consumers]
+        result = ds.CheckResult(True, "admits", ds.ACTION_REBUILD_RUST)
+        with (
+            mock.patch.object(
+                ds, "load_producer", return_value={"nodes": {"p": {"package": "scalo"}}}
+            ),
+            mock.patch.object(ds, "out_edges", return_value=edges),
+            mock.patch.object(
+                ds, "_consumer_repo", side_effect=lambda name, _: Path(name)
+            ),
+            mock.patch.object(ds, "check_edge", return_value=result),
+            mock.patch.object(ds, "rebuild_rust", side_effect=rebuild),
+            mock.patch.object(
+                ds, "walk_worktree", side_effect=lambda repo, *_, **__: repo
+            ),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            assert ds.main(["walk", "p", "1.0.0", "--runner-mode", mode]) == 0
+        return live[1]
 
     def test_a_failure_stops_new_rebuilds_and_names_them(self) -> None:
         started: list[str] = []
@@ -624,6 +676,13 @@ class WalkActsTests(unittest.TestCase):
         assert "DRY RUN -- nothing will be changed or pushed" in output
         assert "would pin scalo to 2.11.0" in output
         assert "dry run complete" in output
+        assert "would work in" in output
+        assert ".worktrees/dfe-suite-walk" in output
+        assert "without the release trailer, and hand back: hyperi-ci release" in output
+        assert "follow the release" not in output
+        repo = self.root / "suite-consumer-xyzzy"
+        tail = output.split("Release each one:", 1)[1].splitlines()
+        assert tail[1:3] == [f"  cd {repo}", "  hyperi-ci release"]
 
     def test_a_rebuild_does_not_swallow_a_siblings_edge_in_either_order(self) -> None:
         # The regression: a rebuild dispatched by one edge used to discard
@@ -692,27 +751,11 @@ esac
 """
 
 
-def _hyperi_ai_installed() -> bool:
-    """True when hyperi-ai's fixes_scan.py is reachable.
-
-    `signals` and the review pack's signal line read it. Without hyperi-ai
-    there is nothing to gather, so those cases SKIP -- mocking the scanner
-    would assert against our own stub rather than the real gather.
-    """
-    from pathlib import Path as _P
-
-    root = os.environ.get("HYPERI_AI_ROOT")
-    candidates = [_P(root) / "tools" / "fixes_scan.py"] if root else []
-    candidates += [
-        _P.home() / ".local" / "share" / "hyperi-ai" / "tools" / "fixes_scan.py",
-        _P("/usr/local/share/hyperi-ai/tools/fixes_scan.py"),
-    ]
-    return any(path.is_file() for path in candidates)
-
-
+# `signals` and the review pack's signal line read `hyperi-ai scan fixes`.
+# Without hyperi-ai those cases skip, because a stub would test only itself.
 NEEDS_HYPERI_AI = pytest.mark.skipif(
-    not _hyperi_ai_installed(),
-    reason="signal gather needs hyperi-ai's fixes_scan.py",
+    shutil.which("hyperi-ai") is None,
+    reason="signal gather needs `hyperi-ai scan fixes`",
 )
 
 

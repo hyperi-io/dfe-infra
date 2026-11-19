@@ -19,7 +19,8 @@ scalo's pin whichever producer released.
 
 Both end the same way: a staged change lands through
 :func:`hyperi_ai.suite.landing.land_via_pr`, and the release is followed to a
-moved artefact.
+moved artefact. A caller that passes ``on_landed`` takes the release instead:
+the change lands with no trailer and the caller gets the command that releases it.
 
 A Rust consumer with ``build.skip_optimize`` set cannot release through the
 merge: hyperi-ci refuses a stable build with its optimisation stage skipped
@@ -43,15 +44,13 @@ Cargo builds into the checkout's own ``target/`` unless
 ``SCALO_REBUILD_TARGET`` names another directory.
 """
 
-from __future__ import annotations
-
 import json
 import os
 import re
 import shlex
 import shutil
 import tempfile
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from contextlib import AbstractContextManager, nullcontext
 from pathlib import Path
 
@@ -281,6 +280,10 @@ _CONSENT_INPUTS = ("skip-optimize", "release-unoptimized")
 _EXPRESSION = re.compile(r"\$\{\{(.*?)\}\}", re.DOTALL)
 
 
+# Releases main's HEAD, run from a checkout of the consumer.
+HYPERI_CI_RELEASE = ["hyperi-ci", "release"]
+
+
 def _unoptimized_dispatch(slug: str) -> list[str]:
     """The ``gh workflow run`` that releases main's HEAD with the consent set."""
     argv = ["gh", "workflow", "run", CI_WORKFLOW_FILE, "-R", slug, "--ref", "main"]
@@ -488,6 +491,8 @@ def rebuild_rust(
     release_unoptimized: bool = False,
     gate_lock: AbstractContextManager[object] | None = None,
     gate: str = GATE_LOCAL,
+    sync: bool = True,
+    on_landed: Callable[[list[str]], None] | None = None,
 ) -> int:
     """Move one Rust consumer onto a new producer release and ship it.
 
@@ -513,6 +518,11 @@ def rebuild_rust(
         gate: ``local`` runs clippy (and nextest unless ``run_tests`` is False)
             here. ``pr-ci`` runs neither and takes the PR's CI Quality and Test
             as the gate, for a host without the memory for an all-features build.
+        sync: Bring ``repo`` onto an up-to-date ``main`` first. False when the
+            caller made ``repo`` a worktree at ``origin/main`` already.
+        on_landed: Land with no release trailer and pass this the argv that
+            releases the merge, rather than releasing it here. Called on a dry
+            run too, with the argv a real run would pass.
 
     Returns:
         The process exit code -- non-zero means STOP.
@@ -544,7 +554,8 @@ def rebuild_rust(
     if dry_run:
         say("DRY RUN -- nothing will be changed or pushed")
 
-    sync_main(repo, dry_run=dry_run)
+    if sync:
+        sync_main(repo, dry_run=dry_run)
 
     configured = _skip_optimize(repo)
     unoptimized = release_unoptimized or configured
@@ -562,6 +573,7 @@ def rebuild_rust(
             f"{' and '.join(_CONSENT_INPUTS)}"
         )
         dispatch = _unoptimized_dispatch(slug)
+    release = dispatch or HYPERI_CI_RELEASE
 
     # Resolved on a dry run too, so a stale suite.yaml entry fails before a real run.
     excluded = _gate_exclusions(app)
@@ -579,7 +591,13 @@ def rebuild_rust(
         say(f"[dry-run] would pin {package} to {version} and relock")
         say("[dry-run] would regenerate the Dockerfile and docs/ artefacts")
         say(f"[dry-run] would gate on {gates}, then commit '{subject}'")
-        if unoptimized:
+        if on_landed is not None:
+            say(
+                f"[dry-run] would land it on {slug} main via a PR without the release "
+                f"trailer, and hand back: {' '.join(release)}"
+            )
+            on_landed(release)
+        elif unoptimized:
             say(
                 f"[dry-run] would land it on {slug} main via a PR without the release trailer"
             )
@@ -645,6 +663,21 @@ def rebuild_rust(
     git("add", "-u", cwd=repo)
     if not has_staged_changes(repo):
         say(f"{app} already current on scalo {version} -- nothing to commit")
+        return 0
+
+    if on_landed is not None:
+        merged = land_via_pr(
+            repo=repo,
+            slug=slug,
+            branch=f"scalo/{_slugify(f'rebuild-{version}')}",
+            subject=subject,
+            note=f"Rebuild on {package} {version}.",
+            publish=False,
+            dry_run=False,
+        )
+        assert merged is not None
+        say(f"merged {merged[:12]} -- release it with: {' '.join(release)}")
+        on_landed(release)
         return 0
 
     artefact = Artefact(kind="ghrelease", name=slug)
@@ -760,6 +793,8 @@ def rebuild_python(
     dry_run: bool = False,
     org: str = DEFAULT_ORG,
     gate_lock: AbstractContextManager[object] | None = None,
+    sync: bool = True,
+    on_landed: Callable[[list[str]], None] | None = None,
 ) -> int:
     """Move one Python consumer onto a new producer release and ship it.
 
@@ -774,6 +809,11 @@ def rebuild_python(
         org: GitHub org used when the remote cannot be read.
         gate_lock: Held for the local bump and gate, so concurrent rebuilds
             run one local build at a time while their CI runs overlap.
+        sync: Bring ``repo`` onto an up-to-date ``main`` first. False when the
+            caller made ``repo`` a worktree at ``origin/main`` already.
+        on_landed: Land with no release trailer and pass this the argv that
+            releases the merge, rather than releasing it here. Called on a dry
+            run too.
 
     Returns:
         The process exit code -- non-zero means STOP.
@@ -791,7 +831,8 @@ def rebuild_python(
     if dry_run:
         say("DRY RUN -- nothing will be changed or pushed")
 
-    sync_main(repo, dry_run=dry_run)
+    if sync:
+        sync_main(repo, dry_run=dry_run)
 
     # Resolved on a dry run too, so a malformed suite.yaml entry fails before a real run.
     timeout = _release_timeout(_suite_node(app), app, RUN_TIMEOUT_PYTHON)
@@ -801,7 +842,16 @@ def rebuild_python(
         say(f"[dry-run] would raise the {package} floor to >={version} and relock")
         say(f"[dry-run] would assert uv.lock resolved exactly {version}")
         say(f"[dry-run] would gate on `hyperi-ci check`, then commit '{subject}'")
-        say(f"[dry-run] would land it on {slug} main via a PR and follow the release")
+        if on_landed is not None:
+            say(
+                f"[dry-run] would land it on {slug} main via a PR without the release "
+                f"trailer, and hand back: {' '.join(HYPERI_CI_RELEASE)}"
+            )
+            on_landed(HYPERI_CI_RELEASE)
+        else:
+            say(
+                f"[dry-run] would land it on {slug} main via a PR and follow the release"
+            )
         say("dry run complete -- nothing changed, nothing pushed")
         return 0
 
@@ -829,10 +879,14 @@ def rebuild_python(
         branch=f"scalo/{_slugify(f'rebuild-{version}')}",
         subject=subject,
         note=f"Rebuild on {package} {version}.",
-        publish=True,
+        publish=on_landed is None,
         dry_run=False,
     )
     assert merged is not None
+    if on_landed is not None:
+        say(f"merged {merged[:12]} -- release it with: {' '.join(HYPERI_CI_RELEASE)}")
+        on_landed(HYPERI_CI_RELEASE)
+        return 0
 
     if not watch:
         say(

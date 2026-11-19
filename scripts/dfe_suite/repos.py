@@ -12,8 +12,6 @@ different places, so a repo is resolved through an explicit env var first
 and a short list of roots after that.
 """
 
-from __future__ import annotations
-
 import os
 from pathlib import Path
 
@@ -203,6 +201,39 @@ def sync_main(repo: Path, *, dry_run: bool) -> None:
         git("switch", "main", cwd=repo)
     # --autostash so uncommitted work survives the rebase and comes back.
     git("pull", "--rebase", "--autostash", "origin", "main", cwd=repo)
+
+
+def walk_worktree(repo: Path, name: str, *, dry_run: bool) -> Path:
+    """A linked worktree of ``repo`` at ``.worktrees/<name>``, detached at ``origin/main``.
+
+    The repo's own checkout is never switched, so a ``main`` another worktree
+    holds and uncommitted work in the checkout both stay as they are. A
+    worktree of that name left by an interrupted run is ours, and is reset.
+
+    Returns:
+        The worktree, or ``repo`` itself on a dry run, which creates nothing.
+    """
+    path = repo / ".worktrees" / name
+    if dry_run:
+        say(f"[dry-run] would work in {path}, detached at origin/main")
+        return repo
+    git("fetch", "origin", "main", "--tags", "--quiet", cwd=repo)
+    if path.exists():
+        say(f"resetting the worktree at {path} to origin/main")
+        git("switch", "--detach", "--discard-changes", "origin/main", cwd=path)
+    else:
+        say(f"adding the worktree {path} at origin/main")
+        git("worktree", "add", "--detach", str(path), "origin/main", cwd=repo)
+    return path
+
+
+def remove_worktree(repo: Path, path: Path) -> None:
+    """Remove a worktree :func:`walk_worktree` added, keeping and naming one with changes in it."""
+    if path == repo:
+        return
+    gone = run(["git", "worktree", "remove", str(path)], cwd=repo, check=False)
+    if gone.returncode != 0:
+        say(f"kept the worktree at {path}: {gone.stderr.strip()}")
 
 
 def return_to_main(repo: Path) -> None:
