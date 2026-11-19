@@ -20,6 +20,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from collections.abc import Sequence
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
 from unittest import mock
@@ -645,7 +646,9 @@ class WalkActsTests(unittest.TestCase):
         os.environ["PATH"] = f"{bin_dir}{os.pathsep}{saved}"
         self.addCleanup(os.environ.__setitem__, "PATH", saved)
 
-    def _walk(self, *edges: dict, local_only: str = "") -> tuple[int, str]:
+    def _walk(
+        self, *edges: dict, local_only: str = "", extra: Sequence[str] = ()
+    ) -> tuple[int, str]:
         """Dry-run the walk on a consumer whose origin/main holds its files.
 
         ``local_only`` is a ``.hyperi-ci.yaml`` written to the checkout after
@@ -692,9 +695,23 @@ class WalkActsTests(unittest.TestCase):
                     str(infra),
                     "--repos",
                     str(self.root),
+                    *extra,
                 ]
             )
         return code, buffer.getvalue()
+
+    def test_the_gate_reaches_each_rust_rebuild(self) -> None:
+        for extra, gates in (
+            ((), "would gate on fmt, clippy, nextest"),
+            (
+                ("--gate", "pr-ci"),
+                "would gate on fmt here, clippy and tests in the PR's CI",
+            ),
+        ):
+            with self.subTest(extra=extra):
+                code, output = self._walk(extra=extra)
+                assert code == 0, output
+                assert gates in output
 
     def test_an_admitting_range_reaches_the_rebuild_and_exits_clean(self) -> None:
         code, output = self._walk()
@@ -1055,6 +1072,11 @@ class CliTests(unittest.TestCase):
             ]
         )
         assert (args.subject, args.no_tests, args.repos) == ("fix: x", "", "/y")
+        assert args.gate == "local"
+        args = ds.build_parser().parse_args(["walk", "p", "1.0.0", "--gate", "pr-ci"])
+        assert args.gate == "pr-ci"
+        with contextlib.redirect_stderr(io.StringIO()), pytest.raises(SystemExit):
+            ds.build_parser().parse_args(["walk", "p", "1.0.0", "--gate", "remote"])
         args = ds.build_parser().parse_args(["signals", "dfe-loader"])
         assert args.member == "dfe-loader"
 

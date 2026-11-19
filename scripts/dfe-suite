@@ -86,7 +86,7 @@ from dfe_suite.kinds import (
     check_edge,
 )
 from dfe_suite.proc import DEFAULT_ORG, FleetError, labelled, say, set_tag
-from dfe_suite.rebuild import rebuild_python, rebuild_rust
+from dfe_suite.rebuild import GATE_LOCAL, GATES, rebuild_python, rebuild_rust
 from dfe_suite.repos import find_repo, remove_worktree, repo_slug, walk_worktree
 from dfe_suite.runners import MODES, SELF_HOSTED, SELF_HOSTED_JOBS, runner_mode
 from dfe_suite.ship import SHIP_PY, SHIP_RS, ShipSpec, ship_library
@@ -505,6 +505,7 @@ def _walk_worktree(
     }
     if rebuild is rebuild_rust:
         kwargs["run_tests"] = not _flag_applies(args.no_tests, consumer)
+        kwargs["gate"] = args.gate
     if args.runner_mode:
         mode, why = args.runner_mode, "--runner-mode or GH_RUNNER_MODE"
     else:
@@ -925,6 +926,16 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     walk.add_argument("--subject", default="", help="commit subject for each rebuild")
+    walk.add_argument(
+        "--gate",
+        choices=GATES,
+        default=GATE_LOCAL,
+        help=(
+            "where each Rust rebuild's clippy and tests run: local, in the worktree, "
+            "or pr-ci, which skips both here and takes the PR's CI Quality and Test "
+            "as the gate"
+        ),
+    )
     walk.add_argument(
         "--no-tests",
         nargs="?",
