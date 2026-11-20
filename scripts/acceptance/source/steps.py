@@ -21,11 +21,11 @@ import re
 import shutil
 import subprocess
 import sys
-import tarfile
 import time
 import urllib.error
 import urllib.request
 from pathlib import Path
+from types import ModuleType
 
 from acceptance.clients import (
     RECORD_TEXT,
@@ -580,47 +580,26 @@ def record_table(driver, store: Datastore, name: str) -> None:
 # --- feeding and proving -----------------------------------------------------
 
 
+def corpus_reader(engine_repo: Path) -> ModuleType:
+    """dfe-engine's synthetic filebeat corpus and its reader, off the engine checkout.
+
+    The reader owns the corpus file (``CORPUS``) and each module's data stream
+    (``DATASETS``), so every pushed case reads the lines the engine's own e2e
+    suite replays.
+    """
+    sys.path.insert(0, str(engine_repo))
+    from tests.e2e import filebeat_corpus  # type: ignore[import-not-found]
+
+    return filebeat_corpus
+
+
 def corpus_lines(
-    engine_repo: Path, corpus_file: Path, per_module: int, modules: tuple[str, ...] = ()
+    engine_repo: Path, per_module: int, modules: tuple[str, ...] = ()
 ) -> list[str]:
     """The raw log lines, unwrapped, for an agent that reads them off disk."""
-    sys.path.insert(0, str(engine_repo))
-    from tests.e2e import filebeat_corpus as corpus  # type: ignore[import-not-found]
-
-    items = corpus.samples(
-        corpus_file, modules=modules or corpus.MODULES, limit=per_module
-    )
+    corpus = corpus_reader(engine_repo)
+    items = corpus.samples(modules=modules or corpus.MODULES, limit=per_module)
     return [item.line for item in items]
-
-
-def corpus_datasets(corpus_file: Path) -> dict[str, str]:
-    """Each corpus module's Elastic data stream, read off the archive's own paths.
-
-    The corpus is elastic/integrations test data laid out ``<package>/<stream>/``,
-    so ``cisco_ios/log/`` holds the ``cisco_ios.log`` dataset.
-
-    Args:
-        corpus_file: The corpus archive.
-
-    Returns:
-        Dataset by module.
-
-    Raises:
-        ValueError: A module ships lines under more than one data stream, so a
-            line's module alone cannot name its dataset.
-    """
-    found: dict[str, set[str]] = {}
-    with tarfile.open(corpus_file, "r:gz") as tar:
-        for member in tar.getnames():
-            parts = member.split("/")
-            if len(parts) >= 3 and member.endswith(".log"):
-                found.setdefault(parts[0], set()).add(f"{parts[0]}.{parts[1]}")
-    split = sorted(module for module, streams in found.items() if len(streams) > 1)
-    if split:
-        raise ValueError(
-            f"corpus modules under more than one data stream: {', '.join(split)}"
-        )
-    return {module: streams.pop() for module, streams in found.items()}
 
 
 def run_marker(run: str, kind: str) -> dict[str, str]:
@@ -671,7 +650,6 @@ def agent_envelope(line: str, tags: list[str], dataset: str) -> dict:
 
 def corpus_bodies(
     engine_repo: Path,
-    corpus_file: Path,
     run: str,
     per_module: int,
     modules: tuple[str, ...] = (),
@@ -679,23 +657,17 @@ def corpus_bodies(
 ) -> list[dict]:
     """The corpus lines a case feeds, each in the Elastic Agent envelope plus this run's marker.
 
-    dfe-engine's wrapper still reads the archive and mints each record's tags.
-    The counts read the ``_e2e`` marker instead, because the transform replaces
-    the tags and keeps root fields.
+    dfe-engine's wrapper mints each record's tags. The counts read the ``_e2e``
+    marker instead, because the transform replaces the tags and keeps root fields.
     """
-    sys.path.insert(0, str(engine_repo))
-    from tests.e2e import filebeat_corpus as corpus  # type: ignore[import-not-found]
-
-    items = corpus.samples(
-        corpus_file, modules=modules or corpus.MODULES, limit=per_module
-    )
+    corpus = corpus_reader(engine_repo)
+    items = corpus.samples(modules=modules or corpus.MODULES, limit=per_module)
     if not items:
         return []
-    datasets = corpus_datasets(corpus_file)
     wrapped = corpus.wrap_all(items, run=run)
     return [
         {
-            **agent_envelope(item.line, record["tags"], datasets[item.module]),
+            **agent_envelope(item.line, record["tags"], corpus.DATASETS[item.module]),
             MARKER: run_marker(run, kind),
         }
         for item, record in zip(items, wrapped, strict=True)
@@ -704,21 +676,19 @@ def corpus_bodies(
 
 def expected_carrying(
     engine_repo: Path,
-    corpus_file: Path,
     per_module: int,
     modules: tuple[str, ...],
     dotted: str,
 ) -> int:
     """How many of the lines a case feeds carry *dotted* in the corpus's own expected output.
 
-    Each corpus log ships its expected events beside it, one per non-blank line,
-    and dfe-engine's wrapper reads every file from its first line, so the n-th
-    line a file contributes is graded against that file's n-th event. A line
-    whose event has no such field is one the transform is not asked to set it on.
+    The wrapper keys each sample's expected events by the sample's name and reads
+    a name's lines in order, so the n-th line a name contributes is graded against
+    its n-th event. A line whose event has no such field is one the transform is
+    not asked to set it on.
 
     Args:
         engine_repo: The dfe-engine checkout holding the corpus wrapper.
-        corpus_file: The corpus archive.
         per_module: Lines read per module, as the feed read them.
         modules: The modules the feed was narrowed to; empty is every one.
         dotted: The field, as a dotted path into the expected event.
@@ -726,12 +696,10 @@ def expected_carrying(
     Returns:
         The count of fed lines whose expected event carries the field.
     """
-    sys.path.insert(0, str(engine_repo))
-    from tests.e2e import filebeat_corpus as corpus  # type: ignore[import-not-found]
-
+    corpus = corpus_reader(engine_repo)
     wanted = modules or corpus.MODULES
-    items = corpus.samples(corpus_file, modules=wanted, limit=per_module)
-    expected = corpus.goldens(corpus_file, modules=wanted)
+    items = corpus.samples(modules=wanted, limit=per_module)
+    expected = corpus.goldens(modules=wanted)
     seen: dict[str, int] = {}
     carrying = 0
     for item in items:
@@ -750,7 +718,6 @@ def post_corpus(
     receiver_url: str,
     verify: bool,
     engine_repo: Path,
-    corpus_file: Path,
     run: str,
     per_module: int,
     modules: tuple[str, ...] = (),
@@ -758,11 +725,11 @@ def post_corpus(
 ) -> int:
     """POST the corpus in the Elastic Agent envelope, one request per record.
 
-    ``modules`` narrows the archive to the corpus modules a case's transform
-    handles; empty is every module the wrapper names. ``kind`` is the role the
-    marker gives every record, so a probe is never counted as corpus.
+    ``modules`` narrows the corpus to the modules a case's transform handles;
+    empty is every module the wrapper names. ``kind`` is the role the marker
+    gives every record, so a probe is never counted as corpus.
     """
-    bodies = corpus_bodies(engine_repo, corpus_file, run, per_module, modules, kind)
+    bodies = corpus_bodies(engine_repo, run, per_module, modules, kind)
 
     for body in bodies:
         request = urllib.request.Request(
@@ -806,7 +773,6 @@ def wait_routed(
     receiver_url: str,
     verify: bool,
     engine_repo: Path,
-    corpus_file: Path,
     store: Datastore,
     name: str,
     run: str,
@@ -827,9 +793,7 @@ def wait_routed(
     until = time.monotonic() + deadline
     passes = 0
     while True:
-        post_corpus(
-            receiver_url, verify, engine_repo, corpus_file, run, 1, modules, PROBE
-        )
+        post_corpus(receiver_url, verify, engine_repo, run, 1, modules, PROBE)
         passes += 1
         if store.scalar(f"SELECT count() FROM {name} WHERE {marked(run, PROBE)}"):
             return (

@@ -154,7 +154,9 @@ def test_the_real_versions_file_releases_2_2_0_and_no_candidate() -> None:
     text = (REPO_ROOT / "versions.yaml").read_text(encoding="utf-8")
     released = aggregate.released_stacks(aggregate.yaml_subset.parse(text))
     assert "2.2.0" in released
-    assert [name for name in released if "-" in name] == []
+    # A fix release (X.Y.Z-fix.N) counts, and a candidate (-rc, -alpha, -beta) never does.
+    assert [name for name in released if "-" in name and "-fix." not in name] == []
+    assert "2.2.2-fix.1" in released
 
 
 def test_members_follow_the_lanes_and_the_first_lane_wins() -> None:
@@ -1494,28 +1496,32 @@ def test_the_gate_needs_every_phrase_section() -> None:
         gate.load_phrases({"process": {}, "register": {}})
 
 
-def write_content(root: Path, pages: dict[str, str]) -> Path:
+def write_content(root: Path, pages: dict[str, str], build: str = "1.0.0") -> Path:
     members = [
         {"name": "dfe-ui", "repo": "o/dfe-ui"},
         {"name": "dfe-hyperdx", "repo": "o/dfe-hyperdx"},
     ]
-    site = {"builds": [{"name": "1.0.0", "members": members, "openapi": None}]}
+    site = {"builds": [{"name": build, "members": members, "openapi": None}]}
     write_tree(
         root,
-        {"site.json": json.dumps(site), **{f"1.0.0/{k}": v for k, v in pages.items()}},
+        {
+            "site.json": json.dumps(site),
+            **{f"{build}/{k}": v for k, v in pages.items()},
+        },
     )
     return root
 
 
 @pytest.mark.parametrize(
-    ("pages", "exit_code", "new"),
+    ("pages", "exit_code", "new", "build"),
     [
-        ({"dfe-ui/a.md": "# A\n\nIntro.\n\nOld; line.\n"}, 0, []),
-        ({"dfe-ui/a.md": "# A\n\nOld; line.\n"}, 0, []),
+        ({"dfe-ui/a.md": "# A\n\nIntro.\n\nOld; line.\n"}, 0, [], "1.0.0"),
+        ({"dfe-ui/a.md": "# A\n\nOld; line.\n"}, 0, [], "1.0.0"),
         (
             {"dfe-ui/a.md": "# A\n\nOld; line, edited.\n"},
             1,
             ["o/dfe-ui docs/a.md:3: semicolon"],
+            "1.0.0",
         ),
         (
             {
@@ -1524,11 +1530,21 @@ def write_content(root: Path, pages: dict[str, str]) -> Path:
             },
             1,
             ["o/dfe-hyperdx docs/b.md:2: semicolon"],
+            "1.0.0",
         ),
         (
             {"README.md": "# R\nRoot; page.\n"},
             1,
             ["hyperi-io/dfe-infra docs-site/content-root/README.md:2"],
+            "1.0.0",
+        ),
+        # A build the baseline lacks takes its old findings from any baseline build.
+        ({"dfe-ui/a.md": "# A\n\nOld; line.\n"}, 0, [], "1.0.0-fix.1"),
+        (
+            {"dfe-ui/a.md": "# A\n\nOld; line.\nNew; line.\n"},
+            1,
+            ["o/dfe-ui docs/a.md:4: semicolon"],
+            "1.0.0-fix.1",
         ),
     ],
 )
@@ -1538,9 +1554,10 @@ def test_the_gate_fails_only_on_findings_the_baseline_lacks(
     pages: dict[str, str],
     exit_code: int,
     new: list[str],
+    build: str,
 ) -> None:
     baseline = write_content(tmp_path / "main", {"dfe-ui/a.md": "# A\n\nOld; line.\n"})
-    content = write_content(tmp_path / "pr", pages)
+    content = write_content(tmp_path / "pr", pages, build)
     summary = tmp_path / "summary.md"
     status = gate.main(
         [
@@ -1561,6 +1578,27 @@ def test_the_gate_fails_only_on_findings_the_baseline_lacks(
         ["--content", str(content), "--baseline", str(baseline), "--report-only"]
     )
     assert report_only == 0
+
+
+@pytest.mark.parametrize(
+    ("line", "exit_code"),
+    [
+        ("Old; see [notes](https://github.com/o/dfe-ui/blob/main/docs/notes.md).", 0),
+        ("Old, edited; see [notes](notes.md).", 1),
+    ],
+    ids=["link-rewritten", "words-edited"],
+)
+def test_a_rewritten_link_target_is_not_a_new_finding(
+    tmp_path: Path, line: str, exit_code: int
+) -> None:
+    """aggregate.py points a link at GitHub when its page stays off the site."""
+    baseline = write_content(
+        tmp_path / "main", {"dfe-ui/a.md": "# A\n\nOld; see [notes](notes.md).\n"}
+    )
+    content = write_content(tmp_path / "pr", {"dfe-ui/a.md": f"# A\n\n{line}\n"})
+    assert (
+        gate.main(["--content", str(content), "--baseline", str(baseline)]) == exit_code
+    )
 
 
 @pytest.mark.parametrize(
@@ -2125,3 +2163,18 @@ def test_pin_next_refuses_a_site_json_with_no_next_build(tmp_path: Path) -> None
     site_file.write_text(json.dumps({"builds": []}), encoding="utf-8")
     with pytest.raises(SystemExit, match="records no next build"):
         aggregate.pin_next([], site_file)
+
+
+def test_a_fix_release_sorts_above_the_stack_it_fixes() -> None:
+    tree = {
+        "stacks": {
+            name: {"maturity": aggregate.RELEASE}
+            for name in ("2.2.1", "2.2.2", "2.2.2-fix.1", "2.2.2-fix.2", "2.2.3-rc.1")
+        }
+    }
+    assert aggregate.released_stacks(tree) == [
+        "2.2.2-fix.2",
+        "2.2.2-fix.1",
+        "2.2.2",
+        "2.2.1",
+    ]

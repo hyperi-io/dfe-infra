@@ -467,9 +467,14 @@ required_vars=(
   DFE_ENV DFE_CLOUD DFE_REGION DFE_DOMAIN DFE_PROFILE
   DFE_REGISTRY
   DFE_REPO_URL DFE_TARGET_REVISION
-  DFE_STORAGE_CLASS DFE_NAMESPACE
+  DFE_NAMESPACE
   DFE_WORKLOAD_IDENTITY_ANNOTATIONS
 )
+# Blank on-prem means the cluster's default StorageClass. AWS names the class it creates (gp3).
+: "${DFE_STORAGE_CLASS:=}"
+if [[ "${DFE_CLOUD}" == "aws" ]]; then
+  required_vars+=(DFE_STORAGE_CLASS)
+fi
 if [[ "${DFE_SECRETS_BACKEND}" == "openbao" ]]; then
   required_vars+=(DFE_VAULT_ADDR DFE_VAULT_ROLE_ID)
 elif [[ "${DFE_SECRETS_BACKEND}" == "aws-sm" ]]; then
@@ -950,8 +955,8 @@ echo "==> [1b/7] StorageClass (detect-or-install)"
 # DFE assumes only a bare cluster, and the cluster shows up in one of four
 # states:
 #   1. a default StorageClass already exists            -> ADOPT it
-#   2. StorageClass(es) exist, none default              -> use DFE_STORAGE_CLASS
-#      as-is (the common case below covers when that class does not exist yet)
+#   2. StorageClass(es) exist, none default              -> AWS: use DFE_STORAGE_CLASS;
+#      on-prem: mark DFE_STORAGE_CLASS default, or stop when it names none
 #   3. no StorageClass at all (bare RKE2)                 -> INSTALL
 #      local-path-provisioner (pinned) and mark it default, so the data pods'
 #      PVCs (CH/Gitea/DocumentDB) can bind with no deployer input
@@ -963,7 +968,17 @@ echo "==> [1b/7] StorageClass (detect-or-install)"
 if kubectl get storageclass -o jsonpath='{range .items[*]}{.metadata.annotations.storageclass\.kubernetes\.io/is-default-class}{"\n"}{end}' 2>/dev/null | grep -q true; then
   echo "  default StorageClass present -> ADOPT"
 elif [[ -n "$(kubectl get storageclass -o name 2>/dev/null)" ]]; then
-  echo "  StorageClass(es) present, none default -> using DFE_STORAGE_CLASS=${DFE_STORAGE_CLASS}"
+  if [[ "${DFE_CLOUD}" == "aws" ]]; then
+    echo "  StorageClass(es) present, none default -> using DFE_STORAGE_CLASS=${DFE_STORAGE_CLASS}"
+  elif [[ -n "${DFE_STORAGE_CLASS}" ]] && kubectl get storageclass "${DFE_STORAGE_CLASS}" >/dev/null 2>&1; then
+    echo "  StorageClass(es) present, none default -> marking DFE_STORAGE_CLASS=${DFE_STORAGE_CLASS} default"
+    run kubectl patch storageclass "${DFE_STORAGE_CLASS}" -p '{"metadata":{"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}'
+  else
+    echo "ERROR: StorageClass(es) present but none is the default, and DFE_STORAGE_CLASS names none of them." >&2
+    echo "  DFE's volumes ask for the cluster default. Mark one: kubectl patch storageclass <name> -p '{\"metadata\":{\"annotations\":{\"storageclass.kubernetes.io/is-default-class\":\"true\"}}}'" >&2
+    echo "  or set DFE_STORAGE_CLASS to one of: $(kubectl get storageclass -o name | sed 's|storageclass.storage.k8s.io/||' | tr '\n' ' ')" >&2
+    exit 1
+  fi
 else
   echo "  no StorageClass -> INSTALL local-path-provisioner ${LOCAL_PATH_VERSION}"
   # Upstream's manifest names the provisioner by tag; it is pinned by digest before any pod can pull it.
