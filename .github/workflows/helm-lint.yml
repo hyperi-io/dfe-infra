@@ -109,6 +109,7 @@ jobs:
             .github/actions/**
             .python-version
             scripts/tests/requirements-ci.txt
+            scripts/tests/requirements-merrow.txt
 
       # The published-chart renders pull every thin chart from the registry, so they run only where their verdict can change.
       # test_helm_lint_triggers.py holds this list to the render's inputs.
@@ -158,7 +159,7 @@ jobs:
       # A python3 that is not the venv's would run every step below on the runner's own Python and still pass, so the version is checked first.
       - name: Install the pinned test dependencies, hashes required
         run: |
-          uv pip install --require-hashes -r scripts/tests/requirements-ci.txt
+          uv pip install --require-hashes -r scripts/tests/requirements-ci.txt -r scripts/tests/requirements-merrow.txt
           python3 -c 'import pathlib, sys; want = pathlib.Path(".python-version").read_text().strip(); have = "%d.%d" % sys.version_info[:2]; sys.exit(None if have == want else f"python3 is {have}, .python-version says {want}")'
 
       # Pinned, so a ruff release cannot fail a PR that changed nothing.

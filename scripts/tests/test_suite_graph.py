@@ -25,8 +25,6 @@ from __future__ import annotations
 
 import datetime
 import re
-import shutil
-import subprocess
 import sys
 from pathlib import Path
 
@@ -437,23 +435,6 @@ def test_unknown_slice_names_what_exists() -> None:
             expect(f"{label} names what exists", False, "did not raise")
 
 
-# The house class lines, byte for byte. A block copies all of them, so each must
-# equal the line the diagram house style gives.
-HOUSE_CLASS_LINES = {
-    "ext": "classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A",
-    "ingest": "classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A",
-    "xform": "classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A",
-    "load": "classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A",
-    "bus": "classDef bus fill:#FFFFFF,stroke:#A8517F,stroke-width:3px,color:#0F172A",
-    "store": "classDef store fill:#FFFFFF,stroke:#00785A,stroke-width:3px,color:#0F172A",
-    "ui": "classDef ui fill:#FFFFFF,stroke:#D9480F,stroke-width:3px,color:#0F172A",
-    "decision": "classDef decision fill:#FFFFFF,stroke:#9A6700,stroke-width:3px,color:#0F172A",
-    "error": "classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A",
-    "control": "classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A",
-    "part": "classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A",
-}
-
-
 def block_lines(block: str) -> list[str]:
     return [line.strip() for line in block.splitlines()]
 
@@ -636,60 +617,52 @@ def test_block_names_and_unknown_blocks() -> None:
 
 def _live_blocks() -> list[tuple[str, str]]:
     g = suite_graph.load()
-    return [
-        (name, suite_graph.render_block(g, name)) for name in suite_graph.block_names(g)
-    ]
+    return list(suite_graph.render_blocks(g, suite_graph.block_names(g)).items())
 
 
-def test_house_frontmatter_matches_merrow() -> None:
-    """The generator's copy of the house block is merrow's, where merrow is installed."""
-    merrow = shutil.which("merrow")
-    if merrow is None:
-        return
-    shown = subprocess.run(
-        [merrow, "profile", "show", "house"],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        check=True,
-    ).stdout.splitlines()
-    end = shown.index("---", 1)
-    expect(
-        "HOUSE_FRONTMATTER is the frontmatter `merrow profile show house` prints",
-        "\n".join(shown[: end + 1]) + "\n" == suite_graph.HOUSE_FRONTMATTER,
-        "\n".join(shown[: end + 1]),
+def test_a_block_leaves_the_house_style_to_merrow() -> None:
+    """The generator writes no frontmatter or classDef, and ends each block on the pair merrow fills."""
+    g = suite_graph.parse_block_yaml(SAMPLE)
+    for block in (
+        suite_graph.mermaid_overview(g, "services"),
+        suite_graph.mermaid_producer(g, "lib-a"),
+    ):
+        lines = block_lines(block)
+        expect(
+            "a bare block opens on its flowchart and ends on an empty merrow pair",
+            lines[0].startswith("flowchart ")
+            and lines[-2:] == [suite_graph.MERROW_BEGIN, suite_graph.MERROW_END]
+            and not any(ln.startswith(("classDef", "style ")) for ln in lines),
+            block,
+        )
+
+
+def test_an_unpartnered_merrow_marker_is_refused() -> None:
+    """merrow exits 2 on a begin marker with no end, because every line under it would go."""
+    page = (
+        f"```mermaid\nflowchart LR\n    a --> b\n    {suite_graph.MERROW_BEGIN}\n```\n"
+    )
+    expect_raises(
+        "a begin marker with no end raises and names the missing end",
+        lambda: suite_graph.apply_house(page),
+        "merrow:end",
     )
 
 
 def test_class_lines_are_the_house_style() -> None:
-    """A block copies the house frontmatter and class lines byte for byte."""
-    expect(
-        "the generator's class lines are the house style's",
-        suite_graph.CLASS_LINES == HOUSE_CLASS_LINES,
-        str(suite_graph.CLASS_LINES),
-    )
+    """merrow fills each block with the house frontmatter, classDef lines and boundary styles."""
     g = suite_graph.parse_block_yaml(SAMPLE)
-    blocks = [
-        suite_graph.mermaid_overview(g, "services"),
-        suite_graph.mermaid_overview(g, "platform"),
-        suite_graph.mermaid_producer(g, "lib-a"),
-        *(block for _, block in _live_blocks()),
-    ]
+    sample = suite_graph.render_blocks(
+        g, ["overview:services", "overview:platform", "producer:lib-a"]
+    )
+    blocks = [*sample.values(), *(block for _, block in _live_blocks())]
     for block in blocks:
         expect(
             "a block opens with the house frontmatter",
-            block.startswith(
-                suite_graph.HOUSE_FRONTMATTER.rstrip("\n") + "\nflowchart"
-            ),
+            block.startswith("---\nconfig:\n  theme: base\n"),
             block[:80],
         )
         defined = [ln for ln in block_lines(block) if ln.startswith("classDef")]
-        expect(
-            "every house classDef is in a block, in order",
-            defined == list(HOUSE_CLASS_LINES.values()),
-            block,
-        )
         used = {ln.split()[2] for ln in block_lines(block) if ln.startswith("class ")}
         expect(
             "every class a block applies has its line, and no brand colour appears",
@@ -714,7 +687,7 @@ def test_class_lines_are_the_house_style() -> None:
 
 def test_generated_blocks_follow_the_standard() -> None:
     """Rules the checker reads from the source, held without a browser."""
-    g = suite_graph.load()
+
     for name, block in _live_blocks():
         lines = block_lines(block)
         at = header_at(lines)
@@ -733,10 +706,11 @@ def test_generated_blocks_follow_the_standard() -> None:
         )
         nodes = re.findall(r'^\s*\w+\("<b>', block, re.MULTILINE)
         expect(f"{name} stays within 12 nodes", len(nodes) <= 12, str(len(nodes)))
-        expect(
-            f"{name} renders the same twice",
-            block == suite_graph.render_block(g, name),
-        )
+    again = dict(_live_blocks())
+    expect(
+        "every block renders the same twice",
+        all(block == again[name] for name, block in _live_blocks()),
+    )
 
 
 def test_live_page_is_in_sync() -> None:
@@ -837,7 +811,8 @@ def main() -> int:
         test_mermaid_and_docs_render()
         test_consumers_with_the_same_arrow_share_one_box()
         test_block_names_and_unknown_blocks()
-        test_house_frontmatter_matches_merrow()
+        test_a_block_leaves_the_house_style_to_merrow()
+        test_an_unpartnered_merrow_marker_is_refused()
         test_class_lines_are_the_house_style()
         test_generated_blocks_follow_the_standard()
         test_live_page_is_in_sync()
