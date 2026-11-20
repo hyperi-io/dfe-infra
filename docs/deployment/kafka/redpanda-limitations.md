@@ -6,6 +6,19 @@ Redpanda Community Edition is source-available under the Business Source License
 
 The kafka chart fails the render on Redpanda without `kafka.redpanda.acceptLicense: true`. Redpanda's Enterprise features, such as Tiered Storage, need a Redpanda licence. DFE uses none of them, because `dfe-archiver` archives to object storage.
 
+A new Redpanda cluster starts on a 30-day trial with two Enterprise features on: continuous partition balancing and continuous core balancing. If either is on when the trial ends, the broker refuses upgrades to new feature releases. The chart sets `partition_autobalancing_mode` to `node_add` (or `off`) and `core_balancing_continuous` to `false`. It fails the render on `kafka.rebalancing.redpanda.partitionAutobalancingMode: continuous`.
+
+- `scale`: the operator applies both properties to a running cluster at the next sync.
+- `single`: the broker sets both at every start, then exits if `rpk cluster license info` still lists an Enterprise feature. A running broker picks them up at its next pod restart.
+
+To fix a running broker now, without a restart:
+
+```bash
+kubectl -n strimzi exec <broker pod> -- rpk cluster config set partition_autobalancing_mode node_add
+kubectl -n strimzi exec <broker pod> -- rpk cluster config set core_balancing_continuous false
+kubectl -n strimzi exec <broker pod> -- rpk cluster license info
+```
+
 ## Turning it on
 
 Pick the provider at the first deploy. Switching a live deployment to the other broker leaves every message written on the old one, and DFE has no way to move them. [storage.md](../storage.md) covers what else is fixed at the first deploy.

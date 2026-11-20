@@ -4,6 +4,9 @@
 {{- if not .Values.kafka.redpanda.acceptLicense }}
 {{- fail "Redpanda is source-available under the Business Source License 1.1: set kafka.redpanda.acceptLicense=true once you have read it. See docs/deployment/kafka/redpanda-limitations.md." }}
 {{- end }}
+{{- if not (has .Values.kafka.rebalancing.redpanda.partitionAutobalancingMode (list "off" "node_add")) }}
+{{- fail (printf "kafka.rebalancing.redpanda.partitionAutobalancingMode %q is a Redpanda Enterprise feature: use node_add or off." .Values.kafka.rebalancing.redpanda.partitionAutobalancingMode) }}
+{{- end }}
 {{- $replicas := int (include "dfe-kafka.brokerCount" .) }}
 {{- $rf := min (int .Values.kafka.profile.scale.replicationFactor) $replicas }}
 # Redpanda cluster via the Redpanda operator (cluster.redpanda.com/v1alpha2), a thin CR as with Strimzi. SASL/SCRAM-512 with TLS off, matching Strimzi's plain listener.
@@ -28,8 +31,9 @@ spec:
         # Both move with the size chain: the first is the message ceiling and the second the guard it cannot be raised past.
         kafka_batch_max_bytes: {{ include "dfe-kafka.messageMaxBytes" . }}
         kafka_max_message_size_upper_limit_bytes: {{ include "dfe-kafka.messageMaxBytes" . }}
-        # Pinned: the shipped default is continuous, which is licence-gated, so a licence appearing later would change balancing with no config change.
+        # Pinned: Redpanda's defaults turn both on as Enterprise features, and one in use when the trial licence lapses blocks broker upgrades.
         partition_autobalancing_mode: {{ ternary .Values.kafka.rebalancing.redpanda.partitionAutobalancingMode "off" .Values.kafka.rebalancing.enabled | quote }}
+        core_balancing_continuous: false
         # Per-sender bandwidth while a replica catches up, Redpanda's equivalent of the Strimzi replication throttle.
         raft_learner_recovery_rate: {{ int64 .Values.kafka.rebalancing.redpanda.raftLearnerRecoveryRate }}
     # No Console UI (an extra pod, config and Secret).

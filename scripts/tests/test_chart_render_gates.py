@@ -241,6 +241,67 @@ def test_accepting_the_licence_renders_the_redpanda_cluster() -> None:
     )
 
 
+REDPANDA_CLUSTER = (
+    "kafka.mode=cluster",
+    "kafka.provider=redpanda",
+    "kafka.redpanda.acceptLicense=true",
+    "appNamespace=dfe-local",
+)
+
+
+def test_the_redpanda_cluster_turns_off_both_enterprise_balancers() -> None:
+    """Redpanda turns both on by default, and either in use at trial expiry blocks upgrades."""
+    for rebalancing in ("true", "false"):
+        docs = render(
+            KAFKA, *REDPANDA_CLUSTER, f"kafka.rebalancing.enabled={rebalancing}"
+        )
+        cr = next(d for d in docs if d.get("kind") == "Redpanda")
+        cluster = cr["spec"]["clusterSpec"]["config"]["cluster"]
+        expect(
+            f"rebalancing={rebalancing}: partition balancing is not continuous",
+            cluster["partition_autobalancing_mode"] in ("node_add", "off"),
+            f"got {cluster['partition_autobalancing_mode']!r}",
+        )
+        expect(
+            f"rebalancing={rebalancing}: core balancing is off",
+            cluster["core_balancing_continuous"] is False,
+            f"got {cluster.get('core_balancing_continuous')!r}",
+        )
+
+
+def test_continuous_partition_balancing_is_refused() -> None:
+    err = render_error(
+        KAFKA,
+        *REDPANDA_CLUSTER,
+        "kafka.rebalancing.redpanda.partitionAutobalancingMode=continuous",
+    )
+    expect(
+        "continuous partition balancing fails the render",
+        "Enterprise feature" in err,
+        f"got {err!r}",
+    )
+
+
+def test_single_redpanda_turns_both_off_on_every_start_and_checks() -> None:
+    """.bootstrap.yaml reaches only a new volume, so the start script sets them live."""
+    docs = render(
+        KAFKA,
+        "kafka.mode=single",
+        "kafka.provider=redpanda",
+        "kafka.redpanda.acceptLicense=true",
+        "appNamespace=dfe-local",
+    )
+    sts = next(d for d in docs if d.get("kind") == "StatefulSet")
+    script = sts["spec"]["template"]["spec"]["containers"][0]["args"][0]
+    for line in (
+        "rpk cluster config set partition_autobalancing_mode node_add",
+        "rpk cluster config set core_balancing_continuous false",
+        "rpk cluster license info --format json",
+        '"enterprise_features_in_use":[]',
+    ):
+        expect(f"the start script runs {line!r}", line in script, "missing")
+
+
 def test_the_kafka_provider_is_untouched_by_the_gate() -> None:
     """The gate is Redpanda's licence, not a mode check: Strimzi must be unaffected."""
     # The Strimzi path renders a KafkaUser credential, which needs the namespace
@@ -267,6 +328,9 @@ def main() -> int:
         test_cluster_mode_still_refuses_without_the_licence()
         test_single_mode_still_refuses_without_the_licence()
         test_accepting_the_licence_renders_the_redpanda_cluster()
+        test_the_redpanda_cluster_turns_off_both_enterprise_balancers()
+        test_continuous_partition_balancing_is_refused()
+        test_single_redpanda_turns_both_off_on_every_start_and_checks()
         test_the_kafka_provider_is_untouched_by_the_gate()
         return summary()
 

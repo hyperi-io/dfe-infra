@@ -235,7 +235,7 @@ kafka:
           cpu: 200m
           memory: 128Mi
     redpanda:
-      # Pinned: the shipped default is continuous, which is licence-gated. node_add is the free mode and moves replicas onto a new broker.
+      # node_add or off. Redpanda's default, continuous, is an Enterprise feature, and the chart refuses it. node_add moves replicas onto a new broker.
       partitionAutobalancingMode: node_add
       # Recovery bandwidth per sender in bytes/s. Redpanda's own default, pinned.
       raftLearnerRecoveryRate: 104857600
