@@ -25,6 +25,8 @@ from __future__ import annotations
 
 import datetime
 import re
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -639,6 +641,27 @@ def _live_blocks() -> list[tuple[str, str]]:
     ]
 
 
+def test_house_frontmatter_matches_merrow() -> None:
+    """The generator's copy of the house block is merrow's, where merrow is installed."""
+    merrow = shutil.which("merrow")
+    if merrow is None:
+        return
+    shown = subprocess.run(
+        [merrow, "profile", "show", "house"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=True,
+    ).stdout.splitlines()
+    end = shown.index("---", 1)
+    expect(
+        "HOUSE_FRONTMATTER is the frontmatter `merrow profile show house` prints",
+        "\n".join(shown[: end + 1]) + "\n" == suite_graph.HOUSE_FRONTMATTER,
+        "\n".join(shown[: end + 1]),
+    )
+
+
 def test_class_lines_are_the_house_style() -> None:
     """A block copies the house frontmatter and class lines byte for byte."""
     expect(
@@ -814,6 +837,7 @@ def main() -> int:
         test_mermaid_and_docs_render()
         test_consumers_with_the_same_arrow_share_one_box()
         test_block_names_and_unknown_blocks()
+        test_house_frontmatter_matches_merrow()
         test_class_lines_are_the_house_style()
         test_generated_blocks_follow_the_standard()
         test_live_page_is_in_sync()
