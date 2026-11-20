@@ -154,7 +154,9 @@ def test_the_real_versions_file_releases_2_2_0_and_no_candidate() -> None:
     text = (REPO_ROOT / "versions.yaml").read_text(encoding="utf-8")
     released = aggregate.released_stacks(aggregate.yaml_subset.parse(text))
     assert "2.2.0" in released
-    assert [name for name in released if "-" in name] == []
+    # A fix release (X.Y.Z-fix.N) counts, and a candidate (-rc, -alpha, -beta) never does.
+    assert [name for name in released if "-" in name and "-fix." not in name] == []
+    assert "2.2.2-fix.1" in released
 
 
 def test_members_follow_the_lanes_and_the_first_lane_wins() -> None:
@@ -2125,3 +2127,18 @@ def test_pin_next_refuses_a_site_json_with_no_next_build(tmp_path: Path) -> None
     site_file.write_text(json.dumps({"builds": []}), encoding="utf-8")
     with pytest.raises(SystemExit, match="records no next build"):
         aggregate.pin_next([], site_file)
+
+
+def test_a_fix_release_sorts_above_the_stack_it_fixes() -> None:
+    tree = {
+        "stacks": {
+            name: {"maturity": aggregate.RELEASE}
+            for name in ("2.2.1", "2.2.2", "2.2.2-fix.1", "2.2.2-fix.2", "2.2.3-rc.1")
+        }
+    }
+    assert aggregate.released_stacks(tree) == [
+        "2.2.2-fix.2",
+        "2.2.2-fix.1",
+        "2.2.2",
+        "2.2.1",
+    ]
