@@ -121,19 +121,21 @@ flowchart TB
     class dfe_fetcher,dfe_receiver ingest
     class dfe_archiver,dfe_loader load
     class dfe_transform_elastic,dfe_transform_vector,dfe_transform_vrl xform
-  classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
-  classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A
-  classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A
-  classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A
-  classDef bus fill:#FFFFFF,stroke:#A8517F,stroke-width:3px,color:#0F172A
-  classDef store fill:#FFFFFF,stroke:#00785A,stroke-width:3px,color:#0F172A
-  classDef ui fill:#FFFFFF,stroke:#D9480F,stroke-width:3px,color:#0F172A
-  classDef decision fill:#FFFFFF,stroke:#9A6700,stroke-width:3px,color:#0F172A
-  classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
-  classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
-  classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
-  style rust_services fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
-  style python_services fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
+    %% merrow:begin
+    classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A
+    classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A
+    classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A
+    classDef bus fill:#FFFFFF,stroke:#A8517F,stroke-width:3px,color:#0F172A
+    classDef store fill:#FFFFFF,stroke:#00785A,stroke-width:3px,color:#0F172A
+    classDef ui fill:#FFFFFF,stroke:#D9480F,stroke-width:3px,color:#0F172A
+    classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
+    classDef decision fill:#FFFFFF,stroke:#9A6700,stroke-width:3px,color:#0F172A
+    classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
+    classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
+    classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+    style rust_services fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
+    style python_services fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
+    %% merrow:end
 ```
 <!-- suite-graph:end overview:services -->
 
@@ -230,21 +232,23 @@ flowchart TB
     class dfe_clickhouse_rs,factbook_rs,logreducer,scalo_py,scalo_rs,vector_vrl part
     class dfe_schemas store
     class dfe_hyperdx,dfe_ui ui
-  classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
-  classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A
-  classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A
-  classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A
-  classDef bus fill:#FFFFFF,stroke:#A8517F,stroke-width:3px,color:#0F172A
-  classDef store fill:#FFFFFF,stroke:#00785A,stroke-width:3px,color:#0F172A
-  classDef ui fill:#FFFFFF,stroke:#D9480F,stroke-width:3px,color:#0F172A
-  classDef decision fill:#FFFFFF,stroke:#9A6700,stroke-width:3px,color:#0F172A
-  classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
-  classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
-  classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
-  style libraries fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
-  style content fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
-  style infra fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
-  style ui fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
+    %% merrow:begin
+    classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A
+    classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A
+    classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A
+    classDef bus fill:#FFFFFF,stroke:#A8517F,stroke-width:3px,color:#0F172A
+    classDef store fill:#FFFFFF,stroke:#00785A,stroke-width:3px,color:#0F172A
+    classDef ui fill:#FFFFFF,stroke:#D9480F,stroke-width:3px,color:#0F172A
+    classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
+    classDef decision fill:#FFFFFF,stroke:#9A6700,stroke-width:3px,color:#0F172A
+    classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
+    classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
+    classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+    style libraries fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
+    style content fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
+    style infra fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
+    style ui fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
+    %% merrow:end
 ```
 <!-- suite-graph:end overview:platform -->
 
@@ -343,18 +347,20 @@ flowchart TB
     class dfe_archiver,dfe_loader load
     class scalo_rs part
     class dfe_transform_elastic,dfe_transform_vector,dfe_transform_vrl xform
-  classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
-  classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A
-  classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A
-  classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A
-  classDef bus fill:#FFFFFF,stroke:#A8517F,stroke-width:3px,color:#0F172A
-  classDef store fill:#FFFFFF,stroke:#00785A,stroke-width:3px,color:#0F172A
-  classDef ui fill:#FFFFFF,stroke:#D9480F,stroke-width:3px,color:#0F172A
-  classDef decision fill:#FFFFFF,stroke:#9A6700,stroke-width:3px,color:#0F172A
-  classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
-  classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
-  classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
-  style rust_services fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
+    %% merrow:begin
+    classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A
+    classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A
+    classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A
+    classDef bus fill:#FFFFFF,stroke:#A8517F,stroke-width:3px,color:#0F172A
+    classDef store fill:#FFFFFF,stroke:#00785A,stroke-width:3px,color:#0F172A
+    classDef ui fill:#FFFFFF,stroke:#D9480F,stroke-width:3px,color:#0F172A
+    classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
+    classDef decision fill:#FFFFFF,stroke:#9A6700,stroke-width:3px,color:#0F172A
+    classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
+    classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
+    classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+    style rust_services fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
+    %% merrow:end
 ```
 <!-- suite-graph:end producer:scalo-rs -->
 
@@ -431,18 +437,20 @@ flowchart TB
 
     class culvert,dfe_engine control
     class scalo_py,vector_vrl part
-  classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
-  classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A
-  classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A
-  classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A
-  classDef bus fill:#FFFFFF,stroke:#A8517F,stroke-width:3px,color:#0F172A
-  classDef store fill:#FFFFFF,stroke:#00785A,stroke-width:3px,color:#0F172A
-  classDef ui fill:#FFFFFF,stroke:#D9480F,stroke-width:3px,color:#0F172A
-  classDef decision fill:#FFFFFF,stroke:#9A6700,stroke-width:3px,color:#0F172A
-  classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
-  classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
-  classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
-  style python_members fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
+    %% merrow:begin
+    classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A
+    classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A
+    classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A
+    classDef bus fill:#FFFFFF,stroke:#A8517F,stroke-width:3px,color:#0F172A
+    classDef store fill:#FFFFFF,stroke:#00785A,stroke-width:3px,color:#0F172A
+    classDef ui fill:#FFFFFF,stroke:#D9480F,stroke-width:3px,color:#0F172A
+    classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
+    classDef decision fill:#FFFFFF,stroke:#9A6700,stroke-width:3px,color:#0F172A
+    classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
+    classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
+    classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+    style python_members fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
+    %% merrow:end
 ```
 <!-- suite-graph:end producer:scalo-py -->
 
@@ -515,17 +523,19 @@ flowchart LR
 
     class dfe_engine,dfe_infra control
     class dfe_ui ui
-  classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
-  classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A
-  classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A
-  classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A
-  classDef bus fill:#FFFFFF,stroke:#A8517F,stroke-width:3px,color:#0F172A
-  classDef store fill:#FFFFFF,stroke:#00785A,stroke-width:3px,color:#0F172A
-  classDef ui fill:#FFFFFF,stroke:#D9480F,stroke-width:3px,color:#0F172A
-  classDef decision fill:#FFFFFF,stroke:#9A6700,stroke-width:3px,color:#0F172A
-  classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
-  classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
-  classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+    %% merrow:begin
+    classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A
+    classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A
+    classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A
+    classDef bus fill:#FFFFFF,stroke:#A8517F,stroke-width:3px,color:#0F172A
+    classDef store fill:#FFFFFF,stroke:#00785A,stroke-width:3px,color:#0F172A
+    classDef ui fill:#FFFFFF,stroke:#D9480F,stroke-width:3px,color:#0F172A
+    classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
+    classDef decision fill:#FFFFFF,stroke:#9A6700,stroke-width:3px,color:#0F172A
+    classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
+    classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
+    classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+    %% merrow:end
 ```
 <!-- suite-graph:end producer:dfe-engine -->
 
@@ -599,17 +609,19 @@ flowchart LR
     dfe_infra -->|vendored-file| dfe_engine
 
     class dfe_infra,dfe_deploy,dfe_docker,dfe_engine control
-  classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
-  classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A
-  classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A
-  classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A
-  classDef bus fill:#FFFFFF,stroke:#A8517F,stroke-width:3px,color:#0F172A
-  classDef store fill:#FFFFFF,stroke:#00785A,stroke-width:3px,color:#0F172A
-  classDef ui fill:#FFFFFF,stroke:#D9480F,stroke-width:3px,color:#0F172A
-  classDef decision fill:#FFFFFF,stroke:#9A6700,stroke-width:3px,color:#0F172A
-  classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
-  classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
-  classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+    %% merrow:begin
+    classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A
+    classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A
+    classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A
+    classDef bus fill:#FFFFFF,stroke:#A8517F,stroke-width:3px,color:#0F172A
+    classDef store fill:#FFFFFF,stroke:#00785A,stroke-width:3px,color:#0F172A
+    classDef ui fill:#FFFFFF,stroke:#D9480F,stroke-width:3px,color:#0F172A
+    classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
+    classDef decision fill:#FFFFFF,stroke:#9A6700,stroke-width:3px,color:#0F172A
+    classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
+    classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
+    classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+    %% merrow:end
 ```
 <!-- suite-graph:end producer:dfe-infra -->
 
@@ -682,17 +694,19 @@ flowchart LR
 
     class dfe_engine,dfe_infra control
     class dfe_schemas store
-  classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
-  classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A
-  classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A
-  classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A
-  classDef bus fill:#FFFFFF,stroke:#A8517F,stroke-width:3px,color:#0F172A
-  classDef store fill:#FFFFFF,stroke:#00785A,stroke-width:3px,color:#0F172A
-  classDef ui fill:#FFFFFF,stroke:#D9480F,stroke-width:3px,color:#0F172A
-  classDef decision fill:#FFFFFF,stroke:#9A6700,stroke-width:3px,color:#0F172A
-  classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
-  classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
-  classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+    %% merrow:begin
+    classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A
+    classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A
+    classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A
+    classDef bus fill:#FFFFFF,stroke:#A8517F,stroke-width:3px,color:#0F172A
+    classDef store fill:#FFFFFF,stroke:#00785A,stroke-width:3px,color:#0F172A
+    classDef ui fill:#FFFFFF,stroke:#D9480F,stroke-width:3px,color:#0F172A
+    classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
+    classDef decision fill:#FFFFFF,stroke:#9A6700,stroke-width:3px,color:#0F172A
+    classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
+    classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
+    classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+    %% merrow:end
 ```
 <!-- suite-graph:end producer:dfe-schemas -->
 
@@ -763,17 +777,19 @@ flowchart LR
 
     class dfe_engine control
     class logreducer part
-  classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
-  classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A
-  classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A
-  classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A
-  classDef bus fill:#FFFFFF,stroke:#A8517F,stroke-width:3px,color:#0F172A
-  classDef store fill:#FFFFFF,stroke:#00785A,stroke-width:3px,color:#0F172A
-  classDef ui fill:#FFFFFF,stroke:#D9480F,stroke-width:3px,color:#0F172A
-  classDef decision fill:#FFFFFF,stroke:#9A6700,stroke-width:3px,color:#0F172A
-  classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
-  classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
-  classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+    %% merrow:begin
+    classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A
+    classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A
+    classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A
+    classDef bus fill:#FFFFFF,stroke:#A8517F,stroke-width:3px,color:#0F172A
+    classDef store fill:#FFFFFF,stroke:#00785A,stroke-width:3px,color:#0F172A
+    classDef ui fill:#FFFFFF,stroke:#D9480F,stroke-width:3px,color:#0F172A
+    classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
+    classDef decision fill:#FFFFFF,stroke:#9A6700,stroke-width:3px,color:#0F172A
+    classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
+    classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
+    classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+    %% merrow:end
 ```
 <!-- suite-graph:end producer:logreducer -->
 
@@ -849,18 +865,20 @@ flowchart TB
     class dfe_fetcher ingest
     class dfe_loader load
     class dfe_clickhouse_rs part
-  classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
-  classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A
-  classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A
-  classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A
-  classDef bus fill:#FFFFFF,stroke:#A8517F,stroke-width:3px,color:#0F172A
-  classDef store fill:#FFFFFF,stroke:#00785A,stroke-width:3px,color:#0F172A
-  classDef ui fill:#FFFFFF,stroke:#D9480F,stroke-width:3px,color:#0F172A
-  classDef decision fill:#FFFFFF,stroke:#9A6700,stroke-width:3px,color:#0F172A
-  classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
-  classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
-  classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
-  style rust_services fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
+    %% merrow:begin
+    classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A
+    classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A
+    classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A
+    classDef bus fill:#FFFFFF,stroke:#A8517F,stroke-width:3px,color:#0F172A
+    classDef store fill:#FFFFFF,stroke:#00785A,stroke-width:3px,color:#0F172A
+    classDef ui fill:#FFFFFF,stroke:#D9480F,stroke-width:3px,color:#0F172A
+    classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
+    classDef decision fill:#FFFFFF,stroke:#9A6700,stroke-width:3px,color:#0F172A
+    classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
+    classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
+    classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+    style rust_services fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
+    %% merrow:end
 ```
 <!-- suite-graph:end producer:dfe-clickhouse-rs -->
 
@@ -937,17 +955,19 @@ flowchart LR
 
     class dfe_infra control
     class dfe_ui ui
-  classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
-  classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A
-  classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A
-  classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A
-  classDef bus fill:#FFFFFF,stroke:#A8517F,stroke-width:3px,color:#0F172A
-  classDef store fill:#FFFFFF,stroke:#00785A,stroke-width:3px,color:#0F172A
-  classDef ui fill:#FFFFFF,stroke:#D9480F,stroke-width:3px,color:#0F172A
-  classDef decision fill:#FFFFFF,stroke:#9A6700,stroke-width:3px,color:#0F172A
-  classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
-  classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
-  classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+    %% merrow:begin
+    classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A
+    classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A
+    classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A
+    classDef bus fill:#FFFFFF,stroke:#A8517F,stroke-width:3px,color:#0F172A
+    classDef store fill:#FFFFFF,stroke:#00785A,stroke-width:3px,color:#0F172A
+    classDef ui fill:#FFFFFF,stroke:#D9480F,stroke-width:3px,color:#0F172A
+    classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
+    classDef decision fill:#FFFFFF,stroke:#9A6700,stroke-width:3px,color:#0F172A
+    classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
+    classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
+    classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+    %% merrow:end
 ```
 <!-- suite-graph:end producer:dfe-ui -->
 
@@ -1016,17 +1036,19 @@ flowchart LR
 
     class dfe_infra control
     class dfe_hyperdx ui
-  classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
-  classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A
-  classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A
-  classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A
-  classDef bus fill:#FFFFFF,stroke:#A8517F,stroke-width:3px,color:#0F172A
-  classDef store fill:#FFFFFF,stroke:#00785A,stroke-width:3px,color:#0F172A
-  classDef ui fill:#FFFFFF,stroke:#D9480F,stroke-width:3px,color:#0F172A
-  classDef decision fill:#FFFFFF,stroke:#9A6700,stroke-width:3px,color:#0F172A
-  classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
-  classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
-  classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+    %% merrow:begin
+    classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A
+    classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A
+    classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A
+    classDef bus fill:#FFFFFF,stroke:#A8517F,stroke-width:3px,color:#0F172A
+    classDef store fill:#FFFFFF,stroke:#00785A,stroke-width:3px,color:#0F172A
+    classDef ui fill:#FFFFFF,stroke:#D9480F,stroke-width:3px,color:#0F172A
+    classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
+    classDef decision fill:#FFFFFF,stroke:#9A6700,stroke-width:3px,color:#0F172A
+    classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
+    classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
+    classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+    %% merrow:end
 ```
 <!-- suite-graph:end producer:dfe-hyperdx -->
 
@@ -1096,17 +1118,19 @@ flowchart LR
     dfe_deploy -->|version-pin| dfe_infra
 
     class dfe_deploy,dfe_infra control
-  classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
-  classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A
-  classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A
-  classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A
-  classDef bus fill:#FFFFFF,stroke:#A8517F,stroke-width:3px,color:#0F172A
-  classDef store fill:#FFFFFF,stroke:#00785A,stroke-width:3px,color:#0F172A
-  classDef ui fill:#FFFFFF,stroke:#D9480F,stroke-width:3px,color:#0F172A
-  classDef decision fill:#FFFFFF,stroke:#9A6700,stroke-width:3px,color:#0F172A
-  classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
-  classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
-  classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+    %% merrow:begin
+    classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A
+    classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A
+    classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A
+    classDef bus fill:#FFFFFF,stroke:#A8517F,stroke-width:3px,color:#0F172A
+    classDef store fill:#FFFFFF,stroke:#00785A,stroke-width:3px,color:#0F172A
+    classDef ui fill:#FFFFFF,stroke:#D9480F,stroke-width:3px,color:#0F172A
+    classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
+    classDef decision fill:#FFFFFF,stroke:#9A6700,stroke-width:3px,color:#0F172A
+    classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
+    classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
+    classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+    %% merrow:end
 ```
 <!-- suite-graph:end producer:dfe-deploy -->
 
@@ -1181,17 +1205,19 @@ flowchart LR
 
     class dfe_engine,dfe_infra control
     class dfe_loader load
-  classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
-  classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A
-  classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A
-  classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A
-  classDef bus fill:#FFFFFF,stroke:#A8517F,stroke-width:3px,color:#0F172A
-  classDef store fill:#FFFFFF,stroke:#00785A,stroke-width:3px,color:#0F172A
-  classDef ui fill:#FFFFFF,stroke:#D9480F,stroke-width:3px,color:#0F172A
-  classDef decision fill:#FFFFFF,stroke:#9A6700,stroke-width:3px,color:#0F172A
-  classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
-  classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
-  classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+    %% merrow:begin
+    classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A
+    classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A
+    classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A
+    classDef bus fill:#FFFFFF,stroke:#A8517F,stroke-width:3px,color:#0F172A
+    classDef store fill:#FFFFFF,stroke:#00785A,stroke-width:3px,color:#0F172A
+    classDef ui fill:#FFFFFF,stroke:#D9480F,stroke-width:3px,color:#0F172A
+    classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
+    classDef decision fill:#FFFFFF,stroke:#9A6700,stroke-width:3px,color:#0F172A
+    classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
+    classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
+    classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+    %% merrow:end
 ```
 <!-- suite-graph:end producer:dfe-loader -->
 
@@ -1262,17 +1288,19 @@ flowchart LR
 
     class dfe_engine,dfe_infra control
     class dfe_receiver ingest
-  classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
-  classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A
-  classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A
-  classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A
-  classDef bus fill:#FFFFFF,stroke:#A8517F,stroke-width:3px,color:#0F172A
-  classDef store fill:#FFFFFF,stroke:#00785A,stroke-width:3px,color:#0F172A
-  classDef ui fill:#FFFFFF,stroke:#D9480F,stroke-width:3px,color:#0F172A
-  classDef decision fill:#FFFFFF,stroke:#9A6700,stroke-width:3px,color:#0F172A
-  classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
-  classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
-  classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+    %% merrow:begin
+    classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A
+    classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A
+    classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A
+    classDef bus fill:#FFFFFF,stroke:#A8517F,stroke-width:3px,color:#0F172A
+    classDef store fill:#FFFFFF,stroke:#00785A,stroke-width:3px,color:#0F172A
+    classDef ui fill:#FFFFFF,stroke:#D9480F,stroke-width:3px,color:#0F172A
+    classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
+    classDef decision fill:#FFFFFF,stroke:#9A6700,stroke-width:3px,color:#0F172A
+    classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
+    classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
+    classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+    %% merrow:end
 ```
 <!-- suite-graph:end producer:dfe-receiver -->
 
@@ -1341,17 +1369,19 @@ flowchart LR
 
     class dfe_infra control
     class dfe_fetcher ingest
-  classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
-  classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A
-  classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A
-  classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A
-  classDef bus fill:#FFFFFF,stroke:#A8517F,stroke-width:3px,color:#0F172A
-  classDef store fill:#FFFFFF,stroke:#00785A,stroke-width:3px,color:#0F172A
-  classDef ui fill:#FFFFFF,stroke:#D9480F,stroke-width:3px,color:#0F172A
-  classDef decision fill:#FFFFFF,stroke:#9A6700,stroke-width:3px,color:#0F172A
-  classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
-  classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
-  classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+    %% merrow:begin
+    classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A
+    classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A
+    classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A
+    classDef bus fill:#FFFFFF,stroke:#A8517F,stroke-width:3px,color:#0F172A
+    classDef store fill:#FFFFFF,stroke:#00785A,stroke-width:3px,color:#0F172A
+    classDef ui fill:#FFFFFF,stroke:#D9480F,stroke-width:3px,color:#0F172A
+    classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
+    classDef decision fill:#FFFFFF,stroke:#9A6700,stroke-width:3px,color:#0F172A
+    classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
+    classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
+    classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+    %% merrow:end
 ```
 <!-- suite-graph:end producer:dfe-fetcher -->
 
@@ -1420,17 +1450,19 @@ flowchart LR
 
     class dfe_infra control
     class dfe_archiver load
-  classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
-  classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A
-  classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A
-  classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A
-  classDef bus fill:#FFFFFF,stroke:#A8517F,stroke-width:3px,color:#0F172A
-  classDef store fill:#FFFFFF,stroke:#00785A,stroke-width:3px,color:#0F172A
-  classDef ui fill:#FFFFFF,stroke:#D9480F,stroke-width:3px,color:#0F172A
-  classDef decision fill:#FFFFFF,stroke:#9A6700,stroke-width:3px,color:#0F172A
-  classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
-  classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
-  classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+    %% merrow:begin
+    classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A
+    classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A
+    classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A
+    classDef bus fill:#FFFFFF,stroke:#A8517F,stroke-width:3px,color:#0F172A
+    classDef store fill:#FFFFFF,stroke:#00785A,stroke-width:3px,color:#0F172A
+    classDef ui fill:#FFFFFF,stroke:#D9480F,stroke-width:3px,color:#0F172A
+    classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
+    classDef decision fill:#FFFFFF,stroke:#9A6700,stroke-width:3px,color:#0F172A
+    classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
+    classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
+    classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+    %% merrow:end
 ```
 <!-- suite-graph:end producer:dfe-archiver -->
 
@@ -1499,17 +1531,19 @@ flowchart LR
 
     class dfe_infra control
     class dfe_transform_vrl xform
-  classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
-  classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A
-  classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A
-  classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A
-  classDef bus fill:#FFFFFF,stroke:#A8517F,stroke-width:3px,color:#0F172A
-  classDef store fill:#FFFFFF,stroke:#00785A,stroke-width:3px,color:#0F172A
-  classDef ui fill:#FFFFFF,stroke:#D9480F,stroke-width:3px,color:#0F172A
-  classDef decision fill:#FFFFFF,stroke:#9A6700,stroke-width:3px,color:#0F172A
-  classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
-  classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
-  classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+    %% merrow:begin
+    classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A
+    classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A
+    classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A
+    classDef bus fill:#FFFFFF,stroke:#A8517F,stroke-width:3px,color:#0F172A
+    classDef store fill:#FFFFFF,stroke:#00785A,stroke-width:3px,color:#0F172A
+    classDef ui fill:#FFFFFF,stroke:#D9480F,stroke-width:3px,color:#0F172A
+    classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
+    classDef decision fill:#FFFFFF,stroke:#9A6700,stroke-width:3px,color:#0F172A
+    classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
+    classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
+    classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+    %% merrow:end
 ```
 <!-- suite-graph:end producer:dfe-transform-vrl -->
 
@@ -1578,17 +1612,19 @@ flowchart LR
 
     class dfe_infra control
     class dfe_transform_vector xform
-  classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
-  classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A
-  classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A
-  classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A
-  classDef bus fill:#FFFFFF,stroke:#A8517F,stroke-width:3px,color:#0F172A
-  classDef store fill:#FFFFFF,stroke:#00785A,stroke-width:3px,color:#0F172A
-  classDef ui fill:#FFFFFF,stroke:#D9480F,stroke-width:3px,color:#0F172A
-  classDef decision fill:#FFFFFF,stroke:#9A6700,stroke-width:3px,color:#0F172A
-  classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
-  classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
-  classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+    %% merrow:begin
+    classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A
+    classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A
+    classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A
+    classDef bus fill:#FFFFFF,stroke:#A8517F,stroke-width:3px,color:#0F172A
+    classDef store fill:#FFFFFF,stroke:#00785A,stroke-width:3px,color:#0F172A
+    classDef ui fill:#FFFFFF,stroke:#D9480F,stroke-width:3px,color:#0F172A
+    classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
+    classDef decision fill:#FFFFFF,stroke:#9A6700,stroke-width:3px,color:#0F172A
+    classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
+    classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
+    classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+    %% merrow:end
 ```
 <!-- suite-graph:end producer:dfe-transform-vector -->
 
@@ -1657,17 +1693,19 @@ flowchart LR
 
     class dfe_infra control
     class dfe_transform_elastic xform
-  classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
-  classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A
-  classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A
-  classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A
-  classDef bus fill:#FFFFFF,stroke:#A8517F,stroke-width:3px,color:#0F172A
-  classDef store fill:#FFFFFF,stroke:#00785A,stroke-width:3px,color:#0F172A
-  classDef ui fill:#FFFFFF,stroke:#D9480F,stroke-width:3px,color:#0F172A
-  classDef decision fill:#FFFFFF,stroke:#9A6700,stroke-width:3px,color:#0F172A
-  classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
-  classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
-  classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+    %% merrow:begin
+    classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A
+    classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A
+    classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A
+    classDef bus fill:#FFFFFF,stroke:#A8517F,stroke-width:3px,color:#0F172A
+    classDef store fill:#FFFFFF,stroke:#00785A,stroke-width:3px,color:#0F172A
+    classDef ui fill:#FFFFFF,stroke:#D9480F,stroke-width:3px,color:#0F172A
+    classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
+    classDef decision fill:#FFFFFF,stroke:#9A6700,stroke-width:3px,color:#0F172A
+    classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
+    classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
+    classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+    %% merrow:end
 ```
 <!-- suite-graph:end producer:dfe-transform-elastic -->
 

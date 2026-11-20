@@ -45,6 +45,8 @@ sys.path.insert(0, str(SCRIPTS))
 import suite_graph  # noqa: E402
 
 GIT = shutil.which("git")
+# The check renders the suite-graph page through merrow (scripts/tests/requirements-merrow.txt).
+MERROW = shutil.which("merrow")
 
 SUITE = """\
 schema: "1"
@@ -411,7 +413,7 @@ def _write(path: Path, text: str) -> None:
 def check(
     infra: Path, *args: str, diagram_check: Path | None = None
 ) -> tuple[int, str]:
-    """Run the copied check with a PATH holding git only.
+    """Run the copied check with a PATH holding git and merrow only.
 
     DIAGRAM_CHECK names the diagram checker. By default it names a file that
     does not exist, so the result never depends on what the host has installed.
@@ -419,7 +421,8 @@ def check(
     restricted = infra.parent / "restricted-path"
     restricted.mkdir(exist_ok=True)
     env = dict(os.environ)
-    env["PATH"] = str(Path(GIT).parent) if GIT else str(restricted)
+    tools = [str(Path(tool).parent) for tool in (GIT, MERROW) if tool]
+    env["PATH"] = os.pathsep.join(tools) or str(restricted)
     env["DIAGRAM_CHECK"] = str(diagram_check or infra.parent / "no-diagram-check.py")
     proc = subprocess.run(
         [sys.executable, str(infra / "scripts" / "check_suite_drift.py"), *args],

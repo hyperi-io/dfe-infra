@@ -21,9 +21,10 @@ inside a quoted string, a quoted item in a flow list, a tab-indented line --
 is rejected here rather than coerced into a value PyYAML would disagree with.
 """
 
-from __future__ import annotations
-
 import re
+import shutil
+import subprocess
+import tempfile
 from pathlib import Path
 
 from manifest_deps import PACKAGE_KINDS
@@ -406,74 +407,12 @@ def slice_graph(
 # Mermaid -- the blocks docs/suite-graph.md carries between markers
 # ---------------------------------------------------------------------------
 
-# The house frontmatter and class lines every Mermaid diagram in the DFE docs
-# carries, byte for byte. A block copies all of them, used or not.
-HOUSE_FRONTMATTER = """---
-config:
-  theme: base
-  look: neo
-  fontFamily: Inter, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif
-  flowchart:
-    curve: linear
-    nodeSpacing: 40
-    rankSpacing: 64
-    padding: 18
-    wrappingWidth: 280
-    htmlLabels: true
-  elk:
-    preset: modelOrder
-  themeVariables:
-    fontSize: 15px
-    lineColor: "#64748B"
-    primaryTextColor: "#0F172A"
-    nodeBorder: "#334155"
-    clusterBorder: "#0072B2"
-    edgeLabelBackground: "#FFFFFF"
-  themeCSS: >-
-    p{margin:0}
-    .node[data-look] rect,.node[data-look] path,.node[data-look] polygon,.node[data-look] .outer-path{filter:drop-shadow(0 1px 2px rgba(15,23,42,.10)) drop-shadow(0 6px 14px rgba(15,23,42,.10))}
-    .node rect{rx:10px;ry:10px}
-    .cluster rect{rx:16px;ry:16px}
-    .node .label div{min-width:150px}
-    .node.decision .label div{min-width:0}
-    .cluster[data-look] rect{filter:none}
-    .nodeLabel{line-height:1.35}
-    .nodeLabel b{font-weight:600;font-size:15px;letter-spacing:-0.01em}
-    .nodeLabel span{font-size:12.5px;font-weight:400;color:#334155}
-    .cluster-label span.nodeLabel{display:inline-block;background:#FFFFFF;color:#0B2A3F;border:1.5px solid #0072B2;border-radius:999px;padding:2px 12px;font-size:11.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase}
-    .flowchart-link{stroke-width:1.75px}
-    .labelBkg{background:transparent!important}
-    span.edgeLabel{display:inline-block;background:#FFFFFF!important;color:#1E293B;border:1px solid #94A3B8;border-radius:999px;padding:2px 10px;font-size:12px;font-weight:500}
-    span.edgeLabel p{background:transparent!important}
-    .label-icon{width:20px;height:20px;vertical-align:-4px;margin-right:6px}
-    .icon-shape path[stroke-width="0"][fill="none"]{fill:#FFFFFF;stroke:#FFFFFF;stroke-width:12px;stroke-linejoin:round}
-    .icon-shape p{background:transparent!important;color:#0F172A}
-    .ingest .label-icon{color:#0E8A7D}
-    .xform .label-icon{color:#7B4FB0}
-    .load .label-icon{color:#0072B2}
-    .bus .label-icon{color:#A8517F}
-    .store .label-icon{color:#00785A}
-    .ui .label-icon{color:#D9480F}
-    .ext .label-icon{color:#64748B}
----
-"""
-CLASS_LINES = {
-    "ext": "classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A",
-    "ingest": "classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A",
-    "xform": "classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A",
-    "load": "classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A",
-    "bus": "classDef bus fill:#FFFFFF,stroke:#A8517F,stroke-width:3px,color:#0F172A",
-    "store": "classDef store fill:#FFFFFF,stroke:#00785A,stroke-width:3px,color:#0F172A",
-    "ui": "classDef ui fill:#FFFFFF,stroke:#D9480F,stroke-width:3px,color:#0F172A",
-    "decision": "classDef decision fill:#FFFFFF,stroke:#9A6700,stroke-width:3px,color:#0F172A",
-    "error": "classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A",
-    "control": "classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A",
-    "part": "classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A",
-}
-# The dashed boundary line a subgraph takes.
-BOUNDARY_STYLE = (
-    "style {id} fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4"
-)
+# merrow writes each block's frontmatter, classDef lines and boundary styles
+# between these markers, from this profile.
+HOUSE_PROFILE = "house"
+MERROW_BEGIN = "%% merrow:begin"
+MERROW_END = "%% merrow:end"
+MERROW_REQUIREMENTS = "scripts/tests/requirements-merrow.txt"
 
 # A named DFE component keeps its own colour in every diagram. Any other node
 # takes the colour of its role.
@@ -593,11 +532,10 @@ def _block(
     classes: dict[str, list[str]],
     groups: list[str],
 ) -> str:
-    """One flowchart: frontmatter, header, nodes and arrows in `body`, then the house class lines."""
-    lines = [*HOUSE_FRONTMATTER.rstrip("\n").split("\n")]
+    """One flowchart: header, nodes and arrows in `body`, class assignments, then the pair merrow fills."""
     # Groups stack top to bottom with their members in rows, which keeps the block
     # inside 860 px. A block with no group is a short chain and reads left to right.
-    lines += [
+    lines = [
         f"flowchart {'TB' if groups else 'LR'}",
         f"{INDENT}accTitle: {LEVEL} -- {title}",
     ]
@@ -608,8 +546,7 @@ def _block(
     lines += [
         f"{INDENT}class {','.join(ids)} {name}" for name, ids in sorted(classes.items())
     ]
-    lines += [f"{INDENT[:2]}{line}" for line in CLASS_LINES.values()]
-    lines += [f"{INDENT[:2]}{BOUNDARY_STYLE.format(id=gid)}" for gid in groups]
+    lines += [f"{INDENT}{MERROW_BEGIN}", f"{INDENT}{MERROW_END}"]
     return "\n".join(lines)
 
 
@@ -750,7 +687,8 @@ def block_names(graph: dict) -> list[str]:
     return [*OVERVIEW_BLOCKS, *(f"producer:{p}" for p in producers)]
 
 
-def render_block(graph: dict, name: str) -> str:
+def _bare_block(graph: dict, name: str) -> str:
+    """One block as the generator writes it, before merrow fills the house style."""
     if name in OVERVIEW_BLOCKS:
         return mermaid_overview(graph, name.split(":", 1)[1])
     if name.startswith("producer:") and name.split(":", 1)[1] in graph["nodes"]:
@@ -758,6 +696,53 @@ def render_block(graph: dict, name: str) -> str:
     raise KeyError(
         f"unknown block {name!r}; use {' or '.join(OVERVIEW_BLOCKS)} or producer:<node>"
     )
+
+
+def apply_house(text: str) -> str:
+    """Return the Markdown page `text` with every marked fence filled by `merrow diagram apply`.
+
+    Raises:
+        RuntimeError: If merrow is not installed, or exits other than 0 or 2.
+        ValueError: If merrow refuses the page (exit 2), such as a marker with no partner.
+    """
+    merrow = shutil.which("merrow")
+    if merrow is None:
+        raise RuntimeError(
+            f"merrow is not installed: uv pip install --require-hashes -r {MERROW_REQUIREMENTS}"
+        )
+    with tempfile.TemporaryDirectory() as tmp:
+        page = Path(tmp) / "page.md"
+        page.write_text(text, encoding="utf-8", newline="\n")
+        result = subprocess.run(
+            [merrow, "diagram", "apply", "--profile", HOUSE_PROFILE, str(page)],
+            capture_output=True,
+            check=False,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        if result.returncode == 2:
+            raise ValueError(
+                f"merrow diagram apply refused the page: {result.stderr.strip()}"
+            )
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"merrow diagram apply exited {result.returncode}: {result.stderr.strip()}"
+            )
+        return page.read_text(encoding="utf-8")
+
+
+def render_blocks(graph: dict, names: list[str]) -> dict[str, str]:
+    """Return each named block in the house style, from one merrow run."""
+    fences = [f"```mermaid\n{_bare_block(graph, name)}\n```" for name in names]
+    styled = apply_house("\n\n".join(fences) + "\n")
+    bodies = re.findall(r"^```mermaid\n(.*?)\n```$", styled, re.MULTILINE | re.DOTALL)
+    return dict(zip(names, bodies, strict=True))
+
+
+def render_block(graph: dict, name: str) -> str:
+    """Return one block in the house style."""
+    return render_blocks(graph, [name])[name]
 
 
 def render_docs(graph: dict, text: str) -> str:
@@ -779,7 +764,7 @@ def render_docs(graph: dict, text: str) -> str:
 
     def replace(m: re.Match) -> str:
         name = m.group("name")
-        body = render_block(graph, name)
+        body = _bare_block(graph, name)
         replaced.append(name)
         return f"{BEGIN.format(name=name)}\n```mermaid\n{body}\n```\n{END.format(name=name)}"
 
@@ -796,7 +781,7 @@ def render_docs(graph: dict, text: str) -> str:
             f"suite-graph block {unmatched[0]!r} has a begin marker and no "
             f"matching end marker, so it can never be rewritten"
         )
-    return fresh
+    return apply_house(fresh)
 
 
 def doc_block_names(text: str) -> list[str]:
