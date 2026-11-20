@@ -111,7 +111,10 @@ def test_an_rc_ranks_below_its_release() -> None:
         ("1.22.81-rc.1", ">=1.22.80 <1.22.81", True),
         ("v1.22.81", "==1.22.81", True),
     ):
-        expect(f"{version} {spec} is {want}", version_range.satisfies(version, spec) is want)
+        expect(
+            f"{version} {spec} is {want}",
+            version_range.satisfies(version, spec) is want,
+        )
 
 
 def test_only_a_trailing_alpha_beta_or_rc_is_a_prerelease() -> None:
