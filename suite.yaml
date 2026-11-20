@@ -886,23 +886,6 @@ edges:
     evidence: "dfe-infra/versions.yaml"
     note: "The pin is content.dfe-deploy in the current stack. Lockstep by the same content-block policy."
 
-  # --- the components into dfe-engine --------------------------------------
-  # dfe-engine authors these apps' configs, so it carries a hand-written copy
-  # of their validation rules. No file is copied, so nothing can compare them.
-
-  - from: dfe-loader
-    to: dfe-engine
-    kind: mirrored-logic
-    type: potential
-    evidence: "dfe-engine/src/dfe_engine/services/plugins_builtin/loader.py:55"
-    note: "Mirrors the loader's own config validation, deliberately scoped by transport. Re-read it whenever the loader's config schema changes."
-  - from: dfe-receiver
-    to: dfe-engine
-    kind: mirrored-logic
-    type: potential
-    evidence: "dfe-engine/src/dfe_engine/services/plugins_builtin/receiver.py:29"
-    note: "Mirrors the receiver's own config validation."
-
 # ---------------------------------------------------------------------------
 # RUNTIME EDGES -- real dependencies between members at run time, recorded so
 # the picture is complete for an outside reader. The tooling does NOT walk

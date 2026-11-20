@@ -46,9 +46,9 @@ to the end of the page. `all` names every rule. An .mdx page writes the marker a
 aggregate.py, so put it after the H1.
 
 With --baseline, a finding counts as new unless the baseline tree has the same
-rule, term and line text on the same page of the same build. A build the
-baseline lacks, such as a stack just released, matches that page in any
-baseline build. Moving a line is not new, editing it is.
+rule, term and line text on the same page of the same build, link targets aside.
+A build the baseline lacks, such as a stack just released, matches that page in
+any baseline build. Moving a line is not new, editing it is.
 """
 
 import argparse
@@ -134,8 +134,13 @@ class Finding:
 
     @property
     def key(self) -> tuple[str, str, str, str, str]:
-        """What a baseline finding has to share for this one not to be new."""
-        return (self.build, self.page, self.rule, self.term.lower(), self.text)
+        """What a baseline finding has to share for this one not to be new.
+
+        Link targets are left out, because aggregate.py rewrites a link to a page
+        it keeps off the site, and that rewrite is not an edit to the line.
+        """
+        text = _LINK_TARGET.sub("]()", self.text)
+        return (self.build, self.page, self.rule, self.term.lower(), text)
 
 
 def load_phrases(tree: dict) -> Phrases:

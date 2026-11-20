@@ -82,7 +82,7 @@ extraVolumeMounts:
     mountPath: /var/run/secrets/dfe/ingest-bearer-tokens
     readOnly: true
 
-# Fixed in the config file, beyond any overlay: the Push listener dfe-fetcher sends to, and the buffer figure.
+# Fixed in the config file, beyond any overlay: the gRPC listener for a Vector agent's `vector` sink (PushEvents), and the buffer figure.
 configOverrides:
   buffer:
     memory_limit: 0

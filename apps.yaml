@@ -273,17 +273,13 @@ apps:
     multiplicity: single
     scale_deployed: true
     transports: [bus, direct]
-    # A reload rebuilds the router and the validator and re-reads the auth
-    # tokens. The sinks, their buffers and the DLQ are built once
-    # (dfe-receiver src/pipeline/mod.rs PipelineState::build), and so is every
-    # listener (src/server/mod.rs build_handlers), so a destination added later
-    # has no sink and its records are refused until the container restarts.
+    # A reload rebuilds the router, the validator and every destination whose
+    # wiring changed, the built-in loader one included, and re-reads the auth
+    # tokens (dfe-receiver src/pipeline/mod.rs reload_config). Buffers, the DLQ
+    # and every listener are built once (DeliverySettings, src/server/mod.rs
+    # build_handlers).
     hot_reload: true
     restart_paths:
-      - config.destinations
-      # The built-in loader destination is resolved from this (config/mod.rs
-      # resolved_destinations).
-      - config.loader
       - config.kafka
       - config.buffer
       - config.routing.dlq
