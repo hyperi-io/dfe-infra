@@ -65,10 +65,11 @@ spec:
               until rpk cluster health >/dev/null 2>&1; do kill -0 "${RP_PID}" || exit 1; sleep 2; done
               rpk security user create "${KAFKA_USER}" -p "${KAFKA_PASSWORD}" --mechanism SCRAM-SHA-512 || true
               {{- if .Values.kafka.redpanda.enterprise.licenseSecretRef.name }}
-              # Beta: a licensed broker keeps Redpanda's default Enterprise features, and must report no violation.
+              # Beta: a licensed broker skips the forced-off settings below and must report no violation.
               (umask 077 && printf '%s' "${REDPANDA_LICENSE}" > /tmp/redpanda.license)
-              rpk cluster license set --path /tmp/redpanda.license
+              rc=0; rpk cluster license set --path /tmp/redpanda.license || rc=$?
               rm -f /tmp/redpanda.license
+              [ "${rc}" -eq 0 ] || { echo "ERROR: rpk could not set the Redpanda licence" >&2; kill "${RP_PID}"; exit 1; }
               licence="$(rpk cluster license info --format json | tr -d ' \n\t')"
               case "${licence}" in
                 *'"license_violation":false'*) ;;

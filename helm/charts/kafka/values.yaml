@@ -48,7 +48,7 @@ kafka:
     auth:
       # The bootstrap superuser the operator creates and manages, and whose password Secret it generates.
       superuserName: "admin"
-    # Beta, untested against a paid licence. Naming a Secret that holds a Redpanda Enterprise licence keeps Redpanda's default Enterprise features on.
+    # Beta, untested against a paid licence. Naming a Secret that holds a Redpanda Enterprise licence stops the chart forcing core balancing off and lets continuous partition balancing render.
     enterprise:
       licenseSecretRef:
         name: ""
@@ -240,7 +240,7 @@ kafka:
           cpu: 200m
           memory: 128Mi
     redpanda:
-      # node_add or off. Redpanda's default, continuous, is an Enterprise feature, and the chart refuses it. node_add moves replicas onto a new broker.
+      # node_add or off. Redpanda's default, continuous, is an Enterprise feature, and the chart refuses it unless enterprise.licenseSecretRef names a licence. node_add moves replicas onto a new broker.
       partitionAutobalancingMode: node_add
       # Recovery bandwidth per sender in bytes/s. Redpanda's own default, pinned.
       raftLearnerRecoveryRate: 104857600

@@ -12,7 +12,7 @@ A new Redpanda cluster starts on a 30-day trial with two Enterprise features on:
 - `single`: the broker sets both at every start, then exits if `rpk cluster license info` still lists an Enterprise feature. A running broker picks them up at its next pod restart.
 - `kafka.mode: external`: the chart deploys no broker, so it sets neither. Whoever runs that Redpanda turns both off there.
 
-With a Redpanda Enterprise licence (beta, and untested against a paid licence), put it in a Secret under the key `license` and name the Secret in `kafka.redpanda.enterprise.licenseSecretRef.name`. The chart then hands it to the broker and stops forcing either feature off, so `partitionAutobalancingMode: continuous` renders. In `single` mode the broker applies it at every start and exits if `rpk cluster license info` reports a violation.
+With a Redpanda Enterprise licence (beta, and untested against a paid licence), create a Secret by hand in the namespace the kafka chart deploys into, with the licence under the key `license` (`kubectl -n strimzi create secret generic redpanda-license --from-file=license=./redpanda.license`), and name the Secret in `kafka.redpanda.enterprise.licenseSecretRef.name`. The chart then hands it to the broker and stops forcing either feature off, so `partitionAutobalancingMode: continuous` renders. In `single` mode the broker applies it at every start and exits if `rpk cluster license info` reports a violation.
 
 To fix a running broker now, without a restart:
 
