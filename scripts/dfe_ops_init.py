@@ -167,12 +167,18 @@ class WizardIO:
     answers: dict[str, str] | None = None
     read_line: object = input
     write_out: object = None  # defaults to print(..., file=sys.stderr)
+    # The --answers keys a question read, so the rest can be named as ignored.
+    read: set[str] = field(default_factory=set)
 
     def write(self, text: str) -> None:
         if self.write_out is not None:
             self.write_out(text)
         else:
             print(text, file=sys.stderr)
+
+    def ignored(self) -> list[str]:
+        """Return the --answers keys no question read, in file order."""
+        return [key for key in (self.answers or {}) if key not in self.read]
 
 
 def ask(
@@ -188,6 +194,7 @@ def ask(
     the key up, validate once, refuse immediately (no one to re-ask). `hint`
     replaces the bracketed default in the prompt."""
     if io.answers is not None:
+        io.read.add(key)
         raw = io.answers.get(key, default)
         if validate is None:
             return raw
@@ -534,6 +541,9 @@ def step_public_uis(io: WizardIO, a: Answers) -> None:
             "  No OIDC yet, so every UI stays private. Make one public once OIDC is in place."
         )
 
+    # The allow-list, proxy ranges and public zone serve public UIs alone.
+    if not any(a.ui_public.values()):
+        return
     a.ui_allowed_cidrs = ask(
         io,
         "ui_allowed_cidrs",
@@ -704,6 +714,7 @@ def _overrides_from_answers(raw: dict[str, str]) -> dict[str, dict[str, str]]:
 def step_overrides(io: WizardIO, a: Answers) -> None:
     if io.answers is not None:
         a.overrides = _overrides_from_answers(io.answers)
+        io.read.update(key for key in io.answers if key.startswith("override."))
     else:
         step_overrides_interactive(io, a)
     if not a.overrides:
@@ -1216,6 +1227,11 @@ def cmd_init(args: argparse.Namespace) -> int:
     except InitError as error:
         print(f"dfe-ops init: {error}", file=sys.stderr)
         return 2
+    for key in io.ignored():
+        print(
+            f"dfe-ops init: --answers {key} ignored: no question asks it for this target and tier",
+            file=sys.stderr,
+        )
 
     if args.dry_run:
         print(dial_text, end="")

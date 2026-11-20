@@ -65,7 +65,7 @@ toolbox_pod_enabled=y
 python3 scripts/dfe-ops init --answers onprem-small.answers
 ```
 
-Both write this `deployment.yaml`. `version.pin` is the stack `versions.yaml` names as `current` when you run it.
+Both write this `deployment.yaml`. `version.pin` is the stack `versions.yaml` names as `current` when you run it. Each run ends by printing the two commands to run next, `render_dial.py` on the dial and then `dfe-ops stack-deploy` with that stack and `--mode slim`.
 
 <details>
 <summary>The deployment.yaml both runs write</summary>
@@ -244,7 +244,7 @@ tags:
 registry: ghcr.io/hyperi-io
 
 version:
-  pin: 2.2.2
+  pin: <current stack>
 
 profile: slim
 

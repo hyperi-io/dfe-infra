@@ -4,7 +4,7 @@
 Set Shell "bash"
 Set FontSize 15
 Set Width 1000
-Set Height 1000
+Set Height 900
 Set Padding 20
 Set TypingSpeed 15ms
 Set Theme "Builtin Dark"
@@ -37,6 +37,9 @@ Type "203.0.113.0/24" Enter
 Enter
 Type "dfe.example.com" Enter
 Type "y" Enter
+Type "n"
+Sleep 500ms
+# Taken before the last Enter, so the closing commands' stack version stays out of the image.
+Screenshot docs/deployment/images/wizard/onprem-small.png
 Enter
 Sleep 1s
-Screenshot docs/deployment/images/wizard/onprem-small.png

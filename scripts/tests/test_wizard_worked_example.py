@@ -51,6 +51,7 @@ def test_the_worked_examples_answers_write_its_dial(tmp_path: Path) -> None:
         errors="replace",
     )
     assert result.returncode == 0, result.stderr
+    assert "ignored" not in result.stderr, result.stderr
     written = PIN_LINE.sub("  pin: <current>", result.stdout)
     documented = PIN_LINE.sub("  pin: <current>", _fence("deployment.yaml"))
     assert written == documented, (

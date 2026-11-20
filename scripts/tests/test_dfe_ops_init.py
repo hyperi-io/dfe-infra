@@ -438,6 +438,22 @@ def test_every_default_taken_interactively_finishes_with_every_ui_private() -> N
     assert not any(answers.ui_public.values())
     assert sum("confirm OIDC" in p for p in prompts) == 1
     assert any("every UI stays private" in m for m in messages)
+    # The allow-list, proxy ranges and public zone serve public UIs alone.
+    assert not any("allow-list" in p or "Public DNS zone" in p for p in prompts)
+
+
+def test_an_answers_key_no_question_reads_is_named() -> None:
+    """A stale or misspelt key must not quietly change what an answers file means."""
+    answers = {
+        "target": "on-prem",
+        "profile": "slim",
+        "kafka_provider": "msk",
+        "oidc_confirmed": "y",
+        "bogus": "1",
+    }
+    io = wiz.WizardIO(answers=answers)
+    wiz.run_wizard(io)
+    assert io.ignored() == ["kafka_provider", "bogus"]
 
 
 def test_confirming_oidc_interactively_keeps_the_public_ui() -> None:
@@ -486,7 +502,8 @@ def test_a_trusted_proxy_range_of_every_address_is_refused_through_answers() -> 
     answers = {
         "ui_allowed_cidrs": "198.51.100.0/24",
         "ui_trusted_proxy_cidrs": "192.0.2.0/25, ::/0",
-        "ui_dfe_ui": "n",
+        "ui_dfe_ui": "y",
+        "oidc_confirmed": "y",
         "public_zone": "",
     }
     with pytest.raises(wiz.InitError, match="trusts every address"):
@@ -497,7 +514,8 @@ def test_a_cdn_range_is_accepted_through_answers() -> None:
     answers = {
         "ui_allowed_cidrs": "198.51.100.0/24",
         "ui_trusted_proxy_cidrs": "192.0.2.0/25",
-        "ui_dfe_ui": "n",
+        "ui_dfe_ui": "y",
+        "oidc_confirmed": "y",
         "public_zone": "",
     }
     collected = wiz.Answers()
