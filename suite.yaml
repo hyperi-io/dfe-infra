@@ -365,7 +365,7 @@ nodes:
     artefacts:
       - kind: container
         registry: ghcr
-        public: false
+        public: true
 
   dfe-transform-elastic:
     repo: hyperi-io/dfe-transform-elastic
