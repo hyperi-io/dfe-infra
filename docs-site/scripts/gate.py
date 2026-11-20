@@ -46,8 +46,9 @@ to the end of the page. `all` names every rule. An .mdx page writes the marker a
 aggregate.py, so put it after the H1.
 
 With --baseline, a finding counts as new unless the baseline tree has the same
-rule, term and line text on the same page of the same build. Moving a line is
-not new, editing it is.
+rule, term and line text on the same page of the same build. A build the
+baseline lacks, such as a stack just released, matches that page in any
+baseline build. Moving a line is not new, editing it is.
 """
 
 import argparse
@@ -423,6 +424,37 @@ def gate_tree(content: Path, phrases: Phrases) -> list[Finding]:
     return findings
 
 
+def new_findings(
+    findings: list[Finding], baseline: Path, phrases: Phrases
+) -> list[Finding]:
+    """The findings a baseline tree lacks.
+
+    Args:
+        findings: The findings to sort.
+        baseline: An assembled tree whose findings are old.
+        phrases: The compiled gate.yaml phrases.
+
+    Returns:
+        The findings the baseline has on no matching page: the same build's, or
+        any build's for a build the baseline does not hold.
+    """
+    old = gate_tree(baseline, phrases)
+    same_build = {finding.key for finding in old}
+    any_build = {finding.key[1:] for finding in old}
+    site = json.loads((baseline / aggregate.SITE_FILE).read_text(encoding="utf-8"))
+    known = {build["name"] for build in site["builds"]}
+    return [
+        finding
+        for finding in findings
+        if finding.key not in same_build
+        and not (
+            finding.build
+            and finding.build not in known
+            and finding.key[1:] in any_build
+        )
+    ]
+
+
 def copy_prose(text: str) -> str:
     """The prose in a copy/ YAML file, every other line blanked so line numbers hold.
 
@@ -635,8 +667,7 @@ def main(argv: list[str] | None = None) -> int:
         findings += gate_files([COPY_DIR], phrases)
     new = findings
     if args.baseline:
-        old = {finding.key for finding in gate_tree(args.baseline, phrases)}
-        new = [finding for finding in findings if finding.key not in old]
+        new = new_findings(findings, args.baseline, phrases)
     console, summary = report(findings, new, repos, baselined=bool(args.baseline))
     print("\n".join([*console, "", summary[2]]))
     if args.summary:

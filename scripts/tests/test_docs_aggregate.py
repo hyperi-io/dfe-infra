@@ -1496,28 +1496,32 @@ def test_the_gate_needs_every_phrase_section() -> None:
         gate.load_phrases({"process": {}, "register": {}})
 
 
-def write_content(root: Path, pages: dict[str, str]) -> Path:
+def write_content(root: Path, pages: dict[str, str], build: str = "1.0.0") -> Path:
     members = [
         {"name": "dfe-ui", "repo": "o/dfe-ui"},
         {"name": "dfe-hyperdx", "repo": "o/dfe-hyperdx"},
     ]
-    site = {"builds": [{"name": "1.0.0", "members": members, "openapi": None}]}
+    site = {"builds": [{"name": build, "members": members, "openapi": None}]}
     write_tree(
         root,
-        {"site.json": json.dumps(site), **{f"1.0.0/{k}": v for k, v in pages.items()}},
+        {
+            "site.json": json.dumps(site),
+            **{f"{build}/{k}": v for k, v in pages.items()},
+        },
     )
     return root
 
 
 @pytest.mark.parametrize(
-    ("pages", "exit_code", "new"),
+    ("pages", "exit_code", "new", "build"),
     [
-        ({"dfe-ui/a.md": "# A\n\nIntro.\n\nOld; line.\n"}, 0, []),
-        ({"dfe-ui/a.md": "# A\n\nOld; line.\n"}, 0, []),
+        ({"dfe-ui/a.md": "# A\n\nIntro.\n\nOld; line.\n"}, 0, [], "1.0.0"),
+        ({"dfe-ui/a.md": "# A\n\nOld; line.\n"}, 0, [], "1.0.0"),
         (
             {"dfe-ui/a.md": "# A\n\nOld; line, edited.\n"},
             1,
             ["o/dfe-ui docs/a.md:3: semicolon"],
+            "1.0.0",
         ),
         (
             {
@@ -1526,11 +1530,21 @@ def write_content(root: Path, pages: dict[str, str]) -> Path:
             },
             1,
             ["o/dfe-hyperdx docs/b.md:2: semicolon"],
+            "1.0.0",
         ),
         (
             {"README.md": "# R\nRoot; page.\n"},
             1,
             ["hyperi-io/dfe-infra docs-site/content-root/README.md:2"],
+            "1.0.0",
+        ),
+        # A build the baseline lacks takes its old findings from any baseline build.
+        ({"dfe-ui/a.md": "# A\n\nOld; line.\n"}, 0, [], "1.0.0-fix.1"),
+        (
+            {"dfe-ui/a.md": "# A\n\nOld; line.\nNew; line.\n"},
+            1,
+            ["o/dfe-ui docs/a.md:4: semicolon"],
+            "1.0.0-fix.1",
         ),
     ],
 )
@@ -1540,9 +1554,10 @@ def test_the_gate_fails_only_on_findings_the_baseline_lacks(
     pages: dict[str, str],
     exit_code: int,
     new: list[str],
+    build: str,
 ) -> None:
     baseline = write_content(tmp_path / "main", {"dfe-ui/a.md": "# A\n\nOld; line.\n"})
-    content = write_content(tmp_path / "pr", pages)
+    content = write_content(tmp_path / "pr", pages, build)
     summary = tmp_path / "summary.md"
     status = gate.main(
         [
