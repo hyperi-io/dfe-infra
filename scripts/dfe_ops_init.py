@@ -119,7 +119,13 @@ FOCUS_HELP = {
     "performance": "100% headroom (2x), high-IOPS storage with an instance-store cache.",
 }
 
-KAFKA_TOKENS = ("strimzi", "redpanda", "msk", "confluent-cloud", "redpanda-cloud")
+KAFKA_PROVIDER_CHOICES = (
+    "strimzi",
+    "redpanda",
+    "msk",
+    "confluent-cloud",
+    "redpanda-cloud",
+)
 
 LIFECYCLE_CHOICES = render_dial.LIFECYCLE_VALUES  # ("ephemeral", "persistent")
 
@@ -229,10 +235,10 @@ def ask_bool(
     hint = "[Y/n]" if default else "[y/N]"
 
     def validate(raw: str) -> str:
-        token = raw.strip().lower()
-        if token in ("y", "yes", "true"):
+        answer = raw.strip().lower()
+        if answer in ("y", "yes", "true"):
             value = True
-        elif token in ("n", "no", "false"):
+        elif answer in ("n", "no", "false"):
             value = False
         else:
             raise ValueError(f"{key} must be y/yes/true or n/no/false, got {raw!r}")
@@ -419,14 +425,14 @@ def step_kafka(io: WizardIO, a: Answers) -> None:
     def validate_provider(raw: str) -> str:
         if raw not in resolve_sizing.KAFKA_PROVIDERS:
             raise ValueError(
-                f"kafka provider must be one of {', '.join(KAFKA_TOKENS)}, got {raw!r}"
+                f"kafka provider must be one of {', '.join(KAFKA_PROVIDER_CHOICES)}, got {raw!r}"
             )
         return raw
 
     a.kafka_provider = ask(
         io,
         "kafka_provider",
-        f"Kafka provider ({', '.join(KAFKA_TOKENS)})",
+        f"Kafka provider ({', '.join(KAFKA_PROVIDER_CHOICES)})",
         default_provider,
         validate=validate_provider,
     )
