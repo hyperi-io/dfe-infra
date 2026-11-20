@@ -57,13 +57,22 @@ spec:
               kafka_batch_max_bytes: {{ include "dfe-kafka.messageMaxBytes" . }}
               kafka_max_message_size_upper_limit_bytes: {{ include "dfe-kafka.messageMaxBytes" . }}
               CFG
-              redpanda start --overprovisioned --smp 1 --memory 1G --reserve-memory 0M \
+              rpk redpanda start --overprovisioned --smp 1 --memory 1G --reserve-memory 0M \
                 --node-id 0 --check=false \
                 --kafka-addr SASL_PLAINTEXT://0.0.0.0:9092 \
                 --advertise-kafka-addr SASL_PLAINTEXT://{{ $fqdn }}:9092 &
               RP_PID=$!
-              until rpk cluster health >/dev/null 2>&1; do sleep 2; done
+              until rpk cluster health >/dev/null 2>&1; do kill -0 "${RP_PID}" || exit 1; sleep 2; done
               rpk security user create "${KAFKA_USER}" -p "${KAFKA_PASSWORD}" --mechanism SCRAM-SHA-512 || true
+              # Set on every start, because .bootstrap.yaml reaches only a new volume. Both are Enterprise features Redpanda turns on by default.
+              rpk cluster config set partition_autobalancing_mode node_add
+              rpk cluster config set core_balancing_continuous false
+              # The text form drops an empty list, so read the JSON. Stripping whitespace keeps the match on a pretty-printed reply.
+              licence="$(rpk cluster license info --format json | tr -d ' \n\t')"
+              case "${licence}" in
+                *'"enterprise_features_in_use":[]'*) ;;
+                *) echo "ERROR: Redpanda Enterprise features in use: ${licence}" >&2; kill "${RP_PID}"; exit 1 ;;
+              esac
               wait $RP_PID
           env:
             - name: KAFKA_USER
