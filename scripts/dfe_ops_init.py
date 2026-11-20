@@ -105,8 +105,9 @@ OVERRIDE_FIELDS = resolve_sizing.NODE_OVERRIDES + resolve_sizing.SHAPE_OVERRIDES
 
 
 def _default_kafka_provider(target: str, tier: str) -> str:
-    """msk on AWS Small/Medium, confluent-cloud on AWS Large, strimzi on-prem."""
-    if target != "aws":
+    """msk on AWS Medium, confluent-cloud on AWS Large, strimzi on-prem and on
+    Small, which runs no broker, so the tofu root builds nothing for it."""
+    if target != "aws" or tier == "slim":
         return "strimzi"
     return "confluent-cloud" if tier == "scale" else "msk"
 
@@ -159,9 +160,11 @@ def ask(
     default: str,
     *,
     validate: object = None,
+    hint: str | None = None,
 ) -> str:
     """One question. Interactive: prompt, re-ask on refusal. --answers: look
-    the key up, validate once, refuse immediately (no one to re-ask)."""
+    the key up, validate once, refuse immediately (no one to re-ask). `hint`
+    replaces the bracketed default in the prompt."""
     if io.answers is not None:
         raw = io.answers.get(key, default)
         if validate is None:
@@ -171,7 +174,7 @@ def ask(
         except ValueError as err:
             raise InitError(f"--answers {key}={raw!r}: {err}") from err
     while True:
-        raw = io.read_line(f"{question} [{default}]: ").strip()
+        raw = io.read_line(f"{question} {hint or f'[{default}]'}: ").strip()
         if not raw:
             raw = default
         if validate is None:
@@ -209,7 +212,7 @@ def ask_bool(
         return "true" if value else "false"
 
     result = ask(
-        io, key, f"{question} {hint}", "true" if default else "false", validate=validate
+        io, key, question, "true" if default else "false", validate=validate, hint=hint
     )
     return result == "true"
 
@@ -344,13 +347,9 @@ def step_target(io: WizardIO, a: Answers) -> None:
 
 
 def step_tier(io: WizardIO, a: Answers) -> None:
-    io.write(
-        "Tiers: "
-        + ", ".join(
-            f"{TIER_LABELS[t]} ({t}) -- {profiles.PROFILES[t].description}"
-            for t in TIER_CHOICES
-        )
-    )
+    io.write("Tiers:")
+    for t in TIER_CHOICES:
+        io.write(f"  {t:<7} {TIER_LABELS[t]}: {profiles.PROFILES[t].description}")
     a.profile = ask_choice(io, "profile", "Profile/tier", a.profile, TIER_CHOICES)
 
     def validate_ingest(raw: str) -> str:
@@ -375,13 +374,17 @@ def step_tier(io: WizardIO, a: Answers) -> None:
     )
 
     focus_choices = _focus_choices() or tuple(FOCUS_HELP)
-    io.write(
-        "Focus: " + ", ".join(f"{f} -- {FOCUS_HELP.get(f, '')}" for f in focus_choices)
-    )
+    io.write("Focus:")
+    for f in focus_choices:
+        io.write(f"  {f:<12} {FOCUS_HELP.get(f, '')}")
     a.focus = ask_choice(io, "focus", "Focus", a.focus, focus_choices)
 
 
 def step_kafka(io: WizardIO, a: Answers) -> None:
+    if a.profile == "slim":
+        io.write("Kafka: Small (slim) runs no broker, so there is nothing to ask.")
+        a.kafka_provider = _default_kafka_provider(a.target, a.profile)
+        return
     default_provider = _default_kafka_provider(a.target, a.profile)
 
     def validate_provider(raw: str) -> str:
@@ -438,14 +441,16 @@ STORAGE_MODEL_CHOICES = ("auto", "cached-object", "local")
 
 
 def step_clickhouse_storage(io: WizardIO, a: Answers) -> None:
+    io.write("ClickHouse storage model:")
     io.write(
-        "ClickHouse storage model: auto -- the chart derives it, cached-object when an "
-        "object-store endpoint exists (always on a populated cloud, on-prem once MinIO "
-        "or similar is supplied) and local otherwise. cached-object -- force the object "
-        "store; refuses to render with no endpoint. local -- force local storage even "
-        "with an endpoint configured; switching to cached-object later is a data "
-        "migration, not a values edit."
+        "  auto           cached-object when an object-store endpoint exists (always on a "
+        "cloud, on-prem once MinIO or similar is supplied), local otherwise"
     )
+    io.write(
+        "  cached-object  always the object store, and the render fails with no endpoint"
+    )
+    io.write("  local          local disks even with an endpoint")
+    io.write("  Moving to cached-object later is a data migration, not a values edit.")
 
     def validate_storage_model(raw: str) -> str:
         value = raw.lower()
@@ -462,6 +467,9 @@ def step_clickhouse_storage(io: WizardIO, a: Answers) -> None:
         a.clickhouse_storage_model,
         validate=validate_storage_model,
     )
+    # On-prem sizing is node demand, so there is no instance type to override.
+    if a.target != "aws":
+        return
     a.clickhouse_instance_override = ask(
         io,
         "clickhouse_instance_override",
@@ -479,18 +487,29 @@ def step_public_uis(io: WizardIO, a: Answers) -> None:
             io, f"ui_{name}", f"Public admin UI: {name}", a.ui_public[name]
         )
 
-    if any(a.ui_public.values()):
+    oidc_question = (
+        "At least one UI is public -- confirm OIDC will be configured for it "
+        "(docs/deployment/gateway-oidc.md) before this goes live"
+    )
+    if any(a.ui_public.values()) and io.answers is not None:
         ask_bool(
             io,
             "oidc_confirmed",
-            "At least one UI is public -- confirm OIDC will be configured for it "
-            "(docs/deployment/gateway-oidc.md) before this goes live",
+            oidc_question,
             False,
             require_true_message=(
                 "a public UI needs OIDC wired up (dfe-engine + envoy-gateway-config oidc.* "
                 "values in your deploy-repo overlay) -- confirm oidc_confirmed=true, or turn "
                 "every ui_* flag off"
             ),
+        )
+    elif any(a.ui_public.values()) and not ask_bool(
+        io, "oidc_confirmed", oidc_question, False
+    ):
+        # Interactive has no way back to the questions above, so a no keeps every UI private.
+        a.ui_public = dict.fromkeys(a.ui_public, False)
+        io.write(
+            "  No OIDC yet, so every UI stays private. Make one public once OIDC is in place."
         )
 
     a.ui_allowed_cidrs = ask(
@@ -548,7 +567,7 @@ def step_telemetry(io: WizardIO, a: Answers) -> None:
     a.telemetry_sink = ask(
         io,
         "telemetry_sink",
-        "Telemetry sink (otel | cloudwatch)",
+        "Telemetry sink (otel/cloudwatch)",
         a.telemetry_sink,
         validate=validate_sink,
     )
@@ -562,6 +581,14 @@ def step_telemetry(io: WizardIO, a: Answers) -> None:
 
 
 def step_lifecycle(io: WizardIO, a: Answers) -> None:
+    # Both land in the tofu root alone, which an on-prem target has none of.
+    if a.target != "aws":
+        return
+    io.write(
+        "Lifecycle: ephemeral is a test deployment you destroy, persistent is one you keep. "
+        "It sets the secret recovery window and whether the KMS key and a managed broker "
+        "outlive a destroy."
+    )
     a.lifecycle = ask_choice(
         io, "lifecycle", "Lifecycle", a.lifecycle, LIFECYCLE_CHOICES
     )
@@ -574,7 +601,11 @@ def step_lifecycle(io: WizardIO, a: Answers) -> None:
         return raw
 
     a.az_count = ask(
-        io, "az_count", "network.az_count (2-6)", a.az_count, validate=validate_az
+        io,
+        "az_count",
+        "Availability zones, 2-6 (network.az_count)",
+        a.az_count,
+        validate=validate_az,
     )
 
 
@@ -1092,12 +1123,14 @@ def run_resolve(
 # ---------------------------------------------------------------------------
 
 
+def _repo_relative(path: Path) -> Path:
+    """`path` from the repo root when it sits inside it, so output names no machine path."""
+    return path.relative_to(REPO_ROOT) if path.is_relative_to(REPO_ROOT) else path
+
+
 def _next_commands(dial_out: Path, a: Answers) -> str:
-    rel = (
-        dial_out.relative_to(REPO_ROOT)
-        if dial_out.is_relative_to(REPO_ROOT)
-        else dial_out
-    )
+    rel = _repo_relative(dial_out)
+    stack = current_stack()
     if a.target == "aws":
         return "\n".join(
             (
@@ -1106,14 +1139,14 @@ def _next_commands(dial_out: Path, a: Answers) -> str:
                 "  tofu -chdir=terraform/environments/aws plan -out=deployment.tfplan",
                 "  tofu -chdir=terraform/environments/aws apply deployment.tfplan",
                 '  eval "$(tofu -chdir=terraform/environments/aws output -raw kubeconfig_command)"',
-                f"  python3 scripts/dfe-ops stack-deploy --stack <version> --mode {a.profile} \\",
+                f"  python3 scripts/dfe-ops stack-deploy --stack {stack} --mode {a.profile} \\",
                 "      --from-terraform terraform/environments/aws --kubeconfig <path>",
             )
         )
     return "\n".join(
         (
             f"  python3 scripts/render_dial.py --dial {rel}",
-            "  python3 scripts/dfe-ops stack-deploy --stack <version> --mode <mode> --kubeconfig <path>",
+            f"  python3 scripts/dfe-ops stack-deploy --stack {stack} --mode {a.profile} --kubeconfig <path>",
         )
     )
 
@@ -1176,7 +1209,7 @@ def cmd_init(args: argparse.Namespace) -> int:
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(dial_text, encoding="utf-8")
-    print(f"dfe-ops init: wrote {out_path}", file=sys.stderr)
+    print(f"dfe-ops init: wrote {_repo_relative(out_path)}", file=sys.stderr)
 
     if args.fixtures or args.live:
         sizing_out = Path(args.sizing_out) if args.sizing_out else REPO_ROOT
