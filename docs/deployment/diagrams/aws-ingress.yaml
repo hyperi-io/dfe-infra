@@ -1,0 +1,24 @@
+title: L4 Detail -- DFE on AWS, ingress
+profile: aws
+description: Users reach the UIs through the gateway's internet-facing Network Load Balancer. Edge clients send events through the receiver's own NLB, which renders once senders are allowed, or the optional tunnel forwarder. All three sit in the public subnets, and the nodes and Amazon MSK brokers in the private subnets.
+groups:
+  - {id: cloud, label: "", object: aws.cloud}
+  - {id: vpc, label: "", object: aws.vpc, parent: cloud}
+  - {id: pub, label: Public subnets, object: aws.public-subnet, parent: vpc}
+  - {id: priv, label: Private subnets, object: aws.private-subnet, parent: vpc}
+nodes:
+  - {id: users, object: aws.users, label: Users}
+  - {id: clients, object: aws.users, label: Edge clients}
+  - {id: gwnlb, object: aws.nlb, label: Gateway NLB, group: pub}
+  - {id: nlb, object: aws.nlb, label: Receiver NLB, subtitle: opt-in, group: pub}
+  - {id: fwd, object: aws.ec2-instance, label: Tunnel forwarder, group: pub}
+  - {id: nodes, object: aws.ec2, label: EKS nodes, subtitle: incl. Karpenter, group: priv}
+  - {id: msk, object: aws.msk, subtitle: if provider msk, group: priv}
+edges:
+  - {source: users, target: gwnlb, label: UIs}
+  - {source: clients, target: nlb, label: events}
+  - {source: clients, target: fwd, label: tunnel, optional: true}
+  - {source: gwnlb, target: nodes}
+  - {source: nlb, target: nodes}
+  - {source: fwd, target: nodes, optional: true}
+  - {source: nodes, target: msk}

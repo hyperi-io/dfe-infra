@@ -1,0 +1,18 @@
+title: L4 Detail -- DFE on AWS, data identities
+profile: aws
+direction: TB
+description: Three data workloads hold an AWS identity through EKS Pod Identity. ClickHouse writes its parts to its S3 object store, ESO and dfe-engine read and write secrets in Secrets Manager, and the otel collector reads the EKS audit and CloudTrail log groups in CloudWatch.
+groups:
+  - {id: cloud, label: "", object: aws.cloud}
+  - {id: cluster, label: "EKS cluster, Pod Identity", parent: cloud}
+nodes:
+  - {id: ch, label: ClickHouse, group: cluster}
+  - {id: eso, label: ESO, subtitle: and dfe-engine, group: cluster}
+  - {id: otel, label: otel collector, subtitle: sink otel, group: cluster}
+  - {id: s3, object: aws.s3, subtitle: object store, group: cloud}
+  - {id: sm, object: aws.secrets-manager, group: cloud}
+  - {id: cw, object: aws.cloudwatch, subtitle: "audit, CloudTrail logs", group: cloud}
+edges:
+  - {source: ch, target: s3, label: parts}
+  - {source: eso, target: sm, label: secrets}
+  - {source: otel, target: cw, label: reads}
