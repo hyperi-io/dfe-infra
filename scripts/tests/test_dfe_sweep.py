@@ -1192,11 +1192,27 @@ def test_a_pending_status_check_never_gates() -> None:
             ),
             True,
         ),
+        (
+            sweep.GhError(
+                "x", None, "invalid character 'u' looking for beginning of value"
+            ),
+            True,
+        ),
+        (sweep.GhError("x", None, "not JSON: upstream request timeout"), True),
         (sweep.GhError("x", None, "unexpected end of JSON input"), True),
         (sweep.GhError("x", 502, "Bad Gateway (HTTP 502)"), True),
         (sweep.GhError("x", 404, "Not Found (HTTP 404)"), False),
+        (sweep.GhError("x", 403, "Resource not accessible (HTTP 403)"), False),
     ],
-    ids=["error-page", "cut-off-body", "bad-gateway", "not-found"],
+    ids=[
+        "error-page",
+        "plain-text-page",
+        "plain-text-line",
+        "cut-off-body",
+        "bad-gateway",
+        "not-found",
+        "forbidden",
+    ],
 )
 def test_a_transient_github_error_is_retried_and_a_real_refusal_is_not(
     monkeypatch, error: sweep.GhError, retried: bool
