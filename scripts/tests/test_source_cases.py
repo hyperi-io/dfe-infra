@@ -24,14 +24,12 @@ import collections
 import contextlib
 import importlib.machinery
 import importlib.util
-import io
 import json
 import re
 import shutil
 import socket
 import subprocess
 import sys
-import tarfile
 import threading
 import time
 import types
@@ -426,14 +424,14 @@ def a_run(driver, engine, args, name, transform_repo: Path, receiver: str = ""):
 
 
 class FakeCorpus:
-    """dfe-engine's corpus wrapper, without the Elastic-licensed archive behind it."""
+    """dfe-engine's corpus wrapper, reading no corpus file."""
 
     MODULES = ("cisco_umbrella", "cisco_ios", "cisco_meraki")
 
     def __init__(self) -> None:
         self.asked: list[tuple[tuple[str, ...], int]] = []
 
-    def samples(self, _path, *, modules, limit):
+    def samples(self, _path=None, *, modules, limit):
         self.asked.append((tuple(modules), limit))
         return []
 
@@ -569,13 +567,14 @@ class TestWhichCaseARunGets:
         )
 
     def test_the_companion_checkout_is_the_cases_own(self):
-        """Both pushed cases read one corpus archive; a fetched source reads no repo."""
+        """Only filebeat uploads a program from dfe-transform-vrl.
+
+        The corpus is the engine's, elastic compiles its transform in, and vector
+        and a fetched source read no transform checkout.
+        """
         assert cases.build(parse()).companion_repo == "dfe-transform-vrl"
-        assert (
-            cases.build(parse("--case", "elastic")).companion_repo
-            == "dfe-transform-vrl"
-        )
-        assert cases.build(parse("--case", "cloudwatch")).companion_repo == ""
+        for case in ("elastic", "vector", "cloudwatch"):
+            assert cases.build(parse("--case", case)).companion_repo == ""
 
 
 # The keys each upstream's record carries: the event as FilterLogEvents and
@@ -1136,7 +1135,6 @@ class TestTheElasticCase:
             receiver_url,
             verify,
             engine_repo,
-            corpus_file,
             store,
             name,
             run,
@@ -1146,9 +1144,7 @@ class TestTheElasticCase:
             asked["routed"] = modules
             return f"routed into dfe.{name} after 1 probe pass(es)"
 
-        def posted(
-            receiver_url, verify, engine_repo, corpus_file, run, per_module, modules=()
-        ):
+        def posted(receiver_url, verify, engine_repo, run, per_module, modules=()):
             asked["posted"] = modules
             return 7
 
@@ -1198,12 +1194,11 @@ class TestTheVectorCase:
         assert case.ENRICHMENT == "pipelines/filebeat/timezones.csv"
         assert case.PROGRAM_SET == "transforms"
 
-    def test_the_corpus_and_the_program_come_from_different_checkouts(self):
-        """One --transform-repo cannot serve both: dfe-transform-vrl ships the
-        corpus every pushed case grades against, and the pipeline is the app's."""
+    def test_the_vector_program_comes_from_its_own_app_checkout(self):
+        """The pipeline is the app's, so a --transform-repo naming vrl cannot move it."""
         case = cases.build(parse("--case", "vector"))
 
-        assert case.companion_repo == "dfe-transform-vrl"
+        assert case.companion_repo == ""
         assert case.program_repo == "dfe-transform-vector"
         assert cases.FilebeatCase.program_repo == ""
         assert cases.ElasticCase.program_repo == ""
@@ -1261,14 +1256,12 @@ class TestTheVectorCase:
 
 
 class TestTheCorpusFilter:
-    """post_corpus reads the archive through dfe-engine's wrapper, which caps per module."""
+    """post_corpus reads the corpus through dfe-engine's wrapper, which caps per module."""
 
     def test_a_case_with_no_modules_asks_for_every_one_the_wrapper_names(
         self, corpus_module
     ):
-        steps.post_corpus(
-            "https://rx.example", False, Path("/nowhere"), Path("c.tar.gz"), "run", 20
-        )
+        steps.post_corpus("https://rx.example", False, Path("/nowhere"), "run", 20)
 
         assert corpus_module.asked == [(FakeCorpus.MODULES, 20)]
 
@@ -1277,7 +1270,6 @@ class TestTheCorpusFilter:
             "https://rx.example",
             False,
             Path("/nowhere"),
-            Path("c.tar.gz"),
             "run",
             20,
             ("cisco_ios",),
@@ -1290,7 +1282,6 @@ class TestTheCorpusFilter:
             "https://rx.example",
             False,
             Path("/nowhere"),
-            Path("c.tar.gz"),
             FakeStore(),
             "el1",
             "src-test",
@@ -1310,7 +1301,6 @@ class TestTheCorpusFilter:
             "https://rx.example",
             False,
             Path("/nowhere"),
-            Path("c.tar.gz"),
             store,
             "fb1",
             "src-test",
@@ -1332,7 +1322,6 @@ class TestTheCorpusFilter:
             "https://rx.example",
             False,
             Path("/nowhere"),
-            Path("c.tar.gz"),
             RoutingStore(routed=0, strayed=0),
             "fb1",
             "src-test",
@@ -1350,7 +1339,6 @@ class TestTheCorpusFilter:
             "https://rx.example",
             False,
             Path("/nowhere"),
-            Path("c.tar.gz"),
             RoutingStore(routed=1, strayed=-1),
             "fb1",
             "src-test",
@@ -1394,6 +1382,7 @@ class ShippingCorpus:
     """dfe-engine's wrapper over three modules, honouring the module filter."""
 
     MODULES = ("cisco_umbrella", "cisco_ios", "cisco_meraki")
+    DATASETS: ClassVar[dict[str, str]] = {module: f"{module}.log" for module in MODULES}
     LINES: ClassVar[dict[str, list[str]]] = {
         "cisco_ios": [
             "<189>1: Jan  6 20:52:12: %SYS-5-CONFIG_I: one",
@@ -1411,14 +1400,14 @@ class ShippingCorpus:
                 f"192.0.2.{n}" for n in range(1, len(lines) + 1)
             ]
 
-    def samples(self, _path, *, modules, limit):
+    def samples(self, _path=None, *, modules, limit):
         return [
             FakeSample(module, line, f"test-{module}.log")
             for module in modules
             for line in self.LINES[module][:limit]
         ]
 
-    def goldens(self, _path, *, modules):
+    def goldens(self, _path=None, *, modules):
         """Each module's expected events, keyed by the log's name the way the wrapper keys them."""
         return {
             f"test-{module}.log-expected.json": {
@@ -1441,26 +1430,6 @@ class ShippingCorpus:
         ]
 
 
-def _archive(path: Path, members: tuple[str, ...]) -> Path:
-    """A gzipped tar holding empty files at these paths, laid out as the corpus is."""
-    with tarfile.open(path, "w:gz") as tar:
-        for name in members:
-            info = tarfile.TarInfo(name)
-            info.size = 1
-            tar.addfile(info, io.BytesIO(b"\n"))
-    return path
-
-
-CORPUS_PATHS = (
-    "cisco_ios/log/test-asr920.log",
-    "cisco_ios/log/test-asr920.log-expected.json",
-    "cisco_ios/manifest.yml",
-    "cisco_meraki/log/test-events.log",
-    "cisco_umbrella/log/test-umbrella-dnslogs.log",
-    "LICENSE.txt",
-)
-
-
 @pytest.fixture
 def shipping_corpus(monkeypatch):
     return _as_engine_wrapper(monkeypatch, ShippingCorpus())
@@ -1479,12 +1448,12 @@ class TwoLogCorpus:
             "test-b.log-expected.json": {"expected": [{"source": {"ip": "192.0.2.2"}}]},
         }
 
-    def samples(self, _path, *, modules, limit):
+    def samples(self, _path=None, *, modules, limit):
         return [
             FakeSample("cisco_ios", line, name) for name, line in self.LINES[:limit]
         ]
 
-    def goldens(self, _path, *, modules):
+    def goldens(self, _path=None, *, modules):
         return self.expected
 
 
@@ -1495,7 +1464,6 @@ class TestTheExpectedCount:
     def _count(per_module: int) -> int:
         return steps.expected_carrying(
             Path("/nowhere"),
-            Path("c.tar.gz"),
             per_module,
             ("cisco_ios",),
             "source.ip",
@@ -1529,31 +1497,10 @@ def _walk(body: dict, dotted: str):
 class TestTheShippersIdentifier:
     """The pushed cases route on data_stream.dataset, the field an Elastic Agent sends."""
 
-    def test_each_module_takes_the_dataset_its_archive_path_names(self, tmp_path):
-        archive = _archive(tmp_path / "corpus.tar.gz", CORPUS_PATHS)
-
-        assert steps.corpus_datasets(archive) == {
-            "cisco_ios": "cisco_ios.log",
-            "cisco_meraki": "cisco_meraki.log",
-            "cisco_umbrella": "cisco_umbrella.log",
-        }
-
-    def test_expected_fail_a_module_under_two_data_streams_is_refused(self, tmp_path):
-        archive = _archive(
-            tmp_path / "corpus.tar.gz", (*CORPUS_PATHS, "cisco_ios/metrics/test-x.log")
-        )
-
-        with pytest.raises(ValueError, match="cisco_ios"):
-            steps.corpus_datasets(archive)
-
     def test_every_record_is_the_agent_envelope_with_the_vendor_line_as_message(
-        self, tmp_path, shipping_corpus
+        self, shipping_corpus
     ):
-        archive = _archive(tmp_path / "corpus.tar.gz", CORPUS_PATHS)
-
-        bodies = steps.corpus_bodies(
-            Path("/nowhere"), archive, "src-run", 20, ("cisco_ios",)
-        )
+        bodies = steps.corpus_bodies(Path("/nowhere"), "src-run", 20, ("cisco_ios",))
 
         assert [body["message"] for body in bodies] == ShippingCorpus.LINES["cisco_ios"]
         for body in bodies:
@@ -1582,13 +1529,10 @@ class TestTheShippersIdentifier:
         self, tmp_path, shipping_corpus
     ):
         """Every posted body, corpus or probe, carries its run and role in a root `_e2e` object."""
-        archive = _archive(tmp_path / "corpus.tar.gz", CORPUS_PATHS)
 
-        corpus = steps.corpus_bodies(
-            Path("/nowhere"), archive, "src-run", 20, ("cisco_ios",)
-        )
+        corpus = steps.corpus_bodies(Path("/nowhere"), "src-run", 20, ("cisco_ios",))
         probes = steps.corpus_bodies(
-            Path("/nowhere"), archive, "src-run", 1, ("cisco_ios",), steps.PROBE
+            Path("/nowhere"), "src-run", 1, ("cisco_ios",), steps.PROBE
         )
 
         assert corpus
@@ -1606,7 +1550,6 @@ class TestTheShippersIdentifier:
             receiver_url,
             verify,
             engine_repo,
-            corpus_file,
             run,
             per_module,
             modules=(),
@@ -1620,7 +1563,6 @@ class TestTheShippersIdentifier:
             "https://rx.example",
             False,
             Path("/nowhere"),
-            Path("c.tar.gz"),
             FakeStore(),
             "fb1",
             "src-run",
@@ -1634,11 +1576,8 @@ class TestTheShippersIdentifier:
         self, tmp_path, shipping_corpus
     ):
         case = cases.build(parse())
-        archive = _archive(tmp_path / "corpus.tar.gz", CORPUS_PATHS)
 
-        bodies = steps.corpus_bodies(
-            Path("/nowhere"), archive, "src-run", 20, case.MODULES
-        )
+        bodies = steps.corpus_bodies(Path("/nowhere"), "src-run", 20, case.MODULES)
 
         assert bodies
         assert all(_walk(body, case.MATCH_FIELD) == case.MATCH_VALUE for body in bodies)
@@ -1647,9 +1586,8 @@ class TestTheShippersIdentifier:
         self, tmp_path, shipping_corpus
     ):
         case = cases.build(parse())
-        archive = _archive(tmp_path / "corpus.tar.gz", CORPUS_PATHS)
 
-        everything = steps.corpus_bodies(Path("/nowhere"), archive, "src-run", 20)
+        everything = steps.corpus_bodies(Path("/nowhere"), "src-run", 20)
         missing = {_walk(body, case.MATCH_FIELD) for body in everything} - {
             case.MATCH_VALUE
         }
@@ -2123,9 +2061,6 @@ class TestTheLandedCount:
     """The probes that prove routing land in the same table, so a count of rows cannot be the proof."""
 
     def _feed_and_prove(self, monkeypatch, transform_repo, backend, **pipeline):
-        corpus = transform_repo / cases.FilebeatCase.CORPUS
-        corpus.parent.mkdir(parents=True, exist_ok=True)
-        _archive(corpus, CORPUS_PATHS)
         driver = FakeDriver(FakePage())
         case = cases.build(parse())
         store = Pipeline(case.name, backend, **pipeline)

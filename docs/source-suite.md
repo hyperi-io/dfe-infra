@@ -12,7 +12,7 @@ Every step lands a screenshot under `--shots-dir`, and the run removes the sourc
 
 The console creates the source. In the Configuration tab that's the name, display name, description, Archive on, and the match `data_stream.dataset equals cisco_ios.log` (Elastic's own identifier for the source). In the Table Settings tab it's the shipped `common-header/timeseries` and `meta/beats/filebeat`, at the `HEADER_VERSION` and `META_SCHEMA_VERSION` in `scripts/acceptance/source/cases.py`. Then the Transform tab (Define Transform -> `dfe-transform-vrl`). After the deploy, the source's Processing tab puts the bundled `pipelines/filebeat/filebeat.vrl` and `timezones.csv` from the dfe-transform-vrl checkout (`--transform-repo`) into the instance's file sets.
 
-The corpus's cisco_ios lines are then posted at the receiver in the envelope an Elastic Agent sends: `agent`, `data_stream`, `input`, the device line as `message`, and `tags`. Every record has a root `_e2e` object as well, `{run: <run id>, kind: corpus|probe}`, and the counts read that rather than `tags`.
+The cisco_ios lines of dfe-engine's synthetic corpus (`tests/e2e/filebeat_cases.yaml`) are then posted at the receiver in the envelope an Elastic Agent sends: `agent`, `data_stream`, `input`, the device line as `message`, and `tags`. Every record has a root `_e2e` object as well, `{run: <run id>, kind: corpus|probe}`, and the counts read that rather than `tags`.
 
 One `equals` match routes one dataset, so the cisco_meraki and cisco_umbrella lines aren't fed and this suite doesn't cover them.
 
@@ -53,7 +53,7 @@ The cisco_ios lines the filebeat case posts are the entry the variant names as w
 
 This is the filebeat case with the program run by dfe-transform-vector, a supervised Vector. Its bundled `pipelines/filebeat/filebeat.yaml` embeds dfe-transform-vrl's `filebeat.vrl` byte-identical in a Vector `remap`, with the same `timezones.csv`. So the proof is the same `source_ip` column from a second runtime.
 
-The corpus still comes from dfe-transform-vrl and the program from dfe-transform-vector, so the run names two checkouts: `--transform-repo` and `--program-repo`, each defaulting to the checkout beside the engine repo. dfe-ops reads the second from `DFE_TRANSFORM_VECTOR_REPO`, as dfe-docker's `make test-source` does.
+The program comes from dfe-transform-vector, through `--program-repo`, which defaults to the checkout beside the engine repo. dfe-ops reads the second from `DFE_TRANSFORM_VECTOR_REPO`, as dfe-docker's `make test-source` does.
 
 The docker single seeds one idle dfe-transform-vector, so Compose can reach the case. dfe-docker's `make proof` runs it after `filebeat` on every stack version, with dfe-transform-vector cloned at the tag the stack pins.
 

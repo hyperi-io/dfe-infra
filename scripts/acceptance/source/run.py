@@ -275,8 +275,7 @@ def run(args: argparse.Namespace) -> int:
         transform_repo = companion(engine_repo, case.companion_repo)
     else:
         transform_repo = engine_repo
-    # The vector case reads its program out of its own app's checkout and the
-    # corpus out of dfe-transform-vrl, so one --transform-repo cannot serve both.
+    # The vector case reads its program out of its own app's checkout, whatever --transform-repo names.
     if args.program_repo:
         program_repo = Path(args.program_repo).resolve()
     elif case.program_repo:
@@ -411,17 +410,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--engine-repo",
         required=True,
-        help="dfe-engine checkout (the corpus wrapper lives in its e2e tests)",
+        help="dfe-engine checkout (its e2e tests hold the synthetic filebeat corpus and its reader)",
     )
     parser.add_argument(
         "--transform-repo",
         default="",
-        help="checkout holding the corpus archive; every pushed case names dfe-transform-vrl (default: the case's own, beside the engine repo)",
+        help="checkout holding the program the filebeat case uploads, dfe-transform-vrl (default: the case's own, beside the engine repo)",
     )
     parser.add_argument(
         "--program-repo",
         default="",
-        help="checkout holding the program a case uploads, when its app ships one of its own; only the vector case needs it (default: the corpus checkout above)",
+        help="checkout holding the program a case uploads, when its app ships one of its own; only the vector case needs it (default: dfe-transform-vector beside the engine repo)",
     )
     parser.add_argument(
         "--access-summary",
@@ -463,7 +462,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--case",
         default="filebeat",
         choices=tuple(cases.CASES),
-        help="filebeat pushes real lines at the receiver through the bundled VRL; "
+        help="filebeat pushes dfe-engine's synthetic lines at the receiver through the bundled VRL; "
         "vector pushes the same lines through the same program run by a "
         "supervised Vector; elastic pushes cisco_ios lines at a transform "
         "compiled into its app; syslog sends the demo's cisco-asa and fortinet "
