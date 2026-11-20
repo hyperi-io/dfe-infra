@@ -81,7 +81,11 @@ def watching() -> Iterator[list[tuple[int, int]]]:
 
 def exposed(seen: list[tuple[int, int]]) -> list[str]:
     """The observations where content sat in a file someone else could read."""
-    return [f"{size} bytes at {oct(mode)}" for size, mode in seen if size and mode & GROUP_OR_OTHER]
+    return [
+        f"{size} bytes at {oct(mode)}"
+        for size, mode in seen
+        if size and mode & GROUP_OR_OTHER
+    ]
 
 
 def mode_of(path: Path) -> int:
@@ -152,8 +156,12 @@ def _fake_tool(bindir: Path, name: str, body: str) -> None:
 
 def _dfe_ops():
     """dfe-ops carries no extension, so it is loaded by path rather than imported."""
-    loader = importlib.machinery.SourceFileLoader("dfeops_private_file", str(SCRIPTS / "dfe-ops"))
-    module = importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name, loader))
+    loader = importlib.machinery.SourceFileLoader(
+        "dfeops_private_file", str(SCRIPTS / "dfe-ops")
+    )
+    module = importlib.util.module_from_spec(
+        importlib.util.spec_from_loader(loader.name, loader)
+    )
     loader.exec_module(module)
     return module
 
@@ -171,7 +179,15 @@ def test_a_fetched_node_kubeconfig_is_never_wider_than_0600(
     ops = _dfe_ops()
     out = tmp_path / "node.kubeconfig"
     args = ops.build_parser().parse_args(
-        ["kubeconfig", "--node", "node.example", "--vault-path", "kv/ssh", "--out", str(out)]
+        [
+            "kubeconfig",
+            "--node",
+            "node.example",
+            "--vault-path",
+            "kv/ssh",
+            "--out",
+            str(out),
+        ]
     )
 
     with watching() as seen:
@@ -192,14 +208,28 @@ def _render_env(tmp_path: Path, out: Path) -> subprocess.CompletedProcess:
     """render_dial.py's env render of the committed example dial, under a umask of 0."""
     dial = tmp_path / "deployment.yaml"
     dial.write_text(EXAMPLE_DIAL.read_text(encoding="utf-8"), encoding="utf-8")
-    argv = [sys.executable, str(SCRIPTS / "render_dial.py"), "--dial", str(dial), "--out", str(out)]
+    argv = [
+        sys.executable,
+        str(SCRIPTS / "render_dial.py"),
+        "--dial",
+        str(dial),
+        "--out",
+        str(out),
+    ]
     with open_umask():
         return subprocess.run(
-            argv, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False
+            argv,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
         )
 
 
-def test_the_env_file_render_dial_seeds_is_never_wider_than_0600(tmp_path: Path) -> None:
+def test_the_env_file_render_dial_seeds_is_never_wider_than_0600(
+    tmp_path: Path,
+) -> None:
     """The seeded env file is the one an operator types the estate's secrets into."""
     out = tmp_path / "bootstrap.env"
 
@@ -210,7 +240,9 @@ def test_the_env_file_render_dial_seeds_is_never_wider_than_0600(tmp_path: Path)
     assert mode_of(out) == 0o600, oct(mode_of(out))
 
 
-def test_a_render_narrows_an_existing_env_file_before_rewriting_it(tmp_path: Path) -> None:
+def test_a_render_narrows_an_existing_env_file_before_rewriting_it(
+    tmp_path: Path,
+) -> None:
     """The merge rewrites every line of the file, the secrets filled into it included."""
     out = tmp_path / "bootstrap.env"
     out.write_text(f'DFE_EXAMPLE_TOKEN="{SECRET}"\n', encoding="utf-8")

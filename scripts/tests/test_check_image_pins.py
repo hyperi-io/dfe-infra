@@ -84,9 +84,13 @@ def _install(monkeypatch, tmp_path) -> Path:
     vfile.write_text(SYNTHETIC_VERSIONS, encoding="utf-8")
     monkeypatch.setattr(resolve_pins, "VERSIONS", vfile)
     monkeypatch.setattr(
-        check_image_pins, "tag_digest", lambda org, app, tag: FAKE_TAGS.get(app, {}).get(tag)
+        check_image_pins,
+        "tag_digest",
+        lambda org, app, tag: FAKE_TAGS.get(app, {}).get(tag),
     )
-    monkeypatch.setattr(check_image_pins, "package_tags", lambda org, app: FAKE_TAGS.get(app, {}))
+    monkeypatch.setattr(
+        check_image_pins, "package_tags", lambda org, app: FAKE_TAGS.get(app, {})
+    )
     return vfile
 
 
@@ -98,7 +102,9 @@ def _args(**over) -> argparse.Namespace:
 
 
 def _run(monkeypatch, args) -> int:
-    monkeypatch.setattr(check_image_pins.argparse.ArgumentParser, "parse_args", lambda self: args)
+    monkeypatch.setattr(
+        check_image_pins.argparse.ArgumentParser, "parse_args", lambda self: args
+    )
     return check_image_pins.main()
 
 
@@ -193,10 +199,16 @@ def main() -> int:
             self._out, self._err = out, err
 
         def readouterr(self):
-            return type("R", (), {"out": self._out.getvalue(), "err": self._err.getvalue()})()
+            return type(
+                "R", (), {"out": self._out.getvalue(), "err": self._err.getvalue()}
+            )()
 
     failures = 0
-    tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_") and callable(f)]
+    tests = [
+        (n, f)
+        for n, f in sorted(globals().items())
+        if n.startswith("test_") and callable(f)
+    ]
     for name, fn in tests:
         mp = _MP()
         out_buf, err_buf = io.StringIO(), io.StringIO()
@@ -210,7 +222,10 @@ def main() -> int:
             if "capsys" in params:
                 kw["capsys"] = _Caps(out_buf, err_buf)
             try:
-                with contextlib.redirect_stdout(out_buf), contextlib.redirect_stderr(err_buf):
+                with (
+                    contextlib.redirect_stdout(out_buf),
+                    contextlib.redirect_stderr(err_buf),
+                ):
                     fn(**kw)
                 print(f"PASS  {name}")
             except Exception as exc:

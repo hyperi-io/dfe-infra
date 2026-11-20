@@ -116,7 +116,9 @@ DEFAULT_POLL_INTERVAL = 5.0
 # the tunnel's Elastic IP (terraform/modules/edge/aws).
 CLUSTER_SECRET_NAMESPACE = "argocd"
 CLUSTER_SECRET = "secret/dfe-cluster"
-TUNNEL_ADDRESS_JSONPATH = r"jsonpath={.metadata.annotations.dfe\.hyperi\.io/tunnel_address}"
+TUNNEL_ADDRESS_JSONPATH = (
+    r"jsonpath={.metadata.annotations.dfe\.hyperi\.io/tunnel_address}"
+)
 
 # The annotation on that same secret carrying the range culvert's admin
 # exception admits, the root output it is written from, and the env key the
@@ -167,10 +169,14 @@ class BastionError(RuntimeError):
 # --- the dial editor ----------------------------------------------------------
 
 
-_KEY_LINE = re.compile(r"^(?P<indent> *)(?P<key>[A-Za-z_][A-Za-z0-9_-]*):(?P<rest>\s*(#.*)?$|\s+\S.*$)")
+_KEY_LINE = re.compile(
+    r"^(?P<indent> *)(?P<key>[A-Za-z_][A-Za-z0-9_-]*):(?P<rest>\s*(#.*)?$|\s+\S.*$)"
+)
 
 
-def _set_toolbox_field(text: str, field: str, value: str, *, quoted: bool = True) -> str:
+def _set_toolbox_field(
+    text: str, field: str, value: str, *, quoted: bool = True
+) -> str:
     """Set a scalar field inside the dial's top-level `toolbox:` block.
 
     `quoted` is the caller's statement about the field's TYPE, not a style
@@ -214,7 +220,9 @@ def _set_toolbox_field(text: str, field: str, value: str, *, quoted: bool = True
             in_block = False
             out.append(line)
             continue
-        match = _KEY_LINE.match(line) if stripped and not stripped.startswith("#") else None
+        match = (
+            _KEY_LINE.match(line) if stripped and not stripped.startswith("#") else None
+        )
         if match is None:
             out.append(line)
             continue
@@ -223,7 +231,7 @@ def _set_toolbox_field(text: str, field: str, value: str, *, quoted: bool = True
         path.append((indent, match.group("key")))
         if not found and [key for _, key in path] == wanted:
             rendered_value = f'"{value}"' if quoted else value
-            out.append(f'{match.group("indent")}{match.group("key")}: {rendered_value}')
+            out.append(f"{match.group('indent')}{match.group('key')}: {rendered_value}")
             found = True
             continue
         out.append(line)
@@ -251,7 +259,10 @@ def _set_toolbox_enabled(enabled: bool, *, ttl_minutes: int | None = None) -> No
     if ttl_minutes is not None:
         text = _set_toolbox_field(text, "ttl_minutes", str(ttl_minutes), quoted=False)
     DIAL.write_text(text, encoding="utf-8")
-    print(f"dfe-ops bastion: set toolbox.enabled = {str(enabled).lower()} in {DIAL.name}", file=sys.stderr)
+    print(
+        f"dfe-ops bastion: set toolbox.enabled = {str(enabled).lower()} in {DIAL.name}",
+        file=sys.stderr,
+    )
 
 
 # --- the tofu boundary --------------------------------------------------------
@@ -287,8 +298,15 @@ def _resolve_toolbox_image() -> bool:
     """
     result = _run(
         [
-            sys.executable, str(RESOLVE_SIZING), "images",
-            "--dial", str(DIAL), "--out", str(AWS_ROOT), "--only", TOOLBOX_IMAGE_KEY,
+            sys.executable,
+            str(RESOLVE_SIZING),
+            "images",
+            "--dial",
+            str(DIAL),
+            "--out",
+            str(AWS_ROOT),
+            "--only",
+            TOOLBOX_IMAGE_KEY,
         ],
         cwd=REPO_ROOT,
     )
@@ -296,7 +314,9 @@ def _resolve_toolbox_image() -> bool:
 
 
 def _apply_toolbox() -> bool:
-    result = _run(["tofu", f"-chdir={AWS_ROOT}", "apply", "-auto-approve", *TOOLBOX_TARGETS])
+    result = _run(
+        ["tofu", f"-chdir={AWS_ROOT}", "apply", "-auto-approve", *TOOLBOX_TARGETS]
+    )
     return result.returncode == 0
 
 
@@ -308,7 +328,9 @@ def _destroy_toolbox() -> bool:
     set leaves the instance running and billing. A targeted destroy creates
     nothing, so the only thing that can stop it is the toolbox itself.
     """
-    result = _run(["tofu", f"-chdir={AWS_ROOT}", "destroy", "-auto-approve", *TOOLBOX_TARGETS])
+    result = _run(
+        ["tofu", f"-chdir={AWS_ROOT}", "destroy", "-auto-approve", *TOOLBOX_TARGETS]
+    )
     return result.returncode == 0
 
 
@@ -365,12 +387,19 @@ def _namespace(args: argparse.Namespace) -> str:
 
 def _culvert_pod(namespace: str) -> str:
     """The running culvert pod, by the chart's own selector labels."""
-    result = _kubectl([
-        "-n", namespace, "get", "pods",
-        "-l", CULVERT_SELECTOR,
-        "--field-selector=status.phase=Running",
-        "-o", "jsonpath={.items[0].metadata.name}",
-    ])
+    result = _kubectl(
+        [
+            "-n",
+            namespace,
+            "get",
+            "pods",
+            "-l",
+            CULVERT_SELECTOR,
+            "--field-selector=status.phase=Running",
+            "-o",
+            "jsonpath={.items[0].metadata.name}",
+        ]
+    )
     pod = result.stdout.strip()
     if result.returncode != 0 or not pod:
         raise BastionError(
@@ -384,7 +413,9 @@ def _culvert(namespace: str, pod: str, argv: list[str]) -> str:
     """Run one of culvert's own commands in its pod and return its stdout."""
     result = _kubectl(["-n", namespace, "exec", pod, "--", *argv])
     if result.returncode != 0:
-        raise BastionError(f"culvert `{' '.join(argv)}` failed: {result.stderr.strip()}")
+        raise BastionError(
+            f"culvert `{' '.join(argv)}` failed: {result.stderr.strip()}"
+        )
     return result.stdout
 
 
@@ -394,18 +425,25 @@ def _pod_body(namespace: str, pod: str) -> dict:
     after a roll."""
     result = _kubectl(["-n", namespace, "get", "pod", pod, "-o", "json"])
     if result.returncode != 0:
-        raise BastionError(f"cannot read the culvert pod {pod}: {result.stderr.strip()}")
+        raise BastionError(
+            f"cannot read the culvert pod {pod}: {result.stderr.strip()}"
+        )
     try:
         body = json.loads(result.stdout or "{}")
     except json.JSONDecodeError as error:
-        raise BastionError(f"the culvert pod {pod} returned no readable JSON") from error
+        raise BastionError(
+            f"the culvert pod {pod} returned no readable JSON"
+        ) from error
     return body if isinstance(body, dict) else {}
 
 
 def _pod_env(body: dict) -> dict[str, str]:
     """The first container's environment, as a flat map."""
     containers = (body.get("spec") or {}).get("containers") or [{}]
-    return {str(item.get("name")): str(item.get("value", "")) for item in containers[0].get("env") or []}
+    return {
+        str(item.get("name")): str(item.get("value", ""))
+        for item in containers[0].get("env") or []
+    }
 
 
 def _route_facts(namespace: str, pod: str) -> tuple[str, str]:
@@ -414,7 +452,9 @@ def _route_facts(namespace: str, pod: str) -> tuple[str, str]:
 
     pod_ip = str((body.get("status") or {}).get("podIP") or "")
     if not pod_ip:
-        raise BastionError(f"the culvert pod {pod} carries no podIP yet -- wait for it to be Running")
+        raise BastionError(
+            f"the culvert pod {pod} carries no podIP yet -- wait for it to be Running"
+        )
 
     env = _pod_env(body)
     client_range = env.get(WG_NETWORK_ENV, "")
@@ -430,7 +470,9 @@ def _route_facts(namespace: str, pod: str) -> tuple[str, str]:
     try:
         ipaddress.ip_address(pod_ip)
     except ValueError as error:
-        raise BastionError(f"the culvert pod {pod} reports {pod_ip!r} as its podIP, which is not an address") from error
+        raise BastionError(
+            f"the culvert pod {pod} reports {pod_ip!r} as its podIP, which is not an address"
+        ) from error
     try:
         ipaddress.ip_network(client_range, strict=False)
     except ValueError as error:
@@ -443,7 +485,9 @@ def _route_facts(namespace: str, pod: str) -> tuple[str, str]:
 def _covers(client_range: str, address: str) -> bool:
     """Whether a routed range actually carries a peer's tunnel address."""
     try:
-        return ipaddress.ip_address(address) in ipaddress.ip_network(client_range, strict=False)
+        return ipaddress.ip_address(address) in ipaddress.ip_network(
+            client_range, strict=False
+        )
     except ValueError:
         return False
 
@@ -454,11 +498,15 @@ def _program_hub_route(instance_id: str, client_range: str, pod_ip: str) -> None
     `replace` rather than `add`, because the pod address changes on every roll
     and a stale route is a reach-back that times out against a healthy tunnel.
     """
-    _ssm_run(instance_id, [
-        "set -eu",
-        f"ip route replace {client_range} via {pod_ip}",
-        f"ip route get {client_range.split('/')[0]}",
-    ], comment="route the tunnel client range at the culvert pod")
+    _ssm_run(
+        instance_id,
+        [
+            "set -eu",
+            f"ip route replace {client_range} via {pod_ip}",
+            f"ip route get {client_range.split('/')[0]}",
+        ],
+        comment="route the tunnel client range at the culvert pod",
+    )
 
 
 # --- the admin hole ----------------------------------------------------------
@@ -476,10 +524,19 @@ def _write_admin_cidr(value: str) -> None:
     back to the template -- a patch on the Application is reverted, while the
     secret is the generator's own input.
     """
-    argument = f"{ADMIN_CIDR_ANNOTATION}={value}" if value else f"{ADMIN_CIDR_ANNOTATION}-"
-    result = _kubectl([
-        "-n", CLUSTER_SECRET_NAMESPACE, "annotate", "--overwrite", CLUSTER_SECRET, argument,
-    ])
+    argument = (
+        f"{ADMIN_CIDR_ANNOTATION}={value}" if value else f"{ADMIN_CIDR_ANNOTATION}-"
+    )
+    result = _kubectl(
+        [
+            "-n",
+            CLUSTER_SECRET_NAMESPACE,
+            "annotate",
+            "--overwrite",
+            CLUSTER_SECRET,
+            argument,
+        ]
+    )
     if result.returncode != 0:
         raise BastionError(
             f"cannot write {ADMIN_CIDR_ANNOTATION} on {CLUSTER_SECRET}: {result.stderr.strip()}"
@@ -495,8 +552,13 @@ def _live_admin_cidr(namespace: str) -> str | None:
     return _pod_env(_pod_body(namespace, pod)).get(ADMIN_CIDR_ENV, "")
 
 
-def _wait_for_admin_cidr(namespace: str, expected: str, *, timeout: float,
-                         poll: float = DEFAULT_POLL_INTERVAL) -> bool | None:
+def _wait_for_admin_cidr(
+    namespace: str,
+    expected: str,
+    *,
+    timeout: float,
+    poll: float = DEFAULT_POLL_INTERVAL,
+) -> bool | None:
     """Wait until culvert itself carries the range, rather than until Argo says
     Synced -- the env key is the evidence the hole is open or shut.
 
@@ -524,7 +586,10 @@ def _open_admin_hole(namespace: str, cidr: str, *, timeout: float) -> int:
         return 1
     landed = _wait_for_admin_cidr(namespace, cidr, timeout=timeout)
     if landed is None:
-        print(f"  [ok] admin range {cidr}: written, and no tunnel is deployed to admit it", file=sys.stderr)
+        print(
+            f"  [ok] admin range {cidr}: written, and no tunnel is deployed to admit it",
+            file=sys.stderr,
+        )
         return 0
     if not landed:
         print(
@@ -533,7 +598,10 @@ def _open_admin_hole(namespace: str, cidr: str, *, timeout: float) -> int:
             file=sys.stderr,
         )
         return 1
-    print(f"  [ok] admin range {cidr}: culvert admits this instance alone", file=sys.stderr)
+    print(
+        f"  [ok] admin range {cidr}: culvert admits this instance alone",
+        file=sys.stderr,
+    )
     return 0
 
 
@@ -547,7 +615,10 @@ def _close_admin_hole(namespace: str, *, timeout: float) -> int:
         return 1
     landed = _wait_for_admin_cidr(namespace, "", timeout=timeout)
     if landed is None:
-        print("  [ok] admin range: removed, and no tunnel is deployed to carry it", file=sys.stderr)
+        print(
+            "  [ok] admin range: removed, and no tunnel is deployed to carry it",
+            file=sys.stderr,
+        )
         return 0
     if not landed:
         print(
@@ -567,10 +638,16 @@ def _tunnel_address() -> str:
     address this deployment never sees and opens the toolbox's UDP egress
     themselves (terraform/modules/toolbox/aws variables.tf `tunnel`).
     """
-    result = _kubectl([
-        "-n", CLUSTER_SECRET_NAMESPACE, "get", CLUSTER_SECRET,
-        "-o", TUNNEL_ADDRESS_JSONPATH,
-    ])
+    result = _kubectl(
+        [
+            "-n",
+            CLUSTER_SECRET_NAMESPACE,
+            "get",
+            CLUSTER_SECRET,
+            "-o",
+            TUNNEL_ADDRESS_JSONPATH,
+        ]
+    )
     return result.stdout.strip() if result.returncode == 0 else ""
 
 
@@ -590,7 +667,7 @@ def _wg_table(text: str) -> dict[str, str]:
 def _handshake(epoch: str) -> str:
     try:
         seconds = int(epoch)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         seconds = 0
     if seconds <= 0:
         return "never"
@@ -603,7 +680,9 @@ def _peers(namespace: str, pod: str) -> list[dict[str, str]]:
     Joined on the tunnel address rather than read out of wg0.conf, because that
     file carries the server's own private key and none of this needs it.
     """
-    allowed = _wg_table(_culvert(namespace, pod, ["wg", "show", HUB_INTERFACE, "allowed-ips"]))
+    allowed = _wg_table(
+        _culvert(namespace, pod, ["wg", "show", HUB_INTERFACE, "allowed-ips"])
+    )
     handshakes = _wg_table(
         _culvert(namespace, pod, ["wg", "show", HUB_INTERFACE, "latest-handshakes"])
     )
@@ -611,7 +690,9 @@ def _peers(namespace: str, pod: str) -> list[dict[str, str]]:
     # Any other shape leaves every peer named "(unallocated)" rather than raising,
     # because the handshake table above is the half that matters here.
     try:
-        allocations = json.loads(_culvert(namespace, pod, ["cat", CULVERT_ALLOCATIONS]) or "{}")
+        allocations = json.loads(
+            _culvert(namespace, pod, ["cat", CULVERT_ALLOCATIONS]) or "{}"
+        )
     except json.JSONDecodeError:
         allocations = {}
     if not isinstance(allocations, dict):
@@ -625,48 +706,75 @@ def _peers(namespace: str, pod: str) -> list[dict[str, str]]:
     peers: list[dict[str, str]] = []
     for pubkey, allowed_ips in allowed.items():
         address = allowed_ips.split(",")[0].strip().split("/")[0]
-        peers.append({
-            "name": by_address.get(address, "(unallocated)"),
-            "address": address,
-            "handshake": _handshake(handshakes.get(pubkey, "0")),
-        })
+        peers.append(
+            {
+                "name": by_address.get(address, "(unallocated)"),
+                "address": address,
+                "handshake": _handshake(handshakes.get(pubkey, "0")),
+            }
+        )
     return sorted(peers, key=lambda peer: peer["name"])
 
 
 # --- SSM Run Command ----------------------------------------------------------
 
 
-def _ssm_run(instance_id: str, commands: list[str], *, comment: str,
-             timeout: float = DEFAULT_WAIT_TIMEOUT) -> str:
+def _ssm_run(
+    instance_id: str,
+    commands: list[str],
+    *,
+    comment: str,
+    timeout: float = DEFAULT_WAIT_TIMEOUT,
+) -> str:
     """One AWS-RunShellScript invocation, waited out, returning its stdout.
 
     Run Command rather than a Session, because `join` installs a file and brings
     an interface up unattended and a Session needs a terminal. Nothing secret
     goes in `commands`: the parameters are retrievable from SSM afterwards.
     """
-    sent = aws_cli.run_aws([
-        "ssm", "send-command",
-        "--instance-ids", instance_id,
-        "--document-name", "AWS-RunShellScript",
-        "--comment", comment,
-        "--parameters", json.dumps({"commands": commands}),
-        "--output", "json",
-    ], timeout=60)
+    sent = aws_cli.run_aws(
+        [
+            "ssm",
+            "send-command",
+            "--instance-ids",
+            instance_id,
+            "--document-name",
+            "AWS-RunShellScript",
+            "--comment",
+            comment,
+            "--parameters",
+            json.dumps({"commands": commands}),
+            "--output",
+            "json",
+        ],
+        timeout=60,
+    )
     if sent.returncode != 0:
-        raise BastionError(f"{comment}: ssm send-command failed -- {sent.stderr.strip()}")
+        raise BastionError(
+            f"{comment}: ssm send-command failed -- {sent.stderr.strip()}"
+        )
     try:
         command_id = json.loads(sent.stdout or "{}")["Command"]["CommandId"]
     except (json.JSONDecodeError, KeyError, TypeError) as error:
-        raise BastionError(f"{comment}: ssm send-command returned no command id") from error
+        raise BastionError(
+            f"{comment}: ssm send-command returned no command id"
+        ) from error
 
     deadline = time.monotonic() + timeout
     while True:
-        got = aws_cli.run_aws([
-            "ssm", "get-command-invocation",
-            "--command-id", command_id,
-            "--instance-id", instance_id,
-            "--output", "json",
-        ], timeout=30)
+        got = aws_cli.run_aws(
+            [
+                "ssm",
+                "get-command-invocation",
+                "--command-id",
+                command_id,
+                "--instance-id",
+                instance_id,
+                "--output",
+                "json",
+            ],
+            timeout=30,
+        )
         if got.returncode == 0:
             try:
                 body = json.loads(got.stdout or "{}")
@@ -691,13 +799,17 @@ def _ssm_run(instance_id: str, commands: list[str], *, comment: str,
 def _mint_instance_key(instance_id: str) -> str:
     """The admin peer's keypair, minted ON the instance so the private half
     never crosses a wire or lands in the SSM command history."""
-    out = _ssm_run(instance_id, [
-        "set -eu",
-        "command -v wg >/dev/null 2>&1 || dnf install -y wireguard-tools",
-        "install -d -m 0700 /etc/wireguard",
-        f"test -s {ADMIN_KEY_PATH} || (umask 077; wg genkey > {ADMIN_KEY_PATH})",
-        f"wg pubkey < {ADMIN_KEY_PATH}",
-    ], comment="mint the admin peer keypair")
+    out = _ssm_run(
+        instance_id,
+        [
+            "set -eu",
+            "command -v wg >/dev/null 2>&1 || dnf install -y wireguard-tools",
+            "install -d -m 0700 /etc/wireguard",
+            f"test -s {ADMIN_KEY_PATH} || (umask 077; wg genkey > {ADMIN_KEY_PATH})",
+            f"wg pubkey < {ADMIN_KEY_PATH}",
+        ],
+        comment="mint the admin peer keypair",
+    )
     lines = [line.strip() for line in out.splitlines() if line.strip()]
     if not lines:
         raise BastionError(
@@ -747,35 +859,52 @@ def _admin_config(config: str, address: str) -> str:
 
 def _issue_admin_config(namespace: str, pod: str, public_key: str) -> str:
     """Mint the admin peer on the hub and read back the config it wrote."""
-    _culvert(namespace, pod, [
-        "generate-client",
-        "--name", ADMIN_PEER_NAME,
-        "--protocol", "wireguard",
-        "--pubkey", public_key,
-    ])
-    return _culvert(namespace, pod, ["cat", f"{CULVERT_CLIENTS}/{ADMIN_PEER_NAME}-wg-split.conf"])
+    _culvert(
+        namespace,
+        pod,
+        [
+            "generate-client",
+            "--name",
+            ADMIN_PEER_NAME,
+            "--protocol",
+            "wireguard",
+            "--pubkey",
+            public_key,
+        ],
+    )
+    return _culvert(
+        namespace, pod, ["cat", f"{CULVERT_CLIENTS}/{ADMIN_PEER_NAME}-wg-split.conf"]
+    )
 
 
 def _install_admin_config(instance_id: str, config: str) -> None:
     """Write the config, fill the private key in locally, bring the tunnel up."""
-    _ssm_run(instance_id, [
-        "set -eu",
-        "umask 077",
-        f"cat > {ADMIN_CONF_PATH} <<'DFE_ADMIN_CONF'\n{config}DFE_ADMIN_CONF",
-        f'sed -i "s|{PRIVATE_KEY_PLACEHOLDER}|$(cat {ADMIN_KEY_PATH})|" {ADMIN_CONF_PATH}',
-        f"wg-quick down {ADMIN_INTERFACE} >/dev/null 2>&1 || true",
-        f"wg-quick up {ADMIN_CONF_PATH}",
-    ], comment="install the admin peer config and bring its tunnel up")
+    _ssm_run(
+        instance_id,
+        [
+            "set -eu",
+            "umask 077",
+            f"cat > {ADMIN_CONF_PATH} <<'DFE_ADMIN_CONF'\n{config}DFE_ADMIN_CONF",
+            f'sed -i "s|{PRIVATE_KEY_PLACEHOLDER}|$(cat {ADMIN_KEY_PATH})|" {ADMIN_CONF_PATH}',
+            f"wg-quick down {ADMIN_INTERFACE} >/dev/null 2>&1 || true",
+            f"wg-quick up {ADMIN_CONF_PATH}",
+        ],
+        comment="install the admin peer config and bring its tunnel up",
+    )
 
 
 def _prove_handshake(instance_id: str, hub_address: str) -> None:
     """A handshake, not a bring-up: wg-quick reports success on a config that
     reaches nothing, so the peer is only joined once the hub has answered."""
-    out = _ssm_run(instance_id, [
-        "set -eu",
-        f"ping -c 2 -W 2 {hub_address} >/dev/null 2>&1 || true",
-        f"wg show {ADMIN_INTERFACE} latest-handshakes",
-    ], comment="prove the admin peer completed a handshake")
+    out = _ssm_run(
+        instance_id,
+        [
+            "set -eu",
+            f"ping -c 2 -W 2 {hub_address} >/dev/null 2>&1 || true",
+            f"wg show {ADMIN_INTERFACE} latest-handshakes",
+        ],
+        comment="prove the admin peer completed a handshake",
+    )
     if not any(_handshake(value) != "never" for value in _wg_table(out).values()):
         raise BastionError(
             "the admin peer is installed but has completed no handshake -- check the"
@@ -790,12 +919,15 @@ def _record_admin_peer(namespace: str, ttl_minutes: int) -> None:
     ADMIN_STATE.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(ADMIN_STATE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as handle:
-        json.dump({
-            "name": ADMIN_PEER_NAME,
-            "namespace": namespace,
-            "ttl_minutes": ttl_minutes,
-            "expires_at": int(time.time()) + ttl_minutes * 60,
-        }, handle)
+        json.dump(
+            {
+                "name": ADMIN_PEER_NAME,
+                "namespace": namespace,
+                "ttl_minutes": ttl_minutes,
+                "expires_at": int(time.time()) + ttl_minutes * 60,
+            },
+            handle,
+        )
 
 
 def cmd_bastion_join(args: argparse.Namespace) -> int:
@@ -867,7 +999,10 @@ def cmd_bastion_peers(args: argparse.Namespace) -> int:
         return 0
     print(f"{'name':<28} {'tunnel address':<16} last handshake", file=sys.stderr)
     for peer in peers:
-        print(f"{peer['name']:<28} {peer['address']:<16} {peer['handshake']}", file=sys.stderr)
+        print(
+            f"{peer['name']:<28} {peer['address']:<16} {peer['handshake']}",
+            file=sys.stderr,
+        )
     return 0
 
 
@@ -889,7 +1024,9 @@ def cmd_bastion_hub(args: argparse.Namespace) -> int:
         peer = next((p for p in peers if p["name"] == args.peer), None)
         if peer is None:
             names = ", ".join(p["name"] for p in peers) or "(none)"
-            raise BastionError(f"unknown peer {args.peer!r} -- the hub carries: {names}")
+            raise BastionError(
+                f"unknown peer {args.peer!r} -- the hub carries: {names}"
+            )
         pod_ip, client_range = _route_facts(namespace, pod)
         if not _covers(client_range, peer["address"]):
             raise BastionError(
@@ -909,7 +1046,11 @@ def cmd_bastion_hub(args: argparse.Namespace) -> int:
         f" {peer['address']}:{args.port} through the tunnel, last handshake {peer['handshake']}",
         file=sys.stderr,
     )
-    reach = f"ssh {peer['address']}" if args.port == 22 else f"curl https://{peer['address']}/"
+    reach = (
+        f"ssh {peer['address']}"
+        if args.port == 22
+        else f"curl https://{peer['address']}/"
+    )
     print(f"  {reach}", file=sys.stderr)
     # The instance route is one half: a VPC delivers a packet by looking its
     # DESTINATION up, so the tunnel range also needs a VPC route at the culvert
@@ -925,27 +1066,42 @@ def cmd_bastion_hub(args: argparse.Namespace) -> int:
         file=sys.stderr,
     )
     return _run_interactive(
-        ["aws", "ssm", "start-session", "--target", instance_id, "--document-name", document]
+        [
+            "aws",
+            "ssm",
+            "start-session",
+            "--target",
+            instance_id,
+            "--document-name",
+            document,
+        ]
     )
 
 
 # --- up ------------------------------------------------------------------
 
 
-def _wait_for_online(instance_id: str, *, timeout: float, poll: float = DEFAULT_POLL_INTERVAL) -> bool:
+def _wait_for_online(
+    instance_id: str, *, timeout: float, poll: float = DEFAULT_POLL_INTERVAL
+) -> bool:
     deadline = time.monotonic() + timeout
     while True:
         result = aws_cli.run_aws(
             [
-                "ssm", "describe-instance-information",
-                "--filters", f"Key=InstanceIds,Values={instance_id}",
-                "--output", "json",
+                "ssm",
+                "describe-instance-information",
+                "--filters",
+                f"Key=InstanceIds,Values={instance_id}",
+                "--output",
+                "json",
             ],
             timeout=30,
         )
         if result.returncode == 0:
             try:
-                entries = json.loads(result.stdout or "{}").get("InstanceInformationList", [])
+                entries = json.loads(result.stdout or "{}").get(
+                    "InstanceInformationList", []
+                )
             except json.JSONDecodeError:
                 entries = []
             if entries and entries[0].get("PingStatus") == "Online":
@@ -981,10 +1137,16 @@ def cmd_bastion_up(args: argparse.Namespace) -> int:
     outputs = _tofu_outputs()
     instance_id = str(_output(outputs, "toolbox_instance_id"))
     if not instance_id:
-        print("dfe-ops bastion: apply succeeded but toolbox_instance_id is empty", file=sys.stderr)
+        print(
+            "dfe-ops bastion: apply succeeded but toolbox_instance_id is empty",
+            file=sys.stderr,
+        )
         return 1
 
-    print(f"dfe-ops bastion: waiting for {instance_id} to report PingStatus Online...", file=sys.stderr)
+    print(
+        f"dfe-ops bastion: waiting for {instance_id} to report PingStatus Online...",
+        file=sys.stderr,
+    )
     if not _wait_for_online(instance_id, timeout=args.wait_timeout):
         print(
             f"dfe-ops bastion: {instance_id} did not report Online within {args.wait_timeout:.0f}s -- "
@@ -1001,7 +1163,9 @@ def cmd_bastion_up(args: argparse.Namespace) -> int:
     admin_cidr = str(_output(outputs, ADMIN_CIDR_OUTPUT))
     problems = 0
     if admin_cidr:
-        problems = _open_admin_hole(_namespace(args), admin_cidr, timeout=args.wait_timeout)
+        problems = _open_admin_hole(
+            _namespace(args), admin_cidr, timeout=args.wait_timeout
+        )
     else:
         print(
             "  [ok] admin range: none -- the dial leaves edge.ingest.tunnel.admin_peer off,"
@@ -1024,18 +1188,31 @@ def cmd_bastion_shell(args: argparse.Namespace) -> int:
     instance_id = str(_output(outputs, "toolbox_instance_id"))
     document = str(_output(outputs, "toolbox_ssm_session_document"))
     if not instance_id:
-        print("dfe-ops bastion: no toolbox instance -- run `dfe-ops bastion up` first", file=sys.stderr)
+        print(
+            "dfe-ops bastion: no toolbox instance -- run `dfe-ops bastion up` first",
+            file=sys.stderr,
+        )
         return 1
 
     return _run_interactive(
-        ["aws", "ssm", "start-session", "--target", instance_id, "--document-name", document]
+        [
+            "aws",
+            "ssm",
+            "start-session",
+            "--target",
+            instance_id,
+            "--document-name",
+            document,
+        ]
     )
 
 
 # --- forward -----------------------------------------------------------------
 
 
-def _write_scratch_kubeconfig(*, local_port: int, server_host: str, cluster_name: str, region: str) -> Path:
+def _write_scratch_kubeconfig(
+    *, local_port: int, server_host: str, cluster_name: str, region: str
+) -> Path:
     """A per-session scratch kubeconfig, 0600 before its first byte (never a
     chmod after the fact -- that has a window). tls-server-name keeps
     certificate verification intact through the tunnel; insecure-skip-tls-verify
@@ -1075,19 +1252,32 @@ def cmd_bastion_forward(args: argparse.Namespace) -> int:
     outputs = _tofu_outputs()
     instance_id = str(_output(outputs, "toolbox_instance_id"))
     if not instance_id:
-        print("dfe-ops bastion: no toolbox instance -- run `dfe-ops bastion up` first", file=sys.stderr)
+        print(
+            "dfe-ops bastion: no toolbox instance -- run `dfe-ops bastion up` first",
+            file=sys.stderr,
+        )
         return 1
 
     targets = _output(outputs, "toolbox_targets", {})
     target = targets.get(args.target) if isinstance(targets, dict) else None
     if target is None:
-        names = ", ".join(sorted(targets)) if isinstance(targets, dict) and targets else "(none)"
-        print(f"dfe-ops bastion: unknown target {args.target!r} -- known targets: {names}", file=sys.stderr)
+        names = (
+            ", ".join(sorted(targets))
+            if isinstance(targets, dict) and targets
+            else "(none)"
+        )
+        print(
+            f"dfe-ops bastion: unknown target {args.target!r} -- known targets: {names}",
+            file=sys.stderr,
+        )
         return 1
 
     document_name = str(target.get("document_name", ""))
     if not document_name:
-        print(f"dfe-ops bastion: target {args.target!r} has no forward document", file=sys.stderr)
+        print(
+            f"dfe-ops bastion: target {args.target!r} has no forward document",
+            file=sys.stderr,
+        )
         return 1
 
     # Not a suggestion -- Session Manager genuinely writes no transcript for a
@@ -1116,10 +1306,15 @@ def cmd_bastion_forward(args: argparse.Namespace) -> int:
 
     return _run_interactive(
         [
-            "aws", "ssm", "start-session",
-            "--target", instance_id,
-            "--document-name", document_name,
-            "--parameters", f"localPortNumber={args.local_port}",
+            "aws",
+            "ssm",
+            "start-session",
+            "--target",
+            instance_id,
+            "--document-name",
+            document_name,
+            "--parameters",
+            f"localPortNumber={args.local_port}",
         ]
     )
 
@@ -1141,7 +1336,7 @@ def _revoke_admin_peer() -> int:
         return 0
     try:
         state = json.loads(ADMIN_STATE.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except OSError, json.JSONDecodeError:
         state = {}
     name = str(state.get("name") or ADMIN_PEER_NAME)
     namespace = str(state.get("namespace") or CULVERT_NAMESPACE)
@@ -1160,7 +1355,10 @@ def _revoke_admin_peer() -> int:
         return 1
 
     if name in remaining:
-        print(f"  [FAIL] admin peer {name}: still on the hub after revocation", file=sys.stderr)
+        print(
+            f"  [FAIL] admin peer {name}: still on the hub after revocation",
+            file=sys.stderr,
+        )
         return 1
     ADMIN_STATE.unlink(missing_ok=True)
     print(f"  [ok] admin peer {name}: revoked and off the hub", file=sys.stderr)
@@ -1178,10 +1376,14 @@ def _prove_teardown(instance_id: str, problems: int = 0) -> int:
     if instance_id:
         result = aws_cli.run_aws(
             [
-                "ec2", "describe-instances",
-                "--instance-ids", instance_id,
-                "--query", "Reservations[].Instances[].State.Name",
-                "--output", "json",
+                "ec2",
+                "describe-instances",
+                "--instance-ids",
+                instance_id,
+                "--query",
+                "Reservations[].Instances[].State.Name",
+                "--output",
+                "json",
             ],
             timeout=30,
         )
@@ -1191,23 +1393,38 @@ def _prove_teardown(instance_id: str, problems: int = 0) -> int:
             states = []
         remaining = [s for s in states if s != "terminated"]
         ok = not remaining
-        print(f"  [{'ok' if ok else 'FAIL'}] instance {instance_id}: {states or 'gone'}", file=sys.stderr)
+        print(
+            f"  [{'ok' if ok else 'FAIL'}] instance {instance_id}: {states or 'gone'}",
+            file=sys.stderr,
+        )
         problems += 0 if ok else 1
 
         sessions = aws_cli.run_aws(
             [
-                "ssm", "describe-sessions", "--state", "Active",
-                "--filters", f"key=Target,value={instance_id}",
-                "--output", "json",
+                "ssm",
+                "describe-sessions",
+                "--state",
+                "Active",
+                "--filters",
+                f"key=Target,value={instance_id}",
+                "--output",
+                "json",
             ],
             timeout=30,
         )
         try:
-            active = json.loads(sessions.stdout or "{}").get("Sessions", []) if sessions.returncode == 0 else []
+            active = (
+                json.loads(sessions.stdout or "{}").get("Sessions", [])
+                if sessions.returncode == 0
+                else []
+            )
         except json.JSONDecodeError:
             active = []
         ok = not active
-        print(f"  [{'ok' if ok else 'FAIL'}] active sessions: {len(active)}", file=sys.stderr)
+        print(
+            f"  [{'ok' if ok else 'FAIL'}] active sessions: {len(active)}",
+            file=sys.stderr,
+        )
         problems += 0 if ok else 1
     else:
         print("  [ok] instance: never brought up", file=sys.stderr)
@@ -1215,27 +1432,39 @@ def _prove_teardown(instance_id: str, problems: int = 0) -> int:
 
     volumes = aws_cli.run_aws(
         [
-            "ec2", "describe-volumes",
-            "--filters", "Name=tag:dfe.hyperi.io/component,Values=toolbox",
-            "--query", "Volumes[].VolumeId",
-            "--output", "json",
+            "ec2",
+            "describe-volumes",
+            "--filters",
+            "Name=tag:dfe.hyperi.io/component,Values=toolbox",
+            "--query",
+            "Volumes[].VolumeId",
+            "--output",
+            "json",
         ],
         timeout=30,
     )
     try:
-        volume_ids = json.loads(volumes.stdout or "[]") if volumes.returncode == 0 else []
+        volume_ids = (
+            json.loads(volumes.stdout or "[]") if volumes.returncode == 0 else []
+        )
     except json.JSONDecodeError:
         volume_ids = []
     ok = not volume_ids
-    print(f"  [{'ok' if ok else 'FAIL'}] volumes: {volume_ids or 'none'}", file=sys.stderr)
+    print(
+        f"  [{'ok' if ok else 'FAIL'}] volumes: {volume_ids or 'none'}", file=sys.stderr
+    )
     problems += 0 if ok else 1
 
     enis = aws_cli.run_aws(
         [
-            "ec2", "describe-network-interfaces",
-            "--filters", "Name=tag:dfe.hyperi.io/component,Values=toolbox",
-            "--query", "NetworkInterfaces[].NetworkInterfaceId",
-            "--output", "json",
+            "ec2",
+            "describe-network-interfaces",
+            "--filters",
+            "Name=tag:dfe.hyperi.io/component,Values=toolbox",
+            "--query",
+            "NetworkInterfaces[].NetworkInterfaceId",
+            "--output",
+            "json",
         ],
         timeout=30,
     )
@@ -1244,7 +1473,10 @@ def _prove_teardown(instance_id: str, problems: int = 0) -> int:
     except json.JSONDecodeError:
         eni_ids = []
     ok = not eni_ids
-    print(f"  [{'ok' if ok else 'FAIL'}] network interfaces: {eni_ids or 'none'}", file=sys.stderr)
+    print(
+        f"  [{'ok' if ok else 'FAIL'}] network interfaces: {eni_ids or 'none'}",
+        file=sys.stderr,
+    )
     problems += 0 if ok else 1
 
     print(
@@ -1270,7 +1502,10 @@ def cmd_bastion_down(args: argparse.Namespace) -> int:
     if str(_output(outputs_before, ADMIN_CIDR_OUTPUT)):
         admin_problems += _close_admin_hole(_namespace(args), timeout=args.wait_timeout)
     else:
-        print("  [ok] admin range: none -- the dial asked for no reach-back", file=sys.stderr)
+        print(
+            "  [ok] admin range: none -- the dial asked for no reach-back",
+            file=sys.stderr,
+        )
 
     try:
         _set_toolbox_enabled(False)
@@ -1305,35 +1540,57 @@ def cmd_bastion_status(args: argparse.Namespace) -> int:
 
     ping = aws_cli.run_aws(
         [
-            "ssm", "describe-instance-information",
-            "--filters", f"Key=InstanceIds,Values={instance_id}",
-            "--output", "json",
+            "ssm",
+            "describe-instance-information",
+            "--filters",
+            f"Key=InstanceIds,Values={instance_id}",
+            "--output",
+            "json",
         ],
         timeout=30,
     )
     try:
-        entries = json.loads(ping.stdout or "{}").get("InstanceInformationList", []) if ping.returncode == 0 else []
+        entries = (
+            json.loads(ping.stdout or "{}").get("InstanceInformationList", [])
+            if ping.returncode == 0
+            else []
+        )
     except json.JSONDecodeError:
         entries = []
-    ping_status = entries[0].get("PingStatus", "Unknown") if entries else "not registered"
+    ping_status = (
+        entries[0].get("PingStatus", "Unknown") if entries else "not registered"
+    )
     print(f"instance:        {instance_id} ({ping_status})", file=sys.stderr)
 
     sessions = aws_cli.run_aws(
         [
-            "ssm", "describe-sessions", "--state", "Active",
-            "--filters", f"key=Target,value={instance_id}",
-            "--output", "json",
+            "ssm",
+            "describe-sessions",
+            "--state",
+            "Active",
+            "--filters",
+            f"key=Target,value={instance_id}",
+            "--output",
+            "json",
         ],
         timeout=30,
     )
     try:
-        active = json.loads(sessions.stdout or "{}").get("Sessions", []) if sessions.returncode == 0 else []
+        active = (
+            json.loads(sessions.stdout or "{}").get("Sessions", [])
+            if sessions.returncode == 0
+            else []
+        )
     except json.JSONDecodeError:
         active = []
     print(f"active sessions: {len(active)}", file=sys.stderr)
 
     targets = _output(outputs, "toolbox_targets", {})
-    names = ", ".join(sorted(targets)) if isinstance(targets, dict) and targets else "(none)"
+    names = (
+        ", ".join(sorted(targets))
+        if isinstance(targets, dict) and targets
+        else "(none)"
+    )
     print(f"forward targets: {names}", file=sys.stderr)
 
     # The admin peer's deadline is a fact on disk rather than an intention, so
@@ -1341,10 +1598,14 @@ def cmd_bastion_status(args: argparse.Namespace) -> int:
     if ADMIN_STATE.is_file():
         try:
             state = json.loads(ADMIN_STATE.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+        except OSError, json.JSONDecodeError:
             state = {}
         expires = int(state.get("expires_at") or 0)
-        overdue = " (OVERDUE -- run `dfe-ops bastion down`)" if expires and expires < time.time() else ""
+        overdue = (
+            " (OVERDUE -- run `dfe-ops bastion down`)"
+            if expires and expires < time.time()
+            else ""
+        )
         print(
             f"admin peer:      {state.get('name', ADMIN_PEER_NAME)}, "
             f"revoke by {_handshake(str(expires))}{overdue}",
@@ -1365,54 +1626,78 @@ def add_bastion_subparser(sub: argparse._SubParsersAction) -> None:
         help="up/join/peers/hub/shell/forward/down/status for the on-demand SSM-managed toolbox instance",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    actions = bastion.add_subparsers(dest="bastion_action", required=True, metavar="<action>")
+    actions = bastion.add_subparsers(
+        dest="bastion_action", required=True, metavar="<action>"
+    )
 
     def with_namespace(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
         """The namespace culvert runs in, for every verb that reaches its pod."""
         parser.add_argument(
-            "--namespace", default=None,
+            "--namespace",
+            default=None,
             help=f"namespace the fleet tunnel runs in (default: {CULVERT_NAMESPACE})",
         )
         return parser
 
-    up = with_namespace(actions.add_parser(
-        "up",
-        help="flip toolbox.enabled on, apply the toolbox target, wait for PingStatus Online, admit this instance on the tunnel",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    ))
-    up.add_argument("--ttl", type=int, default=None, metavar="MIN", help="override toolbox.ttl_minutes for this call")
+    up = with_namespace(
+        actions.add_parser(
+            "up",
+            help="flip toolbox.enabled on, apply the toolbox target, wait for PingStatus Online, admit this instance on the tunnel",
+            formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        )
+    )
     up.add_argument(
-        "--wait-timeout", type=float, default=DEFAULT_WAIT_TIMEOUT,
+        "--ttl",
+        type=int,
+        default=None,
+        metavar="MIN",
+        help="override toolbox.ttl_minutes for this call",
+    )
+    up.add_argument(
+        "--wait-timeout",
+        type=float,
+        default=DEFAULT_WAIT_TIMEOUT,
         help="seconds to wait for the instance to report PingStatus Online, and for culvert to carry its range",
     )
     up.set_defaults(func=cmd_bastion_up)
 
-    join = with_namespace(actions.add_parser(
-        "join",
-        help="mint an admin peer on the fleet tunnel -- refused until hyperi-io/culvert#40 lands",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    ))
+    join = with_namespace(
+        actions.add_parser(
+            "join",
+            help="mint an admin peer on the fleet tunnel -- refused until hyperi-io/culvert#40 lands",
+            formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        )
+    )
     join.add_argument(
-        "--ttl", type=int, default=None, metavar="MIN",
+        "--ttl",
+        type=int,
+        default=None,
+        metavar="MIN",
         help="minutes before the admin peer is due for revocation, recorded for `down` and `status`",
     )
     join.set_defaults(func=cmd_bastion_join)
 
-    peers = with_namespace(actions.add_parser(
-        "peers",
-        help="the hub's peers: name, tunnel address and last handshake",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    ))
+    peers = with_namespace(
+        actions.add_parser(
+            "peers",
+            help="the hub's peers: name, tunnel address and last handshake",
+            formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        )
+    )
     peers.set_defaults(func=cmd_bastion_peers)
 
-    hub = with_namespace(actions.add_parser(
-        "hub",
-        help="route the client range at the culvert pod and reach one appliance, in the LOGGED shell Session",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    ))
+    hub = with_namespace(
+        actions.add_parser(
+            "hub",
+            help="route the client range at the culvert pod and reach one appliance, in the LOGGED shell Session",
+            formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        )
+    )
     hub.add_argument("peer", help="a name from `dfe-ops bastion peers`")
     hub.add_argument(
-        "--port", type=int, default=ADMIN_REACH[0],
+        "--port",
+        type=int,
+        default=ADMIN_REACH[0],
         help=f"the appliance port to reach, within the admin class's reach {list(ADMIN_REACH)}",
     )
     hub.set_defaults(func=cmd_bastion_hub)
@@ -1429,17 +1714,25 @@ def add_bastion_subparser(sub: argparse._SubParsersAction) -> None:
         help="port-forward to a named target -- NOT recorded by Session Manager",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    forward.add_argument("target", help="a name from `dfe-ops bastion status`'s forward targets")
-    forward.add_argument("local_port", type=int, help="local port to bind on this machine")
+    forward.add_argument(
+        "target", help="a name from `dfe-ops bastion status`'s forward targets"
+    )
+    forward.add_argument(
+        "local_port", type=int, help="local port to bind on this machine"
+    )
     forward.set_defaults(func=cmd_bastion_forward)
 
-    down = with_namespace(actions.add_parser(
-        "down",
-        help="revoke the admin peer, close the tunnel's admin range, flip toolbox.enabled off, destroy the toolbox target, and prove nothing remains",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    ))
+    down = with_namespace(
+        actions.add_parser(
+            "down",
+            help="revoke the admin peer, close the tunnel's admin range, flip toolbox.enabled off, destroy the toolbox target, and prove nothing remains",
+            formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        )
+    )
     down.add_argument(
-        "--wait-timeout", type=float, default=DEFAULT_WAIT_TIMEOUT,
+        "--wait-timeout",
+        type=float,
+        default=DEFAULT_WAIT_TIMEOUT,
         help="seconds to wait for culvert to drop its admin range before the destroy",
     )
     down.set_defaults(func=cmd_bastion_down)

@@ -32,7 +32,9 @@ from _expect import expect, standalone, summary
 from _smoke import run_smoke
 
 KEPT = "[PASS] a payload's own _raw is kept as sent (1 of 3 fixture lines carry one)"
-NULLED = "[PASS] payloads without a _raw field land with _raw NULL (stored once, in _json)"
+NULLED = (
+    "[PASS] payloads without a _raw field land with _raw NULL (stored once, in _json)"
+)
 HYPERDX = "hyperdx logs in to its DocumentDB store and pings it"
 # The line the probe prints when the DocumentDB gateway rejects the password.
 REFUSED = "MongoServerError (code 18): Invalid key"
@@ -55,8 +57,16 @@ def test_the_raw_a_payload_carries_is_kept_and_the_others_stay_null() -> None:
 def test_a_loader_that_copies_the_payload_into_raw_fails_both() -> None:
     stdout = smoke({"loader_copies_payload_to_raw": True})
 
-    expect("the kept-as-sent check fails", KEPT.replace("[PASS]", "[FAIL]") in stdout, stdout)
-    expect("the stored-once check fails", NULLED.replace("[PASS]", "[FAIL]") in stdout, stdout)
+    expect(
+        "the kept-as-sent check fails",
+        KEPT.replace("[PASS]", "[FAIL]") in stdout,
+        stdout,
+    )
+    expect(
+        "the stored-once check fails",
+        NULLED.replace("[PASS]", "[FAIL]") in stdout,
+        stdout,
+    )
 
 
 def test_a_fixture_with_no_raw_line_skips_the_kept_check() -> None:
@@ -66,8 +76,14 @@ def test_a_fixture_with_no_raw_line_skips_the_kept_check() -> None:
         fixture.write_text(line * 2, encoding="utf-8", newline="\n")
         stdout = smoke({}, DFE_POST_FIXTURE=str(fixture))
 
-    expect("the kept check is skipped", "[SKIP] payload-supplied _raw" in stdout, stdout)
-    expect("every line is asserted NULL", "[PASS] payloads without a _raw field" in stdout, stdout)
+    expect(
+        "the kept check is skipped", "[SKIP] payload-supplied _raw" in stdout, stdout
+    )
+    expect(
+        "every line is asserted NULL",
+        "[PASS] payloads without a _raw field" in stdout,
+        stdout,
+    )
 
 
 def test_a_store_that_answers_the_ping_passes() -> None:
@@ -84,7 +100,9 @@ def test_a_store_that_refuses_the_login_fails_naming_the_layer() -> None:
 
 
 def test_the_probe_pings_with_the_pods_own_uri_and_never_asks_readyz() -> None:
-    _out, counts = run_smoke({"otel_zero_answers": 0, "hyperdx_store": True}, DFE_OTEL_WAIT="0")
+    _out, counts = run_smoke(
+        {"otel_zero_answers": 0, "hyperdx_store": True}, DFE_OTEL_WAIT="0"
+    )
     script = counts.get("hyperdx_probe", "")
 
     expect("the probe reads MONGO_URI", "process.env.MONGO_URI" in script, script)

@@ -1,7 +1,6 @@
 {{- if include "dfe-clickhouse.tlsEnabled" . }}
 {{- $tls := .Values.clickhouse.tls }}
-# The keypair for 8443 and 9440. Both modes mount its Secret as a directory, never
-# a subPath, so a renewal reaches the running server.
+# The keypair for 8443 and 9440. docs/deploy-tls-trust.md, In-cluster ClickHouse.
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:

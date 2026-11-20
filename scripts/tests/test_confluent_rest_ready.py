@@ -57,7 +57,9 @@ SECRET = "stand-in+secret/for+the+probe/only00000000000000000000000000000"
 WRONG_SECRET = "not-the-stand-in-secret"
 
 OK = b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}"
-UNAUTHORISED = b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+UNAUTHORISED = (
+    b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+)
 
 
 def _blocks() -> list[check_tofu_literals.Block]:
@@ -81,7 +83,9 @@ def _expression(block: check_tofu_literals.Block, name: str) -> str:
     """An attribute's expression with every space and line break removed."""
     for attribute in block.attributes:
         if attribute.name == name:
-            return "".join(token.text for token in attribute.tokens if token.kind != "newline")
+            return "".join(
+                token.text for token in attribute.tokens if token.kind != "newline"
+            )
     raise LookupError(f"{block.labels} sets no {name}")
 
 
@@ -96,14 +100,21 @@ def _depends_on(kind: str, name: str) -> list[str]:
 def _provisioner() -> check_tofu_literals.Block:
     """The probe's local-exec provisioner."""
     gate = _resource("terraform_data", "rest_ready")
-    found = [b for b in gate.blocks if b.kind == "provisioner" and b.labels == ["local-exec"]]
+    found = [
+        b for b in gate.blocks if b.kind == "provisioner" and b.labels == ["local-exec"]
+    ]
     if len(found) != 1:
-        raise LookupError(f"terraform_data.rest_ready carries {len(found)} local-exec provisioners")
+        raise LookupError(
+            f"terraform_data.rest_ready carries {len(found)} local-exec provisioners"
+        )
     return found[0]
 
 
 def test_the_probe_is_planned_for_a_public_cluster_only() -> None:
-    assert _expression(_resource("terraform_data", "rest_ready"), "count") == "local.private?0:1"
+    assert (
+        _expression(_resource("terraform_data", "rest_ready"), "count")
+        == "local.private?0:1"
+    )
 
 
 def test_every_write_over_the_rest_endpoint_waits_for_the_probe() -> None:
@@ -112,7 +123,9 @@ def test_every_write_over_the_rest_endpoint_waits_for_the_probe() -> None:
         for kind, name in REST_WRITERS
         if "terraform_data.rest_ready" not in _depends_on(kind, name)
     ]
-    assert missing == [], f"{missing} can reach the REST endpoint before it answers the manager key"
+    assert missing == [], (
+        f"{missing} can reach the REST endpoint before it answers the manager key"
+    )
 
 
 def test_no_key_waits_for_the_probe() -> None:
@@ -122,23 +135,34 @@ def test_no_key_waits_for_the_probe() -> None:
         for name in ("manager", "dfe")
         if "terraform_data.rest_ready" in _depends_on("confluent_api_key", name)
     ]
-    assert waiting == [], f"confluent_api_key {waiting} waits on a probe that needs a key to run"
+    assert waiting == [], (
+        f"confluent_api_key {waiting} waits on a probe that needs a key to run"
+    )
 
 
 def test_neither_key_takes_the_providers_wait() -> None:
     """The provider's wait fails the apply on one reset its retries do not outlast."""
     for name in ("manager", "dfe"):
-        assert _expression(_resource("confluent_api_key", name), "disable_wait_for_ready") == "true"
+        assert (
+            _expression(_resource("confluent_api_key", name), "disable_wait_for_ready")
+            == "true"
+        )
 
 
 def test_the_manager_key_still_waits_for_its_role_binding() -> None:
-    assert "confluent_role_binding.manager" in _depends_on("confluent_api_key", "manager")
+    assert "confluent_role_binding.manager" in _depends_on(
+        "confluent_api_key", "manager"
+    )
 
 
 def test_the_probe_runs_once_at_create_and_fails_the_apply_when_it_fails() -> None:
     settings = {attribute.name for attribute in _provisioner().attributes}
-    assert "when" not in settings, "a destroy-time probe would never run before the writes"
-    assert "on_failure" not in settings, "a probe that may fail and continue holds nothing back"
+    assert "when" not in settings, (
+        "a destroy-time probe would never run before the writes"
+    )
+    assert "on_failure" not in settings, (
+        "a probe that may fail and continue holds nothing back"
+    )
 
 
 def test_the_probe_hands_the_script_its_arguments_in_order() -> None:
@@ -156,16 +180,24 @@ def test_the_probe_hands_the_script_its_arguments_in_order() -> None:
 
 def test_the_manager_key_reaches_the_probe_through_the_environment_alone() -> None:
     command = _expression(_provisioner(), "command")
-    assert "confluent_api_key" not in command, "a credential on the command line shows in a process listing"
+    assert "confluent_api_key" not in command, (
+        "a credential on the command line shows in a process listing"
+    )
     environment = _expression(_provisioner(), "environment")
     assert "CONFLUENT_REST_KEY=confluent_api_key.manager.id" in environment, environment
-    assert "CONFLUENT_REST_SECRET=confluent_api_key.manager.secret" in environment, environment
+    assert "CONFLUENT_REST_SECRET=confluent_api_key.manager.secret" in environment, (
+        environment
+    )
 
 
 def test_the_rendered_wait_can_succeed_inside_its_own_bound() -> None:
     wait = render_dial.CONFLUENT_REST_READY_DEFAULTS
-    assert wait["successes"] > 1, "one answer proves one load balancer has the route, not all of them"
-    assert wait["interval_seconds"] > 0, "back-to-back attempts can land on the same load balancer"
+    assert wait["successes"] > 1, (
+        "one answer proves one load balancer has the route, not all of them"
+    )
+    assert wait["interval_seconds"] > 0, (
+        "back-to-back attempts can land on the same load balancer"
+    )
     assert wait["successes"] * wait["interval_seconds"] < wait["timeout_seconds"]
 
 
@@ -179,10 +211,24 @@ def tls(tmp_path_factory: pytest.TempPathFactory) -> tuple[ssl.SSLContext, Path]
     key = work / "key.pem"
     subprocess.run(
         [
-            openssl, "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1",
-            "-nodes", "-days", "1", "-subj", "/CN=127.0.0.1",
-            "-addext", "subjectAltName=IP:127.0.0.1",
-            "-keyout", str(key), "-out", str(cert),
+            openssl,
+            "req",
+            "-x509",
+            "-newkey",
+            "ec",
+            "-pkeyopt",
+            "ec_paramgen_curve:prime256v1",
+            "-nodes",
+            "-days",
+            "1",
+            "-subj",
+            "/CN=127.0.0.1",
+            "-addext",
+            "subjectAltName=IP:127.0.0.1",
+            "-keyout",
+            str(key),
+            "-out",
+            str(cert),
         ],
         check=True,
         capture_output=True,
@@ -215,7 +261,10 @@ def _authorised(request: bytes) -> bool:
 def _answer(conn: socket.socket, context: ssl.SSLContext, synced: bool) -> None:
     """Complete the handshake and answer 200 to the stand-in key, or 401 while it is not synced."""
     # A client that refuses the certificate ends the handshake, and that is its whole answer.
-    with contextlib.suppress(OSError), context.wrap_socket(conn, server_side=True) as stream:
+    with (
+        contextlib.suppress(OSError),
+        context.wrap_socket(conn, server_side=True) as stream,
+    ):
         request = b""
         while b"\r\n\r\n" not in request:
             chunk = stream.recv(4096)
@@ -226,7 +275,9 @@ def _answer(conn: socket.socket, context: ssl.SSLContext, synced: bool) -> None:
 
 
 @contextlib.contextmanager
-def endpoint(context: ssl.SSLContext, plan: list[str]) -> Iterator[tuple[int, list[str]]]:
+def endpoint(
+    context: ssl.SSLContext, plan: list[str]
+) -> Iterator[tuple[int, list[str]]]:
     """A stand-in REST endpoint that resets, refuses or answers each connection in `plan` order.
 
     "reset" drops the connection, "unsynced" answers 401 whatever the request
@@ -272,8 +323,14 @@ def _env(
 ) -> dict[str, str]:
     """This process's environment, with curl's trust store, rc file and the credential set by the test alone."""
     env = dict(os.environ)
-    for name in ("CURL_CA_BUNDLE", "SSL_CERT_FILE", "SSL_CERT_DIR", "CURL_HOME",
-                 "CONFLUENT_REST_KEY", "CONFLUENT_REST_SECRET"):
+    for name in (
+        "CURL_CA_BUNDLE",
+        "SSL_CERT_FILE",
+        "SSL_CERT_DIR",
+        "CURL_HOME",
+        "CONFLUENT_REST_KEY",
+        "CONFLUENT_REST_SECRET",
+    ):
         env.pop(name, None)
     # The stand-ins sit on 127.0.0.1, which no proxy the runner sets may intercept.
     env["NO_PROXY"] = env["no_proxy"] = "*"
@@ -353,7 +410,9 @@ def _attempts(stdout: str) -> int:
     return sum(1 for line in stdout.splitlines() if " attempt " in line)
 
 
-def test_a_200_for_the_key_is_a_ready_endpoint(tls: tuple[ssl.SSLContext, Path]) -> None:
+def test_a_200_for_the_key_is_a_ready_endpoint(
+    tls: tuple[ssl.SSLContext, Path],
+) -> None:
     context, ca = tls
     with endpoint(context, []) as (port, served):
         out = run_probe(_url(port), "3", "30", "0", ca=ca)
@@ -362,7 +421,9 @@ def test_a_200_for_the_key_is_a_ready_endpoint(tls: tuple[ssl.SSLContext, Path])
     assert "HTTP 200 from 127.0.0.1 (3/3 in a row)" in out.stdout, out.stdout
 
 
-def test_a_401_is_not_ready_and_starts_the_count_again(tls: tuple[ssl.SSLContext, Path]) -> None:
+def test_a_401_is_not_ready_and_starts_the_count_again(
+    tls: tuple[ssl.SSLContext, Path],
+) -> None:
     """A routed endpoint that has not synced the key answers 401, which no write survives."""
     context, ca = tls
     with endpoint(context, ["answer", "unsynced", "answer"]) as (port, served):
@@ -395,12 +456,19 @@ def test_an_endpoint_that_keeps_resetting_fails_at_the_bound_and_names_the_host(
         out = run_probe(_url(port), "3", "3", "1", ca=ca, path=clock)
     assert out.returncode == 1, out.stdout + out.stderr
     assert _attempts(out.stdout) == 3, out.stdout
-    assert served == ["reset"] * 3, "it retries a reset rather than failing on the first one"
+    assert served == ["reset"] * 3, (
+        "it retries a reset rather than failing on the first one"
+    )
     assert "Connection reset by peer" in out.stdout, out.stdout
-    assert "127.0.0.1 did not list its topics with HTTP 200 3 times in a row within 3s (3 attempts" in out.stderr, out.stderr
+    assert (
+        "127.0.0.1 did not list its topics with HTTP 200 3 times in a row within 3s (3 attempts"
+        in out.stderr
+    ), out.stderr
 
 
-def test_a_key_that_never_syncs_fails_at_the_bound(tls: tuple[ssl.SSLContext, Path], clock: Path) -> None:
+def test_a_key_that_never_syncs_fails_at_the_bound(
+    tls: tuple[ssl.SSLContext, Path], clock: Path
+) -> None:
     context, ca = tls
     with endpoint(context, ["unsynced"] * 50) as (port, served):
         out = run_probe(_url(port), "2", "3", "1", ca=ca, path=clock)
@@ -425,7 +493,10 @@ def test_a_closed_port_fails_at_the_bound(clock: Path) -> None:
     out = run_probe(_url(port), "3", "2", "1", path=clock)
     assert out.returncode == 1, out.stdout + out.stderr
     assert _attempts(out.stdout) == 2, out.stdout
-    assert "127.0.0.1 did not list its topics with HTTP 200 3 times in a row within 2s (2 attempts" in out.stderr, out.stderr
+    assert (
+        "127.0.0.1 did not list its topics with HTTP 200 3 times in a row within 2s (2 attempts"
+        in out.stderr
+    ), out.stderr
 
 
 def test_the_probe_waits_on_the_clock_it_is_handed(clock: Path) -> None:
@@ -438,7 +509,9 @@ def test_the_probe_waits_on_the_clock_it_is_handed(clock: Path) -> None:
     assert (clock.parent / "clock").read_text(encoding="utf-8").strip() == "1000030"
 
 
-def test_an_untrusted_certificate_is_not_an_answer(tls: tuple[ssl.SSLContext, Path]) -> None:
+def test_an_untrusted_certificate_is_not_an_answer(
+    tls: tuple[ssl.SSLContext, Path],
+) -> None:
     """The probe verifies the endpoint, so a certificate curl cannot trust is a failure."""
     context, _ = tls
     with endpoint(context, []) as (port, served):
@@ -448,7 +521,9 @@ def test_an_untrusted_certificate_is_not_an_answer(tls: tuple[ssl.SSLContext, Pa
     assert "certificate" in out.stdout, out.stdout
 
 
-def test_a_curlrc_cannot_reach_the_probe(tls: tuple[ssl.SSLContext, Path], tmp_path: Path) -> None:
+def test_a_curlrc_cannot_reach_the_probe(
+    tls: tuple[ssl.SSLContext, Path], tmp_path: Path
+) -> None:
     context, ca = tls
     # Every connection sent to a closed port, which the probe must never read.
     (tmp_path / ".curlrc").write_text(
@@ -462,7 +537,9 @@ def test_a_curlrc_cannot_reach_the_probe(tls: tuple[ssl.SSLContext, Path], tmp_p
             check=False,
         )
         out = run_probe(_url(port), "1", "3", "1", ca=ca, curl_home=tmp_path)
-    assert bare.returncode == 7, "the rc file is read, so it misroutes a curl that does not skip it"
+    assert bare.returncode == 7, (
+        "the rc file is read, so it misroutes a curl that does not skip it"
+    )
     assert out.returncode == 0, out.stdout + out.stderr
 
 
@@ -488,7 +565,9 @@ def test_the_secret_is_never_an_argument_and_never_printed(
     recorded = argv.read_text(encoding="utf-8")
     assert "--config" in recorded, "the shim saw the probe's curl"
     assert SECRET not in recorded, "the secret sat in curl's argument list"
-    assert SECRET not in out.stdout + out.stderr, "the secret reached the probe's output"
+    assert SECRET not in out.stdout + out.stderr, (
+        "the secret reached the probe's output"
+    )
 
 
 @pytest.mark.parametrize(
@@ -527,4 +606,6 @@ def test_a_missing_or_unsafe_credential_is_refused_before_any_attempt(
     assert out.stdout == "", "no attempt is made with a credential it cannot send"
     assert out.stderr.startswith("wait-rest-ready: "), out.stderr
     if secret:
-        assert secret not in out.stderr, "the refusal names the problem, never the secret"
+        assert secret not in out.stderr, (
+            "the refusal names the problem, never the secret"
+        )

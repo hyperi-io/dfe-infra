@@ -1,5 +1,3 @@
-// No zookeeper output: this is a KRaft cluster and MSK returns nothing for it.
-
 output "bootstrap" {
   description = "The SASL/SCRAM bootstrap string DFE connects with. MSK already returns bare host:port pairs, comma separated, which is the spelling the contract asks for."
   value       = aws_msk_cluster.this.bootstrap_brokers_sasl_scram

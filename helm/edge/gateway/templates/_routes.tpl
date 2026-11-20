@@ -313,8 +313,8 @@ true
 {{- dict "state" $state "open" $open "allow" $allow "deny" ($spec.deny | default list) | toJson -}}
 {{- end -}}
 
-{{- /* Envoy Gateway evaluates rules in order and the first match decides, so
-       the deny rule goes first (api/v1alpha1/authorization_types.go at v1.9.2). */ -}}
+{{- /* Envoy Gateway evaluates rules in order and the first match decides, so the deny
+       rule goes first. */ -}}
 {{- define "envoy-gateway-config.groupAuthorization" -}}
 {{- $f := include "envoy-gateway-config.groupFence" . | fromJson -}}
 {{- $rules := list -}}
@@ -424,10 +424,9 @@ true
 {{- end -}}
 
 {{- /* Local rate-limit rules: a bucket per client address in each family, and with
-       shared, one bucket every caller spends from. Envoy Gateway v1.9.2 never
-       spends the selector-less default bucket once another rule matches
-       (internal/xds/translator/local_ratelimit.go), so the shared wall is a rule
-       whose path selector every request matches. */ -}}
+       shared, one bucket every caller spends from. Envoy Gateway never spends the
+       selector-less default bucket once another rule matches, so the shared wall is
+       a rule whose path selector every request matches. */ -}}
 {{- define "envoy-gateway-config.rateLimitRules" -}}
 {{- $rl := .ctx.Values.ui.rate_limit -}}
 {{- $rules := list -}}
@@ -534,9 +533,9 @@ validateUi    -- the render guards; templates/validate.yaml runs them.
 {{- $out | toJson -}}
 {{- end -}}
 
-{{- /* Envoy Gateway's own CIDR alternatives (shared_types.go at v1.9.2),
-       anchored, with the prefix length bounded by the family. Its zone-indexed
-       fe80 form is left out: the Service API refuses a zone in a source range. */ -}}
+{{- /* Envoy Gateway's own CIDR alternatives, anchored, with the prefix length bounded
+       by the family. Its zone-indexed fe80 form is left out: the Service API refuses
+       a zone in a source range. */ -}}
 {{- define "envoy-gateway-config.cidrValid" -}}
 {{- $v4 := `^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)/([0-9]|[12][0-9]|3[0-2])$` -}}
 {{- $v6 := `^(([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|::(ffff(:0{1,4})?:)?((25[0-5]|(2[0-4]|1?[0-9])?[0-9])\.){3}(25[0-5]|(2[0-4]|1?[0-9])?[0-9])|([0-9a-fA-F]{1,4}:){1,4}:((25[0-5]|(2[0-4]|1?[0-9])?[0-9])\.){3}(25[0-5]|(2[0-4]|1?[0-9])?[0-9]))/([0-9]|[1-9][0-9]|1[01][0-9]|12[0-8])$` -}}
@@ -632,10 +631,9 @@ true
 {{- include "envoy-gateway-config.routeHost" (dict "ctx" .ctx "key" $owner) -}}.{{ .ctx.Values.ui.public_domain -}}
 {{- end -}}
 
-{{- /* An engine route is matched family by family; every other one answers on
-       the single pathPrefix it already declares. One rule carries the lot,
-       within the 64 the HTTPRoute CRD caps rules[].matches at (Gateway API
-       v1.6.1, as bundled by envoy-gateway v1.9.1); validateUi checks it. */}}
+{{- /* An engine route is matched family by family; every other one answers on the
+       single pathPrefix it already declares. One rule carries the lot, within the 64
+       the HTTPRoute CRD caps rules[].matches at, and validateUi checks it. */}}
 {{- define "envoy-gateway-config.publicPaths" -}}
 {{- $r := index .ctx.Values.routes .key -}}
 {{- if or $r.browserFamilies $r.cliFamilies -}}
@@ -834,8 +832,8 @@ true
 {{- fail "ui.engine_api.cli_families_public or scim_public is true and exposure.groups.api.enabled is false -- both publish the api group's route, which the group being off withdraws. Turn the group on with an allow list, or leave both flags false" -}}
 {{- end -}}
 
-{{- /* Envoy Gateway's ConnectionLimit.value has a minimum of 1
-       (api/v1alpha1/connection_types.go at v1.9.2), refused only at admission. */ -}}
+{{- /* Envoy Gateway's ConnectionLimit.value has a minimum of 1, refused only at
+       admission. */ -}}
 {{- $limit := .ctx.Values.envoyGateway.connectionLimit | default dict -}}
 {{- if not (kindIs "bool" $limit.enabled) -}}
 {{- fail (printf "envoyGateway.connectionLimit.enabled is %v (a %s), not a bool -- write true or false unquoted" $limit.enabled (kindOf $limit.enabled)) -}}
@@ -844,14 +842,10 @@ true
 {{- fail (printf "envoyGateway.connectionLimit.value is %v -- it is a whole number of connections, 1 or more, per listener per proxy replica" $limit.value) -}}
 {{- end -}}
 
-{{- /* ui.public.* is documented (deployment.example.yaml) to copy verbatim
-       into this chart's values, where an unquoted true/false is a native YAML
-       bool and a quoted "true"/"false" unmarshals as a Go string -- non-empty,
-       so always truthy to the `if $public` test in publicRoutes above.
-       Refused rather than coerced: a string here is more likely a stale
-       copy-paste from the dial's own (string-typed) format than a deliberate
-       choice, and coercing it would hide that a UI meant to stay private was
-       about to publish anyway. */ -}}
+{{- /* ui.public.* is copied verbatim from the dial, where a quoted "true" unmarshals
+       as a Go string: non-empty, so always truthy to the `if $public` test in
+       publicRoutes. Refused rather than coerced, because coercing would hide a UI
+       meant to stay private that was about to publish. */ -}}
 {{- range $name, $val := $ui.public -}}
 {{- if not (kindIs "bool" $val) -}}
 {{- fail (printf "ui.public.%s is %v (a %s), not a bool -- ui.public.dfe_ui is the dial's edge.product.public and ui.public.hyperdx its edge.admin_uis.public.hyperdx; copy those booleans across unquoted (true/false), not \"true\"/\"false\": a quoted string is truthy here no matter what it says" $name $val (kindOf $val)) -}}
@@ -892,17 +886,16 @@ true
 {{- else if ne $ui.rate_limit.scope "local" -}}
 {{- fail (printf "ui.rate_limit.scope is %q -- the only scope this chart renders is local" $ui.rate_limit.scope) -}}
 {{- end -}}
-{{- /* Envoy Gateway's RateLimitValue.requests runs 0 to 4294967295
-       (api/v1alpha1/ratelimit_types.go at v1.9.2), and 0 refuses every caller. */ -}}
+{{- /* Envoy Gateway's RateLimitValue.requests runs 0 to 4294967295, and 0 refuses
+       every caller. */ -}}
 {{- range $field := list "requests" "per_client_requests" -}}
 {{- $v := index $ui.rate_limit $field -}}
 {{- if not (and (or (kindIs "int" $v) (kindIs "int64" $v) (kindIs "float64" $v)) (ge (int64 $v) 1) (le (int64 $v) 4294967295) (eq (float64 (int64 $v)) (float64 $v))) -}}
 {{- fail (printf "ui.rate_limit.%s is %v (a %s) -- it is a whole number of requests per unit, 1 to 4294967295, written unquoted: a quoted number is a string here" $field $v (kindOf $v)) -}}
 {{- end -}}
 {{- end -}}
-{{- /* Envoy v1.39.2 spends matched buckets lowest fill rate first
-       (local_ratelimit_impl.cc), so a wall at or below one caller's budget is
-       spent first and that one caller can empty it. */ -}}
+{{- /* Envoy spends matched buckets lowest fill rate first, so a wall at or below one
+       caller's budget is spent first and that one caller can empty it. */ -}}
 {{- if le (int64 $ui.rate_limit.requests) (int64 $ui.rate_limit.per_client_requests) -}}
 {{- fail (printf "ui.rate_limit.requests is %v and ui.rate_limit.per_client_requests is %v -- the shared bucket must be larger than one caller's, or a single caller empties it for every public user. Raise requests above per_client_requests" $ui.rate_limit.requests $ui.rate_limit.per_client_requests) -}}
 {{- end -}}
@@ -929,10 +922,9 @@ true
 {{- end -}}
 
 {{- $trusted := include "envoy-gateway-config.cidrList" (dict "value" $ui.trusted_proxy_cidrs) | fromJsonArray -}}
-{{- /* Envoy Gateway's CIDR type (api/v1alpha1/shared_types.go at v1.9.2) and
-       the Service's loadBalancerSourceRanges both refuse an entry with no
-       prefix length, but only at admission, where it surfaces as an Argo
-       SyncFailed on the whole edge. Same shape, anchored, checked here. */ -}}
+{{- /* Envoy Gateway's CIDR type and the Service's loadBalancerSourceRanges both
+       refuse an entry with no prefix length, but only at admission, where it
+       surfaces as an Argo SyncFailed on the whole edge. Same shape, checked here. */ -}}
 {{- range $entry := $trusted -}}
 {{- if not (include "envoy-gateway-config.cidrValid" $entry) -}}
 {{- fail (printf "ui.trusted_proxy_cidrs carries %q, which is not a CIDR range -- every entry needs an address and a prefix length, such as 203.0.113.7/32 or 2001:db8::/64. Envoy Gateway and the load balancer refuse it at admission, which fails the whole gateway sync" $entry) -}}

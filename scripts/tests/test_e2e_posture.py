@@ -77,7 +77,9 @@ def engine_env(posture: str, e2e: str | None = None) -> dict[str, str]:
     annotations = {} if e2e is None else {ANNOTATION: e2e}
     docs = render_extras(ENGINE, "slim", "local", env=posture, annotations=annotations)
     configmap = next(
-        d for d in docs if d.get("kind") == "ConfigMap" and d["metadata"]["name"] == f"{ENGINE}-env"
+        d
+        for d in docs
+        if d.get("kind") == "ConfigMap" and d["metadata"]["name"] == f"{ENGINE}-env"
     )
     return configmap["data"]
 
@@ -88,9 +90,14 @@ def test_the_engine_ships_with_the_posture_off() -> None:
         docs = golden(*cell)
         env = effective_env(docs, f"Deployment/{ENGINE}")
         deployment = next(
-            d for d in docs if d.get("kind") == "Deployment" and d["metadata"]["name"] == ENGINE
+            d
+            for d in docs
+            if d.get("kind") == "Deployment" and d["metadata"]["name"] == ENGINE
         )
-        assert env["DFE_ENGINE_ENV"] == deployment["metadata"]["labels"]["dfe.hyperi.io/env"], cell
+        assert (
+            env["DFE_ENGINE_ENV"]
+            == deployment["metadata"]["labels"]["dfe.hyperi.io/env"]
+        ), cell
         assert "DFE_ENGINE_E2E_SERVER" not in env, cell
     env = engine_env("local")
     assert env["DFE_ENGINE_ENV"] == "local"
@@ -99,7 +106,9 @@ def test_the_engine_ships_with_the_posture_off() -> None:
 
 def test_the_posture_runs_the_engine_as_test_with_the_routes_on() -> None:
     """The seeders accept no posture but test, so the engine pod is told test."""
-    docs = render_app(ENGINE, "slim", "local", env="local", annotations={ANNOTATION: "true"})
+    docs = render_app(
+        ENGINE, "slim", "local", env="local", annotations={ANNOTATION: "true"}
+    )
     env = effective_env(docs, f"Deployment/{ENGINE}")
     assert env["DFE_ENGINE_ENV"] == "test"
     assert env["DFE_ENGINE_E2E_SERVER"] == "true"
@@ -145,8 +154,9 @@ def render_expr(expr: str, annotations: dict[str, str]) -> str:
     with tempfile.TemporaryDirectory(prefix="appset-e2e-") as tmp:
         chart = Path(tmp)
         (chart / "templates").mkdir()
-        (chart / "Chart.yaml").write_text("apiVersion: v2\nname: e2e\nversion: 0.0.0\n",
-                                          encoding="utf-8")
+        (chart / "Chart.yaml").write_text(
+            "apiVersion: v2\nname: e2e\nversion: 0.0.0\n", encoding="utf-8"
+        )
         (chart / "templates" / "cm.yaml").write_text(
             "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: e2e\ndata:\n"
             '  value: {{ tpl .Values.expr (dict "metadata" .Values.metadata '
@@ -155,8 +165,14 @@ def render_expr(expr: str, annotations: dict[str, str]) -> str:
         )
         values = {"expr": expr, "metadata": {"annotations": annotations}}
         (chart / "values.yaml").write_text(yaml.safe_dump(values), encoding="utf-8")
-        out = subprocess.run(["helm", "template", "e2e", str(chart)], capture_output=True,
-                             text=True, encoding="utf-8", errors="replace", check=False)
+        out = subprocess.run(
+            ["helm", "template", "e2e", str(chart)],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
     assert out.returncode == 0, out.stderr
     return next(d for d in yaml.safe_load_all(out.stdout) if d)["data"]["value"]
 
@@ -178,16 +194,26 @@ def test_a_secret_written_before_the_key_reads_off() -> None:
 def posture_block() -> str:
     """bootstrap.sh's DFE_E2E_SERVER default and validation, as it ships."""
     lines = BOOTSTRAP.read_text(encoding="utf-8").splitlines()
-    start = next(i for i, ln in enumerate(lines) if ln.startswith("export DFE_E2E_SERVER="))
+    start = next(
+        i for i, ln in enumerate(lines) if ln.startswith("export DFE_E2E_SERVER=")
+    )
     end = next(i for i in range(start, len(lines)) if lines[i] == "esac")
-    return "\n".join(lines[start:end + 1])
+    return "\n".join(lines[start : end + 1])
 
 
 def run_posture_block(env: dict[str, str]) -> subprocess.CompletedProcess:
-    script = f"set -euo pipefail\n{posture_block()}\necho \"posture=${{DFE_E2E_SERVER}}\"\n"
-    return subprocess.run(["bash", "-c", script], env={"PATH": "/usr/bin:/bin", **env},
-                          capture_output=True, text=True, encoding="utf-8", errors="replace",
-                          check=False)
+    script = (
+        f'set -euo pipefail\n{posture_block()}\necho "posture=${{DFE_E2E_SERVER}}"\n'
+    )
+    return subprocess.run(
+        ["bash", "-c", script],
+        env={"PATH": "/usr/bin:/bin", **env},
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
 
 
 def test_bootstrap_defaults_the_posture_off() -> None:
@@ -230,16 +256,35 @@ def test_a_local_annotate_needs_no_cluster(tmp_path: Path) -> None:
     secret = {
         "apiVersion": "v1",
         "kind": "Secret",
-        "metadata": {"name": "dfe-cluster", "namespace": "argocd",
-                     "annotations": {"dfe.hyperi.io/env": "local"}},
+        "metadata": {
+            "name": "dfe-cluster",
+            "namespace": "argocd",
+            "annotations": {"dfe.hyperi.io/env": "local"},
+        },
         "stringData": {"server": "https://kubernetes.default.svc"},
     }
     out = subprocess.run(
-        ["kubectl", "annotate", "--local", "-f", "-", f"{ANNOTATION}=true", "--overwrite",
-         "-o", "yaml"],
+        [
+            "kubectl",
+            "annotate",
+            "--local",
+            "-f",
+            "-",
+            f"{ANNOTATION}=true",
+            "--overwrite",
+            "-o",
+            "yaml",
+        ],
         input=yaml.safe_dump(secret),
-        env={"PATH": "/usr/bin:/bin:/usr/local/bin", "KUBECONFIG": str(tmp_path / "absent")},
-        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
+        env={
+            "PATH": "/usr/bin:/bin:/usr/local/bin",
+            "KUBECONFIG": str(tmp_path / "absent"),
+        },
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
     )
     assert out.returncode == 0, out.stderr
     annotations = yaml.safe_load(out.stdout)["metadata"]["annotations"]
@@ -250,38 +295,67 @@ def test_a_local_annotate_needs_no_cluster(tmp_path: Path) -> None:
 # --- stack-deploy and cycle ------------------------------------------------------
 def deploy_args(tmp_path: Path, *, e2e: bool, env_file: list[str] | None = None):
     return argparse.Namespace(
-        from_terraform=None, env_file=env_file or [], mode="single", target_revision="",
-        kubeconfig="", readiness_timeout=900, access_out=str(tmp_path / "access.md"),
-        stack="current", registry=None, skip_e2e=False, dry_run=False, e2e=e2e,
+        from_terraform=None,
+        env_file=env_file or [],
+        mode="single",
+        target_revision="",
+        kubeconfig="",
+        readiness_timeout=900,
+        access_out=str(tmp_path / "access.md"),
+        stack="current",
+        registry=None,
+        skip_e2e=False,
+        dry_run=False,
+        e2e=e2e,
     )
 
 
 def test_stack_deploy_turns_the_posture_on_only_when_asked(tmp_path: Path) -> None:
-    assert dfeops._assemble_env(deploy_args(tmp_path, e2e=True))["DFE_E2E_SERVER"] == "true"
-    assert dfeops._assemble_env(deploy_args(tmp_path, e2e=False))["DFE_E2E_SERVER"] == "false"
+    assert (
+        dfeops._assemble_env(deploy_args(tmp_path, e2e=True))["DFE_E2E_SERVER"]
+        == "true"
+    )
+    assert (
+        dfeops._assemble_env(deploy_args(tmp_path, e2e=False))["DFE_E2E_SERVER"]
+        == "false"
+    )
 
 
 def test_an_env_file_cannot_turn_the_posture_on(tmp_path: Path) -> None:
     env_file = tmp_path / "estate.env"
     env_file.write_text('DFE_E2E_SERVER="true"\n', encoding="utf-8")
-    env = dfeops._assemble_env(deploy_args(tmp_path, e2e=False, env_file=[str(env_file)]))
+    env = dfeops._assemble_env(
+        deploy_args(tmp_path, e2e=False, env_file=[str(env_file)])
+    )
     assert env["DFE_E2E_SERVER"] == "false"
 
 
 def test_the_cycle_refuses_a_ui_stage_without_the_posture() -> None:
-    args = dfeops.build_parser().parse_args(["cycle", "--ui-repo", "/nonexistent/dfe-ui"])
+    args = dfeops.build_parser().parse_args(
+        ["cycle", "--ui-repo", "/nonexistent/dfe-ui"]
+    )
     assert dfeops.cmd_cycle(args) == 2
 
 
 def test_the_cycle_deploys_in_the_posture_and_runs_the_ui_stage(monkeypatch) -> None:
     ran: list[list[str]] = []
     monkeypatch.setattr(dfeops, "_resolve_stack", lambda args: 0)
-    monkeypatch.setattr(dfeops, "_run_streaming",
-                        lambda cmd, env=None: ran.append(cmd) or 0)
-    args = dfeops.build_parser().parse_args([
-        "cycle", "--e2e", "--ui-repo", "/nonexistent/dfe-ui", "--keep",
-        "--skip-capacity-check", "--skip-preflight", "--stack", "2.2.0-rc.99",
-    ])
+    monkeypatch.setattr(
+        dfeops, "_run_streaming", lambda cmd, env=None: ran.append(cmd) or 0
+    )
+    args = dfeops.build_parser().parse_args(
+        [
+            "cycle",
+            "--e2e",
+            "--ui-repo",
+            "/nonexistent/dfe-ui",
+            "--keep",
+            "--skip-capacity-check",
+            "--skip-preflight",
+            "--stack",
+            "2.2.0-rc.99",
+        ]
+    )
     assert dfeops.cmd_cycle(args) == 0
     deploy = next(cmd for cmd in ran if "stack-deploy" in cmd)
     assert "--e2e" in deploy
@@ -298,10 +372,19 @@ def test_ui_excludes_the_docker_only_specs_by_default() -> None:
 
 def test_playwright_argv_carries_the_filters_and_the_passthrough() -> None:
     assert dfeops.playwright_argv("@docker-only", "", ["--", "--reporter=list"]) == [
-        "yarn", "playwright", "test", "--grep-invert", "@docker-only", "--reporter=list",
+        "yarn",
+        "playwright",
+        "test",
+        "--grep-invert",
+        "@docker-only",
+        "--reporter=list",
     ]
     assert dfeops.playwright_argv("", "@core", []) == [
-        "yarn", "playwright", "test", "--grep", "@core",
+        "yarn",
+        "playwright",
+        "test",
+        "--grep",
+        "@core",
     ]
 
 
@@ -327,7 +410,9 @@ def test_the_e2e_routes_are_read_off_the_engine() -> None:
     assert not dfeops.e2e_routes_mounted(base, opener=refusing)
 
 
-def _staged_ui(monkeypatch, *, routes: bool, root_rc: int) -> list[tuple[list[str], dict]]:
+def _staged_ui(
+    monkeypatch, *, routes: bool, root_rc: int
+) -> list[tuple[list[str], dict]]:
     """cmd_ui up to its two subprocesses, with the cluster-facing steps answered."""
     calls: list[tuple[list[str], dict]] = []
 
@@ -336,15 +421,20 @@ def _staged_ui(monkeypatch, *, routes: bool, root_rc: int) -> list[tuple[list[st
         rc = root_rc if str(dfeops.ONBOARDING_RUNNER) in cmd else 0
         return subprocess.CompletedProcess(cmd, rc)
 
-    monkeypatch.setattr(dfeops, "_console_urls",
-                        lambda kube, ns: ("https://dfe.single.example.test", ""))
+    monkeypatch.setattr(
+        dfeops,
+        "_console_urls",
+        lambda kube, ns: ("https://dfe.single.example.test", ""),
+    )
     monkeypatch.setattr(dfeops, "_resolves", lambda host: True)
     monkeypatch.setattr(dfeops, "_forward", lambda *a, **k: None)
     monkeypatch.setattr(dfeops, "_forward_ready", lambda *a, **k: True)
     # Forwards are stubbed, so the host's own port state has no bearing on these runs.
     monkeypatch.setattr(dfeops, "_taken_ports", lambda _ports: [])
     monkeypatch.setattr(dfeops, "e2e_routes_mounted", lambda url: routes)
-    monkeypatch.setattr(dfeops, "admin_credential", lambda *a, **k: ("admin", "minted-pw"))
+    monkeypatch.setattr(
+        dfeops, "admin_credential", lambda *a, **k: ("admin", "minted-pw")
+    )
     monkeypatch.setattr(dfeops.subprocess, "run", run)
     return calls
 
@@ -364,7 +454,9 @@ def test_a_failed_root_step_stops_the_run(monkeypatch) -> None:
     assert str(dfeops.ONBOARDING_RUNNER) in calls[0][0]
 
 
-def test_the_root_step_signs_in_with_the_minted_password_then_the_suite_runs(monkeypatch) -> None:
+def test_the_root_step_signs_in_with_the_minted_password_then_the_suite_runs(
+    monkeypatch,
+) -> None:
     calls = _staged_ui(monkeypatch, routes=True, root_rc=0)
     args = dfeops.build_parser().parse_args(["ui", "--ui-repo", "/nonexistent/dfe-ui"])
     assert dfeops.cmd_ui(args) == 0
@@ -382,7 +474,8 @@ def test_the_root_step_signs_in_with_the_minted_password_then_the_suite_runs(mon
 def test_skipping_onboarding_goes_straight_to_the_suite(monkeypatch) -> None:
     calls = _staged_ui(monkeypatch, routes=True, root_rc=1)
     args = dfeops.build_parser().parse_args(
-        ["ui", "--ui-repo", "/nonexistent/dfe-ui", "--skip-onboarding"])
+        ["ui", "--ui-repo", "/nonexistent/dfe-ui", "--skip-onboarding"]
+    )
     assert dfeops.cmd_ui(args) == 0
     assert [cmd[:3] for cmd, _ in calls] == [["yarn", "playwright", "test"]]
 

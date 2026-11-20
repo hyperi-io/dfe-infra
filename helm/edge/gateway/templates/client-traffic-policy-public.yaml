@@ -4,12 +4,11 @@
 {{- $public := include "envoy-gateway-config.publicListenerRoutes" (dict "ctx" .) | fromJsonArray }}
 {{- if $public }}
 {{- $trusted := include "envoy-gateway-config.cidrList" (dict "value" .Values.ui.trusted_proxy_cidrs) | fromJsonArray }}
-# Edge settings for the public listeners only, attached by sectionName. A
+# Edge settings for the public listeners, attached by sectionName. A
 # listener-scoped ClientTrafficPolicy REPLACES the Gateway-scoped one for that
-# listener rather than merging with it, so the curve and cipher posture from
-# templates/client-traffic-policy.yaml is restated here -- dropping it would
-# quietly hand the public listeners Envoy Gateway's defaults, which admit
-# AES-128, CBC and P-256.
+# listener, so the TLS posture of client-traffic-policy.yaml is restated here.
+# Dropping it would hand the public listeners Envoy Gateway's defaults, which
+# admit AES-128, CBC and P-256.
 apiVersion: gateway.envoyproxy.io/v1alpha1
 kind: ClientTrafficPolicy
 metadata:
@@ -26,10 +25,9 @@ spec:
       sectionName: https-public-{{ (index $.Values.routes $key).routeName }}
     {{- end }}
   {{- /* With no clientIPDetection Envoy Gateway sets use_remote_address and no
-         trusted hops (internal/xds/translator/listener.go at v1.9.2), so the
-         client the CIDR filter judges is the TCP peer and a caller's own
-         X-Forwarded-For counts for nothing. Only a CDN or other L7 proxy named
-         in ui.trusted_proxy_cidrs is believed. */}}
+         trusted hops, so the client the CIDR filter judges is the TCP peer and a
+         caller's own X-Forwarded-For counts for nothing. Only a CDN or other L7
+         proxy named in ui.trusted_proxy_cidrs is believed. */}}
   {{- with $trusted }}
   # X-Forwarded-For is read only when the TCP peer is inside this list: right to
   # left, the first address outside it is the client.

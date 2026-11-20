@@ -113,7 +113,9 @@ def test_the_access_summary_defaults_into_this_repos_run_directory(
     elsewhere.mkdir()
     monkeypatch.chdir(elsewhere)
 
-    env = dfeops._assemble_env(_no_terraform(tmp_path, access_out="", stack="2.2.0-rc.99"))
+    env = dfeops._assemble_env(
+        _no_terraform(tmp_path, access_out="", stack="2.2.0-rc.99")
+    )
 
     out = Path(env["DFE_ACCESS_OUT"])
     assert out == REPO_ROOT / ".tmp" / "2.2.0-rc.99-scale" / dfeops.ACCESS_OUT_FILENAME
@@ -121,10 +123,14 @@ def test_the_access_summary_defaults_into_this_repos_run_directory(
     assert elsewhere not in out.parents
 
 
-def test_the_access_summary_sits_beside_the_launchers_login_file(tmp_path: Path) -> None:
+def test_the_access_summary_sits_beside_the_launchers_login_file(
+    tmp_path: Path,
+) -> None:
     env = dfeops._assemble_env(_no_terraform(tmp_path, access_out=""))
 
-    assert Path(env["DFE_ACCESS_OUT"]).parent == Path(env["DFE_ACCESS_SUMMARY_OUT"]).parent
+    assert (
+        Path(env["DFE_ACCESS_OUT"]).parent == Path(env["DFE_ACCESS_SUMMARY_OUT"]).parent
+    )
 
 
 def test_an_explicit_access_out_is_used_as_given(tmp_path: Path) -> None:
@@ -150,7 +156,9 @@ def test_the_summary_directory_exists_before_bootstrap_writes_into_it(
     monkeypatch.setattr(dfeops, "_resolve_stack", lambda _args: 0)
     monkeypatch.setattr(dfeops, "_offline_preflight", lambda _args: 0)
     monkeypatch.setattr(dfeops, "_bootstrap_required", lambda _env: ())
-    monkeypatch.setattr(dfeops, "_require_script", lambda _name: tmp_path / "bootstrap.sh")
+    monkeypatch.setattr(
+        dfeops, "_require_script", lambda _name: tmp_path / "bootstrap.sh"
+    )
     monkeypatch.setattr(dfeops, "_strimzi_deploy_gate", lambda _kubeconfig: True)
     monkeypatch.setattr(dfeops, "_run_streaming", fake_bootstrap)
     monkeypatch.delenv("DFE_VAULT_ADDR", raising=False)
@@ -183,7 +191,9 @@ def _preflight_render_argv(monkeypatch, registry: str | None) -> list[str]:
         return 1, "", "stopped by the test"
 
     monkeypatch.setattr(dfeops, "_run_text", fake_run_text)
-    args = argparse.Namespace(registry=registry, stack="2.2.0-rc.99", strict_compat=False, mode="single")
+    args = argparse.Namespace(
+        registry=registry, stack="2.2.0-rc.99", strict_compat=False, mode="single"
+    )
     assert dfeops._offline_preflight(args) == 1
     return seen[0]
 
@@ -214,8 +224,12 @@ def test_openbao_is_required_only_when_the_backend_is_openbao() -> None:
     assert "DFE_SECRETS_REGION" not in openbao
 
 
-@pytest.mark.parametrize(("mode", "needs_host"), [("", False), ("in_cluster", False), ("external", True)])
-def test_the_clickhouse_host_is_required_only_for_an_external_server(mode: str, needs_host: bool) -> None:
+@pytest.mark.parametrize(
+    ("mode", "needs_host"), [("", False), ("in_cluster", False), ("external", True)]
+)
+def test_the_clickhouse_host_is_required_only_for_an_external_server(
+    mode: str, needs_host: bool
+) -> None:
     """An in-cluster deploy from the wizard's dial leaves both endpoints blank, and nothing reads them."""
     sys.path.insert(0, str(REPO_ROOT / "bootstrap"))
     import bridge
@@ -246,7 +260,9 @@ def test_only_the_cluster_broker_reads_its_credential_from_the_store() -> None:
     assert dfeops._broker_credential_from_store("mesh") is False
 
 
-def _deploy_without_a_secret_id(tmp_path: Path, monkeypatch, mode: str) -> tuple[int, bool]:
+def _deploy_without_a_secret_id(
+    tmp_path: Path, monkeypatch, mode: str
+) -> tuple[int, bool]:
     """(stack-deploy's exit code, whether bootstrap ran) with a store address and no SecretID."""
     ran: dict[str, bool] = {"bootstrap": False}
 
@@ -257,7 +273,9 @@ def _deploy_without_a_secret_id(tmp_path: Path, monkeypatch, mode: str) -> tuple
     monkeypatch.setattr(dfeops, "_resolve_stack", lambda _args: 0)
     monkeypatch.setattr(dfeops, "_offline_preflight", lambda _args: 0)
     monkeypatch.setattr(dfeops, "_bootstrap_required", lambda _env: ())
-    monkeypatch.setattr(dfeops, "_require_script", lambda _name: tmp_path / "bootstrap.sh")
+    monkeypatch.setattr(
+        dfeops, "_require_script", lambda _name: tmp_path / "bootstrap.sh"
+    )
     monkeypatch.setattr(dfeops, "_strimzi_deploy_gate", lambda _kubeconfig: True)
     monkeypatch.setattr(dfeops, "_run_streaming", fake_bootstrap)
     monkeypatch.setenv("DFE_VAULT_ADDR", "https://store.example.invalid:8200")
@@ -268,7 +286,9 @@ def _deploy_without_a_secret_id(tmp_path: Path, monkeypatch, mode: str) -> tuple
     return dfeops.cmd_stack_deploy(args), ran["bootstrap"]
 
 
-def test_stack_deploy_refuses_mesh_before_any_cluster_call(tmp_path: Path, monkeypatch, capsys) -> None:
+def test_stack_deploy_refuses_mesh_before_any_cluster_call(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
     """mesh stays declared but cannot be deployed: the refusal comes before bootstrap."""
     assert _deploy_without_a_secret_id(tmp_path, monkeypatch, "mesh") == (2, False)
     assert "mesh is not supported in this release; use scale" in capsys.readouterr().err
@@ -280,7 +300,9 @@ def test_a_single_broker_deploy_needs_no_secret_id(tmp_path: Path, monkeypatch) 
     assert _deploy_without_a_secret_id(tmp_path, monkeypatch, "single") == (0, True)
 
 
-def test_a_cluster_broker_deploy_still_needs_the_secret_id(tmp_path: Path, monkeypatch) -> None:
+def test_a_cluster_broker_deploy_still_needs_the_secret_id(
+    tmp_path: Path, monkeypatch
+) -> None:
     assert _deploy_without_a_secret_id(tmp_path, monkeypatch, "scale") == (1, False)
 
 
@@ -293,7 +315,11 @@ def test_the_backend_split_matches_the_bridge_it_drives() -> None:
     for backend in dfeops.STORE_BACKENDS:
         ours = set(dfeops._bootstrap_required({"DFE_SECRETS_BACKEND": backend}))
         theirs = bridge._required_vars({"DFE_SECRETS_BACKEND": backend})
-        assert ours & {"DFE_VAULT_ADDR", "DFE_VAULT_ROLE_ID", "DFE_SECRETS_REGION"} == theirs & {
+        assert ours & {
+            "DFE_VAULT_ADDR",
+            "DFE_VAULT_ROLE_ID",
+            "DFE_SECRETS_REGION",
+        } == theirs & {
             "DFE_VAULT_ADDR",
             "DFE_VAULT_ROLE_ID",
             "DFE_SECRETS_REGION",
@@ -334,7 +360,9 @@ def _outsider_deploy(
 
     monkeypatch.setattr(dfeops, "_resolve_stack", lambda _args: 0)
     monkeypatch.setattr(dfeops, "_offline_preflight", lambda _args: 0)
-    monkeypatch.setattr(dfeops, "_require_script", lambda _name: tmp_path / "bootstrap.sh")
+    monkeypatch.setattr(
+        dfeops, "_require_script", lambda _name: tmp_path / "bootstrap.sh"
+    )
     monkeypatch.setattr(dfeops, "_strimzi_deploy_gate", lambda _kubeconfig: True)
     monkeypatch.setattr(dfeops, "_run_streaming", fake_bootstrap)
     for key in [k for k in dfeops.os.environ if k.startswith("DFE_")]:
@@ -347,7 +375,9 @@ def _outsider_deploy(
     return dfeops.cmd_stack_deploy(args), seen.get("env")
 
 
-def test_a_store_less_tier_deploys_with_no_secrets_inputs(tmp_path: Path, monkeypatch) -> None:
+def test_a_store_less_tier_deploys_with_no_secrets_inputs(
+    tmp_path: Path, monkeypatch
+) -> None:
     """A kind run of single passed only with made-up OpenBao values, for a store
     whose ClusterSecretStore sat InvalidProviderConfig and that nothing read."""
     for mode in ("single", "slim"):
@@ -357,26 +387,39 @@ def test_a_store_less_tier_deploys_with_no_secrets_inputs(tmp_path: Path, monkey
         assert env["DFE_SECRETS_BACKEND"] == "none", mode
 
 
-def test_a_store_needing_tier_still_refuses_without_a_store(tmp_path: Path, monkeypatch) -> None:
+def test_a_store_needing_tier_still_refuses_without_a_store(
+    tmp_path: Path, monkeypatch
+) -> None:
     """The cluster broker's credential comes from the store, so scale keeps the
     openbao default and its demand for an address and an AppRole."""
     assert _outsider_deploy(tmp_path, monkeypatch, "scale") == (1, None)
 
 
 def test_an_unknown_backend_is_refused(tmp_path: Path, monkeypatch) -> None:
-    rc, env = _outsider_deploy(tmp_path, monkeypatch, "single", DFE_SECRETS_BACKEND="vault")
+    rc, env = _outsider_deploy(
+        tmp_path, monkeypatch, "single", DFE_SECRETS_BACKEND="vault"
+    )
     assert (rc, env) == (1, None)
 
 
-def test_an_explicit_none_is_refused_where_the_store_is_read(tmp_path: Path, monkeypatch) -> None:
-    rc, env = _outsider_deploy(tmp_path, monkeypatch, "scale", DFE_SECRETS_BACKEND="none")
+def test_an_explicit_none_is_refused_where_the_store_is_read(
+    tmp_path: Path, monkeypatch
+) -> None:
+    rc, env = _outsider_deploy(
+        tmp_path, monkeypatch, "scale", DFE_SECRETS_BACKEND="none"
+    )
     assert (rc, env) == (1, None)
 
 
-def test_an_openbao_input_keeps_the_openbao_default(tmp_path: Path, monkeypatch) -> None:
+def test_an_openbao_input_keeps_the_openbao_default(
+    tmp_path: Path, monkeypatch
+) -> None:
     """Every deployment that ran before named an OpenBao address, and still gets openbao."""
     half = _outsider_deploy(
-        tmp_path, monkeypatch, "single", DFE_VAULT_ADDR="https://store.example.invalid:8200"
+        tmp_path,
+        monkeypatch,
+        "single",
+        DFE_VAULT_ADDR="https://store.example.invalid:8200",
     )
     assert half == (1, None)
     rc, env = _outsider_deploy(
@@ -396,7 +439,10 @@ BOOTSTRAP = REPO_ROOT / "bootstrap" / "bootstrap.sh"
 # (env, the backend bootstrap.sh resolves when none is named). Placeholder values only.
 _STORE_DEFAULTS = (
     ({"DFE_CLOUD": "aws"}, "aws-sm"),
-    ({"DFE_CLOUD": "aws", "DFE_VAULT_ADDR": "https://store.example.invalid:8200"}, "aws-sm"),
+    (
+        {"DFE_CLOUD": "aws", "DFE_VAULT_ADDR": "https://store.example.invalid:8200"},
+        "aws-sm",
+    ),
     ({"DFE_CLOUD": "gcp"}, "openbao"),
     ({"DFE_CLOUD": "azure"}, "openbao"),
     ({"DFE_CLOUD": "local-dfe"}, "openbao"),
@@ -411,7 +457,11 @@ def _bootstrap_backend(env: dict[str, str]) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["bash", "-c", script[start:end] + 'printf "%s" "${DFE_SECRETS_BACKEND}"\n'],
         env={"PATH": "/usr/bin:/bin", **env},
-        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
     )
 
 
@@ -468,7 +518,9 @@ def test_the_aws_default_is_what_dfe_ops_and_the_bridge_check_for() -> None:
         assert ("DFE_SECRETS_REGION" in ours) == (expected == "aws-sm"), env
 
 
-def test_an_aws_deploy_that_reads_the_store_gets_aws_sm(tmp_path: Path, monkeypatch) -> None:
+def test_an_aws_deploy_that_reads_the_store_gets_aws_sm(
+    tmp_path: Path, monkeypatch
+) -> None:
     """aws.yaml turns the gateway's OIDC on, whose client secret lives in the store."""
     rc, env = _outsider_deploy(
         tmp_path, monkeypatch, "single", DFE_CLOUD="aws", DFE_SECRETS_REGION="us-west-2"
@@ -481,7 +533,11 @@ def test_an_aws_deploy_that_reads_the_store_gets_aws_sm(tmp_path: Path, monkeypa
 def test_ca_persistence_is_a_store_consumer(tmp_path: Path, monkeypatch) -> None:
     """The persisted root is an ExternalSecret against the store, which none never creates."""
     rc, env = _outsider_deploy(
-        tmp_path, monkeypatch, "single", DFE_SECRETS_BACKEND="none", DFE_CA_PERSIST="true"
+        tmp_path,
+        monkeypatch,
+        "single",
+        DFE_SECRETS_BACKEND="none",
+        DFE_CA_PERSIST="true",
     )
     assert (rc, env) == (1, None)
 
@@ -494,25 +550,33 @@ def test_the_store_consumers_follow_the_charts() -> None:
     scale = dfeops._store_consumers("scale", on_prem)
     assert any("cluster broker" in use for use in scale), scale
     # A managed broker takes its credential from the store unless it signs with IAM.
-    managed = dfeops._store_consumers("single", {**on_prem, "DFE_KAFKA_PROVIDER": "confluent-cloud"})
+    managed = dfeops._store_consumers(
+        "single", {**on_prem, "DFE_KAFKA_PROVIDER": "confluent-cloud"}
+    )
     assert any("external broker" in use for use in managed), managed
     # aws.yaml turns the gateway's OIDC on, and its client secret lives in the store.
     aws = dfeops._store_consumers("single", {"DFE_CLOUD": "aws"})
     assert any("OIDC" in use for use in aws), aws
 
 
-def test_the_on_prem_root_refuses_none_on_exactly_the_tiers_that_read_the_store() -> None:
+def test_the_on_prem_root_refuses_none_on_exactly_the_tiers_that_read_the_store() -> (
+    None
+):
     """terraform/environments/local plans no OpenBao for a tier outside its
     store_profiles, so that list has to be the tiers whose charts read the store."""
     import re
 
-    main_tf = (REPO_ROOT / "terraform" / "environments" / "local" / "main.tf").read_text(encoding="utf-8")
+    main_tf = (
+        REPO_ROOT / "terraform" / "environments" / "local" / "main.tf"
+    ).read_text(encoding="utf-8")
     listed = re.search(r"store_profiles\s*=\s*\[([^\]]*)\]", main_tf)
     assert listed, "store_profiles is gone from the local root"
     root = set(re.findall(r'"([^"]+)"', listed.group(1)))
     # The env the local root hands bootstrap, with no store input.
     local = {"DFE_CLOUD": "local"}
-    reads = {mode for mode in dfeops.SELECTABLE_MODES if dfeops._store_consumers(mode, local)}
+    reads = {
+        mode for mode in dfeops.SELECTABLE_MODES if dfeops._store_consumers(mode, local)
+    }
     assert root == reads, (root, reads)
 
 
@@ -562,17 +626,28 @@ def test_the_component_values_layer_the_appset_files_over_the_extras_defaults(
 
 
 @pytest.mark.parametrize("mode", dfeops.profiles.MODES)
-def test_the_preflight_renders_each_apps_extras_and_finds_the_catalogue(mode: str) -> None:
+def test_the_preflight_renders_each_apps_extras_and_finds_the_catalogue(
+    mode: str,
+) -> None:
     """The offline render stack-deploy gates on: dfe-extras per app, the engine's catalogue in it."""
     if shutil.which("helm") is None:
         pytest.skip("helm is not on PATH")
     for app in dfeops._PREFLIGHT_APPS:
         done = subprocess.run(
             [*dfeops._extras_render(app, mode), "--set", "appNamespace=preflight"],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
         )
         assert done.returncode == 0, f"{app} ({mode}): {done.stderr}"
         if app == "dfe-engine":
             banner = dfeops.composition.CATALOGUE_BANNER.splitlines()[0].lstrip("# ")
-            assert banner in done.stdout, "the app catalogue ConfigMap carries the manifest"
-            assert "  DFE_ENGINE_APP_CATALOGUE_FILE: /etc/dfe-engine/catalogue/apps.yaml\n" in done.stdout
+            assert banner in done.stdout, (
+                "the app catalogue ConfigMap carries the manifest"
+            )
+            assert (
+                "  DFE_ENGINE_APP_CATALOGUE_FILE: /etc/dfe-engine/catalogue/apps.yaml\n"
+                in done.stdout
+            )

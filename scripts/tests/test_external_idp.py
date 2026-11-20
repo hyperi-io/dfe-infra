@@ -38,7 +38,9 @@ from _expect import expect, standalone, summary
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SCRIPTS = REPO_ROOT / "scripts"
 DFE_OPS = SCRIPTS / "dfe-ops"
-GROUPS_DIR = Path(__file__).resolve().parent / "fixtures" / "external-idp" / "engine-groups"
+GROUPS_DIR = (
+    Path(__file__).resolve().parent / "fixtures" / "external-idp" / "engine-groups"
+)
 
 sys.path.insert(0, str(SCRIPTS))
 import external_idp  # noqa: E402
@@ -188,7 +190,11 @@ def _ops():
 
 
 def run(
-    tools: FakeTools, argv: list[str], *, secret: str | None = SECRET, action: str = "wire-external"
+    tools: FakeTools,
+    argv: list[str],
+    *,
+    secret: str | None = SECRET,
+    action: str = "wire-external",
 ) -> tuple[int, str]:
     """Parse with dfe-ops' own parser and run it. Returns (rc, everything printed)."""
     args = _ops().build_parser().parse_args(["idp", action, *argv])
@@ -257,7 +263,9 @@ def test_okta_reads_the_groups_claim_and_keeps_the_engine_scopes() -> None:
         str(body),
     )
     expect("okta leaves scopes to the engine default", "scopes" not in body, str(body))
-    expect("the client id is held in the clear", body["client_id"] == "synthetic-client-id")
+    expect(
+        "the client id is held in the clear", body["client_id"] == "synthetic-client-id"
+    )
     expect(
         "the engine reads the secret from DFE_OIDC_OKTA_CLIENT_SECRET",
         body["client_secret_env"] == "DFE_OIDC_OKTA_CLIENT_SECRET",
@@ -273,7 +281,11 @@ def test_entra_registers_as_entra_id_under_the_name_entra() -> None:
         groups = configmap(tools, "dfe-auth-groups").get("data", {})
     expect("entra wire succeeds", rc == 0, str(rc))
     expect("entra is type entra_id", body["type"] == "entra_id", str(body))
-    expect("entra reads the groups claim", body["groups"]["mode"] == "token_claim", str(body))
+    expect(
+        "entra reads the groups claim",
+        body["groups"]["mode"] == "token_claim",
+        str(body),
+    )
     expect(
         "entra takes only the entra- group files",
         sorted(groups) == ["entra-dfe-admins.yaml"],
@@ -284,16 +296,22 @@ def test_entra_registers_as_entra_id_under_the_name_entra() -> None:
 def test_entra_records_its_tenant_for_the_overage_lookup() -> None:
     tenant = "00000000-0000-0000-0000-0000000000aa"
     argv = [*wire_args("entra_id"), *k8s()]
-    argv[argv.index("https://idp.example.com")] = f"https://login.example.com/{tenant}/v2.0"
+    argv[argv.index("https://idp.example.com")] = (
+        f"https://login.example.com/{tenant}/v2.0"
+    )
     with FakeTools() as tools:
         rc, _ = run(tools, argv)
         derived = provider_file(tools, "entra")["groups"]
-        rc_flag, _ = run(tools, [*wire_args("entra_id", "--tenant-id", tenant.upper()), *k8s()])
+        rc_flag, _ = run(
+            tools, [*wire_args("entra_id", "--tenant-id", tenant.upper()), *k8s()]
+        )
         explicit = provider_file(tools, "entra")["groups"]
         rc_bad, _ = run(tools, [*wire_args("okta", "--tenant-id", tenant), *k8s()])
     expect("entra wire with a tenant issuer succeeds", rc == 0, str(rc))
     expect(
-        "the tenant comes from the issuer path", derived.get("tenant_id") == tenant, str(derived)
+        "the tenant comes from the issuer path",
+        derived.get("tenant_id") == tenant,
+        str(derived),
     )
     expect(
         "--tenant-id wins",
@@ -328,7 +346,9 @@ def test_google_refuses_a_scopes_override() -> None:
 def test_a_scopes_override_must_carry_openid() -> None:
     with FakeTools() as tools:
         bad, _ = run(tools, [*wire_args("okta", "--scopes", "email groups"), *k8s()])
-        good, _ = run(tools, [*wire_args("okta", "--scopes", "openid email groups"), *k8s()])
+        good, _ = run(
+            tools, [*wire_args("okta", "--scopes", "openid email groups"), *k8s()]
+        )
         body = provider_file(tools, "okta")
     expect("scopes without openid are refused", bad == 2, str(bad))
     expect(
@@ -373,8 +393,16 @@ def test_each_group_file_links_to_its_provider_and_claim_value() -> None:
     org = json.loads(files["okta-dfe-test-org-viewers.yaml"])
     nogroup = json.loads(files["okta-dfe-nogroup.yaml"])
     expect("a block list reads as roles", admins["roles"] == ["admin"], str(admins))
-    expect("source_provider is the provider", admins["source_provider"] == "okta", str(admins))
-    expect("an explicit source_id is kept", admins["source_id"] == "dfe-admins", str(admins))
+    expect(
+        "source_provider is the provider",
+        admins["source_provider"] == "okta",
+        str(admins),
+    )
+    expect(
+        "an explicit source_id is kept",
+        admins["source_id"] == "dfe-admins",
+        str(admins),
+    )
     expect(
         "an indented block list and an org scope read",
         org["roles"] == ["org_viewer"]
@@ -408,7 +436,9 @@ def test_a_recorded_id_and_a_flow_list_read() -> None:
 
 
 def test_a_json_group_file_reads() -> None:
-    dex = json.loads(external_idp.render_group_files(GROUPS_DIR, "dex")["dex-dfe-admins.yaml"])
+    dex = json.loads(
+        external_idp.render_group_files(GROUPS_DIR, "dex")["dex-dfe-admins.yaml"]
+    )
     expect(
         "a JSON group file reads",
         dex["roles"] == ["admin"] and dex["source_id"] == "dfe-admins",
@@ -428,10 +458,16 @@ def _refused(body: str, provider: str = "okta") -> bool:
 
 def test_unusable_group_files_are_refused() -> None:
     expect(
-        "another provider's link is refused", _refused("roles: [admin]\nsource_provider: entra\n")
+        "another provider's link is refused",
+        _refused("roles: [admin]\nsource_provider: entra\n"),
     )
-    expect("a field the group model lacks is refused", _refused("roles: [admin]\nmembers: [x]\n"))
-    expect("a nested mapping is refused", _refused("roles: [admin]\nattributes:\n  a: b\n"))
+    expect(
+        "a field the group model lacks is refused",
+        _refused("roles: [admin]\nmembers: [x]\n"),
+    )
+    expect(
+        "a nested mapping is refused", _refused("roles: [admin]\nattributes:\n  a: b\n")
+    )
     expect("a bad scope is refused", _refused("roles: [admin]\nscope: tenant\n"))
     expect("a non-list roles value is refused", _refused("roles: admin\n"))
     expect("a repeated key is refused", _refused("roles: [admin]\nroles: [viewer]\n"))
@@ -452,7 +488,9 @@ def test_a_secret_value_on_argv_is_refused_without_echo() -> None:
         calls = tools.called()
     expect("--client-secret is an input error", rc == 2, str(rc))
     expect("the refusal does not echo the value", SECRET not in out, out)
-    expect("the refusal points at --client-secret-env", "--client-secret-env" in out, out)
+    expect(
+        "the refusal points at --client-secret-env", "--client-secret-env" in out, out
+    )
     expect("a refused run touches nothing", calls == [], str(calls))
 
 
@@ -479,11 +517,21 @@ def test_the_secret_reaches_k8s_on_stdin_only() -> None:
         rc, out = run(tools, [*wire_args("okta"), *k8s()])
         calls = tools.called()
         secret = tools.objects()["secret/dfe-oidc-okta"]
-        cms = [configmap(tools, "dfe-oidc-providers"), configmap(tools, "dfe-auth-groups")]
+        cms = [
+            configmap(tools, "dfe-oidc-providers"),
+            configmap(tools, "dfe-auth-groups"),
+        ]
     expect("wire succeeds", rc == 0, out)
-    expect("no argv carries the secret", not any(SECRET in " ".join(c["args"]) for c in calls))
+    expect(
+        "no argv carries the secret",
+        not any(SECRET in " ".join(c["args"]) for c in calls),
+    )
     expect("nothing printed carries the secret", SECRET not in out)
-    expect("the Secret holds it", secret["stringData"] == {"client-secret": SECRET}, str(secret))
+    expect(
+        "the Secret holds it",
+        secret["stringData"] == {"client-secret": SECRET},
+        str(secret),
+    )
     expect("no ConfigMap holds it", SECRET not in json.dumps(cms))
 
 
@@ -501,7 +549,9 @@ def test_the_secret_reaches_docker_through_the_env_file_only() -> None:
         not any(SECRET in " ".join(c["args"]) or SECRET in c["stdin"] for c in calls),
     )
     expect("nothing printed carries the secret", SECRET not in out)
-    expect("the env file carries it", f"DFE_OIDC_OKTA_CLIENT_SECRET={SECRET}" in text, text)
+    expect(
+        "the env file carries it", f"DFE_OIDC_OKTA_CLIENT_SECRET={SECRET}" in text, text
+    )
     expect("the env file is private", mode == 0o600, oct(mode))
     expect("no written file carries it", not any(SECRET in body for body in written))
 
@@ -509,7 +559,10 @@ def test_the_secret_reaches_docker_through_the_env_file_only() -> None:
 def test_a_dry_run_touches_nothing_and_redacts_the_secret() -> None:
     for target in ("k8s", "docker"):
         with FakeTools() as tools:
-            argv = [*wire_args("okta", "--dry-run"), *(k8s() if target == "k8s" else docker(tools))]
+            argv = [
+                *wire_args("okta", "--dry-run"),
+                *(k8s() if target == "k8s" else docker(tools)),
+            ]
             rc, out = run(tools, argv)
             calls = tools.called()
         expect(f"{target} dry run succeeds", rc == 0, out)
@@ -524,7 +577,9 @@ def test_k8s_wire_records_a_ledger_before_teardown_reads_it() -> None:
         run(tools, [*wire_args("okta"), *k8s()])
         annotations = configmap(tools, "dfe-oidc-providers")["metadata"]["annotations"]
     ledger = json.loads(annotations["dfe.hyperi.io/wire-external-okta"])
-    expect("the ledger names the Secret", ledger["holder"] == "dfe-oidc-okta", str(ledger))
+    expect(
+        "the ledger names the Secret", ledger["holder"] == "dfe-oidc-okta", str(ledger)
+    )
     expect(
         "the ledger names every group key",
         ledger["groups"]
@@ -562,7 +617,8 @@ def test_k8s_teardown_removes_exactly_what_the_wire_added() -> None:
     )
     expect(
         "the okta ledger is gone, entra's stays",
-        list(providers["metadata"]["annotations"]) == ["dfe.hyperi.io/wire-external-entra"],
+        list(providers["metadata"]["annotations"])
+        == ["dfe.hyperi.io/wire-external-entra"],
         str(providers["metadata"]),
     )
     expect(
@@ -570,7 +626,9 @@ def test_k8s_teardown_removes_exactly_what_the_wire_added() -> None:
         sorted(groups["data"]) == ["entra-dfe-admins.yaml"],
         str(groups),
     )
-    expect("the okta Secret is gone", "secret/dfe-oidc-okta" not in objects, str(objects))
+    expect(
+        "the okta Secret is gone", "secret/dfe-oidc-okta" not in objects, str(objects)
+    )
     expect("the entra Secret stays", "secret/dfe-oidc-entra" in objects, str(objects))
     removed = json.loads(execs[-1]["stdin"])["remove"] if execs else []
     expect(
@@ -597,7 +655,11 @@ def test_k8s_teardown_deletes_only_configmaps_it_created_once_empty() -> None:
         rc, _ = run(tools, ["--type", "okta", "--teardown", *k8s()], secret=None)
         objects = tools.objects()
     expect("teardown succeeds", rc == 0, str(rc))
-    expect("both ConfigMaps the wire created are gone once empty", objects == {}, str(objects))
+    expect(
+        "both ConfigMaps the wire created are gone once empty",
+        objects == {},
+        str(objects),
+    )
 
 
 def test_k8s_rewire_removes_a_group_the_new_set_drops() -> None:
@@ -634,7 +696,9 @@ def test_k8s_teardown_reports_a_failed_volume_cleanup() -> None:
         tools.env["FAKE_EXEC_RC"] = "1"
         rc, out = run(tools, ["--type", "okta", "--teardown", *k8s()], secret=None)
     expect("a failed cleanup exits non-zero", rc == 1, str(rc))
-    expect("it names the files left behind", "auth/oidc-providers/okta.yaml" in out, out)
+    expect(
+        "it names the files left behind", "auth/oidc-providers/okta.yaml" in out, out
+    )
 
 
 # --- wire-engine teardown, through the same volume cleanup ---------------------
@@ -659,10 +723,17 @@ def engine_objects() -> dict:
         "configmap/dfe-auth-groups": {
             "kind": "ConfigMap",
             "metadata": {"name": "dfe-auth-groups"},
-            "data": {"dfe-admins.yaml": "{}", "dfe-viewers.yaml": "{}", "okta-ops.yaml": "{}"},
+            "data": {
+                "dfe-admins.yaml": "{}",
+                "dfe-viewers.yaml": "{}",
+                "okta-ops.yaml": "{}",
+            },
         },
         "secret/dfe-oidc-dex": {"kind": "Secret", "metadata": {"name": "dfe-oidc-dex"}},
-        "secret/dfe-oidc-okta": {"kind": "Secret", "metadata": {"name": "dfe-oidc-okta"}},
+        "secret/dfe-oidc-okta": {
+            "kind": "Secret",
+            "metadata": {"name": "dfe-oidc-okta"},
+        },
     }
 
 
@@ -710,8 +781,16 @@ def test_wire_engine_teardown_removes_exactly_the_files_it_seeded() -> None:
         sorted(objects["configmap/dfe-auth-groups"]["data"]) == ["okta-ops.yaml"],
         str(objects),
     )
-    expect("the Secret it applied is gone", "secret/dfe-oidc-dex" not in objects, str(objects))
-    expect("another provider's Secret stays", "secret/dfe-oidc-okta" in objects, str(objects))
+    expect(
+        "the Secret it applied is gone",
+        "secret/dfe-oidc-dex" not in objects,
+        str(objects),
+    )
+    expect(
+        "another provider's Secret stays",
+        "secret/dfe-oidc-okta" in objects,
+        str(objects),
+    )
 
 
 def test_wire_engine_teardown_undoes_a_wire() -> None:
@@ -724,7 +803,10 @@ def test_wire_engine_teardown_undoes_a_wire() -> None:
         )
         common = engine_teardown_args(Path(tmp))
         wired, _ = run(
-            tools, ["--secrets-file", str(env), *common], secret=None, action="wire-engine"
+            tools,
+            ["--secrets-file", str(env), *common],
+            secret=None,
+            action="wire-engine",
         )
         seeded = sorted(configmap(tools, "dfe-oidc-providers").get("data", {}))
         rc, out = run(tools, ["--teardown", *common], secret=None, action="wire-engine")
@@ -767,7 +849,11 @@ def test_wire_engine_teardown_dry_run_touches_nothing() -> None:
         )
         calls = tools.called()
     expect("the dry run succeeds", rc == 0, out)
-    expect("it names the copies it would remove", "auth/groups/dfe-viewers.yaml" in out, out)
+    expect(
+        "it names the copies it would remove",
+        "auth/groups/dfe-viewers.yaml" in out,
+        out,
+    )
     expect("and calls nothing", calls == [], str(calls))
 
 
@@ -776,11 +862,15 @@ def test_docker_wire_writes_the_files_and_recreates_the_engine() -> None:
     with FakeTools() as tools:
         rc, out = run(tools, [*wire_args("okta"), *docker(tools)])
         config = tools.root / "app" / "config" / "auth"
-        provider = json.loads((config / "oidc-providers" / "okta.yaml").read_text("utf-8"))
+        provider = json.loads(
+            (config / "oidc-providers" / "okta.yaml").read_text("utf-8")
+        )
         groups = sorted(p.name for p in (config / "groups").iterdir())
         compose = [c for c in tools.called() if c["args"][:1] == ["compose"]]
     expect("docker wire succeeds", rc == 0, out)
-    expect("the provider file lands in the engine's config dir", provider["type"] == "okta")
+    expect(
+        "the provider file lands in the engine's config dir", provider["type"] == "okta"
+    )
     expect(
         "the group files land beside it",
         groups
@@ -808,13 +898,19 @@ def test_docker_wire_writes_the_files_and_recreates_the_engine() -> None:
 def test_docker_teardown_removes_exactly_what_the_wire_added() -> None:
     with FakeTools() as tools:
         env_file = tools.compose / "env" / "engine.env"
-        env_file.write_text("DFE_ENV=dev\n# DFE_OIDC_OKTA_CLIENT_SECRET=\n", encoding="utf-8")
+        env_file.write_text(
+            "DFE_ENV=dev\n# DFE_OIDC_OKTA_CLIENT_SECRET=\n", encoding="utf-8"
+        )
         keeper = tools.root / "app" / "config" / "auth" / "groups" / "dfe-admins.yaml"
         keeper.parent.mkdir(parents=True)
         keeper.write_text("{}", encoding="utf-8")
         run(tools, [*wire_args("okta"), *docker(tools)])
-        rc, out = run(tools, ["--type", "okta", "--teardown", *docker(tools)], secret=None)
-        left = sorted(str(p.relative_to(tools.root)) for p in tools.root.rglob("*.yaml"))
+        rc, out = run(
+            tools, ["--type", "okta", "--teardown", *docker(tools)], secret=None
+        )
+        left = sorted(
+            str(p.relative_to(tools.root)) for p in tools.root.rglob("*.yaml")
+        )
         text = env_file.read_text(encoding="utf-8")
     expect("docker teardown succeeds", rc == 0, out)
     expect(
@@ -843,18 +939,29 @@ def test_docker_refuses_a_secret_variable_the_env_file_already_sets() -> None:
 def test_docker_rewire_replaces_its_block_and_drops_stale_files() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         (Path(tmp) / "okta-dfe-admins.yaml").write_text(
-            (GROUPS_DIR / "okta-dfe-admins.yaml").read_text(encoding="utf-8"), encoding="utf-8"
+            (GROUPS_DIR / "okta-dfe-admins.yaml").read_text(encoding="utf-8"),
+            encoding="utf-8",
         )
         with FakeTools() as tools:
             run(tools, [*wire_args("okta"), *docker(tools)])
             argv = [*wire_args("okta"), *docker(tools)]
             argv[argv.index(str(GROUPS_DIR))] = tmp
             rc, _ = run(tools, argv)
-            groups = sorted(p.name for p in (tools.root / "app/config/auth/groups").iterdir())
+            groups = sorted(
+                p.name for p in (tools.root / "app/config/auth/groups").iterdir()
+            )
             text = (tools.compose / "env" / "engine.env").read_text(encoding="utf-8")
     expect("docker rewire succeeds", rc == 0, str(rc))
-    expect("the dropped group file is removed", groups == ["okta-dfe-admins.yaml"], str(groups))
-    expect("one block, not two", text.count("# BEGIN dfe-ops idp wire-external okta") == 1, text)
+    expect(
+        "the dropped group file is removed",
+        groups == ["okta-dfe-admins.yaml"],
+        str(groups),
+    )
+    expect(
+        "one block, not two",
+        text.count("# BEGIN dfe-ops idp wire-external okta") == 1,
+        text,
+    )
 
 
 def test_the_cli_parses_through_dfe_ops() -> None:
@@ -862,7 +969,16 @@ def test_the_cli_parses_through_dfe_ops() -> None:
         _ops()
         .build_parser()
         .parse_args(
-            ["idp", "wire-external", "--type", "google", "--target", "docker", "--compose-dir", "x"]
+            [
+                "idp",
+                "wire-external",
+                "--type",
+                "google",
+                "--target",
+                "docker",
+                "--compose-dir",
+                "x",
+            ]
         )
     )
     expect(

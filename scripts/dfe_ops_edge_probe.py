@@ -236,7 +236,9 @@ def _number(tree: dict[str, object], path: tuple[str, ...], default: int) -> int
     try:
         return int(value)
     except ValueError as error:
-        raise EdgeProbeError(f"{'.'.join(path)} must be a whole number, got {value!r}") from error
+        raise EdgeProbeError(
+            f"{'.'.join(path)} must be a whole number, got {value!r}"
+        ) from error
 
 
 def parse_edge(tree: dict[str, object]) -> EdgeSettings:
@@ -252,19 +254,29 @@ def parse_edge(tree: dict[str, object]) -> EdgeSettings:
         flavour=_scalar(tree, ("edge", "flavour")) or "",
         product_public=_flag(tree, ("edge", "product", "public"), True),
         domain=_scalar(tree, ("edge", "product", "domain")) or "",
-        tls_min_version=_scalar(tree, ("edge", "product", "tls", "min_version")) or "1.2",
+        tls_min_version=_scalar(tree, ("edge", "product", "tls", "min_version"))
+        or "1.2",
         hsts=_flag(tree, ("edge", "product", "tls", "hsts"), True),
-        rate_limit_enabled=_flag(tree, ("edge", "product", "rate_limit", "enabled"), True),
-        rate_limit_requests=_number(tree, ("edge", "product", "rate_limit", "requests"), 6000),
-        rate_limit_unit=_scalar(tree, ("edge", "product", "rate_limit", "unit")) or "Minute",
+        rate_limit_enabled=_flag(
+            tree, ("edge", "product", "rate_limit", "enabled"), True
+        ),
+        rate_limit_requests=_number(
+            tree, ("edge", "product", "rate_limit", "requests"), 6000
+        ),
+        rate_limit_unit=_scalar(tree, ("edge", "product", "rate_limit", "unit"))
+        or "Minute",
         # Through _scalar so the deprecated spelling is read too, and stripped of
         # the brackets an inline list carries, which the dial writes elsewhere.
         allowed_cidrs=split_list(
-            (_scalar(tree, ("edge", "product", "allowed_cidrs")) or "").strip().lstrip("[").rstrip("]")
+            (_scalar(tree, ("edge", "product", "allowed_cidrs")) or "")
+            .strip()
+            .lstrip("[")
+            .rstrip("]")
         ),
         admin_uis_external=_flag(tree, ("edge", "admin_uis", "external"), False),
         admin_uis_public={
-            ui: _flag(tree, ("edge", "admin_uis", "public", ui), False) for ui in ADMIN_UIS
+            ui: _flag(tree, ("edge", "admin_uis", "public", ui), False)
+            for ui in ADMIN_UIS
         },
         ingest_enabled=_flag(tree, (*INGEST_AT, "enabled"), True),
         ingest_door=ingest_door,
@@ -426,10 +438,14 @@ def _reach(request: Request) -> Answer:
 
     connection: http.client.HTTPConnection | None = None
     try:
-        sock = socket.create_connection((request.address, request.port), timeout=request.timeout)
+        sock = socket.create_connection(
+            (request.address, request.port), timeout=request.timeout
+        )
         source = sock.getsockname()[0]
         if context is not None:
-            sock = context.wrap_socket(sock, server_hostname=request.host or request.address)
+            sock = context.wrap_socket(
+                sock, server_hostname=request.host or request.address
+            )
         protocol = (sock.version() or "") if context is not None else ""
         if not request.path:
             sock.close()
@@ -438,7 +454,9 @@ def _reach(request: Request) -> Answer:
             request.host or request.address, request.port, timeout=request.timeout
         )
         connection.sock = sock
-        connection.request("GET", request.path, headers={"Host": request.host or request.address})
+        connection.request(
+            "GET", request.path, headers={"Host": request.host or request.address}
+        )
         response = connection.getresponse()
         response.read()
         return Answer(
@@ -539,7 +557,9 @@ def public_listener_reason(settings: EdgeSettings) -> str:
     if not settings.product_public:
         return "edge.product.public is false -- dfe-ui has no public listener"
     if not settings.domain:
-        return "edge.product.domain is empty -- this deployment publishes no public name"
+        return (
+            "edge.product.domain is empty -- this deployment publishes no public name"
+        )
     return ""
 
 
@@ -567,8 +587,14 @@ def engine_path_expectation(name: str, settings: EdgeSettings) -> tuple[bool, st
         return True, "edge.engine_api.cli_families_public is false"
     if name == "engine openapi":
         if settings.engine_cli_families_public:
-            return False, "edge.engine_api.cli_families_public is true, which opens the spec"
-        return True, "edge.engine_api.cli_families_public is false, so the spec is not published"
+            return (
+                False,
+                "edge.engine_api.cli_families_public is true, which opens the spec",
+            )
+        return (
+            True,
+            "edge.engine_api.cli_families_public is false, so the spec is not published",
+        )
     if name == "engine scim":
         if settings.engine_scim_public:
             return False, "edge.engine_api.scim_public is true"
@@ -595,30 +621,39 @@ def check_tls_floor(settings: EdgeSettings, host: str, address: str) -> Check:
     floor = settings.tls_min_version
     answer = _reach(Request(host=host, address=address))
     if not answer.reached:
-        return Check(name, FAIL, f"{host} on {address} answered nothing: {answer.error}")
+        return Check(
+            name, FAIL, f"{host} on {address} answered nothing: {answer.error}"
+        )
     negotiated = answer.protocol or "no TLS at all"
     if not tls_at_or_above(negotiated, floor):
-        return Check(name, FAIL, f"{host} negotiated {negotiated}, under the {floor} floor")
+        return Check(
+            name, FAIL, f"{host} negotiated {negotiated}, under the {floor} floor"
+        )
     cap = BELOW_FLOOR.get(floor, "")
     if not cap:
         return Check(
-            name, PASS,
+            name,
+            PASS,
             f"{host} negotiated {negotiated}, at or above the {floor} floor{UNVERIFIED}",
         )
     capped = _reach(Request(host=host, address=address, tls_cap=cap))
     if capped.client_capped:
         return Check(
-            name, PASS,
+            name,
+            PASS,
             f"{host} negotiated {negotiated}; a {cap} handshake cannot be offered from "
             f"this machine, so the floor is proven from the negotiated protocol alone"
             f"{UNVERIFIED}",
         )
     if capped.reached:
         return Check(
-            name, FAIL, f"{host} accepted a handshake capped at {cap}, under the {floor} floor"
+            name,
+            FAIL,
+            f"{host} accepted a handshake capped at {cap}, under the {floor} floor",
         )
     return Check(
-        name, PASS,
+        name,
+        PASS,
         f"{host} negotiated {negotiated} and refused a {cap} handshake "
         f"({capped.error}){UNVERIFIED}",
     )
@@ -631,14 +666,19 @@ def check_hsts(settings: EdgeSettings, host: str, address: str) -> Check:
     if reason:
         return Check(name, SKIP, reason)
     if not settings.hsts:
-        return Check(name, SKIP, "edge.product.tls.hsts is false -- no header is asked for")
+        return Check(
+            name, SKIP, "edge.product.tls.hsts is false -- no header is asked for"
+        )
     answer = _reach(Request(host=host, address=address))
     if not answer.reached:
-        return Check(name, FAIL, f"{host} on {address} answered nothing: {answer.error}")
+        return Check(
+            name, FAIL, f"{host} on {address} answered nothing: {answer.error}"
+        )
     header = answer.headers.get("strict-transport-security", "")
     if not header:
         return Check(
-            name, FAIL,
+            name,
+            FAIL,
             f"{host} answered {answer.status} with no Strict-Transport-Security header",
         )
     return Check(name, PASS, f"{host} answered Strict-Transport-Security: {header}")
@@ -651,16 +691,21 @@ def check_rate_limit(settings: EdgeSettings, host: str, address: str) -> Check:
     if reason:
         return Check(name, SKIP, reason)
     if not settings.rate_limit_enabled:
-        return Check(name, SKIP, "edge.product.rate_limit.enabled is false -- no limit to reach")
+        return Check(
+            name, SKIP, "edge.product.rate_limit.enabled is false -- no limit to reach"
+        )
     burst = settings.rate_limit_requests
     unit = settings.rate_limit_unit
     if burst <= 0:
         return Check(
-            name, SKIP, f"edge.product.rate_limit.requests is {burst} -- no burst to spend"
+            name,
+            SKIP,
+            f"edge.product.rate_limit.requests is {burst} -- no burst to spend",
         )
     if burst >= RATE_LIMIT_PROBE_CEILING:
         return Check(
-            name, SKIP,
+            name,
+            SKIP,
             f"a burst of {burst} in a {unit} is beyond what this probe sends "
             f"({RATE_LIMIT_PROBE_CEILING}), so the limit is left to a load generator",
         )
@@ -668,16 +713,19 @@ def check_rate_limit(settings: EdgeSettings, host: str, address: str) -> Check:
         answer = _reach(Request(host=host, address=address))
         if not answer.reached:
             return Check(
-                name, FAIL,
+                name,
+                FAIL,
                 f"{host} stopped answering after {attempt - 1} requests: {answer.error}",
             )
         if answer.status == 429:
             return Check(
-                name, PASS,
+                name,
+                PASS,
                 f"{host} answered 429 on request {attempt}, against a burst of {burst} in a {unit}",
             )
     return Check(
-        name, FAIL,
+        name,
+        FAIL,
         f"{host} answered {burst + 1} requests with no 429, past a burst of {burst} in a {unit}",
     )
 
@@ -688,8 +736,14 @@ def check_rate_limit(settings: EdgeSettings, host: str, address: str) -> Check:
 # may legitimately be allow-listing.
 NAT_SIDE_RANGES = tuple(
     ipaddress.ip_network(cidr)
-    for cidr in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
-                 "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16")
+    for cidr in (
+        "10.0.0.0/8",
+        "172.16.0.0/12",
+        "192.168.0.0/16",
+        "100.64.0.0/10",
+        "127.0.0.0/8",
+        "169.254.0.0/16",
+    )
 )
 
 
@@ -726,7 +780,8 @@ def check_cidr_filter(settings: EdgeSettings, host: str, address: str) -> Check:
         return Check(name, SKIP, reason)
     if not settings.allowed_cidrs:
         return Check(
-            name, SKIP,
+            name,
+            SKIP,
             "edge.product.allowed_cidrs is empty -- an internet-facing gateway then answers 403 "
             "to every address and an on-prem one admits every address, so no off-list address "
             "exists to test with",
@@ -735,33 +790,40 @@ def check_cidr_filter(settings: EdgeSettings, host: str, address: str) -> Check:
     answer = _reach(Request(host=host, address=address))
     if not answer.reached:
         return Check(
-            name, PASS,
+            name,
+            PASS,
             f"{host} on {address} refused this machine, which is off the allow-list "
             f"{listed} ({answer.error})",
         )
     # Envoy's own refusal: the load balancer let the connection through, and the
     # gateway's address rule turned the request away.
-    if answer.status == 403 and not address_in_cidrs(answer.source, settings.allowed_cidrs):
+    if answer.status == 403 and not address_in_cidrs(
+        answer.source, settings.allowed_cidrs
+    ):
         return Check(
-            name, PASS,
+            name,
+            PASS,
             f"{host} on {address} answered 403 to {answer.source}, which is off the allow-list "
             f"{listed}",
         )
     if address_in_cidrs(answer.source, settings.allowed_cidrs):
         return Check(
-            name, SKIP,
+            name,
+            SKIP,
             f"this machine dialled from {answer.source}, inside the allow-list {listed} -- "
             f"an on-list address proves nothing about an off-list one",
         )
     if dialled_from_behind_nat(answer.source):
         return Check(
-            name, SKIP,
+            name,
+            SKIP,
             f"this machine's own socket reads {answer.source}, so it sits behind NAT and the "
             f"address weighed against {listed} is not knowable here -- run the probe from a "
             f"host holding a public address",
         )
     return Check(
-        name, FAIL,
+        name,
+        FAIL,
         f"{host} answered {answer.status} to a connection from {answer.source}, "
         f"which is outside the allow-list {listed}",
     )
@@ -784,9 +846,14 @@ def check_receiver_private(settings: EdgeSettings, address: str) -> Check:
     closed = settings.ingest_door == "loadbalancer" and not settings.ingest_allow
     if settings.ingest_enabled and settings.ingest_door != "tunnel" and not closed:
         return Check(
-            name, SKIP,
+            name,
+            SKIP,
             f"edge.groups.ingest.door is {settings.ingest_door}"
-            + (f" admitting {', '.join(settings.ingest_allow)}" if settings.ingest_allow else "")
+            + (
+                f" admitting {', '.join(settings.ingest_allow)}"
+                if settings.ingest_allow
+                else ""
+            )
             + " -- a public door is intended",
         )
 
@@ -794,7 +861,8 @@ def check_receiver_private(settings: EdgeSettings, address: str) -> Check:
     published = published_host(RECEIVER_LABEL, settings.domain)
     if not settings.domain:
         return Check(
-            name, SKIP,
+            name,
+            SKIP,
             "edge.product.domain is empty, so no receiver name is published and the only "
             f"address to dial is the gateway's, which carries no {ports} listener in any "
             "configuration",
@@ -802,12 +870,14 @@ def check_receiver_private(settings: EdgeSettings, address: str) -> Check:
     resolved = _resolved(published)
     if not resolved:
         return Check(
-            name, PASS,
+            name,
+            PASS,
             f"{published} does not resolve, so no record was published for a receiver door",
         )
     if resolved <= _resolved(address):
         return Check(
-            name, SKIP,
+            name,
+            SKIP,
             f"{published} resolves to the gateway's own address, where {ports} is not the "
             "receiver's door in any configuration -- what this check can see is a SEPARATE "
             "load balancer, and there is not one",
@@ -816,19 +886,23 @@ def check_receiver_private(settings: EdgeSettings, address: str) -> Check:
     answered = []
     errors = []
     for port in RECEIVER_INGEST_PORTS:
-        answer = _reach(Request(host="", address=published, port=port, path="", tls=False))
+        answer = _reach(
+            Request(host="", address=published, port=port, path="", tls=False)
+        )
         if answer.reached:
             answered.append(str(port))
         else:
             errors.append(f"{port}: {answer.error}")
     if answered:
         return Check(
-            name, FAIL,
+            name,
+            FAIL,
             f"{published} carries its own address and accepted a connection on "
             f"{', '.join(answered)} -- the receiver is reachable with no public door intended",
         )
     return Check(
-        name, PASS,
+        name,
+        PASS,
         f"{published} carries its own address and refused {ports} -- {'; '.join(errors)}",
     )
 
@@ -841,9 +915,13 @@ def check_route_absent(name: str, host: str, address: str, why: str) -> Check:
     """
     answer = _reach(Request(host=host, address=address))
     if not answer.reached:
-        return Check(name, PASS, f"{host} on {address} answered nothing ({why}): {answer.error}")
+        return Check(
+            name, PASS, f"{host} on {address} answered nothing ({why}): {answer.error}"
+        )
     if answer.status == 404:
-        return Check(name, PASS, f"{host} answered 404 ({why}) -- no route is programmed for it")
+        return Check(
+            name, PASS, f"{host} answered 404 ({why}) -- no route is programmed for it"
+        )
     return Check(name, FAIL, f"{host} answered {answer.status} while {why}")
 
 
@@ -856,35 +934,42 @@ def check_otel_ingress(settings: EdgeSettings, address: str) -> Check:
     name = "otel ingress"
     if not settings.cluster_domain:
         return Check(
-            name, SKIP,
+            name,
+            SKIP,
             "k8s.domain is empty -- the dial names no cluster domain, so there is no "
             "otel name to dial",
         )
     host = published_host(OTEL_LABEL, settings.cluster_domain)
     if not settings.otel_enabled:
-        return check_route_absent(name, host, address, "edge.ingest.otel.enabled is false")
+        return check_route_absent(
+            name, host, address, "edge.ingest.otel.enabled is false"
+        )
     answer = _reach(Request(host=host, address=address, path=OTEL_PROBE_PATH))
     where = f"{host}{OTEL_PROBE_PATH}"
     if not answer.reached:
         return Check(
-            name, FAIL,
+            name,
+            FAIL,
             f"{where} on {address} answered nothing while edge.ingest.otel.enabled is true: "
             f"{answer.error}",
         )
     if answer.status == 401:
         return Check(
-            name, PASS,
+            name,
+            PASS,
             f"{where} answered 401 to a request with no token -- the door is open and asks "
             "for the bearer token",
         )
     if answer.status == 404:
         return Check(
-            name, FAIL,
+            name,
+            FAIL,
             f"{where} answered 404 while edge.ingest.otel.enabled is true -- no route is "
             "programmed for it",
         )
     return Check(
-        name, FAIL,
+        name,
+        FAIL,
         f"{where} answered {answer.status} to a request with no token -- only 401 shows "
         "the collector checked for one",
     )
@@ -894,14 +979,18 @@ def check_admin_ui(settings: EdgeSettings, ui: str, address: str) -> Check:
     """One admin UI route is absent, unless this deployment opted it in."""
     name = f"admin ui {ui}"
     if not settings.domain:
-        return Check(name, SKIP, "edge.product.domain is empty -- no admin name is published")
+        return Check(
+            name, SKIP, "edge.product.domain is empty -- no admin name is published"
+        )
     absent, why = admin_ui_expectation(
         ui, settings.admin_uis_external, settings.admin_uis_public.get(ui, False)
     )
     host = published_host(ADMIN_UI_HOSTNAMES[ui], settings.domain)
     if not absent:
         return Check(
-            name, SKIP, f"{host} is opted in -- {why}, so a route that answers is intended"
+            name,
+            SKIP,
+            f"{host} is opted in -- {why}, so a route that answers is intended",
         )
     return check_route_absent(name, host, address, why)
 
@@ -934,24 +1023,30 @@ def check_engine_path(
         return Check(name, SKIP, reason)
     if not settings.engine_with_product:
         return Check(
-            name, SKIP,
+            name,
+            SKIP,
             "edge.engine_api.with_product is false -- the engine answers on no public name",
         )
     absent, why = engine_path_expectation(name, settings)
     answer = _reach(Request(host=host, address=address, path=path))
     if not answer.reached:
         if absent:
-            return Check(name, PASS, f"{host}{path} answered nothing ({why}): {answer.error}")
+            return Check(
+                name, PASS, f"{host}{path} answered nothing ({why}): {answer.error}"
+            )
         return Check(name, FAIL, f"{host}{path} answered nothing: {answer.error}")
     if absent:
         if answer.status == 404:
             return Check(
-                name, PASS, f"{host}{path} answered 404 ({why}) -- no route is programmed for it"
+                name,
+                PASS,
+                f"{host}{path} answered 404 ({why}) -- no route is programmed for it",
             )
         return Check(name, FAIL, f"{host}{path} answered {answer.status} while {why}")
     if answer.status == 404:
         return Check(
-            name, FAIL,
+            name,
+            FAIL,
             f"{host}{path} answered 404 and {why} -- the public hostname carries no route for it",
         )
     return Check(name, PASS, f"{host}{path} answered {answer.status} -- {why}")
@@ -961,7 +1056,11 @@ def run_checks(settings: EdgeSettings, *, target: str = "") -> list[Check]:
     """Every check, in report order, against one deployment."""
     if not settings.enabled:
         return [
-            Check(name, SKIP, "edge.enabled is false -- this deployment opens no door at all")
+            Check(
+                name,
+                SKIP,
+                "edge.enabled is false -- this deployment opens no door at all",
+            )
             for name in check_names()
         ]
     host = product_host(settings.domain)
@@ -1031,7 +1130,9 @@ def parse_admin_links(text: str) -> list[AdminLink]:
     links = []
     for entry in entries:
         if not isinstance(entry, dict) or not entry.get("name") or not entry.get("url"):
-            raise EdgeProbeError(f"{ADMIN_LINKS_KEY} carries an entry with no name or url: {entry!r}")
+            raise EdgeProbeError(
+                f"{ADMIN_LINKS_KEY} carries an entry with no name or url: {entry!r}"
+            )
         links.append(AdminLink(name=str(entry["name"]), url=str(entry["url"])))
     return links
 
@@ -1050,7 +1151,9 @@ def _on_domain(host: str, domain: str) -> bool:
     return host == domain or host.endswith(f".{domain}")
 
 
-def check_admin_link(link: AdminLink, address: str, max_redirects: int = MAX_REDIRECTS) -> Check:
+def check_admin_link(
+    link: AdminLink, address: str, max_redirects: int = MAX_REDIRECTS
+) -> Check:
     """One admin UI loads through the gateway: no redirect loop, no 5xx, no refused 4xx.
 
     Every hop on the deployment's own domain is dialled at the gateway address
@@ -1061,7 +1164,11 @@ def check_admin_link(link: AdminLink, address: str, max_redirects: int = MAX_RED
     name = f"admin ui {link.name}"
     domain = (urlsplit(link.url).hostname or "").lower().partition(".")[2].rstrip(".")
     if not domain:
-        return Check(name, SKIP, f"{link.url} carries no domain -- this deployment publishes no name")
+        return Check(
+            name,
+            SKIP,
+            f"{link.url} carries no domain -- this deployment publishes no name",
+        )
     url, hops = link.url, []
     for _ in range(max_redirects + 1):
         parts = urlsplit(url)
@@ -1069,34 +1176,54 @@ def check_admin_link(link: AdminLink, address: str, max_redirects: int = MAX_RED
         try:
             port = parts.port or (HTTPS_PORT if tls else HTTP_PORT)
         except ValueError:
-            return Check(name, FAIL, f"{' -> '.join([*hops, url])} names no usable port")
+            return Check(
+                name, FAIL, f"{' -> '.join([*hops, url])} names no usable port"
+            )
         here = _hop(parts, port)
         if here in hops:
-            loop = " -> ".join([*hops[hops.index(here):], here])
+            loop = " -> ".join([*hops[hops.index(here) :], here])
             return Check(name, FAIL, f"redirect loop: {loop}")
         hops.append(here)
         path = (parts.path or "/") + (f"?{parts.query}" if parts.query else "")
-        answer = _reach(Request(
-            host=parts.hostname or "", address=address, port=port, path=path, tls=tls,
-        ))
+        answer = _reach(
+            Request(
+                host=parts.hostname or "",
+                address=address,
+                port=port,
+                path=path,
+                tls=tls,
+            )
+        )
         trail = " -> ".join(hops)
         if not answer.reached:
-            return Check(name, FAIL, f"{trail} answered nothing through {address}: {answer.error}")
+            return Check(
+                name,
+                FAIL,
+                f"{trail} answered nothing through {address}: {answer.error}",
+            )
         if answer.status is not None and answer.status >= 500:
             return Check(name, FAIL, f"{trail} answered {answer.status}")
         status = answer.status or 0
         if 400 <= status < 500 and status not in ADMIN_UI_4XX_PASS:
-            return Check(name, FAIL, f"{trail} answered {status} -- the request was refused")
+            return Check(
+                name, FAIL, f"{trail} answered {status} -- the request was refused"
+            )
         if answer.status not in REDIRECT_STATUSES:
             return Check(name, PASS, f"{trail} answered {answer.status}")
         location = answer.headers.get("location", "")
         if not location:
-            return Check(name, FAIL, f"{trail} answered {answer.status} with no Location")
+            return Check(
+                name, FAIL, f"{trail} answered {answer.status} with no Location"
+            )
         url = urljoin(url, location)
         target = (urlsplit(url).hostname or "").lower()
         if not _on_domain(target, domain):
-            return Check(name, PASS, f"{trail} hands the login to {target} ({answer.status})")
-    return Check(name, FAIL, f"more than {max_redirects} redirects: {' -> '.join(hops)}")
+            return Check(
+                name, PASS, f"{trail} hands the login to {target} ({answer.status})"
+            )
+    return Check(
+        name, FAIL, f"more than {max_redirects} redirects: {' -> '.join(hops)}"
+    )
 
 
 def _kubectl_json(kube: list[str], *argv: str) -> tuple[dict, str]:
@@ -1114,19 +1241,27 @@ def _kubectl_json(kube: list[str], *argv: str) -> tuple[dict, str]:
         parsed = json.loads(done.stdout)
     except json.JSONDecodeError as error:
         return {}, f"kubectl printed no JSON: {error}"
-    return (parsed, "") if isinstance(parsed, dict) else ({}, "kubectl printed no object")
+    return (
+        (parsed, "") if isinstance(parsed, dict) else ({}, "kubectl printed no object")
+    )
 
 
 def read_admin_links(kube: list[str], namespace: str) -> list[AdminLink] | None:
     """The admin UIs the gateway lists in `namespace`, or None when it lists none there."""
-    doc, error = _kubectl_json(kube, "-n", namespace, "get", "configmap", ADMIN_LINKS_CONFIGMAP)
+    doc, error = _kubectl_json(
+        kube, "-n", namespace, "get", "configmap", ADMIN_LINKS_CONFIGMAP
+    )
     if "NotFound" in error:
         return None
     if error:
-        raise EdgeProbeError(f"cannot read {namespace}/{ADMIN_LINKS_CONFIGMAP}: {error}")
+        raise EdgeProbeError(
+            f"cannot read {namespace}/{ADMIN_LINKS_CONFIGMAP}: {error}"
+        )
     text = (doc.get("data") or {}).get(ADMIN_LINKS_KEY)
     if text is None:
-        raise EdgeProbeError(f"{namespace}/{ADMIN_LINKS_CONFIGMAP} carries no {ADMIN_LINKS_KEY}")
+        raise EdgeProbeError(
+            f"{namespace}/{ADMIN_LINKS_CONFIGMAP} carries no {ADMIN_LINKS_KEY}"
+        )
     return parse_admin_links(text)
 
 
@@ -1183,8 +1318,13 @@ def read_self_ranges(kube: list[str]) -> tuple[tuple[str, ...], str]:
         kube, "-n", CLUSTER_SECRET_NAMESPACE, "get", "secret", CLUSTER_SECRET_NAME
     )
     if error:
-        return (), f"cannot read {CLUSTER_SECRET_NAMESPACE}/{CLUSTER_SECRET_NAME}: {error}"
-    raw = ((doc.get("metadata") or {}).get("annotations") or {}).get(SELF_RANGES_ANNOTATION, "")
+        return (
+            (),
+            f"cannot read {CLUSTER_SECRET_NAMESPACE}/{CLUSTER_SECRET_NAME}: {error}",
+        )
+    raw = ((doc.get("metadata") or {}).get("annotations") or {}).get(
+        SELF_RANGES_ANNOTATION, ""
+    )
     return tuple(cidr.strip() for cidr in raw.split(",") if cidr.strip()), ""
 
 
@@ -1201,16 +1341,25 @@ def dead_door(kube: list[str], address: str, port: int, source: str) -> tuple[st
     mine = source or local_address(address, port)
     ranges_shown = f"exposure.selfRanges ({', '.join(ranges) or 'none'})"
     if mine and address_in_cidrs(mine, ranges):
-        return FAIL, f"this machine ({mine}) is inside {ranges_shown}, which the gateway admits"
+        return (
+            FAIL,
+            f"this machine ({mine}) is inside {ranges_shown}, which the gateway admits",
+        )
     if not mine:
-        return SKIP, f"this machine's address is unknown, so it cannot be weighed against {ranges_shown}"
+        return (
+            SKIP,
+            f"this machine's address is unknown, so it cannot be weighed against {ranges_shown}",
+        )
     if not source and dialled_from_behind_nat(mine):
         return SKIP, (
             f"this machine reads {mine}, so it sits behind NAT and the address the gateway "
             f"sees is unknown -- pass --source or {PROBE_SOURCE_ENV} to weigh it against "
             f"{ranges_shown}"
         )
-    return SKIP, f"this machine ({mine}) is outside {ranges_shown} -- probe from a host inside them"
+    return (
+        SKIP,
+        f"this machine ({mine}) is outside {ranges_shown} -- probe from a host inside them",
+    )
 
 
 def addressless_door(kube: list[str], source: str) -> tuple[str, str]:
@@ -1248,7 +1397,13 @@ def admin_ui_checks(
     """One check per admin UI the gateway lists, or one SKIP naming why none can run."""
     links = read_admin_links(kube, namespace)
     if links is None:
-        return [Check("admin uis", SKIP, f"no {ADMIN_LINKS_CONFIGMAP} ConfigMap in {namespace}")]
+        return [
+            Check(
+                "admin uis",
+                SKIP,
+                f"no {ADMIN_LINKS_CONFIGMAP} ConfigMap in {namespace}",
+            )
+        ]
     if not links:
         return [Check("admin uis", SKIP, f"{ADMIN_LINKS_CONFIGMAP} lists no admin UI")]
     address = target or gateway_address(kube, gateway)
@@ -1262,7 +1417,8 @@ def admin_ui_checks(
         verdict, why = dead_door(kube, address, port, source)
         return [
             Check(
-                f"admin ui {link.name}", verdict,
+                f"admin ui {link.name}",
+                verdict,
                 f"the gateway at {address}:{port} does not answer from this machine "
                 f"({door.error}) -- {why}",
             )
@@ -1316,7 +1472,9 @@ def cmd_admin_probe(args: argparse.Namespace) -> int:
     deadline = time.monotonic() + max(args.wait, 0)
     while True:
         try:
-            checks = admin_ui_checks(kube, args.namespace, args.target, args.gateway, source)
+            checks = admin_ui_checks(
+                kube, args.namespace, args.target, args.gateway, source
+            )
         except EdgeProbeError as error:
             print(f"dfe-ops admin-probe: {error}", file=sys.stderr)
             return 1
@@ -1340,18 +1498,21 @@ def add_edge_probe_subparser(sub: argparse._SubParsersAction) -> None:
         "edge-probe",
         help="prove from outside the cluster which doors the edge module actually opens",
         description="Reads the deployment dial's edge: block and dials the published names "
-                    "from this machine, with no credential, so every verdict is what an "
-                    "unauthenticated caller sees. Exits non-zero if any check fails.",
+        "from this machine, with no credential, so every verdict is what an "
+        "unauthenticated caller sees. Exits non-zero if any check fails.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     probe.add_argument(
-        "--dial", default=str(DIAL),
+        "--dial",
+        default=str(DIAL),
         help="the deployment dial carrying the edge: block",
     )
     probe.add_argument(
-        "--target", default="", metavar="HOST_OR_ADDRESS",
+        "--target",
+        default="",
+        metavar="HOST_OR_ADDRESS",
         help="dial this host or gateway address instead of the published name, for a "
-             "deployment whose DNS does not resolve here yet",
+        "deployment whose DNS does not resolve here yet",
     )
     probe.set_defaults(func=cmd_edge_probe)
 
@@ -1361,38 +1522,53 @@ def add_admin_probe_subparser(sub: argparse._SubParsersAction) -> None:
     probe = sub.add_parser(
         "admin-probe",
         help="prove every admin UI the gateway lists loads through it: no redirect loop, "
-             "no 5xx, no refused 4xx",
+        "no 5xx, no refused 4xx",
         description="Reads the dfe-admin-links ConfigMap and GETs each admin UI through the "
-                    "gateway address with its own name on the SNI and Host header, following "
-                    "redirects. A loop, a 5xx, a 4xx other than 401/403/404 or no answer "
-                    "fails; a redirect off the deployment's domain is a login handed to an IdP "
-                    "and passes. Sends no credential. Exits non-zero if any check fails.",
+        "gateway address with its own name on the SNI and Host header, following "
+        "redirects. A loop, a 5xx, a 4xx other than 401/403/404 or no answer "
+        "fails; a redirect off the deployment's domain is a login handed to an IdP "
+        "and passes. Sends no credential. Exits non-zero if any check fails.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     probe.add_argument(
-        "--namespace", default=DEFAULT_ADMIN_NAMESPACE,
+        "--namespace",
+        default=DEFAULT_ADMIN_NAMESPACE,
         help="the engine's namespace, where the gateway writes dfe-admin-links",
     )
-    probe.add_argument("--kubeconfig", default="", help="kubeconfig to read; empty is kubectl's own")
-    probe.add_argument("--context", default="", help="kubeconfig context to read; empty is its current one")
     probe.add_argument(
-        "--gateway", default=DEFAULT_GATEWAY,
+        "--kubeconfig", default="", help="kubeconfig to read; empty is kubectl's own"
+    )
+    probe.add_argument(
+        "--context",
+        default="",
+        help="kubeconfig context to read; empty is its current one",
+    )
+    probe.add_argument(
+        "--gateway",
+        default=DEFAULT_GATEWAY,
         help="the Gateway whose address is dialled; any Gateway's when it holds none",
     )
     probe.add_argument(
-        "--target", default="", metavar="ADDRESS",
+        "--target",
+        default="",
+        metavar="ADDRESS",
         help="dial this address instead of the one the Gateway reports",
     )
     probe.add_argument(
-        "--wait", type=float, default=0.0, metavar="SECONDS",
+        "--wait",
+        type=float,
+        default=0.0,
+        metavar="SECONDS",
         help="re-probe a failing UI until this many seconds have passed",
     )
     probe.add_argument(
-        "--source", default="", metavar="ADDRESS",
+        "--source",
+        default="",
+        metavar="ADDRESS",
         help=f"the address the gateway sees this machine as, for a host behind NAT; empty "
-             f"reads {PROBE_SOURCE_ENV}, then this machine's own route to the gateway. From "
-             f"inside exposure.selfRanges a gateway that does not answer, or holds no address, "
-             f"fails rather than skips",
+        f"reads {PROBE_SOURCE_ENV}, then this machine's own route to the gateway. From "
+        f"inside exposure.selfRanges a gateway that does not answer, or holds no address, "
+        f"fails rather than skips",
     )
     probe.set_defaults(func=cmd_admin_probe)
 

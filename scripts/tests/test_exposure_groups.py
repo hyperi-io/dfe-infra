@@ -39,7 +39,12 @@ import dfe_ops_init as wiz  # noqa: E402
 import render_dial  # noqa: E402
 
 GROUPS = ("ingest", "console", "api", "admin", "vpn")
-GROUP_OF_CLASS = {"product": "console", "api": "api", "infra": "admin", "ingest": "ingest"}
+GROUP_OF_CLASS = {
+    "product": "console",
+    "api": "api",
+    "infra": "admin",
+    "ingest": "ingest",
+}
 # The dial still names admin UIs in snake case and lists HyperDX beside them,
 # which the chart classes product (ui.public.hyperdx).
 DIAL_TO_ROUTE = {"cruise_control": "cruiseControl"}
@@ -85,11 +90,17 @@ def test_hyperdx_is_product_and_never_an_admin_tool() -> None:
     assert "hyperdx" not in common_groups()["admin"]["tools"]
 
 
-@pytest.mark.parametrize(("where", "names"), [
-    ("render_dial.ADMIN_UIS", set(render_dial.ADMIN_UIS)),
-    ("dfe_ops_edge_probe.ADMIN_UI_HOSTNAMES", set(probe.ADMIN_UI_HOSTNAMES)),
-], ids=["render-dial", "edge-probe"])
-def test_each_dial_side_admin_list_is_a_copy_of_the_tool_map(where: str, names: set[str]) -> None:
+@pytest.mark.parametrize(
+    ("where", "names"),
+    [
+        ("render_dial.ADMIN_UIS", set(render_dial.ADMIN_UIS)),
+        ("dfe_ops_edge_probe.ADMIN_UI_HOSTNAMES", set(probe.ADMIN_UI_HOSTNAMES)),
+    ],
+    ids=["render-dial", "edge-probe"],
+)
+def test_each_dial_side_admin_list_is_a_copy_of_the_tool_map(
+    where: str, names: set[str]
+) -> None:
     """The dial still spells these lists itself, so drift from the map fails here."""
     assert dial_admin_tools(names) == set(common_groups()["admin"]["tools"]), where
 
@@ -97,7 +108,9 @@ def test_each_dial_side_admin_list_is_a_copy_of_the_tool_map(where: str, names: 
 def test_the_wizards_admin_block_is_a_copy_of_the_tool_map() -> None:
     dial = yaml.safe_load(wiz.build_dial_text(wiz.Answers()))
     names = set(dial["edge"]["admin_uis"]["public"])
-    assert dial_admin_tools(names) == set(common_groups()["admin"]["tools"]), sorted(names)
+    assert dial_admin_tools(names) == set(common_groups()["admin"]["tools"]), sorted(
+        names
+    )
 
 
 # --- every route has a group, every group its fields ------------------------------------
@@ -130,7 +143,9 @@ def test_every_cloud_flavour_turns_the_admin_group_off(flavour: str) -> None:
 def test_the_default_groups_match_the_design_on_prem() -> None:
     groups = common_groups()
     assert [groups[g]["enabled"] for g in GROUPS] == [True, True, True, True, False]
-    assert load(VALUES / "local.yaml")["exposure"]["groups"]["ingest"]["door"] == "gateway"
+    assert (
+        load(VALUES / "local.yaml")["exposure"]["groups"]["ingest"]["door"] == "gateway"
+    )
     assert groups["ingest"]["door"] == "loadbalancer"
     assert groups["vpn"]["door"] == "culvert"
 
@@ -138,8 +153,14 @@ def test_the_default_groups_match_the_design_on_prem() -> None:
 # --- the engine's two routes ----------------------------------------------------------
 
 
-SHARED_ENGINE_FIELDS = ("hostnameKey", "backendService", "backendPort", "pathPrefix", "requestTimeout",
-                        "publicListenerOf")
+SHARED_ENGINE_FIELDS = (
+    "hostnameKey",
+    "backendService",
+    "backendPort",
+    "pathPrefix",
+    "requestTimeout",
+    "publicListenerOf",
+)
 
 
 @pytest.mark.parametrize("field", SHARED_ENGINE_FIELDS)
@@ -155,7 +176,9 @@ def test_the_engine_routes_carry_their_own_groups() -> None:
 
 def test_expected_fail_no_family_answers_on_both_engine_routes() -> None:
     r = routes()
-    browser = set(r["dfeEngine"]["browserFamilies"]) | set(r["dfeEngine"]["browserPaths"])
+    browser = set(r["dfeEngine"]["browserFamilies"]) | set(
+        r["dfeEngine"]["browserPaths"]
+    )
     cli = set(r["dfeEngineCli"]["cliFamilies"]) | set(r["dfeEngineCli"]["cliPaths"])
     assert not browser & cli, sorted(browser & cli)
     assert "scim/v2" not in r["dfeEngine"]["browserFamilies"]
@@ -182,18 +205,31 @@ def leaf_paths(node: object, prefix: tuple[str, ...] = ()) -> list[tuple[str, ..
 RETIRED = (
     ("ui", "allowed_cidrs"),
     ("exposure", "infraUisExternal"),
-    *(("ui", "public", name) for name in ("kafbat", "cruise_control", "argocd", "links", "forgejo")),
+    *(
+        ("ui", "public", name)
+        for name in ("kafbat", "cruise_control", "argocd", "links", "forgejo")
+    ),
     # The receiver's door and allow list before the ingest group.
     ("exposure", "mode"),
     ("exposure", "public", "loadBalancerSourceRanges"),
 )
 
 
-@pytest.mark.parametrize("path", [
-    GATEWAY_VALUES,
-    *sorted(VALUES.glob("*.yaml")),
-    *sorted((VALUES / "apps").glob("*/*.yaml")),
-], ids=lambda p: str(p.relative_to(REPO_ROOT)))
-def test_expected_fail_no_values_file_carries_a_retired_exposure_key(path: Path) -> None:
-    found = [".".join(p) for p in leaf_paths(load(path)) if any(p[: len(r)] == r for r in RETIRED)]
+@pytest.mark.parametrize(
+    "path",
+    [
+        GATEWAY_VALUES,
+        *sorted(VALUES.glob("*.yaml")),
+        *sorted((VALUES / "apps").glob("*/*.yaml")),
+    ],
+    ids=lambda p: str(p.relative_to(REPO_ROOT)),
+)
+def test_expected_fail_no_values_file_carries_a_retired_exposure_key(
+    path: Path,
+) -> None:
+    found = [
+        ".".join(p)
+        for p in leaf_paths(load(path))
+        if any(p[: len(r)] == r for r in RETIRED)
+    ]
     assert not found, f"{path.name} still sets {found}"

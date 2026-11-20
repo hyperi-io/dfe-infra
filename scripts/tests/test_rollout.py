@@ -190,7 +190,11 @@ def test_a_config_change_rolls_the_pods() -> None:
             node = node.setdefault(part, {})
         node[leaf] = "probe-value"
         moved = checksum(render_app(app, profile, cloud, overlay=overlay), app)
-        expect(f"{app} carries a config checksum", base != "", "no checksum/config annotation")
+        expect(
+            f"{app} carries a config checksum",
+            base != "",
+            "no checksum/config annotation",
+        )
         expect(
             f"{app}: a change to {key} moves the checksum",
             base != moved,
@@ -217,11 +221,16 @@ def test_a_transport_change_rolls_the_pods() -> None:
             )
             for docs, profile in ((bus_docs, BUS), (direct_docs, DIRECT)):
                 dep = deployments(docs)[app]
-                sources = dep["spec"]["template"]["spec"]["containers"][0].get("envFrom") or []
+                sources = (
+                    dep["spec"]["template"]["spec"]["containers"][0].get("envFrom")
+                    or []
+                )
                 fed = sorted(
                     s["configMapRef"]["name"] for s in sources if "configMapRef" in s
                 )
-                watched = (dep["metadata"].get("annotations") or {}).get(RELOAD_CONFIGMAPS, "")
+                watched = (dep["metadata"].get("annotations") or {}).get(
+                    RELOAD_CONFIGMAPS, ""
+                )
                 missing = [name for name in fed if name not in watched.split(",")]
                 expect(
                     f"{app} on {profile}/{cloud}: Reloader watches every ConfigMap feeding env",
@@ -271,7 +280,7 @@ def test_a_multi_replica_workload_carries_a_budget() -> None:
 
 
 def test_a_budget_never_blocks_a_drain_the_autoscaler_can_cause() -> None:
-    """KEDA floor 1 means the workload can reach one pod, where minAvailable wedges."""
+    """KEDA floor 1 means the workload can reach one pod, where minAvailable blocks every drain."""
     profile, cloud = DIAL_CELL
     overlay = {"replicaCount": 2, "keda": {"enabled": True, "minReplicaCount": 1}}
     for app in sorted(APPS):

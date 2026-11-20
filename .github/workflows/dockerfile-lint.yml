@@ -19,7 +19,6 @@ permissions:
 jobs:
   hadolint:
     name: hadolint
-    # A named runner image, so a move of the ubuntu-latest label cannot swap the docker this runs on.
     runs-on: ubuntu-26.04
     timeout-minutes: 5
     steps:
@@ -27,7 +26,6 @@ jobs:
         with:
           persist-credentials: false
 
-      # Every Dockerfile git tracks, so a new image cannot skip the lint.
       - name: hadolint every Dockerfile
         run: |
           set -euo pipefail

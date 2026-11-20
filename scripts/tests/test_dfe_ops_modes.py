@@ -52,7 +52,9 @@ def _appsets() -> dict[str, dict]:
 
 def _charts(appset: dict) -> list[dict]:
     """The chart list a matrix appset installs, past the cluster generator."""
-    return appset["spec"]["generators"][0]["matrix"]["generators"][1]["list"]["elements"]
+    return appset["spec"]["generators"][0]["matrix"]["generators"][1]["list"][
+        "elements"
+    ]
 
 
 def test_mesh_is_a_declared_mode() -> None:
@@ -61,7 +63,9 @@ def test_mesh_is_a_declared_mode() -> None:
 
 def _mode_subcommands() -> list[str]:
     parser = dfeops.build_parser()
-    subparsers = next(a for a in parser._actions if isinstance(a, argparse._SubParsersAction))
+    subparsers = next(
+        a for a in parser._actions if isinstance(a, argparse._SubParsersAction)
+    )
     return sorted(
         name
         for name, sub in subparsers.choices.items()
@@ -70,8 +74,12 @@ def _mode_subcommands() -> list[str]:
 
 
 @pytest.mark.parametrize("sub", _mode_subcommands())
-@pytest.mark.parametrize(("mode", "refused"), [("mesh", True), ("bogus", True), ("scale", False)])
-def test_every_mode_flag_refuses_mesh_and_unknown_modes(sub: str, mode: str, refused: bool, capsys) -> None:
+@pytest.mark.parametrize(
+    ("mode", "refused"), [("mesh", True), ("bogus", True), ("scale", False)]
+)
+def test_every_mode_flag_refuses_mesh_and_unknown_modes(
+    sub: str, mode: str, refused: bool, capsys
+) -> None:
     """Every subcommand that takes --mode says why mesh is out, and accepts the real tiers."""
     parser = dfeops.build_parser()
     if sub == "kind":
@@ -83,7 +91,11 @@ def test_every_mode_flag_refuses_mesh_and_unknown_modes(sub: str, mode: str, ref
             parser.parse_args(argv)
         assert exit_info.value.code == 2
         err = capsys.readouterr().err
-        expected = "mesh is not supported in this release; use scale" if mode == "mesh" else "invalid choice"
+        expected = (
+            "mesh is not supported in this release; use scale"
+            if mode == "mesh"
+            else "invalid choice"
+        )
         assert expected in err
     else:
         try:
@@ -95,7 +107,9 @@ def test_every_mode_flag_refuses_mesh_and_unknown_modes(sub: str, mode: str, ref
 
 def test_the_argocd_profiles_disable_kafka_on_the_brokerless_modes() -> None:
     for mode in BROKERLESS:
-        assert _load(ARGO_VALUES / f"profile-{mode}.yaml")["kafka"]["mode"] == "disabled"
+        assert (
+            _load(ARGO_VALUES / f"profile-{mode}.yaml")["kafka"]["mode"] == "disabled"
+        )
     assert _load(ARGO_VALUES / "profile-scale.yaml")["kafka"]["mode"] == "cluster"
 
 
@@ -109,7 +123,9 @@ def test_the_mesh_argocd_profile_keeps_the_scale_clickhouse_cluster() -> None:
 
 def test_the_mesh_operators_appset_selects_its_own_profile() -> None:
     appset = _appsets()["dfe-mesh-operators"]
-    selector = appset["spec"]["generators"][0]["matrix"]["generators"][0]["clusters"]["selector"]
+    selector = appset["spec"]["generators"][0]["matrix"]["generators"][0]["clusters"][
+        "selector"
+    ]
     assert selector["matchLabels"]["dfe.hyperi.io/profile"] == "mesh"
 
 

@@ -1,11 +1,7 @@
 {{/*
-otel-collector.daemonsetContainerName -- the daemonset's own container name.
-
-Kubelet builds the pod log path (/var/log/pods/<pod>/<container>/*.log) from
-this name, so the filelog receiver's exclude pattern in configmap.yaml has to
-match it exactly. Centralised here so the two cannot drift apart the way they
-did when the exclude carried `otc-container`, the UPSTREAM chart's name --
-the collector then shipped its own logs, one error line per failed export.
+otel-collector.daemonsetContainerName -- the daemonset's container name. The
+filelog exclude in configmap.yaml is built from it, because kubelet builds the
+pod log path from the container name.
 */}}
 {{- define "otel-collector.daemonsetContainerName" -}}
 otel-collector
@@ -13,8 +9,7 @@ otel-collector
 
 {{/*
 otel-collector.ingressTokenDir -- where the ingress token Secret is mounted. The
-bearertokenauth extension's filename and the Deployment's mount both derive from
-it, so the file the extension reads is the one the Secret projects.
+extension's filename and the Deployment's mount both derive from it.
 */}}
 {{- define "otel-collector.ingressTokenDir" -}}
 /etc/otel-ingress
@@ -23,9 +18,8 @@ it, so the file the extension reads is the one the Secret projects.
 {{/*
 otel-collector.clickhouseInClusterTLS -- "true" when the in-cluster ClickHouse
 serves its native protocol over TLS: clickhouse.tls.enabled and a CA to sign with
-(an issuerRef, or the internal CA), the rule clickhouse-cluster's tlsEnabled and
-every other client apply to the same block. An external server stays on its own
-settings.
+(an issuerRef, or the internal CA), the rule every client applies to the shared
+block. An external server stays on its own settings.
 */}}
 {{- define "otel-collector.clickhouseInClusterTLS" -}}
 {{- $ch := .Values.clickhouse | default dict -}}
@@ -78,8 +72,8 @@ receiver append to the native address: secure=true when the server speaks TLS
 
 {{/*
 otel-collector.clickhouseCADir -- where the CA that signed ClickHouse's certificate
-is mounted. The sql_query receiver's driver reads the process's trust store, so
-SSL_CERT_DIR points at this directory, which Go adds to the system roots.
+is mounted. SSL_CERT_DIR points at it, because the sql_query driver reads the
+process's trust store.
 */}}
 {{- define "otel-collector.clickhouseCADir" -}}
 /etc/dfe-clickhouse-ca
@@ -102,9 +96,7 @@ external server, "" when the system roots are enough.
 {{/*
 otel-collector.clickhouseUser / clickhouseSecret -- the collector's own
 ClickHouse user and the Secret its password is in: exporters.clickhouse when
-set, else clickhouse.serviceUsers.otelWriter. The exporter and the sql_query
-receiver both use them. The admin account is refused, because dfe-engine alone
-holds it.
+set, else clickhouse.serviceUsers.otelWriter. The admin account is refused.
 */}}
 {{- define "otel-collector.clickhouseUser" -}}
 {{- $user := .Values.exporters.clickhouse.username | default (dig "serviceUsers" "otelWriter" "user" "" .Values.clickhouse) -}}
@@ -130,11 +122,9 @@ holds it.
 
 {{/*
 otel-collector.waitForEngine -- dfe-common.waitForEngine's init container, on
-busybox's wget because the collector image has no shell. The gateway reads its
-logs table's columns once, at start, as the user the engine creates, so started
-first it writes every log row without EventName. Rendered only while the gateway
-connects to ClickHouse. test_clickhouse_app_identity.py holds the script to the
-library's.
+busybox's wget. Rendered only while the gateway connects to ClickHouse, and
+test_clickhouse_app_identity.py holds the script to the library's. See
+docs/clickhouse-identity.md.
 */}}
 {{- define "otel-collector.waitForEngine" -}}
 {{- $w := .Values.waitForEngine | default dict -}}
@@ -180,8 +170,7 @@ initContainers:
 
 {{/*
 otel-collector.validateIngress -- the otel.ingress render guards. The messages
-are the gateway chart's own, word for word (helm/edge/gateway _routes.tpl), so
-both refusals read the same whichever chart an operator renders first.
+match the gateway chart's (helm/edge/gateway _routes.tpl) word for word.
 */}}
 {{- define "otel-collector.validateIngress" -}}
 {{- $ingress := .Values.otel.ingress -}}
@@ -195,8 +184,7 @@ both refusals read the same whichever chart an operator renders first.
 
 {{/*
 otel-collector.validatePriorityClass -- the API server refuses a created class
-named system-* or valued above 1,000,000,000, and it refuses the daemonset's
-pods while the class they name does not exist.
+named system-* or valued above 1,000,000,000.
 */}}
 {{- define "otel-collector.validatePriorityClass" -}}
 {{- $pc := .Values.daemonset.priorityClass -}}
@@ -251,8 +239,7 @@ true
 
 {{/*
 otel-collector.validateProviderLogs -- the providerLogs render guards. A flavour
-that names a source it cannot read fails the render, so the miss shows up when the
-chart is applied rather than as a collector that polls nothing.
+that names a source it cannot read fails the render.
 */}}
 {{- define "otel-collector.validateProviderLogs" -}}
 {{- $pl := .Values.clusterTelemetry.providerLogs -}}
@@ -278,7 +265,7 @@ chart is applied rather than as a collector that polls nothing.
 {{- end -}}
 {{- end -}}
 
-{{/* The provider-logs workloads' ServiceAccount. Its own, so a cloud role bound to it reaches nothing else in the chart. */}}
+{{/* The provider-logs workloads' ServiceAccount, separate so a cloud role bound to it reaches nothing else. */}}
 {{- define "otel-collector.providerLogsServiceAccount" -}}
 {{- printf "%s-provider-logs" (include "dfe-common.fullname" .) -}}
 {{- end -}}

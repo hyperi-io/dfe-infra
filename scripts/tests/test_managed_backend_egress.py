@@ -98,7 +98,9 @@ def facts(provider: str) -> dict[str, str]:
 
 
 def _target(app: str, provider: str) -> object:
-    return weave().Target(app, *CELL, annotations=tuple(sorted(facts(provider).items())))
+    return weave().Target(
+        app, *CELL, annotations=tuple(sorted(facts(provider).items()))
+    )
 
 
 def render_element(appset: str, element: dict, provider: str) -> list[dict]:
@@ -115,7 +117,13 @@ def render_element(appset: str, element: dict, provider: str) -> list[dict]:
     chain = []
     for raw in source["helm"].get("valueFiles") or []:
         path = None if raw.startswith("$") else (chart / raw).resolve()
-        chain.append({"written": raw, "path": path, "present": path is not None and path.is_file()})
+        chain.append(
+            {
+                "written": raw,
+                "path": path,
+                "present": path is not None and path.is_file(),
+            }
+        )
     docs = w.render_source(
         source,
         chart=chart,
@@ -155,7 +163,9 @@ def rendered(provider: str) -> tuple[dict, ...]:
 
 @functools.cache
 def policies(provider: str) -> tuple[dict, ...]:
-    element = next(e for e in _elements("layer2-platform.yaml") if e["app"] == "network-policies")
+    element = next(
+        e for e in _elements("layer2-platform.yaml") if e["app"] == "network-policies"
+    )
     docs = render_element("layer2-platform.yaml", element, provider)
     return tuple(d for d in docs if d.get("kind") == "NetworkPolicy")
 
@@ -167,7 +177,9 @@ SOURCE = "flowx"
 def per_config_apps() -> list[str]:
     """The apps the manifest deploys once per source, each under its own name."""
     apps = yaml.safe_load(MANIFEST.read_text(encoding="utf-8"))["apps"]
-    return sorted(name for name, shape in apps.items() if shape["multiplicity"] == "per_config")
+    return sorted(
+        name for name, shape in apps.items() if shape["multiplicity"] == "per_config"
+    )
 
 
 def instance_overlay(app: str) -> dict:
@@ -189,7 +201,9 @@ def rendered_instance(app: str, provider: str) -> tuple[dict, ...]:
     """One per-config instance of ``app``, bound to SOURCE, as its Application renders it."""
     namespace = weave().Target("x", *CELL).namespace
     overlay = instance_overlay(app)
-    docs = render_app(app, *CELL, annotations=facts(provider), instance=SOURCE, overlay=overlay)
+    docs = render_app(
+        app, *CELL, annotations=facts(provider), instance=SOURCE, overlay=overlay
+    )
     for d in docs:
         d.setdefault("metadata", {}).setdefault("namespace", namespace)
     return tuple(docs)
@@ -211,18 +225,26 @@ def _workload_text(doc: dict, configmaps: dict[tuple[str, str], dict]) -> str:
     namespace = doc["metadata"]["namespace"]
     names = set()
     spec = pod.get("spec") or {}
-    for container in (spec.get("containers") or []) + (spec.get("initContainers") or []):
+    for container in (spec.get("containers") or []) + (
+        spec.get("initContainers") or []
+    ):
         for source in container.get("envFrom") or []:
             names.add((source.get("configMapRef") or {}).get("name"))
         for entry in container.get("env") or []:
-            names.add(((entry.get("valueFrom") or {}).get("configMapKeyRef") or {}).get("name"))
+            names.add(
+                ((entry.get("valueFrom") or {}).get("configMapKeyRef") or {}).get(
+                    "name"
+                )
+            )
     for volume in spec.get("volumes") or []:
         names.add((volume.get("configMap") or {}).get("name"))
         for projected in (volume.get("projected") or {}).get("sources") or []:
             names.add((projected.get("configMap") or {}).get("name"))
     parts = [yaml.safe_dump(pod)]
     parts += [
-        yaml.safe_dump(configmaps[(namespace, n)]) for n in names if (namespace, n) in configmaps
+        yaml.safe_dump(configmaps[(namespace, n)])
+        for n in names
+        if (namespace, n) in configmaps
     ]
     return "\n".join(parts)
 
@@ -244,7 +266,11 @@ def clients_in(docs: tuple[dict, ...], host: str) -> list[tuple[str, dict, str]]
         if doc.get("kind") in POD_KINDS and host in _workload_text(doc, configmaps):
             labels = (_pod_template(doc).get("metadata") or {}).get("labels") or {}
             found.append(
-                (doc["metadata"]["namespace"], labels, f"{doc['kind']}/{doc['metadata']['name']}")
+                (
+                    doc["metadata"]["namespace"],
+                    labels,
+                    f"{doc['kind']}/{doc['metadata']['name']}",
+                )
             )
     return found
 
@@ -277,7 +303,9 @@ def _reaches_outside(rule: dict) -> bool:
         block = peer.get("ipBlock")
         if not block or OUTSIDE not in ipaddress.ip_network(block["cidr"]):
             continue
-        if not any(OUTSIDE in ipaddress.ip_network(cidr) for cidr in block.get("except") or []):
+        if not any(
+            OUTSIDE in ipaddress.ip_network(cidr) for cidr in block.get("except") or []
+        ):
             return True
     return False
 
@@ -287,12 +315,15 @@ def _opens(rule: dict, port: int) -> bool:
     if not ports:
         return True
     return any(
-        p.get("port") == port or (p.get("endPort") and p["port"] <= port <= p["endPort"])
+        p.get("port") == port
+        or (p.get("endPort") and p["port"] <= port <= p["endPort"])
         for p in ports
     )
 
 
-def unreachable(provider: str, namespace: str, labels: dict, ports: list[int]) -> list[int]:
+def unreachable(
+    provider: str, namespace: str, labels: dict, ports: list[int]
+) -> list[int]:
     """The ports a pod cannot dial outside the cluster on. Empty for an unisolated pod."""
     selecting = [
         p
@@ -303,7 +334,12 @@ def unreachable(provider: str, namespace: str, labels: dict, ports: list[int]) -
     ]
     if not selecting:
         return []
-    rules = [r for p in selecting for r in p["spec"].get("egress") or [] if _reaches_outside(r)]
+    rules = [
+        r
+        for p in selecting
+        for r in p["spec"].get("egress") or []
+        if _reaches_outside(r)
+    ]
     return [port for port in ports if not any(_opens(r, port) for r in rules)]
 
 
@@ -373,7 +409,9 @@ def test_the_manifest_has_per_config_apps_to_check() -> None:
 def test_a_per_config_instance_can_dial_the_broker(app: str, provider: str) -> None:
     """An instance's app.kubernetes.io/name is <app>-<source>, which no app list names."""
     found = clients_in(rendered_instance(app, provider), CLIENT_HOST)
-    assert [workload for _, _, workload in found] == [f"Deployment/{app}-{SOURCE}"], found
+    assert [workload for _, _, workload in found] == [f"Deployment/{app}-{SOURCE}"], (
+        found
+    )
     ports = offering()["backends"][provider]["client_ports"]
     blocked = {
         workload: missing

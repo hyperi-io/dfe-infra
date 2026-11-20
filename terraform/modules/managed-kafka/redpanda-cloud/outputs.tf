@@ -1,5 +1,3 @@
-// No zookeeper output: Redpanda has no ZooKeeper to describe.
-
 output "bootstrap" {
   description = "The SASL/SCRAM bootstrap string DFE connects with, normalised to bare host:port pairs. Redpanda returns a LIST, and a private cluster returns a different list from a public one, so both are collapsed to the one spelling every DFE reader downstream expects."
   value       = local.bootstrap

@@ -1,28 +1,11 @@
-// The DFE principal and its grants. dfe-engine creates every topic at startup,
-// under the topic Create grant below, so this body creates none.
-//
-// TWO service accounts, for the same reason MSK enables both SASL/IAM and
-// SASL/SCRAM: something has to be allowed to write the first ACL, and that
-// something must not be the credential DFE runs as. The manager account holds
-// CloudClusterAdmin and exists only for tofu; the DFE account holds the grant
-// set helm/charts/kafka/templates/kafka-user.yaml gives on-prem -- topic * with
-// Read, Write, Create, Describe, Delete, Alter, DescribeConfigs and
-// AlterConfigs, which is every topic call dfe-engine makes, and consumer groups
-// fenced to the dfe- prefix with Read and Describe. No cluster operations.
-//
-// The credential is an API key and secret used as SASL PLAIN. Confluent has no
-// SCRAM on any tier.
-//
-// ACLs are data-plane resources reached over the REST endpoint, so
-// on private connectivity tofu has to run somewhere that can resolve and reach
-// it -- inside the VPC, or behind a resolver rule that forwards into it.
+// The DFE principal, a manager principal that writes its ACLs, and the grants. dfe-engine creates the topics.
+// The grant set, why two accounts, and where tofu has to run: docs/deployment/kafka/confluent-cloud.md#module-design-notes.
 
 locals {
   topic_grants = toset(["READ", "WRITE", "CREATE", "DESCRIBE", "DELETE", "ALTER", "DESCRIBE_CONFIGS", "ALTER_CONFIGS"])
 
   group_grants = toset(["READ", "DESCRIBE"])
 
-  // Every ACL this module writes, at one grant apiece.
   acls = merge(
     {
       for operation in local.topic_grants : "topic-${lower(operation)}" => {
@@ -43,10 +26,6 @@ locals {
   )
 }
 
-// ---------------------------------------------------------------------------
-// The identity tofu writes with
-// ---------------------------------------------------------------------------
-
 resource "confluent_service_account" "manager" {
   display_name = "${var.name}-manager"
   description  = "Writes the ACLs for ${var.name} (${var.env}). Never used by DFE."
@@ -55,20 +34,18 @@ resource "confluent_service_account" "manager" {
 resource "confluent_role_binding" "manager" {
   principal = "User:${confluent_service_account.manager.id}"
 
-  // Confluent's own role name for a cluster administrator.
   role_name   = "CloudClusterAdmin"
   crn_pattern = confluent_kafka_cluster.this.rbac_crn
 }
 
 resource "confluent_api_key" "manager" {
-  // The role binding has to land before this key writes anything, which also
-  // orders every ACL below behind it.
+  // The role binding lands before the key writes anything, which orders every ACL behind it.
   depends_on = [confluent_role_binding.manager]
 
   display_name = "${var.name}-manager-kafka-api-key"
   description  = "Kafka API key for the ${var.name} manager service account"
 
-  // The provider's wait fails the apply on the first reset its retries do not outlast, so terraform_data.rest_ready waits for this key instead wherever the deployer can reach the endpoint.
+  // The provider's wait fails the apply on the first reset, so terraform_data.rest_ready waits instead.
   disable_wait_for_ready = true
 
   owner {
@@ -88,10 +65,6 @@ resource "confluent_api_key" "manager" {
   }
 }
 
-// ---------------------------------------------------------------------------
-// The identity DFE runs as
-// ---------------------------------------------------------------------------
-
 resource "confluent_service_account" "dfe" {
   display_name = "${var.name}-${var.service_account_name}"
   description  = "The one principal the DFE fleet authenticates as on ${var.name} (${var.env})"
@@ -101,7 +74,7 @@ resource "confluent_api_key" "dfe" {
   display_name = "${var.name}-${var.service_account_name}-kafka-api-key"
   description  = "SASL PLAIN credential for the DFE fleet on ${var.name}"
 
-  // Tofu never signs in with this key, and the provider's wait needs a 200 from the REST endpoint and fails the apply on the first transport error.
+  // Tofu never signs in with this key, so the provider's wait for a 200 would only fail the apply.
   disable_wait_for_ready = true
 
   owner {
@@ -121,14 +94,10 @@ resource "confluent_api_key" "dfe" {
   }
 }
 
-// ---------------------------------------------------------------------------
-// The grants
-// ---------------------------------------------------------------------------
-
 resource "confluent_kafka_acl" "dfe" {
   for_each = local.acls
 
-  // An ACL write fails the apply on a reset or a 401, so it waits for the manager key to answer.
+  // Without the wait, a reset or a 401 fails the apply.
   depends_on = [terraform_data.rest_ready]
 
   kafka_cluster {
@@ -139,7 +108,7 @@ resource "confluent_kafka_acl" "dfe" {
   resource_name = each.value.resource_name
   pattern_type  = each.value.pattern_type
 
-  // Confluent's principal is the service account's own id, not its name.
+  // Confluent's principal is the service account's id, not its name.
   principal  = "User:${confluent_service_account.dfe.id}"
   host       = "*"
   operation  = each.value.operation

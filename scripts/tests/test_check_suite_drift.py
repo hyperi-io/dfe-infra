@@ -45,8 +45,10 @@ sys.path.insert(0, str(SCRIPTS))
 import suite_graph  # noqa: E402
 
 GIT = shutil.which("git")
+# The check renders the suite-graph page through merrow (scripts/tests/requirements-merrow.txt).
+MERROW = shutil.which("merrow")
 
-SUITE = '''\
+SUITE = """\
 schema: "1"
 verified: "2026-09-03"
 edge_kinds:
@@ -129,9 +131,9 @@ lanes:
   - name: deployment
     members: [dfe-infra]
     why: "last"
-'''
+"""
 
-VERSIONS = '''\
+VERSIONS = """\
 current: "1.0.0"
 stacks:
   1.0.0:
@@ -141,37 +143,37 @@ stacks:
       app-b: "sha256:app-b-image"
     chart-digests:
       app-b: "sha256:app-b-chart"
-'''
+"""
 
-CHART = '''\
+CHART = """\
 apiVersion: v2
 name: dfe-app-b
 description: a chart
 type: application
 version: 0.1.0
 appVersion: "v1"
-'''
+"""
 
-CARGO = '''\
+CARGO = """\
 [package]
 name = "app-b"
 
 [dependencies]
 tokio = "1"
 liba = { version = ">=1.0, <2" }
-'''
+"""
 
 PAGE_HEAD = "# page\n\n"
 
 # The same lib-a -> app-b dependency declared a second way, as a Python
 # distribution.
-PYPROJECT = '''\
+PYPROJECT = """\
 [project]
 name = "app-b"
 dependencies = [
     "liba>=1.0,<2",
 ]
-'''
+"""
 
 PY_KIND = """\
   python-dep:
@@ -234,7 +236,7 @@ LIB_C_UNCONSUMED_SUITE = LIB_C_EDGE_SUITE.replace(
 
 CARGO_WITH_C = CARGO + 'libc-ext = { version = "0.1", optional = true }\n'
 
-CARGO_LOCK = '''\
+CARGO_LOCK = """\
 version = 4
 
 [[package]]
@@ -245,24 +247,27 @@ version = "0.1.0"
 name = "liba"
 version = "1.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-'''
+"""
 
-CARGO_LOCK_WITH_C = CARGO_LOCK + '''
+CARGO_LOCK_WITH_C = (
+    CARGO_LOCK
+    + """
 [[package]]
 name = "libc-ext"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-'''
+"""
+)
 
 # A Python lock that happens to name a Rust producer's package: a different ecosystem.
-UV_LOCK_NAMING_LIB_C = '''\
+UV_LOCK_NAMING_LIB_C = """\
 version = 1
 
 [[package]]
 name = "libc-ext"
 version = "9.9.9"
 source = { registry = "https://pypi.org/simple" }
-'''
+"""
 
 # lib-d publishes to PyPI under a name uv.lock writes in its normalised form.
 LIB_D_NODE = """\
@@ -286,14 +291,14 @@ LIB_D_NODE = """\
 LIB_D_SUITE = SUITE.replace("edges:\n", LIB_D_NODE + "edges:\n", 1).replace(
     "members: [lib-a]", "members: [lib-a, lib-d]", 1
 )
-UV_LOCK_NAMING_LIB_D = '''\
+UV_LOCK_NAMING_LIB_D = """\
 version = 1
 
 [[package]]
 name = "lib-d-pkg"
 version = "0.4.0"
 source = { registry = "https://pypi.org/simple" }
-'''
+"""
 
 
 def build(
@@ -334,6 +339,10 @@ def build(
     graph = suite_graph.load(infra / "suite.yaml")
     body = "stale\n" if stale_docs else None
     page = PAGE_HEAD + (
+        "<!-- suite-graph:begin overview:services -->\n"
+        "<!-- suite-graph:end overview:services -->\n"
+        "<!-- suite-graph:begin overview:platform -->\n"
+        "<!-- suite-graph:end overview:platform -->\n"
         "<!-- suite-graph:begin producer:lib-a -->\n"
         + (body or "")
         + "<!-- suite-graph:end producer:lib-a -->\n"
@@ -386,8 +395,13 @@ def _make_clone(
 
 def _run_git(cwd: Path, *args: str) -> None:
     subprocess.run(
-        [GIT, *args], cwd=cwd, check=True, capture_output=True,
-        text=True, encoding="utf-8", errors="replace",
+        [GIT, *args],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
     )
 
 
@@ -396,12 +410,20 @@ def _write(path: Path, text: str) -> None:
     path.write_text(text, encoding="utf-8", newline="\n")
 
 
-def check(infra: Path, *args: str) -> tuple[int, str]:
-    """Run the copied check with a PATH holding git but never `maid`."""
+def check(
+    infra: Path, *args: str, diagram_check: Path | None = None
+) -> tuple[int, str]:
+    """Run the copied check with a PATH holding git and merrow only.
+
+    DIAGRAM_CHECK names the diagram checker. By default it names a file that
+    does not exist, so the result never depends on what the host has installed.
+    """
     restricted = infra.parent / "restricted-path"
     restricted.mkdir(exist_ok=True)
     env = dict(os.environ)
-    env["PATH"] = str(Path(GIT).parent) if GIT else str(restricted)
+    tools = [str(Path(tool).parent) for tool in (GIT, MERROW) if tool]
+    env["PATH"] = os.pathsep.join(tools) or str(restricted)
+    env["DIAGRAM_CHECK"] = str(diagram_check or infra.parent / "no-diagram-check.py")
     proc = subprocess.run(
         [sys.executable, str(infra / "scripts" / "check_suite_drift.py"), *args],
         capture_output=True,
@@ -415,7 +437,12 @@ def check(infra: Path, *args: str) -> tuple[int, str]:
 
 
 def _one_case(
-    name: str, expect_code: int, needle: str, *, extra_args: tuple[str, ...] = (), **kwargs
+    name: str,
+    expect_code: int,
+    needle: str,
+    *,
+    extra_args: tuple[str, ...] = (),
+    **kwargs,
 ) -> None:
     """One built tree, one check run, one verdict."""
     no_app_b_block = kwargs.pop("no_app_b_block", False)
@@ -439,33 +466,72 @@ def main() -> int:
             repos = str(root / "repos")
 
             code, output = check(infra, "--repos", repos)
-            expect("a sound tree with the clones present is OK",
-                   code == 0 and "OK -- suite.yaml" in output, f"exit {code}\n{output}")
-            expect("a chart with no member is advisory, not a failure",
-                   "WARN  chart dfe-orphan" in output, output)
-            expect("maid missing is reported, not swallowed",
-                   "SKIPPED  mermaid syntax" in output, output)
+            expect(
+                "a sound tree with the clones present is OK",
+                code == 0 and "OK -- suite.yaml" in output,
+                f"exit {code}\n{output}",
+            )
+            expect(
+                "a chart with no member is advisory, not a failure",
+                "WARN  chart dfe-orphan" in output,
+                output,
+            )
+            expect(
+                "a missing diagram checker is reported, not swallowed",
+                "SKIPPED  diagram source pass" in output,
+                output,
+            )
+            for label, body, want_code, needle in (
+                ("passes", "print('0 failing')\n", 0, "OK -- suite.yaml"),
+                (
+                    "rejects a block",
+                    "print('FAIL  page.md:3')\nprint('        R7 no accTitle')\nraise SystemExit(1)\n",
+                    1,
+                    "diagram_check rejects a diagram -- FAIL  page.md:3 R7 no accTitle",
+                ),
+            ):
+                fake = root / "fake-diagram-check.py"
+                fake.write_text(body, encoding="utf-8", newline="\n")
+                code, output = check(infra, "--repos", repos, diagram_check=fake)
+                expect(
+                    f"an installed diagram checker that {label} decides the run",
+                    code == want_code and needle in output,
+                    f"exit {code}\n{output}",
+                )
 
             code, output = check(infra, "--repos", repos, "--strict")
-            expect("--strict with maid absent and the clones present still exits 0",
-                   code == 0, f"exit {code}\n{output}")
-            expect("maid absent is not counted as a repo skip",
-                   "0 repo(s) skipped" in output, output)
+            expect(
+                "--strict with the diagram checker absent and the clones present still exits 0",
+                code == 0,
+                f"exit {code}\n{output}",
+            )
+            expect(
+                "an absent diagram checker is not counted as a repo skip",
+                "0 repo(s) skipped" in output,
+                output,
+            )
 
             code, output = check(infra, "--repos", str(root / "nowhere"), "--strict")
-            expect("--strict with the clones absent exits 2",
-                   code == 2 and "never checked" in output, f"exit {code}\n{output}")
+            expect(
+                "--strict with the clones absent exits 2",
+                code == 2 and "never checked" in output,
+                f"exit {code}\n{output}",
+            )
 
             code, output = check(infra, "--repos", str(root / "nowhere"))
-            expect("without --strict the same skip exits 0 and says so",
-                   code == 0 and "SKIPPED  citations and lock files in app-b" in output,
-                   f"exit {code}\n{output}")
+            expect(
+                "without --strict the same skip exits 0 and says so",
+                code == 0 and "SKIPPED  citations and lock files in app-b" in output,
+                f"exit {code}\n{output}",
+            )
 
         _one_case(
             "a citation correct on origin/main but wrong in the working tree is OK",
             0,
             "OK -- suite.yaml",
-            worktree_cargo=CARGO.replace('liba = { version = ">=1.0, <2" }', 'tokio2 = "1"'),
+            worktree_cargo=CARGO.replace(
+                'liba = { version = ">=1.0, <2" }', 'tokio2 = "1"'
+            ),
         )
         _one_case(
             "a citation wrong on origin/main but correct in the working tree FAILs",
@@ -509,7 +575,9 @@ def main() -> int:
             "an image-pin edge whose producer the stack no longer tags FAILs",
             1,
             "has no tag under apps: or content: for app-b",
-            versions=VERSIONS.replace('    apps:\n      app-b: "v1"\n', '    apps:\n      other: "v1"\n'),
+            versions=VERSIONS.replace(
+                '    apps:\n      app-b: "v1"\n', '    apps:\n      other: "v1"\n'
+            ),
         )
         _one_case(
             "an image-pin edge whose producer has no digest FAILs",
@@ -537,7 +605,9 @@ def main() -> int:
             "a citation past the end of its file FAILs",
             1,
             "fewer than 99 lines",
-            suite=SUITE.replace('"dfe-infra/versions.yaml"', '"dfe-infra/versions.yaml:99"'),
+            suite=SUITE.replace(
+                '"dfe-infra/versions.yaml"', '"dfe-infra/versions.yaml:99"'
+            ),
         )
         _one_case(
             "a cargo-dep citation carrying a line number is a structural failure",
@@ -549,7 +619,9 @@ def main() -> int:
             "a dependency added above the declaration leaves the citation sound",
             0,
             "OK -- suite.yaml",
-            cargo=CARGO.replace('tokio = "1"\n', 'tokio = "1"\nserde = "1"\nbytes = "1"\n'),
+            cargo=CARGO.replace(
+                'tokio = "1"\n', 'tokio = "1"\nserde = "1"\nbytes = "1"\n'
+            ),
         )
         _one_case(
             "a manifest that no longer declares the package FAILs",
@@ -694,8 +766,11 @@ def main() -> int:
                 clone_files={"Cargo.lock": CARGO_LOCK},
             )
             code, output = check(infra, "--repos", str(root / "repos"))
-            expect("an unconsumed note that no lock contradicts raises no warning",
-                   code == 0 and "unconsumed" not in output, f"exit {code}\n{output}")
+            expect(
+                "an unconsumed note that no lock contradicts raises no warning",
+                code == 0 and "unconsumed" not in output,
+                f"exit {code}\n{output}",
+            )
 
         _one_case(
             "a producer with no package declared FAILs rather than guessing",
@@ -719,7 +794,9 @@ def main() -> int:
             "a versions.yaml app with no member is advisory",
             0,
             "WARN  versions.yaml apps.ghost",
-            versions=VERSIONS.replace('      app-b: "v1"\n', '      app-b: "v1"\n      ghost: "v1"\n'),
+            versions=VERSIONS.replace(
+                '      app-b: "v1"\n', '      app-b: "v1"\n      ghost: "v1"\n'
+            ),
         )
         _one_case(
             "a producer with no diagram block is advisory",
@@ -751,10 +828,16 @@ def main() -> int:
         # records in suite.yaml why it does not.
         proc = subprocess.run(
             [sys.executable, str(REPO_ROOT / "scripts" / "check_suite_drift.py")],
-            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
         )
-        expect("the committed suite.yaml raises no advisory",
-               "0 advisory" in proc.stdout, proc.stdout + proc.stderr)
+        expect(
+            "the committed suite.yaml raises no advisory",
+            "0 advisory" in proc.stdout,
+            proc.stdout + proc.stderr,
+        )
         expect("and still passes", proc.returncode == 0, f"exit {proc.returncode}")
         return summary()
 

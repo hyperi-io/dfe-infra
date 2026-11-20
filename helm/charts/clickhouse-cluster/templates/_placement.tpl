@@ -1,11 +1,5 @@
 {{/*
-dfe-clickhouse.poolSelector -- the node labels one workload's pods require, as
-YAML: its pool's dfe.hyperi.io/workload label where nodeScheduling.dedicatedPools
-names the pool or `always` is true, then a deployer's nodeScheduling.nodeSelector
-over it. Empty where neither applies and the deployer names no selector.
-
-layer2-data hands dedicatedPools the tainted pools on the cluster secret, so a
-cluster without them never gets a requirement its pods could wait on.
+dfe-clickhouse.poolSelector -- the node labels one workload's pods require, as YAML: its pool's dfe.hyperi.io/workload label where nodeScheduling.dedicatedPools names the pool or `always` is true, then nodeScheduling.nodeSelector over it.
 
 Usage:
   {{- with include "dfe-clickhouse.poolSelector" (dict "root" $ "pool" "keeper") | fromYaml }}

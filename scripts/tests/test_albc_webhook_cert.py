@@ -78,7 +78,11 @@ def _values(tmp_path: Path, element: dict) -> dict:
     ctx.write_text(yaml.safe_dump({"ctx": context}), encoding="utf-8")
     out = subprocess.run(
         ["helm", "template", "appset-values", str(chart), "-f", str(ctx)],
-        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
     )
     assert out.returncode == 0, out.stderr
     return yaml.safe_load(out.stdout) or {}
@@ -88,7 +92,9 @@ def _controller() -> dict:
     return next(e for e in _elements(_appset()) if e["chart"] == CHART)
 
 
-def test_the_controller_takes_its_webhook_certificate_from_cert_manager(tmp_path: Path) -> None:
+def test_the_controller_takes_its_webhook_certificate_from_cert_manager(
+    tmp_path: Path,
+) -> None:
     values = _values(tmp_path, _controller())
     assert values["enableCertManager"] is True, values
     # The values the setting sits beside still render, so it landed in the controller's block.
@@ -101,7 +107,9 @@ def test_no_render_time_certificate_is_configured(tmp_path: Path) -> None:
     values = _values(tmp_path, _controller())
     assert "keepTLSSecret" not in values, values
     assert "webhookTLS" not in values, values
-    assert "certManager" not in values, "the chart's own self-signed issuer chain is the one meant"
+    assert "certManager" not in values, (
+        "the chart's own self-signed issuer chain is the one meant"
+    )
 
 
 def test_no_other_addon_gets_the_setting(tmp_path: Path) -> None:
@@ -118,10 +126,13 @@ def test_cert_manager_is_installed_and_waited_for_before_argo() -> None:
     lines = BOOTSTRAP.read_text(encoding="utf-8").splitlines()
     step_two = "] cert-manager (detect-or-install)"
     cert_manager = next(i for i, line in enumerate(lines) if step_two in line)
-    argo = next(i for i, line in enumerate(lines) if "] ArgoCD with Valkey cache" in line)
+    argo = next(
+        i for i, line in enumerate(lines) if "] ArgoCD with Valkey cache" in line
+    )
     assert cert_manager < argo
     install = next(
-        i for i, line in enumerate(lines)
+        i
+        for i, line in enumerate(lines)
         if i > cert_manager and "helm upgrade --install cert-manager" in line
     )
     step = "\n".join(lines[install : install + 6])

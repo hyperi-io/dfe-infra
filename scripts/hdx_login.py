@@ -97,7 +97,9 @@ def run(base: str, email: str, password: str, shot: Path) -> int:
     with sync_playwright() as p:
         browser = p.chromium.launch()
         page = browser.new_page(viewport={"width": 1440, "height": 900})
-        page.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
+        page.on(
+            "console", lambda m: errors.append(m.text) if m.type == "error" else None
+        )
 
         # Idempotent: LOGIN first (the user usually already exists on a repeat run);
         # if that does not leave the auth page, REGISTER (first run). Submitting the
@@ -123,7 +125,9 @@ def run(base: str, email: str, password: str, shot: Path) -> int:
 
         # Wait for the app to leave the auth page and render its shell.
         try:
-            page.wait_for_url(lambda u: "/register" not in u and "/login" not in u, timeout=30000)
+            page.wait_for_url(
+                lambda u: "/register" not in u and "/login" not in u, timeout=30000
+            )
         except Exception:
             pass
         page.wait_for_timeout(6000)
@@ -151,9 +155,13 @@ def run(base: str, email: str, password: str, shot: Path) -> int:
             guard.append((r, page.evaluate("() => location.pathname")))
 
         # DFE chromeless embed: ?embed=1 must render NO AppNav (dfe-ui owns the nav).
-        page.goto(base + "/search?embed=1", wait_until="domcontentloaded", timeout=30000)
+        page.goto(
+            base + "/search?embed=1", wait_until="domcontentloaded", timeout=30000
+        )
         page.wait_for_timeout(3500)
-        embed_has_nav = page.evaluate("() => !!document.querySelector('[data-testid=\"app-nav\"]')")
+        embed_has_nav = page.evaluate(
+            "() => !!document.querySelector('[data-testid=\"app-nav\"]')"
+        )
         browser.close()
 
     stuck = any(m in (info["text"] or "") for m in SPLASH)
@@ -161,7 +169,11 @@ def run(base: str, email: str, password: str, shot: Path) -> int:
     checks = [
         ("left-auth-page", not on_auth, f"still on {info['url']}" if on_auth else ""),
         ("not-stuck", not stuck, f"splash: {info['text']!r}" if stuck else ""),
-        ("app-shell", bool(info["nav"]), "no chrome/nav rendered" if not info["nav"] else ""),
+        (
+            "app-shell",
+            bool(info["nav"]),
+            "no chrome/nav rendered" if not info["nav"] else "",
+        ),
         ("font-inter", "inter" in (info["font"] or "").lower(), ""),
         (
             "routes-blocked",
@@ -179,7 +191,9 @@ def run(base: str, email: str, password: str, shot: Path) -> int:
     print(f"  screenshot -> {shot}\n")
     failures = 0
     for name, ok, note in checks:
-        print(f"  [{'ok  ' if ok else 'FAIL'}] {name}" + (f" -- {note}" if note else ""))
+        print(
+            f"  [{'ok  ' if ok else 'FAIL'}] {name}" + (f" -- {note}" if note else "")
+        )
         failures += 0 if ok else 1
     if errors:
         print(f"\n  console errors ({len(errors)}):")

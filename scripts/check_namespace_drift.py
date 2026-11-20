@@ -64,7 +64,9 @@ def _load_yaml(path: Path) -> object:
         return yaml.safe_load(fh)
 
 
-def _subchart_namespaces(chart: str, values: object, found: dict[str, set[str]]) -> None:
+def _subchart_namespaces(
+    chart: str, values: object, found: dict[str, set[str]]
+) -> None:
     """Record `<chart>/<subchart>` for each subchart the element's values move with namespaceOverride."""
     if not isinstance(values, str):
         return
@@ -73,7 +75,9 @@ def _subchart_namespaces(chart: str, values: object, found: dict[str, set[str]])
         return
     for subchart, body in parsed.items():
         if isinstance(body, dict) and isinstance(body.get("namespaceOverride"), str):
-            found.setdefault(f"{chart}/{subchart}", set()).add(body["namespaceOverride"])
+            found.setdefault(f"{chart}/{subchart}", set()).add(
+                body["namespaceOverride"]
+            )
 
 
 def _walk_chart_elements(node: object, found: dict[str, set[str]]) -> None:

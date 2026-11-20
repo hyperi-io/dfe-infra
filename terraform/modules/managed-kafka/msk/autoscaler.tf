@@ -1,36 +1,12 @@
-// Broker-count autoscaling. AWS gives MSK Express no equivalent of a scaling
-// policy or target-tracking group: UpdateBrokerCount is a manual control-plane
-// call, so something has to watch the cluster and call it. That something is a
-// Lambda EventBridge runs every var.autoscaling.period_seconds. Each run reads
-// the cluster's current broker count, the BytesInPerSec of exactly those
-// brokers over the last evaluation_periods, and adds var.autoscaling.step when
-// every period's per-broker mean was over the threshold, refusing above
-// max_brokers and refusing to ever scale in (broker_scaler.py). It acts only on
-// an ACTIVE cluster a full window after its last operation ended, so a run that
-// overlaps or repeats another never adds a step on load read before the last one.
-//
-// A schedule, not a CloudWatch alarm: an alarm names a fixed broker set and
-// notifies once per transition, so it never saw an added broker and never fired
-// a second step while load stayed high.
-//
-// No companion check on KafkaDataLogsDiskUsed: Express storage is MSK-managed
-// (msk/main.tf carries no storage_info at all), so there is no disk to watch --
-// that belongs to a Standard cluster with its own EBS volumes.
+// Broker-count autoscaling: an EventBridge schedule runs a Lambda that calls UpdateBrokerCount, which Express has no scaling policy for.
+// How a run decides, and why a schedule rather than an alarm: docs/deployment/kafka/aws-msk-operations.md#broker-count-autoscaling.
 
 locals {
-  // AWS's own constraint -- a scale-out step has to keep the broker count a
-  // multiple of the client subnet count, exactly like broker_count -- is what
-  // makes the subnet count the only default that is always safe.
+  // A step must keep the broker count a multiple of the subnet count, so the subnet count is the safe default.
   autoscaling_step = coalesce(var.autoscaling.step, length(var.network.private_subnet_ids))
 
-  // MB/s is the unit AWS publishes broker network throughput in and the unit
-  // BytesInPerSec is reported in. This is the SI-decimal MB -> bytes conversion,
-  // not a capacity number, so it is a named local rather than a bare 1000000
-  // in the arithmetic below.
   mb_per_s_to_bytes_per_s = 1000000
 
-  // What ONE broker may carry before the cluster needs more of them. Per broker
-  // rather than per cluster, so the same figure holds at every broker count.
   autoscaling_threshold_bytes_per_sec_per_broker = (
     var.autoscaling.per_broker_capacity_mb_s
     * local.mb_per_s_to_bytes_per_s
@@ -39,15 +15,11 @@ locals {
 
   autoscaling_enabled = var.autoscaling.enabled
 
-  // EventBridge's rate() counts whole minutes, and the variable is refused unless it is whole minutes.
+  // rate() counts whole minutes, and variables.tf enforces them.
   seconds_per_minute         = 60
   autoscaling_period_minutes = var.autoscaling.period_seconds / local.seconds_per_minute
   autoscaling_schedule       = local.autoscaling_period_minutes == 1 ? "rate(1 minute)" : "rate(${local.autoscaling_period_minutes} minutes)"
 }
-
-// ---------------------------------------------------------------------------
-// The action: a schedule, and a Lambda that calls UpdateBrokerCount
-// ---------------------------------------------------------------------------
 
 resource "aws_cloudwatch_event_rule" "broker_scaler" {
   count = local.autoscaling_enabled ? 1 : 0
@@ -70,15 +42,11 @@ resource "aws_lambda_permission" "broker_scaler_schedule" {
   statement_id  = "AllowExecutionFromSchedule"
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.broker_scaler[0].function_name
-  // The EventBridge service principal. Fixed by AWS.
-  principal  = "events.amazonaws.com"
-  source_arn = aws_cloudwatch_event_rule.broker_scaler[0].arn
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.broker_scaler[0].arn
 }
 
-// DFE's own monitoring on AWS goes to its OTel feed, never CloudWatch -- the
-// scaler's metric read is the one deliberate exception, because MSK publishes
-// BytesInPerSec to CloudWatch whatever DFE does and UpdateBrokerCount has no
-// other signal to act on.
+// The scaler's log group is CloudWatch under either telemetry sink.
 resource "aws_cloudwatch_log_group" "broker_scaler" {
   count = local.autoscaling_enabled ? 1 : 0
 
@@ -94,8 +62,7 @@ data "aws_iam_policy_document" "broker_scaler_assume" {
     actions = ["sts:AssumeRole"]
 
     principals {
-      type = "Service"
-      // The Lambda service principal. Fixed by AWS.
+      type        = "Service"
       identifiers = ["lambda.amazonaws.com"]
     }
   }
@@ -110,10 +77,7 @@ resource "aws_iam_role" "broker_scaler" {
   permissions_boundary = var.permissions_boundary
 }
 
-// Least privilege: describe and update THIS cluster alone, read its metrics,
-// and write to nothing but the log group created above. No AWSLambdaBasicExecutionRole --
-// that manages grants logs:CreateLogGroup account-wide, which this role never
-// needs because the group already exists.
+// Least privilege: this cluster, and the one log group. No AWSLambdaBasicExecutionRole, which grants logs:CreateLogGroup account-wide.
 data "aws_iam_policy_document" "broker_scaler" {
   count = local.autoscaling_enabled ? 1 : 0
 
@@ -123,8 +87,7 @@ data "aws_iam_policy_document" "broker_scaler" {
     resources = [aws_msk_cluster.this.arn]
   }
 
-  // GetMetricData has no resource-level permissions, so it cannot be scoped to
-  // this cluster's metrics. It only reads.
+  // GetMetricData has no resource-level permissions.
   statement {
     effect    = "Allow"
     actions   = ["cloudwatch:GetMetricData"]
@@ -146,8 +109,7 @@ resource "aws_iam_role_policy" "broker_scaler" {
   policy = data.aws_iam_policy_document.broker_scaler[0].json
 }
 
-// Stdlib + boto3 only, both of which ship in var.broker_scaler_runtime. The
-// handler is its own file so scripts/tests/test_msk_broker_scaler.py runs it.
+// Stdlib and boto3 only, both in var.broker_scaler_runtime. scripts/tests/test_msk_broker_scaler.py runs the handler.
 data "archive_file" "broker_scaler" {
   count = local.autoscaling_enabled ? 1 : 0
 
@@ -164,7 +126,7 @@ resource "aws_lambda_function" "broker_scaler" {
 
   role     = aws_iam_role.broker_scaler[0].arn
   filename = data.archive_file.broker_scaler[0].output_path
-  // Recomputed whenever broker_scaler.py changes, which is what redeploys the function's code.
+  // Redeploys the code when broker_scaler.py changes.
   source_code_hash = data.archive_file.broker_scaler[0].output_base64sha256
 
   handler       = "broker_scaler.handler"

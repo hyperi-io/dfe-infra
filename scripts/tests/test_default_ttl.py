@@ -52,7 +52,9 @@ def literal_env(annotations: dict[str, str]) -> dict[str, str]:
     """The literal env dfe-extras hands the engine for a cluster secret's annotations."""
     docs = render_extras(ENGINE, "slim", "local", annotations=annotations)
     return next(
-        d for d in docs if d.get("kind") == "ConfigMap" and d["metadata"]["name"] == f"{ENGINE}-env"
+        d
+        for d in docs
+        if d.get("kind") == "ConfigMap" and d["metadata"]["name"] == f"{ENGINE}-env"
     )["data"]
 
 
@@ -61,17 +63,31 @@ def test_the_engine_ships_90_days() -> None:
     """A cluster secret carrying no retention leaves every deployed cell at 90."""
     for cell in (c for c in CELLS if c[0] == ENGINE):
         env = effective_env(golden(*cell), f"Deployment/{ENGINE}")
-        expect(f"{cell}: the engine Deployment carries the TTL env", ENGINE_ENV_KEY in env,
-               f"{sorted(env)}")
-        expect(f"{cell}: and it defaults to 90", env.get(ENGINE_ENV_KEY) == "90", f"{env.get(ENGINE_ENV_KEY)}")
+        expect(
+            f"{cell}: the engine Deployment carries the TTL env",
+            ENGINE_ENV_KEY in env,
+            f"{sorted(env)}",
+        )
+        expect(
+            f"{cell}: and it defaults to 90",
+            env.get(ENGINE_ENV_KEY) == "90",
+            f"{env.get(ENGINE_ENV_KEY)}",
+        )
 
 
 def test_the_engine_takes_the_value_it_is_given() -> None:
     env = literal_env({ANNOTATION: "30"})
-    expect("a cluster secret's value renders", env.get(ENGINE_ENV_KEY) == "30", f"{env.get(ENGINE_ENV_KEY)}")
+    expect(
+        "a cluster secret's value renders",
+        env.get(ENGINE_ENV_KEY) == "30",
+        f"{env.get(ENGINE_ENV_KEY)}",
+    )
     env = literal_env({ANNOTATION: "0"})
-    expect("zero renders as zero, not as the default", env.get(ENGINE_ENV_KEY) == "0",
-           f"{env.get(ENGINE_ENV_KEY)}")
+    expect(
+        "zero renders as zero, not as the default",
+        env.get(ENGINE_ENV_KEY) == "0",
+        f"{env.get(ENGINE_ENV_KEY)}",
+    )
 
 
 def test_the_engine_ships_the_documented_default() -> None:
@@ -146,7 +162,11 @@ def test_bootstrap_defaults_and_validates_the_key() -> None:
 
 def test_the_env_contract_documents_the_key() -> None:
     body = ENV_EXAMPLE.read_text(encoding="utf-8")
-    expect("local.env.example declares the key at 90", f'{ENV_KEY}="90"' in body, "key missing")
+    expect(
+        "local.env.example declares the key at 90",
+        f'{ENV_KEY}="90"' in body,
+        "key missing",
+    )
 
 
 # --- the dial ------------------------------------------------------------------
@@ -159,7 +179,11 @@ def test_the_dial_renders_the_key() -> None:
         f"got {updates.get(ENV_KEY)}",
     )
     zero = render_dial._env_updates({"retention": {"default_ttl_days": "0"}})
-    expect("a dial saying 0 renders 0", zero.get(ENV_KEY) == "0", f"got {zero.get(ENV_KEY)}")
+    expect(
+        "a dial saying 0 renders 0",
+        zero.get(ENV_KEY) == "0",
+        f"got {zero.get(ENV_KEY)}",
+    )
 
 
 def main() -> int:

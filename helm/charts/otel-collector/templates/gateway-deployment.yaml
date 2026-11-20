@@ -19,9 +19,7 @@ spec:
         app.kubernetes.io/part-of: {{ .Values.project | quote }}
     spec:
       {{- include "dfe-common.podSecurityContext" . | nindent 6 }}
-      # The k8s_cluster receiver reads the API server, so the gateway needs the
-      # chart's ServiceAccount rather than the namespace default the ClusterRole
-      # is not bound to.
+      # The k8s_cluster receiver reads the API server, which the ClusterRole binds to this account only.
       serviceAccountName: {{ include "dfe-common.serviceAccountName" . }}
       {{- include "dfe-common.scheduling" . | nindent 6 }}
       {{- include "otel-collector.waitForEngine" . | nindent 6 }}
@@ -31,15 +29,10 @@ spec:
           args: ["--config=/etc/otel/gateway-config.yaml"]
           {{- include "dfe-common.containerSecurityContext" . | nindent 10 }}
           env:
-            # The Go runtime otherwise sizes its heap against the NODE, not this
-            # container's limit, and collects too late to stay under it.
             - name: GOMEMLIMIT
               value: {{ include "otel-collector.goMemLimit" (include "otel-collector.gatewayMemory" .) | quote }}
             {{- if or .Values.exporters.clickhouse.enabled .Values.clusterTelemetry.clickhouse.enabled }}
-            # Expanded by the collector config (${env:CLICKHOUSE_PASSWORD}). The
-            # collector's own password, which dfe-extras copies into this
-            # namespace beside the engine. Shared by the ClickHouse exporter and
-            # the sql_query receiver.
+            # Expanded by the collector config. dfe-extras copies the password into this namespace.
             - name: CLICKHOUSE_PASSWORD
               valueFrom:
                 secretKeyRef:
@@ -47,14 +40,12 @@ spec:
                   key: {{ .Values.exporters.clickhouse.passwordSecretKey | default (dig "serviceUsers" "otelWriter" "passwordSecretKey" "password" .Values.clickhouse) }}
             {{- end }}
             {{- if include "otel-collector.clickhouseCAKind" . }}
-            # The sql_query receiver's driver verifies against the process's trust
-            # store. Go adds this directory to the system roots.
+            # The sql_query driver verifies against the process's trust store.
             - name: SSL_CERT_DIR
               value: {{ include "otel-collector.clickhouseCADir" . }}
             {{- end }}
             {{- if and .Values.clusterTelemetry.kafka.enabled .Values.clusterTelemetry.kafka.sasl.enabled }}
-            # Requires the kafka chart to project dfe-kafka-user into this
-            # namespace via user.password.extraAppNamespaces.
+            # The kafka chart projects dfe-kafka-user here (user.password.extraAppNamespaces).
             - name: KAFKA_PASSWORD
               valueFrom:
                 secretKeyRef:
@@ -75,9 +66,7 @@ spec:
               containerPort: {{ .Values.gateway.service.prometheusPort }}
             - name: health
               containerPort: {{ .Values.healthCheckPort }}
-          # Backed by the health_check extension enabled in gateway-config.yaml
-          # (service.extensions) -- the probe is only safe because the extension
-          # serves this port.
+          # Served by the health_check extension in gateway-config.yaml.
           livenessProbe:
             httpGet:
               path: /
@@ -114,8 +103,7 @@ spec:
         - name: tmp
           emptyDir: {}
         {{- if eq (include "otel-collector.clickhouseCAKind" .) "secret" }}
-        # Required, not optional: the collector dials TLS with verification on, so
-        # without the CA it would crashloop on a certificate error rather than wait.
+        # Required, so the pod waits for the CA and does not crashloop on a certificate error.
         - name: clickhouse-ca
           secret:
             secretName: {{ .Values.clickhouse.tls.ca.secretName }}
@@ -125,8 +113,7 @@ spec:
             name: {{ .Values.clickhouse.tls.ca.configMapName }}
         {{- end }}
         {{- if .Values.otel.ingress.enabled }}
-        # Required, not optional: without the file the extension cannot start, so
-        # the pod waits for the Secret rather than crashlooping on a missing token.
+        # Required, so the pod waits for the Secret and does not crashloop on a missing token.
         - name: ingress-token
           secret:
             secretName: {{ .Values.otel.ingress.auth.secretName }}

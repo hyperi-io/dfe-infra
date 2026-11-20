@@ -227,6 +227,15 @@ metadata:
   name: dfe-ui-scaler
   namespace: dfe
 spec:
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleDown:
+          policies:
+          - periodSeconds: 60
+            type: Percent
+            value: 25
+          stabilizationWindowSeconds: 300
   cooldownPeriod: 300
   maxReplicaCount: 10
   minReplicaCount: 2
@@ -282,7 +291,7 @@ metadata:
   name: dfe-ui-nextauth-gen
 spec:
   allowRepeat: true
-  digits: 6
-  length: 48
+  digits: 10
+  length: 64
   noUpper: false
   symbols: 0

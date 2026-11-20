@@ -1,4 +1,4 @@
-# Direct transport: no broker, so the engine creates no topics and needs no Kafka credentials.
+# Direct transport: no broker, so no topics and no Kafka credentials.
 secrets:
   kafka:
     enabled: false

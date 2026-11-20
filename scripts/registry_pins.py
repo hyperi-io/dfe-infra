@@ -95,6 +95,10 @@ _RATE_LIMITED = re.compile(r"\b429\b|toomanyrequests", re.IGNORECASE)
 _QUICK_WAITS = (1.0, 2.0)
 PATIENT_WAITS = (4.0, 8.0, 16.0, 32.0)
 
+# Backoff one run may spend on retried registry reads, so a registry that stays
+# rate limited fails the run in minutes rather than once per image.
+RUN_RETRY_SECONDS = 240.0
+
 # Module attributes so tests replace them with instant, deterministic stand-ins.
 _sleep = time.sleep
 _random = random.random
@@ -222,7 +226,9 @@ def _last_line(stderr: str, default: str) -> str:
 
 def _gave_up(registry: str, stderr: str, attempts: int, budget_spent: bool) -> str:
     """The message for a read that stayed transient: which registry, and whether it rate limited."""
-    verdict = "rate limited this read" if _RATE_LIMITED.search(stderr) else "kept failing"
+    verdict = (
+        "rate limited this read" if _RATE_LIMITED.search(stderr) else "kept failing"
+    )
     spent = " (the run's retry budget is spent)" if budget_spent else ""
     noun = "attempt" if attempts == 1 else "attempts"
     last = _last_line(stderr, "no output")
@@ -310,13 +316,13 @@ def is_absent(err: str) -> bool:
     return bool(_ABSENT.search(err))
 
 
-def ref_digest(ref: str) -> tuple[str | None, str]:
+def ref_digest(ref: str, budget: RetryBudget | None = None) -> tuple[str | None, str]:
     """(digest, error) for a full image ref, read with `docker buildx imagetools`.
 
     The multi-arch INDEX digest -- what a pin records -- never one platform's
-    manifest.
+    manifest. A `budget` retries a rate-limited read on its patient schedule.
     """
-    out, err = _imagetools(ref, "--format", "{{.Manifest.Digest}}")
+    out, err = _imagetools(ref, "--format", "{{.Manifest.Digest}}", budget=budget)
     if out is None:
         return None, err
     digest = out.strip()
@@ -353,7 +359,9 @@ def config_platform(doc: object) -> str | None:
     return f"{os_name}/{arch}" if os_name and arch else None
 
 
-def ref_platforms(ref: str, budget: RetryBudget | None = None) -> tuple[set[str] | None, str]:
+def ref_platforms(
+    ref: str, budget: RetryBudget | None = None
+) -> tuple[set[str] | None, str]:
     """(os/arch set, error) for a full image ref, read with `docker buildx imagetools`.
 
     The same registry path and credentials as ref_digest. An index lists its
@@ -396,8 +404,14 @@ def provenance_builders(doc: object) -> dict[str, str] | None:
         if not isinstance(slsa, dict):
             continue
         definition = slsa.get("buildDefinition")
-        internal = definition.get("internalParameters") if isinstance(definition, dict) else None
-        builder = internal.get("builderPlatform") if isinstance(internal, dict) else None
+        internal = (
+            definition.get("internalParameters")
+            if isinstance(definition, dict)
+            else None
+        )
+        builder = (
+            internal.get("builderPlatform") if isinstance(internal, dict) else None
+        )
         found[platform] = builder if isinstance(builder, str) else ""
     return found
 
@@ -464,10 +478,14 @@ def head_commit(org: str, repo: str, ref: str = "main") -> str:
         check=False,
     )
     if proc.returncode != 0:
-        raise RegistryError(proc.stderr.strip() or f"gh api could not read {org}/{repo}@{ref}")
+        raise RegistryError(
+            proc.stderr.strip() or f"gh api could not read {org}/{repo}@{ref}"
+        )
     sha = proc.stdout.strip()
     if not re.fullmatch(r"[0-9a-f]{40}", sha):
-        raise RegistryError(f"{org}/{repo}@{ref} did not resolve to a commit sha: {sha!r}")
+        raise RegistryError(
+            f"{org}/{repo}@{ref} did not resolve to a commit sha: {sha!r}"
+        )
     return sha
 
 
@@ -480,8 +498,11 @@ def commit_summary(org: str, repo: str, sha: str) -> tuple[str, str]:
     """
     proc = subprocess.run(
         [
-            "gh", "api", f"/repos/{org}/{repo}/commits/{sha}",
-            "--jq", "{message: .commit.message, date: .commit.committer.date}",
+            "gh",
+            "api",
+            f"/repos/{org}/{repo}/commits/{sha}",
+            "--jq",
+            "{message: .commit.message, date: .commit.committer.date}",
         ],
         capture_output=True,
         text=True,
@@ -490,12 +511,16 @@ def commit_summary(org: str, repo: str, sha: str) -> tuple[str, str]:
         check=False,
     )
     if proc.returncode != 0:
-        raise RegistryError(proc.stderr.strip() or f"gh api could not read {org}/{repo}@{sha}")
+        raise RegistryError(
+            proc.stderr.strip() or f"gh api could not read {org}/{repo}@{sha}"
+        )
     record = json.loads(proc.stdout)
     lines = (record.get("message") or "").strip().splitlines()
     date = (record.get("date") or "")[:10]
     if not lines or not date:
-        raise RegistryError(f"{org}/{repo}@{sha} returned no subject or date: {record!r}")
+        raise RegistryError(
+            f"{org}/{repo}@{sha} returned no subject or date: {record!r}"
+        )
     return lines[0].strip(), date
 
 
@@ -508,11 +533,15 @@ def repo_file(org: str, repo: str, ref: str, path: str) -> str:
     Raises:
         RegistryError: The file is absent at that ref, or the host did not answer.
     """
-    url = f"{RAW_FILES}/{org}/{repo}/{urllib.parse.quote(ref)}/{urllib.parse.quote(path)}"
+    url = (
+        f"{RAW_FILES}/{org}/{repo}/{urllib.parse.quote(ref)}/{urllib.parse.quote(path)}"
+    )
     waits = list(_QUICK_WAITS)
     while True:
         try:
-            with urllib.request.urlopen(url, timeout=oci_registry.TIMEOUT_SECONDS) as response:
+            with urllib.request.urlopen(
+                url, timeout=oci_registry.TIMEOUT_SECONDS
+            ) as response:
                 return response.read().decode("utf-8", errors="replace")
         except urllib.error.HTTPError as exc:
             exc.close()

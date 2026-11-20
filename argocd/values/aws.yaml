@@ -1,58 +1,21 @@
-# AWS EKS overrides — populated in Plan 07 (aws-eks).
-# Stub required so Layer 2 ApplicationSet valueFiles resolution succeeds on EKS targets.
+# Must exist so the layer 2 valueFiles resolution succeeds on EKS. See docs/deployment/values-clouds-edge.md#cloud-files.
 global:
   cloud: aws
-  # registry is UNSET here, matching gcp.yaml and azure.yaml, because the dial's
-  # own `registry:` field is the one source. It reaches the charts as the
-  # dfe.hyperi.io/registry cluster-secret annotation, which every layer 2
-  # appset passes back as the global.registry parameter -- NOT as the
-  # `dfe-ops --registry` flag, which stops at the version-set render. A literal
-  # here would drift whenever a customer dial names a different registry.
+  # Unset: the dial's registry field is the one source.
 
 storageClass: gp3
 
-# THE EDGE MODULE'S OWN AWS KEYS LIVE IN argocd/values/edge-aws.yaml, layered
-# after this file by argocd/appsets/layer2-edge.yaml: the gateway Service and
-# its controller annotations, the infra-class kill switch, the tunnel's Service
-# type and traffic policy, and culvert's PKI mode. That file carries the AWS
-# tier table in one place; what stays here is what a chart OUTSIDE the edge
-# module reads as well.
+# The edge module's AWS keys are in edge-aws.yaml.
 
-# The engine's runtime store is a PVC against the cluster's default
-# StorageClass (the engine contract's persistent `config` writable path) -- no per-cloud
-# storage seam needed.
-
-# ClickHouse's object store is the bucket the cluster module creates
-# (kubernetes-cluster/aws/object-store.tf), reached through EKS Pod Identity:
-# no static key, so the chart's ExternalSecret and credential env vars stay
-# off. The endpoint itself arrives per deployment from the cluster secret.
+# Reached through EKS Pod Identity, so no static key.
 clickhouse:
   objectStore:
     usePodIdentity: true
 
-# Pods take VPC addresses from the private subnets MSK brokers and PrivateLink
-# endpoints share (kubernetes-cluster/aws/vpc.tf), so carving the pod range
-# would cut every in-VPC backend off its clients. Nor the Service range: the VPC
-# CNI policy agent turns an except into a deny over every other rule on the pod,
-# which cuts it off kube-dns (aws/aws-network-policy-agent#326).
+# Link-local alone: carving the pod or service range breaks in-VPC backends and kube-dns. See docs/deployment/values-shared.md#network-ranges.
 networkModel:
   carveOut: [linkLocalCIDR]
 
-# THE RECEIVER'S FRONT DOOR is exposure.groups.ingest (common.yaml): its own
-# NLB, which renders only once the deploy repo's infra/common.yaml names the
-# senders in exposure.groups.ingest.allow. The NLB's controller annotations are
-# argocd/values/apps/dfe-receiver/aws.yaml.
-
-# Edge OIDC on by default: a deployer who turns edge-aws.yaml's
-# exposure.groups.admin back on still needs a real oidc.providers entry (this
-# only sets the switch, not a provider) before an admin route's edgePolicy has
-# anything to authenticate against -- and the gateway's render guard refuses the
-# internet-facing + admin-on combination unless the admin group names an allow
-# list, or sets allowPublic with this true and a provider.
-#
-# IT STAYS HERE rather than moving to edge-aws.yaml because two charts outside
-# the edge module read the same switch: kafbat degrades OAUTH2 to its
-# break-glass LOGIN_FORM without it, and dfe-engine stops rendering each
-# provider's secret env vars. Moving it would change what both of them deploy.
+# Stays here because kafbat and dfe-engine read it. See docs/deployment/values-clouds-edge.md#cloud-files.
 oidc:
   enabled: true

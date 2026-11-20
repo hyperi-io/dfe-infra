@@ -1,5 +1,5 @@
 {{/*
-Version-check deployment seam. The apps ship the check ON by default with
+Version-check deployment settings. The apps ship the check ON by default with
 their own releases endpoint baked in, so the chart's job is only the
 DEPLOYMENT override: emitted solely when a versionCheck value is set,
 leaving today's rendered manifests byte-identical. Set fleet-wide in

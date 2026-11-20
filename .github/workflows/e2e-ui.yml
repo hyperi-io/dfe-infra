@@ -1,10 +1,8 @@
-# Starts on every PR and push to main, and runs when the browser suite changed.
-# Typechecks the e2e-ui harness and runs its OIDC self-test against the local
-# mock IdP, which needs no cluster, no live IdP and no secret.
+# Typechecks the e2e-ui harness and runs its OIDC self-test against the local mock IdP,
+# which needs no cluster, no live IdP and no secret.
 name: e2e-ui harness
 
-# No `paths:` here: a PR outside them would start no run, and a required check
-# that never reports blocks the merge. The `changes` job applies the filter.
+# No `paths:` here, the `changes` job filters. docs/ci-maintenance-design.md, "CI workflows".
 on:
   push:
     branches: [main]
@@ -15,8 +13,6 @@ permissions:
   contents: read
 
 jobs:
-  # The self-test needs this job and runs unless it positively found nothing in
-  # its paths, so a failure here runs the self-test rather than skipping it.
   changes:
     name: changed paths (e2e-ui)
     runs-on: ubuntu-26.04
@@ -24,7 +20,6 @@ jobs:
     outputs:
       relevant: ${{ steps.filter.outputs.relevant }}
     steps:
-      # Depth 2 carries a pull request merge commit's two parents.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 2
@@ -43,7 +38,6 @@ jobs:
     name: e2e-ui typecheck + OIDC harness self-test
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.relevant != 'false' }}
-    # A named runner image, so a move of the ubuntu-latest label cannot swap the tools these steps run on.
     runs-on: ubuntu-26.04
     timeout-minutes: 15
     defaults:
@@ -54,16 +48,13 @@ jobs:
         with:
           persist-credentials: false
 
-      # 24 is the Active LTS major hyperi-ci's versions.yaml sets for TypeScript CI.
-      # No cache: the install is six packages, and a restored cache is one more input to trust.
+      # No cache: a restored cache is one more input to trust.
       - name: Set up Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: "24"
+          node-version: "26"
           package-manager-cache: false
 
-      # npm ci fails on a lockfile that disagrees with package.json and checks every
-      # tarball against its integrity hash. Nothing in the tree needs an install script.
       - name: Install from the committed lockfile
         run: npm ci --ignore-scripts --no-audit --no-fund
 
@@ -72,10 +63,8 @@ jobs:
         working-directory: .
         run: tests/e2e-ui/node_modules/.bin/tsc --noEmit -p tests/e2e-ui/tsconfig.json
 
-      # The self-test runs headless, so the Chromium headless shell is the only browser it opens.
       - name: Install the Chromium headless shell
         run: node_modules/.bin/playwright install --with-deps --only-shell chromium
 
-      # The project keeps no trace, screenshot or video (playwright.config.ts), and no step uploads the report.
       - name: OIDC harness self-test against the mock IdP
         run: node_modules/.bin/playwright test --project=oidc-live-selftest

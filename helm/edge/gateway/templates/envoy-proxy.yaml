@@ -1,20 +1,13 @@
-# EnvoyProxy -- customises the managed Envoy proxy's front-door Service so the
-# HTTP plane's LB is SWAPPABLE (cloud LB <-> k8s LB) the same way the receiver's
-# L4 LBs are. Referenced by the GatewayClass via parametersRef (see
-# gateway-class.yaml).
-#
-# type, annotations, loadBalancerIP, loadBalancerClass and
-# loadBalancerSourceRanges are all dedicated fields at Envoy Gateway v1.8, so
-# they are set directly. Only externalIPs has no field of its own and still goes
-# through a StrategicMerge patch; it is not gated on type, because a cluster
-# with no LB controller reaches the outside through it on a ClusterIP.
+# The managed Envoy proxy's front-door Service, so the HTTP plane's load balancer
+# swaps (cloud LB <-> k8s LB) as the receiver's does. The GatewayClass references it
+# (gateway-class.yaml). Only externalIPs goes through a StrategicMerge patch,
+# because it has no field of its own. It is not gated on type: a cluster with no LB
+# controller reaches the outside through it on a ClusterIP.
 {{- $svc := .Values.envoyGateway.service }}
 {{- $public := include "envoy-gateway-config.publicRoutes" (dict "ctx" .) | fromJsonArray }}
-{{- /* The second wall. Each group's list is enforced at Envoy as well, so a
-       misconfigured policy is not the only thing between the internet and a UI
-       -- but this one is the WHOLE front door, because one Service carries
-       every listener: the web groups, and the ingest group while an ingest
-       route renders. Envoy still holds each route to its own group. */}}
+{{- /* The second wall: the load balancer fences the WHOLE front door, because one
+       Service carries every listener. Envoy still holds each route to its own
+       group. */}}
 {{- $sourceRanges := include "envoy-gateway-config.lbSourceRanges" (dict "ctx" .) | fromJsonArray }}
 {{- /* Every name this edge answers on, public and internal. external-dns picks
        the zone by matching the suffix, so the public names land in the

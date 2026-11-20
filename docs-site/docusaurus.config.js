@@ -36,9 +36,42 @@ const releaseNotes = site.newest
   ? `https://github.com/hyperi-io/dfe-infra/releases/tag/${site.newest}`
   : null;
 const GRAPHICS = 'https://graphics.hyperi.io';
-const ARROW_SVG =
-  '<svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="2" ' +
-  'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="M13 6l6 6-6 6"/></svg>';
+
+// hyperi.io's Plausible site, split per host by the dashboard's hostname filter. Nothing loads under Do Not Track or GPC.
+const PLAUSIBLE = `(function () {
+  try {
+    var dnt = navigator.doNotTrack === '1' || window.doNotTrack === '1' || navigator.msDoNotTrack === '1';
+    var gpc = navigator.globalPrivacyControl === true;
+    if (dnt || gpc) return;
+    var pa = document.createElement('script');
+    pa.async = true;
+    pa.src = 'https://plausible.io/js/pa-q4IMLUamXTyMwys_1kKop.js';
+    document.head.appendChild(pa);
+    window.plausible = window.plausible || function () { (plausible.q = plausible.q || []).push(arguments); };
+    plausible.init = plausible.init || function (i) { plausible.o = i || {}; };
+    plausible.init();
+  } catch (e) {}
+})();`;
+
+// The navbar label beside the version picker: Latest on the newest release, a warning elsewhere.
+// A warning stays in the bar on a phone (custom.css), where Latest moves into the menu.
+function releaseLabel() {
+  const copy = siteCopy.release_label;
+  if (!copy || !site.newest) {
+    return [];
+  }
+  const kind = build.name === site.newest ? 'latest' : build.name === 'next' ? 'next' : 'older';
+  const href = kind === 'latest' ? releaseNotes : `/v/${site.newest}/`;
+  const tone = kind === 'latest' ? 'latest' : 'warn';
+  return [
+    {
+      type: 'html',
+      position: 'right',
+      className: `release-item release-item--${tone}`,
+      value: `<a class="release-label release-label--${tone}" href="${href}" title="${copy[`${kind}_title`]}">${copy[kind]}</a>`,
+    },
+  ];
+}
 
 // gen-api-docs names the spec's introduction page after its title, lowercased and hyphenated.
 function apiIntroPath(openapi) {
@@ -97,31 +130,37 @@ function loadCopy(name) {
   return fillCopy(yaml.load(fs.readFileSync(path.join(__dirname, 'copy', `${name}.yaml`), 'utf8')));
 }
 
-// The landing tab's lines from this build's copy of a quickstart page: the first sentence of its
-// "You need" line, and the fenced block after its <!-- landing --> marker.
-// Inline # notes stay on the page, and a make line pins this build's stack when it is not the newest.
-function landingFrom(page) {
+// The quickstart.json of the dfe-docker release this build pins, as aggregate.py saved it.
+function releaseQuickstart() {
+  const file = path.join(CONTENT, '_quickstart', `${build.name}.json`);
+  return fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : {};
+}
+
+// A release with a `login` key prints the console login from its second command.
+const LOGIN_LINE = 'The second command prints your admin username and password.';
+
+// The landing tab's block after <!-- landing -->, then the block's `then`.
+// Only aggregate.py's one-line compose fill writes that marker, so other builds show no command.
+// hyperi.io renders `then` alone, so the login line goes into it.
+function landingFrom({code_from: page, then}) {
   const file = path.join(CONTENT, build.name, page);
   const text = fs.readFileSync(file, 'utf8');
   const match = text.match(/<!-- landing -->\s*```[^\n]*\n([\s\S]*?)\n```/);
   if (!match) {
-    throw new Error(`copy/landing.yaml: ${file} has no <!-- landing --> marker before a code block`);
+    return [];
   }
-  const need = text.slice(0, match.index).match(/^You need ([^\n]*?\.)(?: |$)/m);
   const code = match[1]
     .split('\n')
     .map((line) => line.replace(/\s+#.*$/, ''))
-    .map((line) => (line.startsWith('make ') ? `${line}${versionArg}` : line))
     .join('\n');
-  return need ? [{text: `Needs ${need[1]}`}, {code}] : [{code}];
+  const after = releaseQuickstart().login && then ? `${LOGIN_LINE} ${then}` : then;
+  return [{code}, ...(after ? [{text: after}] : [])];
 }
 
 const siteCopy = loadCopy('site');
 const landingCopy = loadCopy('landing');
 for (const tab of landingCopy.quickstart.tabs) {
-  tab.blocks = tab.blocks.flatMap((block) =>
-    block.code_from === undefined ? [block] : landingFrom(block.code_from),
-  );
+  tab.blocks = tab.blocks.flatMap((block) => (block.code_from === undefined ? [block] : landingFrom(block)));
 }
 
 // Markdown links and backticks as the plain text another site can show.
@@ -129,9 +168,26 @@ function plainText(text) {
   return text.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1').replace(/`/g, '');
 }
 
+// The demo packs of the dfe-docker release this build pins, as aggregate.py saved it.
+function demoPacks() {
+  const file = path.join(CONTENT, '_quickstart', `${build.name}.json`);
+  if (!fs.existsSync(file)) {
+    return [];
+  }
+  const release = JSON.parse(fs.readFileSync(file, 'utf8'));
+  return (release.packs || []).map((pack) => ({
+    id: pack.name,
+    title: pack.title,
+    use_case: pack.use_case,
+    commands: pack[release.form],
+  }));
+}
+
 // The hero's quickstart tabs as /quickstart.json, so other sites show the same commands.
 // A note between two code blocks rides into the next command as a shell comment.
+// A tab with `packs: true` lists the release's demo packs, each use_case a path on hyperi.io.
 function quickstartJson(siteUrl, baseUrl) {
+  const packs = demoPacks();
   const tabs = landingCopy.quickstart.tabs.map((tab) => {
     const texts = [];
     const commands = [];
@@ -153,6 +209,7 @@ function quickstartJson(siteUrl, baseUrl) {
       commands,
       then: pending,
       guide: tab.guide ? `${siteUrl}${baseUrl}${tab.guide.to.replace(/^\//, '')}` : null,
+      packs: tab.packs ? packs : [],
     };
   });
   return {stack, tabs};
@@ -205,7 +262,7 @@ async function sidebarItemsGenerator({defaultSidebarItemsGenerator, ...args}) {
   if (journeys.length === 0 || Object.keys(placements).length === 0) {
     return items;
   }
-  return journeySidebar(items, journeys, placements);
+  return journeySidebar(items, journeys, placements, build.members.map((member) => member.path));
 }
 
 // Every doc's route, title, description and source file, for scripts/agent_layer.py.
@@ -292,12 +349,17 @@ const openapiPlugins = build.openapi
     ]
   : [];
 
-module.exports = {
+// remark-math and rehype-katex ship as ES modules only, so the config loads them with import().
+module.exports = async function createConfig() {
+  const {default: remarkMath} = await import('remark-math');
+  const {default: rehypeKatex} = await import('rehype-katex');
+  return {
   title: siteCopy.title,
   tagline: siteCopy.tagline,
   favicon: `${GRAPHICS}/product-dfe/tertiary/product-dfe_square.svg`,
   // The brand tokens and @font-face rules, read anonymously like every other build input.
   stylesheets: [`${GRAPHICS}/tokens/tokens.css`],
+  headTags: [{tagName: 'script', attributes: {}, innerHTML: PLAUSIBLE}],
   customFields: {landing: landingCopy},
   url: site.url,
   baseUrl: build.base_url,
@@ -336,10 +398,12 @@ module.exports = {
           sidebarPath: require.resolve('./sidebars.js'),
           sidebarItemsGenerator,
           docItemComponent: '@theme/ApiItem',
+          remarkPlugins: [remarkMath],
+          rehypePlugins: [rehypeKatex],
         },
         blog: false,
         pages: {},
-        theme: {customCss: require.resolve('./src/css/custom.css')},
+        theme: {customCss: [require.resolve('./src/css/custom.css'), require.resolve('katex/dist/katex.min.css')]},
       },
     ],
   ],
@@ -362,19 +426,7 @@ module.exports = {
   ],
   themeConfig: {
     // The toggle cycles system, light and dark. Every surface reads the mode through the roles in custom.css.
-    colorMode: {defaultMode: 'light', disableSwitch: false, respectPrefersColorScheme: true},
-    announcementBar: siteCopy.announcement && releaseNotes
-      ? {
-          // Keyed on the release, so a reader who closed one sees the next.
-          id: `release-${site.newest}`,
-          content:
-            `<span class="announcement-tag">${siteCopy.announcement.tag}</span>${siteCopy.announcement.text} ` +
-            `<a href="${releaseNotes}">${siteCopy.announcement.link}${ARROW_SVG}</a>`,
-          backgroundColor: 'var(--dfe-accent)',
-          textColor: 'var(--dfe-navy)',
-          isCloseable: true,
-        }
-      : undefined,
+    colorMode: {respectPrefersColorScheme: true, disableSwitch: true},
     navbar: {
       title: siteCopy.navbar.title,
       // hyperi-graphics public/hyperi-hound/tertiary: the one hound colour that reads on both modes.
@@ -392,6 +444,7 @@ module.exports = {
           position: 'right',
           items: versionItems,
         },
+        ...releaseLabel(),
         {...siteCopy.navbar.github, position: 'right'},
       ],
     },
@@ -402,7 +455,7 @@ module.exports = {
         src: `${GRAPHICS}/hyperi-horizontal/dark/hyperi-horizontal_bare.svg`,
         href: 'https://hyperi.io',
       },
-      links: siteCopy.footer.columns,
+      links: siteCopy.footer.links,
       copyright: siteCopy.footer.copyright,
     },
     mermaid: {theme: {light: 'neutral', dark: 'dark'}},
@@ -412,4 +465,5 @@ module.exports = {
       additionalLanguages: ['bash', 'toml', 'sql', 'hcl', 'docker', 'ini', 'diff'],
     },
   },
+  };
 };

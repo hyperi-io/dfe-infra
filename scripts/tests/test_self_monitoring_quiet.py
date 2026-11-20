@@ -52,19 +52,35 @@ def operator_elements() -> list[tuple[str, dict, str]]:
 
 
 def documentdb_cr() -> dict:
-    cmd = ["helm", "template", "documentdb", str(chart_dir("documentdb")), "--set", "appNamespace=x"]
+    cmd = [
+        "helm",
+        "template",
+        "documentdb",
+        str(chart_dir("documentdb")),
+        "--set",
+        "appNamespace=x",
+    ]
     out = subprocess.run(
-        cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False
+        cmd,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
     )
     if out.returncode != 0:
         raise SystemExit(f"helm template failed for documentdb:\n{out.stderr}")
-    (cr,) = [d for d in yaml.safe_load_all(out.stdout) if d and d.get("kind") == "DocumentDB"]
+    (cr,) = [
+        d for d in yaml.safe_load_all(out.stdout) if d and d.get("kind") == "DocumentDB"
+    ]
     return cr
 
 
 def test_the_operator_logs_at_info_in_every_appset_that_installs_it() -> None:
     elements = operator_elements()
-    expect("both operator appsets are found", len(elements) == 2, f"got {len(elements)}")
+    expect(
+        "both operator appsets are found", len(elements) == 2, f"got {len(elements)}"
+    )
     for appset, element, values in elements:
         chart_values = yaml.safe_load(element.get("chartValuesYaml") or "") or {}
         args = (chart_values.get("manager") or {}).get("args")
@@ -83,7 +99,11 @@ def test_the_operator_logs_at_info_in_every_appset_that_installs_it() -> None:
 def test_documentdb_neither_logs_nor_records_each_cron_run() -> None:
     parameters = (documentdb_cr()["spec"].get("postgres") or {}).get("parameters") or {}
     for key in ("cron.log_run", "cron.log_statement"):
-        expect(f"documentdb sets {key} off", parameters.get(key) == "off", f"got {parameters}")
+        expect(
+            f"documentdb sets {key} off",
+            parameters.get(key) == "off",
+            f"got {parameters}",
+        )
 
 
 def main() -> int:

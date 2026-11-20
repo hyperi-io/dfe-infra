@@ -47,10 +47,17 @@ def retarget(config: str, directory: str) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--dir", required=True, help="directory on each node the volumes are created under")
+    parser.add_argument(
+        "--dir",
+        required=True,
+        help="directory on each node the volumes are created under",
+    )
     args = parser.parse_args()
     if not args.dir.startswith("/"):
-        print(f"local_path_dir: --dir must be an absolute path, got {args.dir}", file=sys.stderr)
+        print(
+            f"local_path_dir: --dir must be an absolute path, got {args.dir}",
+            file=sys.stderr,
+        )
         return 2
     sys.stdout.write(retarget(sys.stdin.read(), args.dir))
     return 0

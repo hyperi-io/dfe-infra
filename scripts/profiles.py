@@ -149,7 +149,9 @@ PROFILES: dict[str, Profile] = {
 
 PROFILE_NAMES: tuple[str, ...] = tuple(PROFILES)
 
-MODES: tuple[str, ...] = tuple(name for name, p in PROFILES.items() if p.platform == KUBERNETES)
+MODES: tuple[str, ...] = tuple(
+    name for name, p in PROFILES.items() if p.platform == KUBERNETES
+)
 """The Kubernetes deploy modes -- what `dfe-ops --mode` and DFE_PROFILE accept."""
 
 UNSUPPORTED_MODES: dict[str, str] = {
@@ -157,7 +159,9 @@ UNSUPPORTED_MODES: dict[str, str] = {
 }
 """Modes that stay declared (charts, overlays, render tests) but cannot be deployed, mapped to the refusal text."""
 
-SELECTABLE_MODES: tuple[str, ...] = tuple(m for m in MODES if m not in UNSUPPORTED_MODES)
+SELECTABLE_MODES: tuple[str, ...] = tuple(
+    m for m in MODES if m not in UNSUPPORTED_MODES
+)
 """The modes a deploy may name: MODES less UNSUPPORTED_MODES."""
 
 DEFAULT_MODE = "scale"
@@ -304,7 +308,9 @@ def emit_shell() -> str:
 
 def _table() -> str:
     """One line per profile -- the table this module exists to declare, printed."""
-    rows = ["profile       broker  substrate charts                floor (cpu/mem/nodes)  lane"]
+    rows = [
+        "profile       broker  substrate charts                floor (cpu/mem/nodes)  lane"
+    ]
     for name in PROFILE_NAMES:
         p = PROFILES[name]
         cpu, mem, nodes = p.capacity_floor

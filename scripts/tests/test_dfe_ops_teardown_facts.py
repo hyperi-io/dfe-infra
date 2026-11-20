@@ -78,7 +78,9 @@ def _bridge(monkeypatch: pytest.MonkeyPatch, outputs: object) -> None:
 
 
 def _teardown(*argv: str) -> int:
-    return dfeops.cmd_teardown(dfeops.build_parser().parse_args(["teardown", "--force", *argv]))
+    return dfeops.cmd_teardown(
+        dfeops.build_parser().parse_args(["teardown", "--force", *argv])
+    )
 
 
 def test_the_roots_cluster_facts_reach_destroy_sh(
@@ -159,13 +161,17 @@ def test_an_error_that_is_not_an_unreadable_root_is_not_swallowed(
 ) -> None:
     """Only the bridge's own failure is a root that cannot be read; a bug elsewhere surfaces."""
     _bridge(monkeypatch, KeyError("value"))
-    sys.modules["bridge"].TerraformOutputError = type("TerraformOutputError", (RuntimeError,), {})
+    sys.modules["bridge"].TerraformOutputError = type(
+        "TerraformOutputError", (RuntimeError,), {}
+    )
     with pytest.raises(KeyError):
         _teardown("--from-terraform", "terraform/environments/aws")
     assert ran == []
 
 
-def test_the_cycle_hands_its_root_to_the_teardown(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_cycle_hands_its_root_to_the_teardown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     ran: list[list[str]] = []
 
     def run(cmd: list[str], env: dict | None = None) -> int:
@@ -187,6 +193,8 @@ def test_the_cycle_hands_its_root_to_the_teardown(monkeypatch: pytest.MonkeyPatc
     )
     dfeops.cmd_cycle(args)
     teardown = next(cmd for cmd in ran if cmd[2] == "teardown")
-    assert teardown[teardown.index("--from-terraform") + 1] == "terraform/environments/aws"
+    assert (
+        teardown[teardown.index("--from-terraform") + 1] == "terraform/environments/aws"
+    )
     assert teardown[teardown.index("--tf-dir") + 1] == "terraform/environments/aws"
     assert "--with-terraform" in teardown

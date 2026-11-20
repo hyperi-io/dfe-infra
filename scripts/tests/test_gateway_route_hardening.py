@@ -46,33 +46,59 @@ NOT_FOUND = "dfe-gateway-not-found"
 # Every route renders: the edge login, the bundled deploy repo, OTLP ingress, the
 # receiver door, the Cruise Control UI and three UIs on a public hostname.
 EVERYTHING = (
-    "--set", "domain=dfe.example.test",
-    "--set", "appNamespace=dfe-local",
-    "--set", "oidc.enabled=true",
+    "--set",
+    "domain=dfe.example.test",
+    "--set",
+    "appNamespace=dfe-local",
+    "--set",
+    "oidc.enabled=true",
     "--set-json",
     'oidc.providers=[{"name":"acme","issuerUrl":"https://id.example.com","clientId":"dfe"}]',
-    "--set", "deployRepo.bundled=true",
-    "--set", "otel.ingress.enabled=true",
-    "--set", "otel.ingress.auth.remoteKey=dfe/test/otel/ingress",
-    "--set", "exposure.groups.ingest.door=gateway",
-    "--set", "kafka.mode=cluster",
-    "--set", "ui.public_domain=public.example.test",
-    "--set", "exposure.groups.admin.tools.argocd=true",
-    "--set", "ui.public.hyperdx=true",
+    "--set",
+    "deployRepo.bundled=true",
+    "--set",
+    "otel.ingress.enabled=true",
+    "--set",
+    "otel.ingress.auth.remoteKey=dfe/test/otel/ingress",
+    "--set",
+    "exposure.groups.ingest.door=gateway",
+    "--set",
+    "kafka.mode=cluster",
+    "--set",
+    "ui.public_domain=public.example.test",
+    "--set",
+    "exposure.groups.admin.tools.argocd=true",
+    "--set",
+    "ui.public.hyperdx=true",
 )
 
 # Every route on the wildcard listener, which tls.edge.hsts governs.
-INTERNAL_ROUTES = {"argocd", "cruise-control", "dfe-engine", "dfe-engine-cli", "dfe-ui", "forgejo",
-                   "hyperdx", "kafbat", "links", "otel", "receiver"}
+INTERNAL_ROUTES = {
+    "argocd",
+    "cruise-control",
+    "dfe-engine",
+    "dfe-engine-cli",
+    "dfe-ui",
+    "forgejo",
+    "hyperdx",
+    "kafbat",
+    "links",
+    "otel",
+    "receiver",
+}
 
 # The edge wildcard issued by the chart's own internal CA (tls.internalCA.issuerName).
 INTERNAL_CA = ("--set", "tls.issuerName=dfe-internal-ca")
 PERSIST_ON = ("--set", "tls.internalCA.persist.enabled=true")
 VAULT = (
-    "--set", "tls.issuerName=dfe-estate-pki",
-    "--set", "tls.vault.server=https://vault.example.test:8200",
-    "--set", "tls.vault.path=pki_tls/sign/example",
-    "--set", "tls.vault.appRole.roleId=example-role",
+    "--set",
+    "tls.issuerName=dfe-estate-pki",
+    "--set",
+    "tls.vault.server=https://vault.example.test:8200",
+    "--set",
+    "tls.vault.path=pki_tls/sign/example",
+    "--set",
+    "tls.vault.appRole.roleId=example-role",
 )
 
 # (label, extra args, whether the wildcard listener sends HSTS)
@@ -81,18 +107,38 @@ EDGE_HSTS_CASES = (
     ("internal CA, persist on", (*INTERNAL_CA, *PERSIST_ON), True),
     ("Vault/OpenBao PKI issuer", VAULT, True),
     ("ACME issuer", ("--set", "tls.acme.email=ops@example.test"), True),
-    ("explicit true, internal CA persist off", (*INTERNAL_CA, "--set", "tls.edge.hsts=true"), True),
-    ("explicit false, internal CA persist on",
-     (*INTERNAL_CA, *PERSIST_ON, "--set", "tls.edge.hsts=false"), False),
+    (
+        "explicit true, internal CA persist off",
+        (*INTERNAL_CA, "--set", "tls.edge.hsts=true"),
+        True,
+    ),
+    (
+        "explicit false, internal CA persist on",
+        (*INTERNAL_CA, *PERSIST_ON, "--set", "tls.edge.hsts=false"),
+        False,
+    ),
     ("explicit false, Vault issuer", (*VAULT, "--set", "tls.edge.hsts=false"), False),
 )
 
 
 def helm(*args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        ["helm", "template", "envoy-gateway-config", str(GATEWAY),
-         "--namespace", "envoy-gateway-system", "-f", str(VALUES / "common.yaml"), *args],
-        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
+        [
+            "helm",
+            "template",
+            "envoy-gateway-config",
+            str(GATEWAY),
+            "--namespace",
+            "envoy-gateway-system",
+            "-f",
+            str(VALUES / "common.yaml"),
+            *args,
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
     )
 
 
@@ -134,9 +180,22 @@ def hsts_is_a_year_with_subdomains(value: str) -> bool:
 def test_the_render_reaches_every_route() -> None:
     """A sweep over routes that did not render would pass on nothing."""
     names = set(routes(render(*EVERYTHING)))
-    want = {"argocd", "cruise-control", "dfe-engine", "dfe-ui", "forgejo", "hyperdx",
-            "kafbat", "links", "otel", "receiver", "dfe-ui-public", "dfe-engine-public",
-            "argocd-public", "hyperdx-public"}
+    want = {
+        "argocd",
+        "cruise-control",
+        "dfe-engine",
+        "dfe-ui",
+        "forgejo",
+        "hyperdx",
+        "kafbat",
+        "links",
+        "otel",
+        "receiver",
+        "dfe-ui-public",
+        "dfe-engine-public",
+        "argocd-public",
+        "hyperdx-public",
+    }
     expect("every route renders", want <= names, f"missing {sorted(want - names)}")
 
 
@@ -146,16 +205,22 @@ def test_every_https_route_sends_a_years_hsts() -> None:
             continue
         for index, rule in enumerate(forwarding_rules(route)):
             value = set_headers(rule).get(HSTS, "")
-            expect(f"{name} rule {index} sends {HSTS} for a year with subdomains",
-                   hsts_is_a_year_with_subdomains(value), f"got {value!r}")
+            expect(
+                f"{name} rule {index} sends {HSTS} for a year with subdomains",
+                hsts_is_a_year_with_subdomains(value),
+                f"got {value!r}",
+            )
 
 
 def test_the_plaintext_redirect_carries_none() -> None:
     """A browser ignores HSTS over plaintext; the redirect is the only answer there."""
     for name, route in routes(render(*EVERYTHING)).items():
         if listener(route) == "http":
-            expect(f"{name} on :80 sets no {HSTS}",
-                   all(HSTS not in set_headers(r) for r in route["spec"]["rules"]), "")
+            expect(
+                f"{name} on :80 sets no {HSTS}",
+                all(HSTS not in set_headers(r) for r in route["spec"]["rules"]),
+                "",
+            )
 
 
 def test_each_listener_answers_to_its_own_switch() -> None:
@@ -163,30 +228,48 @@ def test_each_listener_answers_to_its_own_switch() -> None:
     public_off = routes(render(*EVERYTHING, "--set", "ui.tls.hsts=false"))
     for name, route in internal_off.items():
         if listener(route) == "https":
-            expect(f"tls.edge.hsts=false: {name} sends none",
-                   all(HSTS not in set_headers(r) for r in forwarding_rules(route)), "")
+            expect(
+                f"tls.edge.hsts=false: {name} sends none",
+                all(HSTS not in set_headers(r) for r in forwarding_rules(route)),
+                "",
+            )
         elif listener(route).startswith("https-public-"):
-            expect(f"tls.edge.hsts=false: public {name} still sends it",
-                   all(HSTS in set_headers(r) for r in forwarding_rules(route)), "")
+            expect(
+                f"tls.edge.hsts=false: public {name} still sends it",
+                all(HSTS in set_headers(r) for r in forwarding_rules(route)),
+                "",
+            )
     for name, route in public_off.items():
         if listener(route).startswith("https-public-"):
-            expect(f"ui.tls.hsts=false: public {name} sends none",
-                   all(HSTS not in set_headers(r) for r in forwarding_rules(route)), "")
+            expect(
+                f"ui.tls.hsts=false: public {name} sends none",
+                all(HSTS not in set_headers(r) for r in forwarding_rules(route)),
+                "",
+            )
         elif listener(route) == "https":
-            expect(f"ui.tls.hsts=false: internal {name} still sends it",
-                   all(HSTS in set_headers(r) for r in forwarding_rules(route)), "")
+            expect(
+                f"ui.tls.hsts=false: internal {name} still sends it",
+                all(HSTS in set_headers(r) for r in forwarding_rules(route)),
+                "",
+            )
 
 
 def test_hyperdx_keeps_its_frame_ancestors_beside_hsts() -> None:
     """One filter of each type per rule, so the two headers share one modifier."""
     rule = forwarding_rules(routes(render(*EVERYTHING))["hyperdx"])[0]
     kinds = [f["type"] for f in rule.get("filters", [])]
-    expect("hyperdx has one ResponseHeaderModifier", kinds.count("ResponseHeaderModifier") == 1,
-           f"got {kinds}")
+    expect(
+        "hyperdx has one ResponseHeaderModifier",
+        kinds.count("ResponseHeaderModifier") == 1,
+        f"got {kinds}",
+    )
     headers = set_headers(rule)
     csp = headers.get("Content-Security-Policy", "")
-    expect("carrying the frame-ancestors policy",
-           csp.startswith("frame-ancestors 'self' https://dfe."), f"got {headers}")
+    expect(
+        "carrying the frame-ancestors policy",
+        csp.startswith("frame-ancestors 'self' https://dfe."),
+        f"got {headers}",
+    )
     expect("and HSTS", HSTS in headers, f"got {headers}")
 
 
@@ -194,14 +277,20 @@ def test_no_rule_repeats_a_filter_type() -> None:
     for name, route in routes(render(*EVERYTHING)).items():
         for index, rule in enumerate(route["spec"]["rules"]):
             kinds = [f["type"] for f in rule.get("filters", [])]
-            expect(f"{name} rule {index} names each filter type once",
-                   len(kinds) == len(set(kinds)), f"got {kinds}")
+            expect(
+                f"{name} rule {index} names each filter type once",
+                len(kinds) == len(set(kinds)),
+                f"got {kinds}",
+            )
 
 
 def test_a_quoted_switch_is_refused() -> None:
     out = helm("--set", "domain=dfe.example.test", "--set-string", "tls.edge.hsts=true")
-    expect("tls.edge.hsts as a string is refused by name",
-           out.returncode != 0 and "tls.edge.hsts" in out.stderr, out.stderr[-300:])
+    expect(
+        "tls.edge.hsts as a string is refused by name",
+        out.returncode != 0 and "tls.edge.hsts" in out.stderr,
+        out.stderr[-300:],
+    )
 
 
 def test_the_wildcard_default_follows_the_edge_issuer() -> None:
@@ -209,16 +298,25 @@ def test_the_wildcard_default_follows_the_edge_issuer() -> None:
     for label, args, want in EDGE_HSTS_CASES:
         found = routes(render(*EVERYTHING, *args))
         internal = {name: r for name, r in found.items() if listener(r) == "https"}
-        expect(f"{label}: every wildcard route renders", set(internal) == INTERNAL_ROUTES,
-               f"got {sorted(internal)}")
+        expect(
+            f"{label}: every wildcard route renders",
+            set(internal) == INTERNAL_ROUTES,
+            f"got {sorted(internal)}",
+        )
         for name, route in sorted(internal.items()):
             sends = [HSTS in set_headers(r) for r in forwarding_rules(route)]
-            expect(f"{label}: {name} {'sends' if want else 'sends no'} {HSTS}",
-                   bool(sends) and all(s == want for s in sends), f"got {sends}")
+            expect(
+                f"{label}: {name} {'sends' if want else 'sends no'} {HSTS}",
+                bool(sends) and all(s == want for s in sends),
+                f"got {sends}",
+            )
         for name, route in sorted(found.items()):
             if listener(route).startswith("https-public-"):
-                expect(f"{label}: public {name} keeps ui.tls.hsts",
-                       all(HSTS in set_headers(r) for r in forwarding_rules(route)), "")
+                expect(
+                    f"{label}: public {name} keeps ui.tls.hsts",
+                    all(HSTS in set_headers(r) for r in forwarding_rules(route)),
+                    "",
+                )
 
 
 def test_the_default_matches_the_root_persist_render() -> None:
@@ -227,8 +325,14 @@ def test_the_default_matches_the_root_persist_render() -> None:
     variants = (
         ("persist off", ()),
         ("persist on", PERSIST_ON),
-        ("persist on, no store", (*PERSIST_ON, "--set", "tls.internalCA.persist.secretStoreName=")),
-        ("persist on, internal CA off", (*PERSIST_ON, "--set", "tls.internalCA.enabled=false")),
+        (
+            "persist on, no store",
+            (*PERSIST_ON, "--set", "tls.internalCA.persist.secretStoreName="),
+        ),
+        (
+            "persist on, internal CA off",
+            (*PERSIST_ON, "--set", "tls.internalCA.enabled=false"),
+        ),
     )
     seen = set()
     for label, args in variants:
@@ -236,10 +340,16 @@ def test_the_default_matches_the_root_persist_render() -> None:
         persisted = any(d.get("kind") == "PushSecret" for d in docs)
         seen.add(persisted)
         sends = HSTS in set_headers(forwarding_rules(routes(docs)["dfe-ui"])[0])
-        expect(f"{label}: HSTS on the wildcard exactly when the root persists",
-               sends == persisted, f"persisted={persisted} sends={sends}")
-    expect("the variants cover a persisted and an unpersisted root", seen == {True, False},
-           f"got {seen}")
+        expect(
+            f"{label}: HSTS on the wildcard exactly when the root persists",
+            sends == persisted,
+            f"persisted={persisted} sends={sends}",
+        )
+    expect(
+        "the variants cover a persisted and an unpersisted root",
+        seen == {True, False},
+        f"got {seen}",
+    )
 
 
 def test_empty_or_null_takes_the_derived_default() -> None:
@@ -250,8 +360,11 @@ def test_empty_or_null_takes_the_derived_default() -> None:
             continue
         docs = [d for d in yaml.safe_load_all(out.stdout) if d]
         dfe_ui = routes(docs)["dfe-ui"]
-        expect(f"{' '.join(how)}: an unpersisted internal root sends none",
-               all(HSTS not in set_headers(r) for r in forwarding_rules(dfe_ui)), "")
+        expect(
+            f"{' '.join(how)}: an unpersisted internal root sends none",
+            all(HSTS not in set_headers(r) for r in forwarding_rules(dfe_ui)),
+            "",
+        )
 
 
 def hidden_rules(route: dict) -> list[dict]:
@@ -267,17 +380,34 @@ def test_dfe_ui_metrics_answers_404_on_both_faces() -> None:
         if len(rules) != 1:
             continue
         paths = [m["path"] for m in rules[0]["matches"]]
-        expect(f"{name} hides /metrics by prefix",
-               paths == [{"type": "PathPrefix", "value": "/metrics"}], f"got {paths}")
+        expect(
+            f"{name} hides /metrics by prefix",
+            paths == [{"type": "PathPrefix", "value": "/metrics"}],
+            f"got {paths}",
+        )
         refs = [f.get("extensionRef") for f in rules[0]["filters"]]
-        expect(f"{name} answers it from the 404 filter",
-               refs == [{"group": "gateway.envoyproxy.io", "kind": "HTTPRouteFilter",
-                         "name": NOT_FOUND}], f"got {refs}")
+        expect(
+            f"{name} answers it from the 404 filter",
+            refs
+            == [
+                {
+                    "group": "gateway.envoyproxy.io",
+                    "kind": "HTTPRouteFilter",
+                    "name": NOT_FOUND,
+                }
+            ],
+            f"got {refs}",
+        )
     filters = [d for d in docs if d.get("kind") == "HTTPRouteFilter"]
-    namespaces = {found[name]["metadata"]["namespace"] for name in ("dfe-ui", "dfe-ui-public")}
+    namespaces = {
+        found[name]["metadata"]["namespace"] for name in ("dfe-ui", "dfe-ui-public")
+    }
     placed = [(f["metadata"]["name"], f["metadata"]["namespace"]) for f in filters]
-    expect("one 404 filter, in the routes' namespace",
-           placed == [(NOT_FOUND, ns) for ns in sorted(namespaces)], f"got {placed}")
+    expect(
+        "one 404 filter, in the routes' namespace",
+        placed == [(NOT_FOUND, ns) for ns in sorted(namespaces)],
+        f"got {placed}",
+    )
     if filters:
         status = filters[0]["spec"]["directResponse"]["statusCode"]
         expect("which answers 404 itself", status == 404, f"got {filters[0]['spec']}")
@@ -294,7 +424,11 @@ def test_only_the_hiding_route_gains_a_rule() -> None:
 def test_an_empty_list_hides_nothing_and_renders_no_filter() -> None:
     docs = render(*EVERYTHING, "--set-json", "routes.dfeUi.hiddenPaths=[]")
     expect("no hiding rule on dfe-ui", hidden_rules(routes(docs)["dfe-ui"]) == [], "")
-    expect("and no filter object", not [d for d in docs if d.get("kind") == "HTTPRouteFilter"], "")
+    expect(
+        "and no filter object",
+        not [d for d in docs if d.get("kind") == "HTTPRouteFilter"],
+        "",
+    )
 
 
 def main() -> int:

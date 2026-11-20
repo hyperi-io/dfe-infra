@@ -1,3 +1,4 @@
+# Design and settings: docs/observability/otel-collector.md.
 project: dfe
 component: otel-collector
 env: local
@@ -5,44 +6,30 @@ cloud: local
 
 image:
   repository: otel/opentelemetry-collector-contrib
-  tag: "0.163.2"  # Released 2026-10-21. Pinned explicitly, not via appVersion.
+  tag: "0.163.2"  # == versions.yaml services.otel-collector (drift-checked).
   # == versions.yaml services-digests.otel-collector (drift-checked).
   digest: "sha256:7f22d2a6748110ffb6a59bc0df448bccbf501cdb667d610ede4c61d3863d5849"
   pullPolicy: IfNotPresent
 
-# The GATEWAY's pod securityContext. The contrib image ships USER 10001
-# (numeric, verified via crane), so runAsNonRoot is satisfiable. The daemonset
-# is the exception and carries its own ids under daemonset.podSecurityContext.
+# The gateway's pod securityContext. The daemonset's is daemonset.podSecurityContext.
 podSecurityContext:
   runAsUser: 10001
   runAsGroup: 10001
   fsGroup: 10001
 
-# health_check extension port, served by BOTH collector configs (gateway +
-# daemonset) and probed by their workloads. The probes are only valid because
-# configmap.yaml enables the extension in service.extensions -- a probe against
-# a collector without the extension dials a closed port and kills the pod.
+# Served by both collector configs and probed by their workloads.
 healthCheckPort: 13133
 
 gateway:
   replicas: 1
-  # Adds the `debug` exporter to the traces and logs pipelines, which prints one
-  # line per batch to the collector's own log. Off by default: at a few hundred
-  # records a second it is the loudest thing in the namespace and it tells an
-  # operator nothing the pipeline metrics do not.
+  # Adds the debug exporter, which prints a line per batch.
   debugExporter: false
-  # Gateway PDB (templates/gateway-pdb.yaml): renders only when replicas >= 2,
-  # same drain-safety gating as dfe-common.pdb. maxUnavailable defaults to 1.
+  # Renders only when replicas >= 2.
   pdb:
     enabled: true
   export:
-    # Retry ceiling on the gateway's own exporters. A destination that has gone
-    # (a deleted ClickHouse Service, a rebuild) drops after this instead of
-    # being retried behind a full queue until the gateway itself dies.
     maxElapsedTime: 120s
-  # limits.memory is the ONE number the gateway's memory dials come from:
-  # memory_limiter limit_mib is 80% of it, spike_limit_mib 20%, and GOMEMLIMIT
-  # matches the 80%. Resize this and the config resizes with it.
+  # The one memory number: the limiter and GOMEMLIMIT derive from limits.memory.
   resources:
     requests:
       cpu: 200m
@@ -56,32 +43,19 @@ gateway:
     prometheusPort: 8889
 
 daemonset:
-  # Root, unlike every other DFE pod: node pod-log files are root-owned (0640),
-  # so a non-root filelog receiver silently opens zero files. Rootfs stays
-  # read-only and all capabilities stay dropped (containerSecurityContext).
-  # Node paths it mounts: /var/log/pods and the node root at /hostfs (for the
-  # host_metrics filesystem and disk scrapers), both read-only, and the
-  # checkpoint below, writable.
+  # Root: node pod-log files are root-owned, so a non-root filelog opens none.
   podSecurityContext:
     runAsNonRoot: false
     runAsUser: 0
     runAsGroup: 0
     fsGroup: 0
   export:
-    # Retry ceiling on the push to the gateway. A gateway refusing data because
-    # of its own memory_limiter, or gone entirely, costs the queued batches
-    # rather than a collector that retries until it is OOMKilled.
     maxElapsedTime: 60s
-  # Where the filelog receiver keeps its read offsets. On the NODE, because they
-  # have to survive the pod: without a checkpoint every restart re-ingests every
-  # pod log on the node from the start, which floods the export queue and OOMs
-  # the collector into the next restart.
+  # Read offsets live on the node so they survive the pod.
   checkpoint:
     hostPath: /var/lib/dfe-otel-collector
     mountPath: /var/lib/otelcol/storage
-  # limits.memory is the ONE number the daemonset's memory dials come from:
-  # memory_limiter limit_mib is 80% of it, spike_limit_mib 20%, GOMEMLIMIT
-  # matches the 80%, and the export queue holds a batch per 4 MiB of it.
+  # The one memory number: the limiter, GOMEMLIMIT and the export queue derive from limits.memory.
   resources:
     requests:
       cpu: 100m
@@ -89,28 +63,23 @@ daemonset:
     limits:
       cpu: 500m
       memory: 512Mi
-  # A daemonset pod can only run on its own node, so on a full node it waits
-  # unless it outranks a pod there. This class puts it above every pod that
-  # names none, and the scheduler evicts one of those to make room.
+  # Outranks the app pods so a full node evicts one for the agent.
   priorityClass:
     # false where the cluster already defines the class `name` refers to.
     create: true
-    # Empty renders no priorityClassName, and the pod ranks 0 with the apps.
+    # Empty renders no priorityClassName.
     name: dfe-node-critical
-    # Above the 0 a classless pod gets, and under the 1,000,000,000 ceiling on a
-    # user-defined class, so the cluster's own system-* classes still rank higher.
-    # The API server refuses a change to it, so a new value means a new name.
+    # Above 0, at most 1000000000. The API server refuses a change, so a new value needs a new name.
     value: 1000000
 
-# Where the DFE apps run (the ApplicationSet passes the cluster annotation);
-# empty falls back to {project}-{env}.
+# Where the DFE apps run (the ApplicationSet passes the cluster annotation); empty falls back to {project}-{env}.
 appNamespace: ""
 
 # The gateway's hold until dfe-engine reports ready, the keys dfe-common.waitForEngine reads.
 waitForEngine:
   enabled: true
   service: dfe-engine
-  # Empty is appNamespace, where the engine runs.
+  # Empty is appNamespace.
   namespace: ""
   port: 8000
   timeoutSeconds: 600
@@ -130,107 +99,60 @@ waitForEngine:
       cpu: 100m
       memory: 64Mi
 
-# Cluster + dependency telemetry, feeding the pre-canned HyperDX dashboards
-# (dfe-engine#184). The dashboards are identical on every profile; collection cost
-# is not, so the expensive scrapers are gated here and enabled per profile.
-# Parse a severity out of each container log line (DaemonSet filelog). Without it
-# every log row stores SeverityText='' and no severity filter or error tile works.
-# Verified against a 406-line sample of live cluster logs: 395 parsed, no line
-# carrying a level token missed, and no false ERROR.
+# Parse a severity out of each container log line (DaemonSet filelog).
 logSeverity:
   enabled: true
 
+# Cluster and dependency telemetry. The expensive scrapers are set per tier in argocd/values/profile-*.yaml.
 clusterTelemetry:
-  # Cluster-scoped state: node conditions, allocatable, replica counts, pod phase.
-  # Gateway-only -- it reads the API server, and one instance per cluster is the
-  # contract.
+  # Gateway only.
   k8sCluster:
     enabled: true
     collectionInterval: 30s
 
-  # Per-node/pod/container consumption, read off each node's kubelet. DaemonSet-only.
-  # Container-level series multiply by every container on every node, so slim leaves
-  # it off. `volume` is omitted: a series per mounted volume, unused by the PV tiles.
+  # DaemonSet only. Off in slim, where container series are not worth it.
   kubeletStats:
     enabled: false
     collectionInterval: 30s
     metricGroups: [node, pod, container]
 
-  # ClickHouse server metrics via sql_query over system.metrics/events/parts.
-  # Not the :9363 Prometheus endpoint -- the clickhouse-cluster chart does not
-  # expose it and managed ClickHouse does not offer it, whereas these system tables
-  # are readable from any client on any provider. It dials as the exporter's
-  # user, whose role grants those three reads (dfe-schemas roles/clickhouse.yaml).
+  # sql_query over system.metrics, system.events and system.parts, as the collector's own user.
   clickhouse:
     enabled: true
     collectionInterval: 30s
 
-  # Broker-side Kafka metrics. kafka_metrics speaks the Kafka protocol against
-  # bootstrapServers, so single-broker and Strimzi share one config with no JMX
-  # exporter. Complements the consumers' own rdkafka_* lag, which stops reporting
-  # when a consumer dies.
-  # Off by default -- the brokerless profiles (slim, mesh) have no Kafka to
-  # scrape. SASL/SCRAM-SHA-512 is the DFE broker
-  # standard, so the credential must be projected here via the kafka chart's
-  # `user.password.extraAppNamespaces`.
+  # Broker-side metrics over the Kafka protocol. Off for the brokerless tiers (slim, mesh).
+  # SASL needs dfe-kafka-user projected here through the kafka chart's `user.password.extraAppNamespaces`.
   kafka:
     enabled: false
     collectionInterval: 30s
-    # Pinned rather than left to the receiver default of 2.1.0.
     protocolVersion: "3.6.0"
     scrapers: [brokers, topics, consumers]
-    # Dial TLS (system trust store). A managed broker (kafka.mode external with
-    # kafka.external.provider set) always does, so this is for a self-run
-    # broker on a TLS listener.
+    # Dial TLS (system trust store). A managed broker always does.
     tls:
       enabled: false
     sasl:
       enabled: true
-      # Empty derives it: the provider table's mechanism for a managed broker,
-      # else SCRAM-SHA-512.
+      # Empty derives it: the provider table's mechanism for a managed broker, else SCRAM-SHA-512.
       mechanism: ""
       username: dfe-kafka-user
       passwordSecretName: dfe-kafka-user
       passwordSecretKey: password
 
-  # MSK's own open_monitoring: the JMX exporter (broker JVM metrics) and node
-  # exporter (broker OS metrics) AWS runs on every broker instance, in
-  # Prometheus text format -- a DIFFERENT feed from the kafka block above,
-  # which speaks the Kafka protocol itself and covers broker/topic/consumer
-  # counts, not JVM or OS metrics. Gateway-only: the targets are the brokers'
-  # own hosts, not anything running in this cluster. Rendered only when
-  # kafka.external.provider is msk -- every other provider either exposes no such
-  # endpoint (strimzi, redpanda) or is a SaaS body with no host to target
-  # (confluent-cloud, redpanda-cloud).
+  # MSK's JMX and node exporters, a different feed from `kafka` above. Gateway only,
+  # and renders only when kafka.external.provider is msk.
   mskOpenMonitoring:
     enabled: true
     collectionInterval: 30s
     jmxPort: 11001
     nodeExporterPort: 11002
 
-  # The infra provider's own logs (the second self-monitoring feed beside the
-  # stack's OTLP). Each provider's native log service feeds a receiver in a
-  # collector OF ITS OWN, which pushes OTLP to the gateway and so into the otel
-  # database HyperDX reads. Off the DFE ingest path: no fetcher source, no
-  # customer table, so self-monitoring stays up when ingest breaks.
-  #
-  # Its own process, not the gateway, because a failed receiver must not take
-  # the rest of self-monitoring with it. The aws_cloudwatch receiver dereferences
-  # a nil pointer when its STS identity call fails, which exits the whole
-  # collector, so it is isolated here and restarts alone.
-  #
-  # flavour:
-  #   none     nothing renders (the chart default).
-  #   aws      aws_cloudwatch (alpha) polling the named CloudWatch log groups,
-  #            read through the pod's own Pod Identity role. Needs aws.region and
-  #            at least one log group. The group names are cluster facts the
-  #            cloud root outputs, so they are not defaulted here.
-  #   azure    azure_event_hub, fed by a diagnostic setting streaming to an Event Hub.
-  #   gcp      googlecloudpubsub, fed by a log sink into a Pub/Sub subscription.
+  # The infra provider's own logs, in a collector of their own. See docs/observability/provider-logs.md.
+  #   none     nothing renders.
+  #   aws      aws_cloudwatch on the named CloudWatch log groups. Needs aws.region and at least one group.
+  #   azure    azure_event_hub, fed by a diagnostic setting.
+  #   gcp      googlecloudpubsub, fed by a log sink.
   #   rancher  filelog on the control-plane nodes, reading the kube-apiserver audit log.
-  #
-  # Auditing is the operator's to turn on, on rancher. With it off the file does
-  # not exist, the receiver finds nothing to read and the collector stays up.
   providerLogs:
     flavour: none
     # The workload that runs aws, azure and gcp. A DaemonSet runs rancher instead.
@@ -242,22 +164,18 @@ clusterTelemetry:
         limits:
           cpu: 250m
           memory: 256Mi
-      # Retry ceiling on the push to the gateway, as for the node agent.
       export:
         maxElapsedTime: 60s
-      # aws only: the receiver's read offsets, on a claim so a replacement pod resumes
-      # where the last one stopped instead of rereading the lookback or skipping a longer gap.
-      # Empty storageClass takes the cluster's default class.
+      # aws only: the receiver's read offsets. Empty storageClass takes the cluster's default class.
       checkpoint:
         size: 1Gi
         storageClass: ""
     aws:
       region: ""
-      # CloudWatch keeps only a catch-up window, so a restart reads back at most this far.
+      # Read back this far when there is no checkpoint yet.
       initialLookback: 5m
       pollInterval: 1m
-      # EKS control-plane audit stream and CloudTrail's CloudWatch group. Empty
-      # leaves that source out.
+      # Cluster facts the cloud root outputs. Empty leaves that source out.
       eksAuditLogGroup: ""
       cloudTrailLogGroup: ""
     azure:
@@ -269,13 +187,10 @@ clusterTelemetry:
       # Fully qualified: projects/<project>/subscriptions/<name>. A Pull subscription.
       subscription: ""
     rancher:
-      # RKE2's documented path once its audit-policy-file is set. Auditing is
-      # the operator's to enable. Any other distribution sets its own path.
+      # RKE2's path once its audit-policy-file is set. Another distribution sets its own.
       auditLogPath: /var/lib/rancher/rke2/server/logs/audit.log
-      # The control-plane nodes, by the label RKE2 puts on them.
       nodeSelector:
         node-role.kubernetes.io/control-plane: "true"
-      # Every taint, so a tainted control plane still runs it.
       tolerations:
         - operator: Exists
       resources:
@@ -285,52 +200,33 @@ clusterTelemetry:
         limits:
           cpu: 250m
           memory: 256Mi
-      # Read offsets, on the node so they outlive the pod.
       checkpoint:
         hostPath: /var/lib/dfe-otel-provider-logs
         mountPath: /var/lib/otelcol/storage
 
-  # KEDA needs no receiver here: the operator pushes its own metrics over OTLP to
-  # the gateway, enabled in argocd/appsets/layer1-addons.yaml. Kept as a documented
-  # absence so the next reader does not add a scrape job for it.
-
-  # The collector's own pipeline health (otelcol_*): queue depth, enqueue failures,
-  # send failures. Served on loopback and scraped back into the same pipeline.
+  # The collector's own otelcol_* metrics, scraped back on loopback.
   selfTelemetry:
     enabled: true
     port: 8888
 
-  # Scrape the DFE services' own /metrics. Every DFE thin chart already annotates
-  # its pods with prometheus.io/scrape, port and path, so this is discovery by annotation
-  # rather than a target list. A service that also pushes the same metrics over OTLP
-  # with the pod as service.instance.id would land in otel_metrics_* twice, and a sum
-  # over both copies counts it twice, so pushedCharts drops its pods from the scrape.
+  # Scrapes the DFE services' /metrics by pod annotation.
   dfeServices:
     enabled: true
     collectionInterval: 30s
-    # Anchored regex over the pods' helm.sh/chart label (<chart>-<version>). A chart
-    # belongs here only once the image it deploys pushes with replica identity: before
-    # that, the push merges every replica into one series. Empty drops nothing.
+    # Anchored regex over the pods' helm.sh/chart label. Drops charts that also push the same
+    # metrics over OTLP, so a sum does not count them twice. Empty drops nothing.
     pushedCharts: "dfe-(engine|receiver|loader|fetcher|archiver|transform-vrl|transform-vector|transform-elastic)-[0-9].*|culvert-[0-9].*"
 
-  # The data operators' own controller metrics: reconcile errors, work-queue depth,
-  # API latency. Scraped rather than pushed because none of them speak OTLP.
-  # Discovery is by Service endpoint, not pod annotation: the ClickHouse chart's
-  # scraping_annotations omit prometheus.io/scheme while its port serves HTTPS, so
-  # an annotation-driven scrape fails the TLS handshake.
-  # Bounded to operatorNamespaces -- the job presents the collector's
-  # ServiceAccount token, which must not leave namespaces we install into.
+  # The data operators' controller metrics, found by Service endpoint in operatorNamespaces.
   platformComponents:
     enabled: true
     collectionInterval: 30s
-    # Port names to scrape. `https` selects controller-runtime's secure endpoint;
-    # the plain names are the convention for unauthenticated exposition.
+    # `https` selects controller-runtime's secure endpoint.
     portNames: "https|metrics|http-metrics"
 
-# Shared endpoint facts. Defaulted here so the chart renders standalone; a real
-# deploy takes them from argocd/values/common.yaml, which is the SSoT.
+# Shared endpoint facts. A real deploy takes them from argocd/values/common.yaml.
 
-# Where the data operators run -- the discovery scope for platformComponents.
+# The discovery scope for platformComponents.
 operatorNamespaces:
   clickhouse: clickhouse-operator-system
   strimzi: strimzi
@@ -340,12 +236,7 @@ clickhouse:
   host: dfe-clickhouse.clickhouse.svc.cluster.local
   nativePort: 9000
   database: dfe
-  # The shared clickhouse.tls block (argocd/values/common.yaml), whose rule every
-  # client applies: on when enabled AND there is a CA to sign with (issuerRef, or
-  # the internal CA). An in-cluster server then serves the native protocol over TLS
-  # on nativePort below, and the collector verifies it against the CA copy in
-  # ca.secretName. An external server keeps its own port and trust: set
-  # ca.configMapName for a corporate bundle, verify false for an unverifiable cert.
+  # The shared clickhouse.tls block (argocd/values/common.yaml). See docs/observability/otel-collector.md#rows-and-writes.
   tls:
     enabled: false
     nativePort: 9440
@@ -358,8 +249,7 @@ clickhouse:
       secretName: ""
       configMapName: ""
       dataKey: ca.crt
-  # The collector's own user, never the admin account: dfe-engine creates it on
-  # the password dfe-extras mints and copies into this namespace.
+  # Never the admin account: dfe-engine creates this user.
   serviceUsers:
     otelWriter:
       user: dfe_otel_writer
@@ -369,51 +259,32 @@ clickhouse:
 kafka:
   # Comma separated for a multi-broker bootstrap list.
   bootstrapServers: "dfe-kafka.strimzi.svc.cluster.local:9092"
-  # The kafka chart's own kafka.mode and kafka.external.provider, set from the
-  # cluster-secret annotations by argocd/appsets/layer2-data.yaml. At
-  # mode=external the provider decides TLS, the SASL mechanism and whether the
-  # MSK open_monitoring scrape below renders.
+  # Set from the cluster-secret annotations by argocd/appsets/layer2-data.yaml.
   mode: ""
   external:
     provider: ""
-  # MSK's own bare broker hosts (no port), comma separated -- the target list
-  # the Prometheus receiver below needs. Derived by bootstrap.sh from
-  # DFE_KAFKA_BOOTSTRAP; empty on every provider but msk.
+  # MSK's bare broker hosts, no port, comma separated. Empty on every provider but msk.
   brokerHosts: ""
 
 exporters:
-  # OTLP push to a hyperdx-side receiver. OFF: the dfe-hyperdx image ships
-  # no OTLP listener; flip on (with an endpoint) only when the fork deploys
-  # its own collector.
+  # OTLP push to a hyperdx-side receiver. Off: the dfe-hyperdx image has no OTLP listener.
   hyperdx:
     enabled: false
     endpoint: ""
-  # ClickHouse exporter -- writes the otel_logs/otel_traces/otel_metrics
-  # tables the embedded HyperDX reads. THE default telemetry sink.
+  # Writes the otel_logs, otel_traces and otel_metrics tables HyperDX reads. The default sink.
   clickhouse:
     enabled: true
-    # Empty -> derived from the shared clickhouse facts above, which is what a
-    # real deploy wants. Set these only to point the exporter somewhere else.
+    # Empty derives these from the shared clickhouse facts above.
     endpoint: ""
     database: ""
     username: ""
     passwordSecretName: ""
     passwordSecretKey: ""
-    # ClickHouse session settings, merged into the exporter's DSN query string.
-    #
-    # A log body repeating a JSON path fails its whole batch with code 117 and
-    # the retry never drains it, so one record stops the logs pipeline.
-    # The skip keeps the first occurrence and is silent; the raw Body column
-    # still holds the original text.
+    # Merged into the exporter's DSN. See docs/observability/otel-collector.md#rows-and-writes.
     connectionParams:
       type_json_skip_duplicated_paths: "1"
 
-# OTLP ingest from OUTSIDE the cluster, through the gateway's otel route. Off,
-# nothing here renders. On, a second OTLP/HTTP receiver listens on `port`, admits
-# only a bearer token, and feeds the same pipelines, while 4317/4318 stay exactly
-# as they are for senders inside the cluster. Defaulted here so the chart renders
-# standalone. A real deploy takes the switch from argocd/values/common.yaml or
-# the deploy repo's infra/common.yaml, which the gateway chart reads too.
+# OTLP ingest from outside the cluster, on a bearer token. See docs/observability/otel-collector.md#otlp-ingest-from-outside-the-cluster.
 otel:
   ingress:
     enabled: false
@@ -423,8 +294,7 @@ otel:
       secretStoreName: dfe-secret-store
       # The token's path in that store. Required when enabled.
       remoteKey: ""
-      # The field within that entry. Each line's first word is a valid token, so
-      # a rotation can hold the old and the new one at once.
+      # The field within that entry.
       property: token
       # The Secret the token lands in, mounted into the gateway pod.
       secretName: dfe-otel-ingress-token

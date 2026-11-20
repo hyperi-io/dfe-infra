@@ -1,8 +1,6 @@
 {{- $pl := .Values.clusterTelemetry.providerLogs }}
 {{- if eq $pl.flavour "rancher" }}
-# rancher: the kube-apiserver audit log only exists on the control-plane nodes, so
-# this is a DaemonSet of its own, selected onto them. The chart's node agent
-# stays where it was.
+# rancher: the kube-apiserver audit log exists only on the control-plane nodes, so this DaemonSet is selected onto them.
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
@@ -21,7 +19,7 @@ spec:
         app.kubernetes.io/name: {{ include "dfe-common.fullname" . }}-provider-logs
         app.kubernetes.io/part-of: {{ .Values.project | quote }}
     spec:
-      # Root: the audit log is written by the API server as root with a restrictive mode.
+      # Root: the API server writes the audit log as root, mode restricted.
       {{- include "dfe-common.podSecurityContext" (dict "Values" (dict "podSecurityContext" .Values.daemonset.podSecurityContext)) | nindent 6 }}
       serviceAccountName: {{ include "otel-collector.providerLogsServiceAccount" . }}
       {{- with $pl.rancher.nodeSelector }}
@@ -75,9 +73,7 @@ spec:
         - name: config
           configMap:
             name: {{ include "dfe-common.fullname" . }}-provider-logs-config
-        # The log's directory, not the file: the file rotates, and a directory
-        # that does not exist yet (auditing off) is created empty rather than
-        # refusing to start the pod.
+        # The directory, not the file: the file rotates, and a missing directory is created empty.
         - name: audit
           hostPath:
             path: {{ dir $pl.rancher.auditLogPath }}

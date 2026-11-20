@@ -15,26 +15,23 @@ navbar:
     - {label: API, to: "{api_path}"}
   github: {label: GitHub, href: "https://github.com/hyperi-io"}
 
-announcement:
-  tag: Latest
-  text: "DFE {newest} is the current release."
-  link: Release notes
+# The navbar label beside the version picker, by what this build is.
+release_label:
+  latest: Latest
+  latest_title: "DFE {newest} is the current release. Release notes"
+  older: Not latest
+  older_title: "Go to DFE {newest}, the current release"
+  next: Unreleased
+  next_title: "Unreleased. Go to DFE {newest}, the current release"
 
 footer:
-  columns:
-    - title: Docs
-      items:
-        - {label: Overview, to: /overview/}
-        - {label: Quickstarts, to: /quickstart/}
-        - {label: Coming from Splunk or Elastic, to: /coming-from/}
-        - {label: HTTP API reference, to: "{api_path}"}
-        - {label: Release notes, href: "{release_notes}"}
-    - title: Source
-      items:
-        - {label: GitHub, href: "https://github.com/hyperi-io"}
-        - {label: dfe-infra, href: "https://github.com/hyperi-io/dfe-infra"}
-        - {label: dfe-docker, href: "https://github.com/hyperi-io/dfe-docker"}
-    - title: HyperI
-      items:
-        - {label: hyperi.io, href: "https://hyperi.io"}
+  links:
+    - {label: Overview, to: /overview/}
+    - {label: Quickstarts, to: /quickstart/}
+    - {label: Coming from Splunk or Elastic, to: /coming-from/}
+    - {label: Coming from a Lakehouse, to: /coming-from-lakehouse/}
+    - {label: HTTP API reference, to: "{api_path}"}
+    - {label: Release notes, href: "{release_notes}"}
+    - {label: GitHub, href: "https://github.com/hyperi-io"}
+    - {label: hyperi.io, href: "https://hyperi.io"}
   copyright: "Copyright (c) {year} HYPERI PTY LIMITED"

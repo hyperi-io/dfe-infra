@@ -904,7 +904,7 @@ export DFE_IMAGE_PULL_SECRET="${DFE_PULL_SECRET_TOKEN:+ghcr-pull-secret}"
 # defaults to DFE_REGISTRY's host rather than to one fixed registry.
 DFE_PULL_SECRET_SERVER="${DFE_PULL_SECRET_SERVER:-${DFE_REGISTRY%%/*}}"
 
-# Deploy repo (dfe-engine writes config, Argo watches). PROVIDER-AGNOSTIC seam:
+# Deploy repo (dfe-engine writes config, Argo watches). Any git PROVIDER works:
 # external git (GitHub ~85% / GitLab ~10%) is PRIMARY; the in-cluster Forgejo
 # fallback (~5%, tyre-kicking/air-gapped) is used ONLY when no external URL is
 # given. If DFE_CONFIG_REPO_URL is set -> external mode (deployer also supplies
@@ -1514,7 +1514,7 @@ run kubectl apply -f "${SCRIPT_DIR}/../argocd/bootstrap/appproject-bootstrap.yam
 # The config app below needs the Gateway API CRDs, laid at [1d/7] or adopted
 # and then synced by the operator app, so wait for them to establish before
 # applying it (its sync retry budget is finite -- exhausting it on missing
-# CRDs wedges the app until a manual refresh).
+# CRDs stops the app syncing until a manual refresh).
 kubectl -n argocd create secret generic repo-envoyproxy-oci \
   --from-literal=type=helm \
   --from-literal=name=envoyproxy \

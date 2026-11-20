@@ -62,6 +62,7 @@ KEY_FILE = re.compile(r"(^tls\.key$|\.key$|private[-_.]?key)", re.IGNORECASE)
 # A Secret named for the keypair it holds, wherever its object is rendered.
 KEYPAIR_NAME = re.compile(r"-keypair$")
 
+
 # Namespaces a first-party chart is deployed into by layer2-data.yaml, by chart name.
 def _data_namespaces() -> dict[str, str]:
     appset = yaml.safe_load(APPSET.read_text(encoding="utf-8", errors="replace"))
@@ -75,7 +76,11 @@ def _data_namespaces() -> dict[str, str]:
 
 
 def _charts() -> list[Path]:
-    return [chart.parent for tree in CHART_TREES for chart in sorted(tree.glob("*/Chart.yaml"))]
+    return [
+        chart.parent
+        for tree in CHART_TREES
+        for chart in sorted(tree.glob("*/Chart.yaml"))
+    ]
 
 
 @functools.cache
@@ -86,11 +91,27 @@ def chart_renders(tier: str) -> tuple[tuple[str, tuple[dict, ...]], ...]:
     for directory in _charts():
         name = directory.name
         cmd = [
-            "helm", "template", name, str(directory), "--namespace", namespaces.get(name, APP_NS),
-            "-f", str(VALUES / "common.yaml"), "-f", str(VALUES / f"profile-{tier}.yaml"),
-            "--set", f"appNamespace={APP_NS}",
+            "helm",
+            "template",
+            name,
+            str(directory),
+            "--namespace",
+            namespaces.get(name, APP_NS),
+            "-f",
+            str(VALUES / "common.yaml"),
+            "-f",
+            str(VALUES / f"profile-{tier}.yaml"),
+            "--set",
+            f"appNamespace={APP_NS}",
         ]
-        done = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
+        done = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
         assert done.returncode == 0, f"helm template {name} ({tier}): {done.stderr}"
         docs = tuple(d for d in yaml.safe_load_all(done.stdout) if d)
         renders.append((namespaces.get(name, ""), docs))
@@ -99,7 +120,9 @@ def chart_renders(tier: str) -> tuple[tuple[str, tuple[dict, ...]], ...]:
 
 @functools.cache
 def thin_renders(tier: str) -> tuple[tuple[str, tuple[dict, ...]], ...]:
-    return tuple((APP_NS, tuple(golden(s, tier, c))) for s in COMPONENTS for c in CLOUDS)
+    return tuple(
+        (APP_NS, tuple(golden(s, tier, c))) for s in COMPONENTS for c in CLOUDS
+    )
 
 
 def _namespace(doc: dict, default: str) -> str:
@@ -114,7 +137,9 @@ def key_secrets(renders) -> dict[str, set[str]]:
             kind, ns = doc.get("kind"), _namespace(doc, default)
             if kind == "Secret":
                 keys = set(doc.get("data") or {}) | set(doc.get("stringData") or {})
-                if any(KEY_FILE.search(key) for key in keys) or KEYPAIR_NAME.search(doc["metadata"]["name"]):
+                if any(KEY_FILE.search(key) for key in keys) or KEYPAIR_NAME.search(
+                    doc["metadata"]["name"]
+                ):
                     owners.setdefault(doc["metadata"]["name"], set()).add(ns)
             elif kind == "Certificate":
                 secret = (doc.get("spec") or {}).get("secretName")
@@ -139,13 +164,21 @@ def _mounts(volume: dict) -> Iterator[tuple[str, object, list[dict]]]:
     """(secret name, defaultMode, items) for each Secret a volume mounts."""
     secret = volume.get("secret")
     if isinstance(secret, dict) and secret.get("secretName"):
-        yield str(secret["secretName"]), secret.get("defaultMode"), secret.get("items") or []
+        yield (
+            str(secret["secretName"]),
+            secret.get("defaultMode"),
+            secret.get("items") or [],
+        )
     projected = volume.get("projected")
     if isinstance(projected, dict):
         for source in projected.get("sources") or []:
             part = source.get("secret") if isinstance(source, dict) else None
             if isinstance(part, dict) and part.get("name"):
-                yield str(part["name"]), projected.get("defaultMode"), part.get("items") or []
+                yield (
+                    str(part["name"]),
+                    projected.get("defaultMode"),
+                    part.get("items") or [],
+                )
 
 
 def _mode(value: object) -> int:
@@ -165,20 +198,28 @@ def violations(renders) -> list[str]:
                 for secret, default_mode, items in _mounts(volume):
                     if secret not in owners and not KEYPAIR_NAME.search(secret):
                         continue
-                    where = f"{object_id(doc)} in {ns or 'its namespace'} mounts {secret}"
+                    where = (
+                        f"{object_id(doc)} in {ns or 'its namespace'} mounts {secret}"
+                    )
                     if owners.get(secret) and ns and ns not in owners[secret]:
                         found.append(f"{where}, owned by {sorted(owners[secret])}")
-                    modes = [_mode(default_mode)] if not items else [
-                        _mode(item.get("mode", default_mode)) for item in items
-                    ]
+                    modes = (
+                        [_mode(default_mode)]
+                        if not items
+                        else [_mode(item.get("mode", default_mode)) for item in items]
+                    )
                     wide = [oct(m) for m in modes if m & ~WIDEST]
                     if wide:
-                        found.append(f"{where} with mode {', '.join(wide)}, wider than {oct(WIDEST)}")
+                        found.append(
+                            f"{where} with mode {', '.join(wide)}, wider than {oct(WIDEST)}"
+                        )
     return found
 
 
 @pytest.mark.parametrize("tier", TIERS)
-def test_private_key_secrets_stay_in_their_namespace_and_are_mounted_0440(tier: str) -> None:
+def test_private_key_secrets_stay_in_their_namespace_and_are_mounted_0440(
+    tier: str,
+) -> None:
     renders = chart_renders(tier) + thin_renders(tier)
     owners = key_secrets(renders)
     assert owners, "no private-key Secret was found, so the scan proved nothing"
@@ -190,13 +231,26 @@ def test_private_key_secrets_stay_in_their_namespace_and_are_mounted_0440(tier: 
 
 def _pod(ns: str, secret: str, **volume: object) -> dict:
     return {
-        "kind": "Deployment", "metadata": {"name": "app", "namespace": ns},
-        "spec": {"template": {"spec": {"volumes": [{"name": "k", "secret": {"secretName": secret, **volume}}]}}},
+        "kind": "Deployment",
+        "metadata": {"name": "app", "namespace": ns},
+        "spec": {
+            "template": {
+                "spec": {
+                    "volumes": [
+                        {"name": "k", "secret": {"secretName": secret, **volume}}
+                    ]
+                }
+            }
+        },
     }
 
 
 def _owner(ns: str = "clickhouse") -> dict:
-    return {"kind": "Certificate", "metadata": {"name": "c", "namespace": ns}, "spec": {"secretName": "tls"}}
+    return {
+        "kind": "Certificate",
+        "metadata": {"name": "c", "namespace": ns},
+        "spec": {"secretName": "tls"},
+    }
 
 
 @pytest.mark.parametrize(
@@ -206,20 +260,49 @@ def _owner(ns: str = "clickhouse") -> dict:
         (_pod("clickhouse", "tls", defaultMode=0o644), "wider than 0o440"),
         (_pod("clickhouse", "tls"), "0o644"),
         (_pod("clickhouse", "tls", defaultMode=0o444), "0o444"),
-        (_pod("clickhouse", "tls", defaultMode=0o400, items=[{"key": "tls.key", "path": "k", "mode": 0o666}]), "0o666"),
         (
-            {"kind": "Pod", "metadata": {"name": "p", "namespace": "clickhouse"}, "spec": {"volumes": [
-                {"name": "k", "projected": {"sources": [{"secret": {"name": "tls"}}]}}]}},
+            _pod(
+                "clickhouse",
+                "tls",
+                defaultMode=0o400,
+                items=[{"key": "tls.key", "path": "k", "mode": 0o666}],
+            ),
+            "0o666",
+        ),
+        (
+            {
+                "kind": "Pod",
+                "metadata": {"name": "p", "namespace": "clickhouse"},
+                "spec": {
+                    "volumes": [
+                        {
+                            "name": "k",
+                            "projected": {"sources": [{"secret": {"name": "tls"}}]},
+                        }
+                    ]
+                },
+            },
             "wider than",
         ),
         (
-            {"kind": "ClickHouseInstallation", "metadata": {"name": "ch", "namespace": "clickhouse"}, "spec": {
-                "templates": {"podTemplates": [{"spec": {"volumes": [{"secret": {"secretName": "tls"}}]}}]}}},
+            {
+                "kind": "ClickHouseInstallation",
+                "metadata": {"name": "ch", "namespace": "clickhouse"},
+                "spec": {
+                    "templates": {
+                        "podTemplates": [
+                            {"spec": {"volumes": [{"secret": {"secretName": "tls"}}]}}
+                        ]
+                    }
+                },
+            },
             "wider than",
         ),
     ],
 )
-def test_expected_fail_each_way_of_exposing_a_key_is_found(pod: dict, needle: str) -> None:
+def test_expected_fail_each_way_of_exposing_a_key_is_found(
+    pod: dict, needle: str
+) -> None:
     assert any(needle in line for line in violations([("", (_owner(), pod))]))
 
 
@@ -228,7 +311,12 @@ def test_expected_fail_each_way_of_exposing_a_key_is_found(pod: dict, needle: st
     [
         _pod("clickhouse", "tls", defaultMode=0o440),
         _pod("clickhouse", "tls", defaultMode=0o400),
-        _pod("clickhouse", "tls", defaultMode=0o440, items=[{"key": "tls.key", "path": "k", "mode": 0o400}]),
+        _pod(
+            "clickhouse",
+            "tls",
+            defaultMode=0o440,
+            items=[{"key": "tls.key", "path": "k", "mode": 0o400}],
+        ),
         _pod("dfe", "dfe-clickhouse-tls-ca", defaultMode=0o644),
     ],
 )
@@ -237,6 +325,10 @@ def test_a_narrow_mount_in_the_owning_namespace_is_clean(pod: dict) -> None:
 
 
 def test_a_secret_with_a_key_file_is_a_key_secret_without_a_certificate() -> None:
-    secret = {"kind": "Secret", "metadata": {"name": "signer", "namespace": "a"}, "data": {"tls.key": "eA=="}}
+    secret = {
+        "kind": "Secret",
+        "metadata": {"name": "signer", "namespace": "a"},
+        "data": {"tls.key": "eA=="},
+    }
     assert key_secrets([("", (secret,))]) == {"signer": {"a"}}
     assert violations([("", (secret, _pod("b", "signer", defaultMode=0o440)))])

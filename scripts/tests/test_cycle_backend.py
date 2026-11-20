@@ -11,7 +11,7 @@
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
 """Tests for scripts/cycle_backend.py.
 
-    python3 -m pytest scripts/tests/test_cycle_backend.py -q
+python3 -m pytest scripts/tests/test_cycle_backend.py -q
 """
 
 import sys
@@ -102,8 +102,15 @@ def test_the_merge_keeps_every_key_the_overlay_does_not_name(tmp_path: Path) -> 
 def test_the_msk_overlay_is_the_shape_the_example_dial_documents() -> None:
     overlay = cycle_backend.load_overlay("msk")["kafka"]["msk"]
     example = parse_dial(EXAMPLE.read_text(encoding="utf-8"))
-    for key in ("shape_ref", "broker_count", "broker_version", "num_partitions",
-                "log_retention_ms", "message_max_bytes", "scram_username"):
+    for key in (
+        "shape_ref",
+        "broker_count",
+        "broker_version",
+        "num_partitions",
+        "log_retention_ms",
+        "message_max_bytes",
+        "scram_username",
+    ):
         assert overlay[key] == at(example, ("kafka", "msk", key)), key
     assert overlay["bootstrap_job"] == at(example, ("kafka", "msk", "bootstrap_job"))
 
@@ -119,12 +126,16 @@ def test_the_backends_a_run_may_name_are_default_and_every_committed_overlay() -
 
 
 @pytest.mark.parametrize("backend", cycle_backend.available()[1:])
-def test_every_committed_overlay_renders_for_the_root(tmp_path: Path, backend: str) -> None:
+def test_every_committed_overlay_renders_for_the_root(
+    tmp_path: Path, backend: str
+) -> None:
     variables = render_with(tmp_path, backend)
     assert variables["provision"]["cloud"] == "aws"
 
 
-def test_confluent_cloud_is_public_basic_in_the_standing_environment(tmp_path: Path) -> None:
+def test_confluent_cloud_is_public_basic_in_the_standing_environment(
+    tmp_path: Path,
+) -> None:
     variables = render_with(tmp_path, "confluent-cloud")
 
     assert variables["kafka"] == {
@@ -134,13 +145,22 @@ def test_confluent_cloud_is_public_basic_in_the_standing_environment(tmp_path: P
         "connectivity": "public",
         "confluent_tier": "basic",
         "confluent_environment_id": "env-example1",
-        "confluent_rest_ready": {"successes": 12, "timeout_seconds": 900, "interval_seconds": 5},
+        "confluent_rest_ready": {
+            "successes": 12,
+            "timeout_seconds": 900,
+            "interval_seconds": 5,
+        },
     }
-    assert variables["seeds"]["kafka/confluent-cloud"] == {"username": "", "password": ""}
+    assert variables["seeds"]["kafka/confluent-cloud"] == {
+        "username": "",
+        "password": "",
+    }
     assert variables["clickhouse"] == {"mode": "in_cluster"}
 
 
-def test_redpanda_cloud_is_public_serverless_in_the_standing_group(tmp_path: Path) -> None:
+def test_redpanda_cloud_is_public_serverless_in_the_standing_group(
+    tmp_path: Path,
+) -> None:
     variables = render_with(tmp_path, "redpanda-cloud")
 
     assert variables["kafka"] == {
@@ -155,7 +175,9 @@ def test_redpanda_cloud_is_public_serverless_in_the_standing_group(tmp_path: Pat
     assert variables["clickhouse"] == {"mode": "in_cluster"}
 
 
-def test_clickhouse_cloud_is_the_standing_service_beside_the_dials_broker(tmp_path: Path) -> None:
+def test_clickhouse_cloud_is_the_standing_service_beside_the_dials_broker(
+    tmp_path: Path,
+) -> None:
     variables = render_with(tmp_path, "clickhouse-cloud")
 
     assert variables["clickhouse"] == {
@@ -177,20 +199,27 @@ def test_a_saas_overlay_carries_the_engines_topic_settings_alone(backend: str) -
     kafka = cycle_backend.load_overlay(backend)["kafka"]
     example = parse_dial(EXAMPLE.read_text(encoding="utf-8"))
     assert set(kafka["msk"]) == {"message_max_bytes", "log_retention_ms"}
-    assert kafka["msk"]["log_retention_ms"] == at(example, ("kafka", "msk", "log_retention_ms"))
+    assert kafka["msk"]["log_retention_ms"] == at(
+        example, ("kafka", "msk", "log_retention_ms")
+    )
     assert "landing_topics" not in kafka
 
 
 def test_redpanda_cloud_carries_the_message_size_the_example_dial_documents() -> None:
     kafka = cycle_backend.load_overlay("redpanda-cloud")["kafka"]
     example = parse_dial(EXAMPLE.read_text(encoding="utf-8"))
-    assert kafka["msk"]["message_max_bytes"] == at(example, ("kafka", "msk", "message_max_bytes"))
+    assert kafka["msk"]["message_max_bytes"] == at(
+        example, ("kafka", "msk", "message_max_bytes")
+    )
 
 
 def test_confluent_cloud_stays_inside_the_basic_message_size_cap() -> None:
     kafka = cycle_backend.load_overlay("confluent-cloud")["kafka"]
     assert kafka["confluent_tier"] == "basic"
-    assert int(kafka["msk"]["message_max_bytes"]) <= render_dial.CONFLUENT_BASIC_MAX_MESSAGE_BYTES
+    assert (
+        int(kafka["msk"]["message_max_bytes"])
+        <= render_dial.CONFLUENT_BASIC_MAX_MESSAGE_BYTES
+    )
 
 
 @pytest.mark.parametrize(
@@ -202,7 +231,9 @@ def test_confluent_cloud_stays_inside_the_basic_message_size_cap() -> None:
         ),
         (
             "redpanda-cloud",
-            ["DFE_CYCLE_REDPANDA_RESOURCE_GROUP_ID (for kafka.redpanda_resource_group_id)"],
+            [
+                "DFE_CYCLE_REDPANDA_RESOURCE_GROUP_ID (for kafka.redpanda_resource_group_id)"
+            ],
         ),
         (
             "clickhouse-cloud",
@@ -231,9 +262,16 @@ def test_an_unknown_backend_is_refused_by_name(tmp_path: Path) -> None:
 
 
 def test_an_env_value_is_read_from_the_environment_and_never_committed() -> None:
-    tree = {"endpoints": {"clickhouse_host": "env:DFE_CYCLE_TEST_HOST", "otel_endpoint": "x"}}
+    tree = {
+        "endpoints": {
+            "clickhouse_host": "env:DFE_CYCLE_TEST_HOST",
+            "otel_endpoint": "x",
+        }
+    }
     resolved = cycle_backend.resolve(tree, {"DFE_CYCLE_TEST_HOST": "ch.example.com"})
-    assert resolved == {"endpoints": {"clickhouse_host": "ch.example.com", "otel_endpoint": "x"}}
+    assert resolved == {
+        "endpoints": {"clickhouse_host": "ch.example.com", "otel_endpoint": "x"}
+    }
 
 
 def test_an_unset_env_value_refuses_the_run_naming_the_secret_and_the_key() -> None:
@@ -245,14 +283,18 @@ def test_an_unset_env_value_refuses_the_run_naming_the_secret_and_the_key() -> N
 
 def test_a_scalar_over_a_map_is_refused() -> None:
     with pytest.raises(cycle_backend.BackendError, match=r"kafka\.msk"):
-        cycle_backend.merge({"kafka": {"msk": {"broker_count": "3"}}}, {"kafka": {"msk": "none"}})
+        cycle_backend.merge(
+            {"kafka": {"msk": {"broker_count": "3"}}}, {"kafka": {"msk": "none"}}
+        )
 
 
 def test_a_map_over_a_value_is_refused_unless_the_value_is_an_empty_map() -> None:
     with pytest.raises(cycle_backend.BackendError, match=r"kafka\.msk"):
         cycle_backend.merge({"kafka": {"msk": "set"}}, {"kafka": {"msk": {"a": "1"}}})
     dial: dict[str, object] = {"sizing": {"overrides": "{}"}}
-    assert cycle_backend.merge(dial, {"sizing": {"overrides": {"a": "1"}}}) == ["sizing.overrides.a"]
+    assert cycle_backend.merge(dial, {"sizing": {"overrides": {"a": "1"}}}) == [
+        "sizing.overrides.a"
+    ]
 
 
 def test_the_dump_reads_back_unchanged_through_the_dials_own_parser() -> None:
@@ -265,7 +307,7 @@ def test_the_dump_reads_back_unchanged_through_the_dials_own_parser() -> None:
 
 def test_a_value_the_subset_cannot_carry_is_refused() -> None:
     with pytest.raises(cycle_backend.BackendError, match=r"a\.b"):
-        cycle_backend.dump({"a": {"b": "it's \"both\""}})
+        cycle_backend.dump({"a": {"b": 'it\'s "both"'}})
 
 
 def test_the_rewritten_dial_is_private(tmp_path: Path) -> None:

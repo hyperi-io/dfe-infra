@@ -63,7 +63,9 @@ INTERNAL = re.compile(
 # brand-token site and the docs site. Any other is estate, and an apex mail address
 # (sales@hyperi.io) has no host label.
 PUBLIC_HOSTS = frozenset({"dfe.hyperi.io", "graphics.hyperi.io", "dfe.docs.hyperi.io"})
-_VENDOR_HOST = re.compile(r"(?<![\w.-])((?:[\w-]+\.)+hyperi\.io)(?![\w-])", re.IGNORECASE)
+_VENDOR_HOST = re.compile(
+    r"(?<![\w.-])((?:[\w-]+\.)+hyperi\.io)(?![\w-])", re.IGNORECASE
+)
 
 # versions.yaml and constraints/ are the version SSoT and are compared
 # byte-for-byte against main by the drift guards, so they are never rewritten
@@ -99,7 +101,7 @@ def _names_the_estate(line: str) -> bool:
 def _hits(name: str) -> list[str]:
     try:
         text = (REPO_ROOT / name).read_text(encoding="utf-8")
-    except (UnicodeDecodeError, FileNotFoundError):
+    except UnicodeDecodeError, FileNotFoundError:
         # A binary blob carries no prose to leak, and a listed-but-absent path is
         # a submodule pointer rather than a file.
         return []
@@ -164,7 +166,7 @@ def test_a_kubernetes_secret_reference_is_not_a_vault_path() -> None:
 def test_the_product_s_own_vendor_names_are_product_text() -> None:
     """The label prefix, the brand-token site and the apex mail addresses ship on purpose."""
     for sample in (
-        "dfe.hyperi.io/managed: \"true\"",
+        'dfe.hyperi.io/managed: "true"',
         "selected by dfe.hyperi.io/profile.",
         "verbatim from https://graphics.hyperi.io/tokens/tokens.css.",
         '"pattern": "dfe.docs.hyperi.io",',

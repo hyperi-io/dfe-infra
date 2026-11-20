@@ -2,30 +2,38 @@
 
 ## Environment
 
-- **Target:** {cluster description}
-- **Cloud:** local | aws | gcp | az
-- **Domain:** {domain}
-- **versions.yaml:** {git sha}
+| Field | Value |
+|---|---|
+| Target | {cluster description} |
+| Cloud | local, aws, gcp or azure |
+| Domain | {domain} |
+| versions.yaml | {git sha} |
 
-## Terraform
+## OpenTofu
 
-- **Command:** `deploy.sh --cloud {cloud}`
-- **Resources created:** {count}
-- **Issues:** {none | describe}
+| Field | Value |
+|---|---|
+| Command | `deploy.sh --cloud {cloud}` |
+| Resources created | {count} |
+| Issues | {none, or describe} |
 
 ## Bootstrap
 
-- **Duration:** {time}
-- **Issues:** {none | describe}
+| Field | Value |
+|---|---|
+| Duration | {time} |
+| Issues | {none, or describe} |
 
-## ArgoCD Sync
+## Argo CD sync
 
 | Wave | Components | Status | Notes |
 |------|-----------|--------|-------|
-| 2 | cert-manager, ESO, Envoy Gateway | | |
-| 3 | KEDA, operators (DocumentDB and its CloudNativePG included) | | |
-| 4 | Kafka, ClickHouse, DocumentDB, OTel | | |
-| 5 | DFE services, dfe-hyperdx | | |
+| bootstrap | cert-manager, ESO, Argo CD, AppProjects | | |
+| 1-3 | Karpenter, network policies, Envoy Gateway config, KEDA, operators (DocumentDB and its CloudNativePG included) | | |
+| 4 | Kafka, ClickHouse, DocumentDB, deploy-repo Forgejo | | |
+| 5 | dfe-engine | | |
+| 6 | OTel collector | | |
+| 7 | DFE apps, dfe-hyperdx | | |
 
 ## Smoke Tests
 
@@ -42,4 +50,4 @@
 
 ## Images Pending
 
-- [ ] {service}: image not yet built
+- [ ] {service}: image missing from the registry

@@ -56,7 +56,9 @@ def test_the_elastic_consumer_joins_as_classic() -> None:
 
 
 def test_an_empty_protocol_leaves_scalo_to_decide() -> None:
-    docs = render_app(ELASTIC, "single", "local", overlay={"kafka": {"consumerProtocol": ""}})
+    docs = render_app(
+        ELASTIC, "single", "local", overlay={"kafka": {"consumerProtocol": ""}}
+    )
     got = env_of(docs).get("KAFKA_CONSUMER_PROTOCOL")
     expect(
         "an empty kafka.consumerProtocol renders no protocol value",

@@ -47,7 +47,9 @@ ACTION = REPO_ROOT / ".github" / "actions" / "changes" / "action.yml"
 ACTION_REF = "./.github/actions/changes"
 # The workflows whose jobs are required checks on main, each filtered by its `changes` job.
 GATED = ("helm-lint.yml", "e2e-ui.yml", "tf-validate.yml")
-RUN_UNLESS_NOTHING_RELEVANT = "!cancelled() && needs.changes.outputs.relevant != 'false'"
+RUN_UNLESS_NOTHING_RELEVANT = (
+    "!cancelled() && needs.changes.outputs.relevant != 'false'"
+)
 
 # What `dfe-ops upgrade` and its tests read from the checkout; constraints/ is what
 # `dfe-stack compat-check --strict` reads for the target stack.
@@ -100,7 +102,11 @@ _WIRED = re.compile(r"\$\{\{ steps\.([\w-]+)\.outputs\.relevant \}\}")
 
 def _filter_steps(name: str) -> dict[str, dict]:
     """The steps of a workflow's `changes` job that run the shared filter, by step id."""
-    steps = [step for step in _load(name)["jobs"]["changes"]["steps"] if step.get("uses") == ACTION_REF]
+    steps = [
+        step
+        for step in _load(name)["jobs"]["changes"]["steps"]
+        if step.get("uses") == ACTION_REF
+    ]
     assert steps, f"{name}'s changes job never runs {ACTION_REF}"
     ids = [step.get("id") for step in steps]
     assert all(ids), f"{name}: every filter step needs an id: {ids}"
@@ -112,13 +118,19 @@ def _filter_step(name: str) -> dict:
     """The workflow-wide filter: the step the `changes` job's `relevant` output carries."""
     wired = _load(name)["jobs"]["changes"]["outputs"]["relevant"]
     match = _WIRED.fullmatch(wired)
-    assert match, f"{name}'s changes job exports `relevant` from no filter step: {wired}"
+    assert match, (
+        f"{name}'s changes job exports `relevant` from no filter step: {wired}"
+    )
     return _filter_steps(name)[match.group(1)]
 
 
 def _patterns(text: str) -> list[str]:
     """The patterns in a paths block, the way the filter's script reads them: `#` lines are notes."""
-    return [line.strip() for line in text.splitlines() if line.strip() and not line.strip().startswith("#")]
+    return [
+        line.strip()
+        for line in text.splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
 
 
 def _filters() -> list[str]:
@@ -127,7 +139,10 @@ def _filters() -> list[str]:
 
 def _covers(patterns: list[str], path: str) -> bool:
     """Whether a filter names `path` as a file or under a `dir/**`, the two forms the script reads."""
-    return any(path.startswith(p.removesuffix("**")) if p.endswith("/**") else path == p for p in patterns)
+    return any(
+        path.startswith(p.removesuffix("**")) if p.endswith("/**") else path == p
+        for p in patterns
+    )
 
 
 def test_the_filters_use_only_the_two_forms_the_script_reads() -> None:
@@ -136,35 +151,55 @@ def test_the_filters_use_only_the_two_forms_the_script_reads() -> None:
 
 
 @pytest.mark.parametrize("name", GATED)
-def test_a_gated_workflow_starts_on_every_pull_request_and_every_push_to_main(name: str) -> None:
+def test_a_gated_workflow_starts_on_every_pull_request_and_every_push_to_main(
+    name: str,
+) -> None:
     triggers = _triggers(_load(name))
-    assert triggers["pull_request"] is None, f"{name} filters pull_request: {triggers['pull_request']}"
-    assert triggers["push"] == {"branches": ["main"]}, f"{name} filters push: {triggers['push']}"
+    assert triggers["pull_request"] is None, (
+        f"{name} filters pull_request: {triggers['pull_request']}"
+    )
+    assert triggers["push"] == {"branches": ["main"]}, (
+        f"{name} filters push: {triggers['push']}"
+    )
 
 
 @pytest.mark.parametrize("name", GATED)
-def test_every_check_in_a_gated_workflow_runs_unless_its_filter_found_nothing(name: str) -> None:
+def test_every_check_in_a_gated_workflow_runs_unless_its_filter_found_nothing(
+    name: str,
+) -> None:
     jobs = _load(name)["jobs"]
     step = _filter_step(name)
     assert _patterns(step["with"]["paths"]), f"{name} hands the filter no pattern"
     wired = f"${{{{ steps.{step['id']}.outputs.relevant }}}}"
-    assert jobs["changes"]["outputs"]["relevant"] == wired, f"{name}'s changes job does not export the verdict"
+    assert jobs["changes"]["outputs"]["relevant"] == wired, (
+        f"{name}'s changes job does not export the verdict"
+    )
     for job_id, job in jobs.items():
         if job_id == "changes":
             continue
-        assert job.get("needs") == "changes", f"{name}:{job_id} does not need the changes job"
+        assert job.get("needs") == "changes", (
+            f"{name}:{job_id} does not need the changes job"
+        )
         condition = str(job.get("if", ""))
-        assert RUN_UNLESS_NOTHING_RELEVANT in condition, f"{name}:{job_id} if: {condition}"
+        assert RUN_UNLESS_NOTHING_RELEVANT in condition, (
+            f"{name}:{job_id} if: {condition}"
+        )
 
 
 @pytest.mark.parametrize("name", GATED)
 def test_the_filter_script_lives_only_in_the_shared_action(name: str) -> None:
     """A copy left in one workflow drifts from the script the others run."""
-    scripts = [step.get("name") for step in _load(name)["jobs"]["changes"]["steps"] if "run" in step]
+    scripts = [
+        step.get("name")
+        for step in _load(name)["jobs"]["changes"]["steps"]
+        if "run" in step
+    ]
     assert scripts == [], f"{name}'s changes job runs its own script: {scripts}"
 
 
-@pytest.mark.parametrize("path", UPGRADE_INPUTS, ids=lambda p: p.relative_to(REPO_ROOT).as_posix())
+@pytest.mark.parametrize(
+    "path", UPGRADE_INPUTS, ids=lambda p: p.relative_to(REPO_ROOT).as_posix()
+)
 def test_every_file_the_upgrade_tooling_reads_starts_the_guards(path: Path) -> None:
     assert path.is_file(), path
     relative = path.relative_to(REPO_ROOT).as_posix()
@@ -172,7 +207,9 @@ def test_every_file_the_upgrade_tooling_reads_starts_the_guards(path: Path) -> N
 
 
 def _test_reads() -> list[str]:
-    found = {p for pattern in TEST_READ_GLOBS for p in REPO_ROOT.glob(pattern) if p.is_file()}
+    found = {
+        p for pattern in TEST_READ_GLOBS for p in REPO_ROOT.glob(pattern) if p.is_file()
+    }
     return sorted(path.relative_to(REPO_ROOT).as_posix() for path in found)
 
 
@@ -180,7 +217,11 @@ def test_every_file_the_other_tests_read_starts_the_guards() -> None:
     reads, filters = _test_reads(), _filters()
     assert reads, "the globs match nothing, so this test would pass for any filter"
     outside = [path for path in reads if not _covers(filters, path)]
-    shown = f"{outside[:8]} and {len(outside) - 8} more" if len(outside) > 8 else f"{outside}"
+    shown = (
+        f"{outside[:8]} and {len(outside) - 8} more"
+        if len(outside) > 8
+        else f"{outside}"
+    )
     assert outside == [], f"read by a test, outside helm-lint.yml's paths: {shown}"
 
 
@@ -193,11 +234,17 @@ def test_every_top_level_name_a_test_source_reads_is_in_the_filters() -> None:
         for name in groups
         if name and (REPO_ROOT / name).exists()
     }
-    assert {"docs", "terraform", "README.md"} <= named, f"the scan found {sorted(named)}"
+    assert {"docs", "terraform", "README.md"} <= named, (
+        f"the scan found {sorted(named)}"
+    )
     filters = _filters()
-    reached = {n for n in named if any(p == n or p.startswith(f"{n}/") for p in filters)}
+    reached = {
+        n for n in named if any(p == n or p.startswith(f"{n}/") for p in filters)
+    }
     missing = sorted(named - reached)
-    assert missing == [], f"named by a test, absent from helm-lint.yml's paths: {missing}"
+    assert missing == [], (
+        f"named by a test, absent from helm-lint.yml's paths: {missing}"
+    )
 
 
 # --- the narrower filter in front of the third-party arch check ---------------------------------
@@ -229,45 +276,70 @@ def _script_closure(entry: Path) -> list[str]:
                 names = [alias.name.split(".")[0] + ".py" for alias in node.names]
             elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
                 names = [node.module.split(".")[0] + ".py"]
-            elif isinstance(node, ast.Constant) and isinstance(node.value, str) and "/" not in node.value:
+            elif (
+                isinstance(node, ast.Constant)
+                and isinstance(node.value, str)
+                and "/" not in node.value
+            ):
                 names = [node.value]
             else:
                 continue
-            todo += [SCRIPTS / name for name in names if name and (SCRIPTS / name).is_file()]
+            todo += [
+                SCRIPTS / name for name in names if name and (SCRIPTS / name).is_file()
+            ]
     return sorted(path.relative_to(REPO_ROOT).as_posix() for path in seen)
 
 
 def test_the_closure_walk_reaches_the_path_loaded_cli() -> None:
     closure = _script_closure(IMAGE_ARCH)
-    assert {"scripts/check_image_arch.py", "scripts/registry_pins.py", "scripts/dfe-stack"} <= set(
-        closure
-    ), closure
+    assert {
+        "scripts/check_image_arch.py",
+        "scripts/registry_pins.py",
+        "scripts/dfe-stack",
+    } <= set(closure), closure
 
 
 def test_the_arch_check_runs_when_any_code_it_reaches_changes() -> None:
-    outside = [path for path in _script_closure(IMAGE_ARCH) if not _covers(_image_filters(), path)]
-    assert outside == [], f"reached by check_image_arch.py, outside its `images` filter: {outside}"
+    outside = [
+        path
+        for path in _script_closure(IMAGE_ARCH)
+        if not _covers(_image_filters(), path)
+    ]
+    assert outside == [], (
+        f"reached by check_image_arch.py, outside its `images` filter: {outside}"
+    )
 
 
 def test_the_arch_check_runs_when_a_pin_it_reads_changes() -> None:
     import check_image_arch
 
-    pinned = ["versions.yaml", *(path.as_posix() for path, _ in check_image_arch.CHART_VALUES_IMAGES.values())]
+    pinned = [
+        "versions.yaml",
+        *(path.as_posix() for path, _ in check_image_arch.CHART_VALUES_IMAGES.values()),
+    ]
     outside = [path for path in pinned if not _covers(_image_filters(), path)]
-    assert outside == [], f"read by check_image_arch.py, outside its `images` filter: {outside}"
+    assert outside == [], (
+        f"read by check_image_arch.py, outside its `images` filter: {outside}"
+    )
 
 
 def test_the_arch_check_job_waits_on_its_own_filter() -> None:
     jobs = _load(WORKFLOW.name)["jobs"]
-    assert jobs["changes"]["outputs"]["images"] == "${{ steps.images.outputs.relevant }}"
+    assert (
+        jobs["changes"]["outputs"]["images"] == "${{ steps.images.outputs.relevant }}"
+    )
     assert "needs.changes.outputs.images != 'false'" in str(jobs[IMAGE_ARCH_JOB]["if"])
 
 
 def test_a_change_the_images_filter_sees_also_starts_the_workflow() -> None:
     """A narrower filter outside the workflow's own would gate a job that never starts."""
     workflow = _filters()
-    outside = [p for p in _image_filters() if not _covers(workflow, p.removesuffix("**"))]
-    assert outside == [], f"in the `images` filter, outside helm-lint.yml's paths: {outside}"
+    outside = [
+        p for p in _image_filters() if not _covers(workflow, p.removesuffix("**"))
+    ]
+    assert outside == [], (
+        f"in the `images` filter, outside helm-lint.yml's paths: {outside}"
+    )
 
 
 # --- the narrower filter in front of the published-chart renders --------------------------------
@@ -294,7 +366,9 @@ def _published_inputs() -> list[str]:
         REPO_ROOT / weave.VALUES_DIR,
         REPO_ROOT / weave.EXTRAS_PATH,
     ]
-    files = {p for root in roots for p in (root.rglob("*") if root.is_dir() else [root])}
+    files = {
+        p for root in roots for p in (root.rglob("*") if root.is_dir() else [root])
+    }
     found = {p.relative_to(REPO_ROOT).as_posix() for p in files if p.is_file()}
     found |= set(_script_closure(_weave.SCRIPT))
     found |= set(_script_closure(Path(_weave.drift().__file__)))
@@ -303,15 +377,24 @@ def _published_inputs() -> list[str]:
 
 def test_the_published_renders_run_when_anything_they_read_changes() -> None:
     inputs = _published_inputs()
-    assert {"versions.yaml", "scripts/dfe-weave", "scripts/version_range.py"} <= set(inputs), inputs
+    assert {"versions.yaml", "scripts/dfe-weave", "scripts/version_range.py"} <= set(
+        inputs
+    ), inputs
     outside = [path for path in inputs if not _covers(_published_filters(), path)]
-    assert outside == [], f"read by a published render, outside its `published` filter: {outside}"
+    assert outside == [], (
+        f"read by a published render, outside its `published` filter: {outside}"
+    )
 
 
 def test_the_published_job_waits_on_its_own_filter() -> None:
     jobs = _load(WORKFLOW.name)["jobs"]
-    assert jobs["changes"]["outputs"]["published"] == "${{ steps.published.outputs.relevant }}"
-    assert "needs.changes.outputs.published != 'false'" in str(jobs[PUBLISHED_JOB]["if"])
+    assert (
+        jobs["changes"]["outputs"]["published"]
+        == "${{ steps.published.outputs.relevant }}"
+    )
+    assert "needs.changes.outputs.published != 'false'" in str(
+        jobs[PUBLISHED_JOB]["if"]
+    )
 
 
 def test_the_published_job_runs_the_registry_cases() -> None:
@@ -324,8 +407,12 @@ def test_the_published_job_runs_the_registry_cases() -> None:
 
 def test_a_change_the_published_filter_sees_also_starts_the_workflow() -> None:
     workflow = _filters()
-    outside = [p for p in _published_filters() if not _covers(workflow, p.removesuffix("**"))]
-    assert outside == [], f"in the `published` filter, outside helm-lint.yml's paths: {outside}"
+    outside = [
+        p for p in _published_filters() if not _covers(workflow, p.removesuffix("**"))
+    ]
+    assert outside == [], (
+        f"in the `published` filter, outside helm-lint.yml's paths: {outside}"
+    )
 
 
 # --- the shared filter's own verdicts ---------------------------------------------------------
@@ -335,9 +422,23 @@ _GIT_ENV = {"PATH": "/usr/bin:/bin", "GIT_CONFIG_NOSYSTEM": "1"}
 
 def _git(repo: Path, *args: str) -> str:
     done = subprocess.run(
-        ["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false", *args],
-        cwd=repo, env={**_GIT_ENV, "HOME": str(repo.parent)}, capture_output=True, text=True,
-        encoding="utf-8", errors="replace", check=True,
+        [
+            "git",
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            *args,
+        ],
+        cwd=repo,
+        env={**_GIT_ENV, "HOME": str(repo.parent)},
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=True,
     )
     return done.stdout.strip()
 
@@ -346,7 +447,10 @@ def _filter_script() -> str:
     doc = yaml.safe_load(ACTION.read_text(encoding="utf-8"))
     (step,) = doc["runs"]["steps"]
     assert doc["runs"]["using"] == "composite"
-    assert doc["outputs"]["relevant"]["value"] == f"${{{{ steps.{step['id']}.outputs.relevant }}}}"
+    assert (
+        doc["outputs"]["relevant"]["value"]
+        == f"${{{{ steps.{step['id']}.outputs.relevant }}}}"
+    )
     return step["run"]
 
 
@@ -374,15 +478,31 @@ def merged(tmp_path: Path) -> tuple[Path, str]:
     return repo, base
 
 
-def _run_filter(repo: Path, paths: str, event: str, before: str = "") -> tuple[subprocess.CompletedProcess, str]:
+def _run_filter(
+    repo: Path, paths: str, event: str, before: str = ""
+) -> tuple[subprocess.CompletedProcess, str]:
     output = repo.parent / "github_output"
     output.write_text("", encoding="utf-8")
-    env = {**_GIT_ENV, "HOME": str(repo.parent), "PATHS": paths, "EVENT": event, "BEFORE": before,
-           "RUNNER_TEMP": str(repo.parent), "GITHUB_OUTPUT": str(output)}
+    env = {
+        **_GIT_ENV,
+        "HOME": str(repo.parent),
+        "PATHS": paths,
+        "EVENT": event,
+        "BEFORE": before,
+        "RUNNER_TEMP": str(repo.parent),
+        "GITHUB_OUTPUT": str(output),
+    }
     # The runner's own invocation for a composite step with `shell: bash`.
-    done = subprocess.run(["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", _filter_script()],
-                          cwd=repo, env=env, capture_output=True, text=True, encoding="utf-8",
-                          errors="replace", check=False)
+    done = subprocess.run(
+        ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", _filter_script()],
+        cwd=repo,
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
     return done, output.read_text(encoding="utf-8")
 
 
@@ -404,7 +524,9 @@ def test_a_pull_request_is_relevant_only_when_its_merge_diff_touches_the_paths(
     assert output == f"relevant={verdict}\n"
 
 
-@pytest.mark.parametrize(("paths", "verdict"), [("terraform/**\n", "true"), ("helm/**\n", "false")])
+@pytest.mark.parametrize(
+    ("paths", "verdict"), [("terraform/**\n", "true"), ("helm/**\n", "false")]
+)
 def test_a_push_is_relevant_only_when_its_range_touches_the_paths(
     merged: tuple[Path, str], paths: str, verdict: str
 ) -> None:
@@ -449,13 +571,29 @@ def test_a_paths_block_the_script_cannot_read_fails_rather_than_skipping(
     ("filter_id", "changed", "verdict"),
     [
         # A deploy-tooling change of the shape that met a registry rate limit: no pin, no reader.
-        ("images", ["bootstrap/bootstrap.sh", "scripts/dfe-ops", "scripts/tests/test_render_env.py"], "false"),
+        (
+            "images",
+            [
+                "bootstrap/bootstrap.sh",
+                "scripts/dfe-ops",
+                "scripts/tests/test_render_env.py",
+            ],
+            "false",
+        ),
         ("images", ["bootstrap/bootstrap.sh", "versions.yaml"], "true"),
         ("images", ["helm/charts/forgejo/values.yaml"], "true"),
         ("images", ["scripts/registry_pins.py"], "true"),
         # An appset the published renders never read, and code they never reach.
-        ("published", ["argocd/appsets/layer1-addons.yaml", "scripts/dfe-ops", "terraform/x.tf"], "false"),
-        ("published", ["scripts/tests/fixtures/thin-renders/dfe-ui/slim-local.yaml"], "true"),
+        (
+            "published",
+            ["argocd/appsets/layer1-addons.yaml", "scripts/dfe-ops", "terraform/x.tf"],
+            "false",
+        ),
+        (
+            "published",
+            ["scripts/tests/fixtures/thin-renders/dfe-ui/slim-local.yaml"],
+            "true",
+        ),
         ("published", ["versions.yaml"], "true"),
     ],
 )
@@ -484,5 +622,7 @@ def test_a_narrower_filter_runs_its_job_only_for_what_it_reads(
 
 def test_the_workflows_name_the_action_these_tests_run() -> None:
     """Inputs reach the script through its env, never spliced into the shell text."""
-    assert (REPO_ROOT / ACTION_REF.removeprefix("./") / "action.yml").resolve() == ACTION.resolve()
+    assert (
+        REPO_ROOT / ACTION_REF.removeprefix("./") / "action.yml"
+    ).resolve() == ACTION.resolve()
     assert "${{" not in _filter_script()

@@ -1,10 +1,6 @@
-// The aws root's managed-Kafka wiring, executable: what the root hands each SaaS
-// body, and the message size it refuses before any body is planned.
-//
-// Provider-free by construction: every provider is mocked and every module this
-// file does not exercise is overridden, so it needs no credential and no cloud
-// account. The SaaS bodies themselves are planned for real against the mocks,
-// because what they receive is what this file is here to prove.
+// What the root hands each managed Kafka body, and the message size it refuses.
+// Providers are mocked and unexercised modules overridden, so no credential is needed.
+// The SaaS bodies are planned for real against the mocks.
 
 mock_provider "aws" {
   mock_data "aws_caller_identity" {
@@ -228,7 +224,7 @@ override_resource {
 }
 
 override_data {
-  target = module.secrets.data.aws_iam_policy_document.receiver
+  target = module.secrets.data.aws_iam_policy_document.reader
 
   values = {
     json = "{\"Version\":\"2012-10-17\",\"Statement\":[]}"
@@ -236,7 +232,7 @@ override_data {
 }
 
 override_resource {
-  target = module.secrets.aws_iam_role.receiver
+  target = module.secrets.aws_iam_role.reader
 
   values = {
     arn = "arn:aws:iam::000000000000:role/dfe-example-receiver-secrets"

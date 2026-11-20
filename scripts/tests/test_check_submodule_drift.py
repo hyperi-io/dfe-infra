@@ -101,7 +101,9 @@ def test_readable_consumer_missing_the_submodule_is_a_failure(guard, monkeypatch
     assert "removed or moved" in failures[0]
 
 
-def test_a_module_no_consumer_vendors_any_more_says_to_delete_the_entry(guard, monkeypatch):
+def test_a_module_no_consumer_vendors_any_more_says_to_delete_the_entry(
+    guard, monkeypatch
+):
     """The whole class retiring is one stale entry, not N repos disagreeing.
 
     dfe-schemas became a pinned wheel and every consumer dropped the submodule;
@@ -147,7 +149,9 @@ def test_a_stale_pin_is_a_failure_with_the_gap(guard, monkeypatch):
                     "type": "submodule",
                     "sha": "b" * 40,
                 },
-                f"repos/hyperi-io/dfe-schemas/compare/{'b' * 40}...{'a' * 40}": {"ahead_by": 26},
+                f"repos/hyperi-io/dfe-schemas/compare/{'b' * 40}...{'a' * 40}": {
+                    "ahead_by": 26
+                },
             }
         ),
     )

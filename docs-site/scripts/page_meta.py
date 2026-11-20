@@ -38,7 +38,9 @@ _CANONICAL = re.compile(r'<link[^>]*rel="canonical"[^>]*>')
 
 
 def _script(node: Mapping[str, object]) -> str:
-    text = json.dumps(node, ensure_ascii=False, separators=(",", ":")).replace("</", "<\\/")
+    text = json.dumps(node, ensure_ascii=False, separators=(",", ":")).replace(
+        "</", "<\\/"
+    )
     return f'<script type="application/ld+json">{text}</script>'
 
 
@@ -108,7 +110,10 @@ def add_structured_data(
         nodes = []
         if '"@type":"TechArticle"' not in text:
             nodes.append(article(page, url + page.permalink))
-        if page.permalink.rstrip("/") == landing and '"@type":"SoftwareApplication"' not in text:
+        if (
+            page.permalink.rstrip("/") == landing
+            and '"@type":"SoftwareApplication"' not in text
+        ):
             nodes.append(software())
         if not nodes:
             continue
@@ -120,15 +125,14 @@ def add_structured_data(
 
 def robots(url: str) -> str:
     """robots.txt: everything crawlable, the sitemap index named, the content signal set."""
-    return (
-        f"User-agent: *\nContent-Signal: {CONTENT_SIGNAL}\nAllow: /\n\nSitemap: {url}/sitemap.xml\n"
-    )
+    return f"User-agent: *\nContent-Signal: {CONTENT_SIGNAL}\nAllow: /\n\nSitemap: {url}/sitemap.xml\n"
 
 
 def sitemap_index(url: str, base_urls: Iterable[str]) -> str:
     """The root sitemap.xml: an index of each listed build's own sitemap."""
     entries = "".join(
-        f"  <sitemap><loc>{url}{base}sitemap.xml</loc></sitemap>\n" for base in base_urls
+        f"  <sitemap><loc>{url}{base}sitemap.xml</loc></sitemap>\n"
+        for base in base_urls
     )
     return (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
@@ -137,7 +141,9 @@ def sitemap_index(url: str, base_urls: Iterable[str]) -> str:
     )
 
 
-def write_root_files(site: Mapping[str, object], build_dir: Path = agent_layer.BUILD) -> None:
+def write_root_files(
+    site: Mapping[str, object], build_dir: Path = agent_layer.BUILD
+) -> None:
     """Write robots.txt and the sitemap index for the listed builds that have a sitemap."""
     url = str(site["url"]).rstrip("/")
     listed = [

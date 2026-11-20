@@ -40,7 +40,7 @@ OTHER_HOOK = "https://ci.example.com/hooks/deploy"
 
 # Answers the calls the Job makes, keeping the repo's hooks in hooks.json and
 # logging every hook write it accepts. The deploy repo reads as already seeded.
-FAKE_CURL = r'''#!/usr/bin/env python3
+FAKE_CURL = r"""#!/usr/bin/env python3
 import json
 import os
 import sys
@@ -129,14 +129,21 @@ if not discard and body is not None:
 if write_out == "%{http_code}":
     sys.stdout.write(str(code))
 sys.exit(22 if "-sf" in args and code >= 400 else 0)
-'''
+"""
 
 
 def _rendered_job() -> dict:
     if shutil.which("helm") is None:
         pytest.skip("helm is not on PATH, so the Job script cannot be rendered")
     out = subprocess.run(
-        ["helm", "template", "t", str(chart_dir("forgejo")), "--show-only", "templates/setup-job.yaml"],
+        [
+            "helm",
+            "template",
+            "t",
+            str(chart_dir("forgejo")),
+            "--show-only",
+            "templates/setup-job.yaml",
+        ],
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -170,13 +177,15 @@ def _run_job(tmp_path: Path, state: Path) -> tuple[int, str, list[dict]]:
     env = {item["name"]: item["value"] for item in container["env"] if "value" in item}
     log = state / "writes.jsonl"
     log.unlink(missing_ok=True)
-    env.update({
-        "PATH": f"{tmp_path / 'bin'}{os.pathsep}{os.environ['PATH']}",
-        "FAKE_FORGEJO_STATE": str(state),
-        "GITEA_USER": "admin",
-        "GITEA_PASS": "not-a-real-password",
-        "WEBHOOK_SECRET": "not-a-real-secret",
-    })
+    env.update(
+        {
+            "PATH": f"{tmp_path / 'bin'}{os.pathsep}{os.environ['PATH']}",
+            "FAKE_FORGEJO_STATE": str(state),
+            "GITEA_USER": "admin",
+            "GITEA_PASS": "not-a-real-password",
+            "WEBHOOK_SECRET": "not-a-real-secret",
+        }
+    )
     shell = ["busybox", "sh"] if shutil.which("busybox") else ["/bin/sh"]
     done = subprocess.run(
         [*shell, "-c", script],
@@ -188,12 +197,18 @@ def _run_job(tmp_path: Path, state: Path) -> tuple[int, str, list[dict]]:
         check=False,
         timeout=60,
     )
-    writes = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()] if log.exists() else []
+    writes = (
+        [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+        if log.exists()
+        else []
+    )
     return done.returncode, done.stdout + done.stderr, writes
 
 
 def _hook_urls(state: Path) -> list[str]:
-    return sorted(h["url"] for h in json.loads((state / "hooks.json").read_text(encoding="utf-8")))
+    return sorted(
+        h["url"] for h in json.loads((state / "hooks.json").read_text(encoding="utf-8"))
+    )
 
 
 def test_a_fresh_repo_gets_the_plain_http_hook(tmp_path: Path) -> None:
@@ -205,7 +220,9 @@ def test_a_fresh_repo_gets_the_plain_http_hook(tmp_path: Path) -> None:
     assert _hook_urls(state) == [HTTP_HOOK]
 
 
-def test_an_upgraded_repo_trades_the_https_hook_for_the_http_one(tmp_path: Path) -> None:
+def test_an_upgraded_repo_trades_the_https_hook_for_the_http_one(
+    tmp_path: Path,
+) -> None:
     state = _forgejo(tmp_path, [HTTPS_HOOK])
     rc, output, writes = _run_job(tmp_path, state)
 

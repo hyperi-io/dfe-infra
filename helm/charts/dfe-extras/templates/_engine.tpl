@@ -1,14 +1,8 @@
 {{/*
-dfe-engine.clickhouseAuthEnv -- the admin account the engine connects to
-ClickHouse as, to create every other user. No other workload takes it: the hunt
-runner and the keda shim connect as their own users (serviceClickhouseAuthEnv).
-
-Emits nothing when clickhouse.user is unset, which leaves the previous
-passwordless behaviour intact for a server that accepts it.
-
-Usage:
-  env:
-    {{- include "dfe-engine.clickhouseAuthEnv" . | nindent 12 }}
+dfe-engine.clickhouseAuthEnv -- the admin account the engine connects to ClickHouse as, to create every other user.
+No other workload takes it: the hunt runner and the keda shim connect as their own users (serviceClickhouseAuthEnv).
+Emits nothing when clickhouse.user is unset, which leaves the previous passwordless behaviour intact for a server
+that accepts it.
 */}}
 {{- define "dfe-engine.clickhouseAuthEnv" -}}
 {{- with .Values.clickhouse.user }}
@@ -28,13 +22,9 @@ Usage:
 {{- end }}
 
 {{/*
-dfe-engine.serviceClickhouseAuthEnv -- an app's own ClickHouse user, in place of
-clickhouseAuthEnv. Takes the identity (dict "user" "passwordSecretName"
-"passwordSecretKey"). The password is the Secret the engine adopts for that user.
-
-Usage:
-  env:
-    {{- include "dfe-engine.serviceClickhouseAuthEnv" .Values.huntRunner.clickhouse | nindent 12 }}
+dfe-engine.serviceClickhouseAuthEnv -- an app's own ClickHouse user, in place of clickhouseAuthEnv. Takes the
+identity (dict "user" "passwordSecretName" "passwordSecretKey"). The password is the Secret the engine adopts for
+that user.
 */}}
 {{- define "dfe-engine.serviceClickhouseAuthEnv" -}}
 - name: DFE_ENGINE_CLICKHOUSE_USERNAME
@@ -58,11 +48,8 @@ dfe-engine.clickhousePasswordSecret -- the Secret one app's ClickHouse password
 lives in, which both the engine and that app's pod read. Takes (dict "ctx" .
 "name" <Secret> "key" <data key> "password" <pinned value, or empty>).
 
-GENERATED IN-CLUSTER by ESO's Password generator with refreshPolicy CreatedOnce,
-for the reasons engine-jwt-secret.yaml gives: Argo renders with `helm template`,
-so a template-minted value would change on every sync, and Reloader would roll
-both pods onto a password the other had not been handed yet. A pinned password
-renders a plain Secret instead.
+Generated in-cluster by ESO's Password generator with refreshPolicy CreatedOnce, so a sync never changes the value
+under the two pods (docs/deployment/README.md, Secrets store). A pinned password renders a plain Secret instead.
 */}}
 {{- define "dfe-engine.clickhousePasswordSecret" -}}
 {{- if .password }}
@@ -87,8 +74,8 @@ metadata:
   labels:
     {{- include "dfe-common.labels" .ctx | nindent 4 }}
 spec:
-  length: 24
-  digits: 4
+  length: 32
+  digits: 5
   symbols: 0          # alphanumeric -- the value is a ClickHouse password passed through env
   noUpper: false
   allowRepeat: true
@@ -123,24 +110,19 @@ spec:
 {{- end }}
 
 {{/*
-dfe-engine.isDevPosture -- non-empty when `env` is one of the postures the
-engine treats as dev.
-
-The SAME list the engine's is_dev_posture uses (dfe-engine #300), which gates
-the refuse-on-default-password check and gitops auto-merge, compared the way it
-compares: trimmed and lower-cased.
+dfe-engine.isDevPosture -- non-empty when `env` is a posture the engine treats as dev: the list its is_dev_posture
+uses (dfe-engine #300), compared trimmed and lower-cased.
 */}}
 {{- define "dfe-engine.isDevPosture" -}}
 {{- if has (lower (trim (toString .Values.env))) (list "dev" "development" "local" "test" "ci") }}true{{ end }}
 {{- end -}}
 
 {{/*
-dfe-engine.docsEnabled -- api.docsEnabled as "true" or "false", or empty when
-unset, which leaves the engine to serve /docs and /redoc on a dev posture only.
+dfe-engine.docsEnabled -- api.docsEnabled as "true" or "false", or empty when unset, which leaves the engine to
+serve /docs and /redoc on a dev posture only.
 
-Anything else fails the render: the gateway and the links page read the same key
-(argocd/values/common.yaml), and a value the engine reads one way and they read
-another publishes a page that is not served, or serves one nobody routes.
+Anything else fails the render: the gateway and the links page read the same key (argocd/values/common.yaml) and
+must agree with the engine.
 */}}
 {{- define "dfe-engine.docsEnabled" -}}
 {{- $v := toString .Values.api.docsEnabled -}}
@@ -196,13 +178,71 @@ startup, so both fail the render by name instead.
 {{- end -}}
 
 {{/*
+dfe-engine.optionalNumber -- an optional decimal engine setting, or empty when
+unset. Takes (dict "key" <values path> "value" <value>). The engine checks the
+range at startup; a value that is not a number fails the render by name.
+*/}}
+{{- define "dfe-engine.optionalNumber" -}}
+{{- $s := toString .value -}}
+{{- if not (has $s (list "" "<nil>")) -}}
+{{- if not (regexMatch "^[0-9]+(\\.[0-9]+)?$" $s) -}}
+{{- fail (printf "%s is %q -- it takes a number" .key $s) -}}
+{{- end -}}
+{{ $s }}
+{{- end -}}
+{{- end -}}
+
+{{/*
+dfe-engine.huntSmoothingEnv -- the hunts.smoothing settings from
+huntRunner.smoothing, for the engine and the hunt runner alike: the runner moves
+the offsets, and the engine API reads the same switch to report next due.
+*/}}
+{{- define "dfe-engine.huntSmoothingEnv" -}}
+{{- $sm := .Values.huntRunner.smoothing | default dict -}}
+{{- if eq (include "dfe-engine.optionalBool" (dict "key" "huntRunner.smoothing.enabled" "value" $sm.enabled)) "true" }}
+- name: DFE_ENGINE_HUNTS_SMOOTHING_ENABLED
+  value: "true"
+{{- end }}
+{{- range $pair := list (list "cycleSeconds" "CYCLE_SECONDS") (list "costQuantile" "COST_QUANTILE") (list "maxStepFraction" "MAX_STEP_FRACTION") (list "hysteresis" "HYSTERESIS") (list "weightMemory" "WEIGHT_MEMORY") }}
+{{- with (include "dfe-engine.optionalNumber" (dict "key" (printf "huntRunner.smoothing.%s" (index $pair 0)) "value" (get $sm (index $pair 0)))) }}
+- name: DFE_ENGINE_HUNTS_SMOOTHING_{{ index $pair 1 }}
+  value: {{ . | quote }}
+{{- end }}
+{{- end }}
+{{- range $c := list (list "bucketSeconds" "BUCKET_SECONDS" 1) (list "windowDays" "WINDOW_DAYS" 1) (list "cooldownCycles" "COOLDOWN_CYCLES" 0) (list "memoryCapBytes" "MEMORY_CAP_BYTES" 0) (list "horizonMaxSeconds" "HORIZON_MAX_SECONDS" 1) }}
+{{- with (include "dfe-engine.optionalCount" (dict "key" (printf "huntRunner.smoothing.%s" (index $c 0)) "value" (get $sm (index $c 0)) "min" (index $c 2))) }}
+- name: DFE_ENGINE_HUNTS_SMOOTHING_{{ index $c 1 }}
+  value: {{ . | quote }}
+{{- end }}
+{{- end }}
+{{- end -}}
+
+{{/*
+dfe-engine.huntAutodisableEnv -- the hunts.autodisable settings from
+huntRunner.autodisable, for the hunt runner only: it stops the hunt, and the
+engine pod never reads them. A switch set to false renders "false", because the
+engine's default is on.
+*/}}
+{{- define "dfe-engine.huntAutodisableEnv" -}}
+{{- $ad := .Values.huntRunner.autodisable | default dict -}}
+{{- with (include "dfe-engine.optionalBool" (dict "key" "huntRunner.autodisable.enabled" "value" $ad.enabled)) }}
+- name: DFE_ENGINE_HUNTS_AUTODISABLE_ENABLED
+  value: {{ . | quote }}
+{{- end }}
+{{- range $c := list (list "failures" "FAILURES") (list "windowSeconds" "WINDOW_SECONDS") }}
+{{- with (include "dfe-engine.optionalCount" (dict "key" (printf "huntRunner.autodisable.%s" (index $c 0)) "value" (get $ad (index $c 0)) "min" 1)) }}
+- name: DFE_ENGINE_HUNTS_AUTODISABLE_{{ index $c 1 }}
+  value: {{ . | quote }}
+{{- end }}
+{{- end }}
+{{- end -}}
+
+{{/*
 dfe-engine.e2eServer -- non-empty when this deployment runs in the e2e posture.
 
-The posture mounts the engine's unauthenticated /api/e2e routes, whose seed
-scripts wipe every account, so anything but a dev posture fails the render. An
-appset parameter can arrive as a bool or a string, so the value is compared as
-text: only true turns it on, and anything but false or empty is refused rather
-than read as truthy.
+The posture mounts the engine's unauthenticated /api/e2e routes, whose seed scripts wipe every account, so anything
+but a dev posture fails the render. An appset parameter can arrive as a bool or a string, so the value is compared
+as text: only true turns it on, and anything but false or empty is refused.
 */}}
 {{- define "dfe-engine.e2eServer" -}}
 {{- $value := toString .Values.e2eServer -}}
@@ -234,13 +274,79 @@ true
 {{- end -}}
 
 {{/*
-dfe-engine.sidecarServiceAccount -- the account the hunt runner or keda shim runs
-as: one of its own, rendered by dfe-engine.sidecarServiceAccountObject, that
-carries nothing. Takes (dict "ctx" . "name" <workload name>).
+dfe-engine.secretsStoreEnv -- where the engine's secrets store is, for the engine
+and the hunt runner alike: the Secrets Manager region and name prefix on aws, the
+file provider's directory otherwise.
+*/}}
+{{- define "dfe-engine.secretsStoreEnv" -}}
+{{- if include "dfe-engine.secretsOnAws" . -}}
+{{- $store := .Values.secrets -}}
+- name: DFE_ENGINE_SECRETS_PROVIDER
+  value: "aws"
+- name: DFE_ENGINE_SECRETS_REGION
+  value: {{ required "secrets.region is empty: with secrets.provider aws the engine refuses to start without the store's region" $store.region | quote }}
+- name: DFE_ENGINE_SECRETS_NAME_PREFIX
+  value: {{ required "secrets.namePrefix is empty: with secrets.provider aws the engine refuses to start without the prefix its role writes under" $store.namePrefix | quote }}
+{{- else -}}
+# Under the writable config mount: the default ./.secrets is the root-owned
+# /app WORKDIR, where minting the JWT signing key crashes the engine.
+- name: DFE_ENGINE_SECRETS_PATH
+  value: {{ .Values.config.mountPath }}/.secrets
+{{- end -}}
+{{- end -}}
 
-The engine's account carries its grants: Secrets Manager writes through EKS Pod
-Identity on aws, and get and update on the ingest bearer Secret elsewhere. Neither
-sidecar calls the Kubernetes API or a secrets store.
+{{/*
+dfe-engine.mirrorSecret -- an empty Opaque Secret the engine mirrors keys into, and the Role and RoleBinding granting
+the engine's account get and update on that one Secret. Takes (dict "ctx" . "name" <Secret name>).
+
+Rendered with no data: the engine owns every key, writing it through scalo's kubernetes provider with the
+resourceVersion it read. Argo applies it server-side naming no data, and layer2-apps.yaml ignores its /data, so a
+sync never takes a key back.
+*/}}
+{{- define "dfe-engine.mirrorSecret" -}}
+{{- $ctx := .ctx -}}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ .name }}
+  labels:
+    {{- include "dfe-common.labels" $ctx | nindent 4 }}
+type: Opaque
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ .name }}-writer
+  labels:
+    {{- include "dfe-common.labels" $ctx | nindent 4 }}
+rules:
+  # resourceNames holds the engine to this one Secret: no list, watch or create,
+  # and no other Secret in the namespace.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames: [{{ .name | quote }}]
+    verbs: ["get", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ .name }}-writer
+  labels:
+    {{- include "dfe-common.labels" $ctx | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ .name }}-writer
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "dfe-common.serviceAccountName" $ctx }}
+    namespace: {{ $ctx.Release.Namespace }}
+{{- end -}}
+
+{{/*
+dfe-engine.sidecarServiceAccount -- the account the hunt runner or keda shim runs as: one of its own, rendered by
+dfe-engine.sidecarServiceAccountObject, that carries nothing, because neither sidecar calls the Kubernetes API. The
+engine's account carries the grants. Takes (dict "ctx" . "name" <workload name>).
 */}}
 {{- define "dfe-engine.sidecarServiceAccount" -}}
 {{ .name }}

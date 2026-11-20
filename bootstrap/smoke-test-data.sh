@@ -3,7 +3,7 @@
 #  File:         smoke-test-data.sh
 #  Purpose:      Verify Layer 2 data platform components are PRESENT/Ready.
 #                NOTE: these are LIVENESS checks ("pod Running / status Ready") --
-#                they do NOT prove the dependency chains work. For real chain/seam
+#                they do NOT prove the dependency chains work. For real chain/connection
 #                verification (hyperdx->documentdb, receiver->...->ClickHouse)
 #                run smoke-test-integration.sh.
 #  Language:     Bash

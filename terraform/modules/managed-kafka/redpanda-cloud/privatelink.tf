@@ -1,24 +1,12 @@
-// The private handshake: the AWS end. Redpanda creates the VPC endpoint service
-// and we create the interface endpoint that connects to it, in the same private
-// subnets the DFE pods run on.
-//
-// private_dns_enabled is what makes the cluster's own hostnames resolve inside
-// this VPC, which is why no hosted zone is created here. Another VPC or an
-// on-prem network resolves the cluster domain through a Route 53 Resolver
-// inbound endpoint plus a forwarding rule -- never by pointing a rule at the
-// VPC's own .2 resolver, which Redpanda documents as not working.
+// The AWS end of the PrivateLink handshake: an interface endpoint to Redpanda's endpoint service, in the DFE pods' subnets.
+// private_dns_enabled resolves the cluster inside the VPC, so there is no hosted zone. Other networks: docs/deployment/kafka/redpanda-cloud.md#module-design-notes.
 
 locals {
-  // An empty client_cidrs means the whole VPC -- the private network the DFE
-  // pods already sit on.
   endpoint_client_cidrs = length(var.client_cidrs) > 0 ? var.client_cidrs : [var.network.cidr]
 
-  // The ports Redpanda Cloud serves behind the endpoint: 9092 is the Kafka
-  // bootstrap, 9093 to 9095 the brokers, 8081 the schema registry and 443 the
-  // data plane API and Prometheus. Fixed by the vendor.
+  // Fixed by Redpanda: 9092 Kafka bootstrap, 9093 to 9095 brokers, 8081 schema registry, 443 data plane API and Prometheus.
   endpoint_ports = [443, 8081, 9092, 9093, 9094, 9095]
 
-  // One ingress rule per port per allowed range.
   endpoint_ingress_rules = local.private ? {
     for pair in setproduct(local.endpoint_ports, local.endpoint_client_cidrs) :
     "${pair[0]}-${pair[1]}" => { port = pair[0], cidr = pair[1] }
@@ -58,8 +46,7 @@ resource "aws_vpc_endpoint" "this" {
   subnet_ids         = var.network.private_subnet_ids
   security_group_ids = [aws_security_group.endpoint[0].id]
 
-  // The endpoint service publishes a verified private DNS name, so the seed
-  // brokers resolve to this endpoint from inside the VPC with no zone of ours.
+  // The service publishes a verified private DNS name, so the seed brokers resolve to this endpoint with no zone of ours.
   private_dns_enabled = true
 
   tags = { Name = "${var.name}-redpanda-privatelink" }

@@ -1,23 +1,12 @@
-# dfe-fetcher's integration values over its thin chart, layered after
-# apps/_common.yaml: the fetcher's wiring, under the keys the scalo-service
-# library reads. What depends on the transport sits in the
-# profile files beside this one.
+# dfe-fetcher's wiring over its thin chart. See docs/deployment/values-tiers-apps.md#per-app-notes.
 
-# One pod per fetcher config: N replicas of one config poll the same source N
-# times. The profile files set replicaCount for every app and this file layers
-# after them. A source whose fetch supports competing consumers opts KEDA in,
-# with its own triggers or this CPU target.
+# One pod per fetcher config: N replicas of one config poll the same source N times.
 replicaCount: 1
 keda:
   cpu:
     targetUtilization: 70
 
-# The cursor store is the contract's writable path `cursor`. Its claim is off by
-# default: a lost cursor re-fetches the default window rather than losing data,
-# and the slim tier is not guaranteed a StorageClass. The claim is
-# <fullname>-cursor. Argo never prunes it: a render that renames or drops the
-# claim leaves it and its volume in place, and the Application OutOfSync until
-# it is deleted by hand.
+# The cursor claim is off by default. Argo never prunes it, so a render that drops it leaves the Application OutOfSync until the claim is deleted by hand.
 writablePaths:
   cursor:
     persistence:
@@ -25,21 +14,15 @@ writablePaths:
       annotations:
         argocd.argoproj.io/sync-options: Prune=false
 
-# The cursor store's directory, on that writable path. An overlay that names its
-# own still wins.
 config:
   cursor:
     directory: /var/lib/dfe-fetcher
 
-# The upstream's credentials by env: the source's stanza names them as env:NAME
-# references, so the Secret's keys are the variable names. Optional, so a source
-# needing none creates nothing.
 extraEnvFrom:
   - secretRef:
       name: '{{ .Values.credentials.secretName }}'
       optional: true
 
-# The contract's secret group, on the Secret these values name.
 secrets:
   kafka:
     existingSecret: '{{ .Values.kafka.saslSecretName }}'
@@ -82,18 +65,15 @@ initContainers:
 
 waitForEngine:
   service: dfe-engine
-  # Empty is the release's own namespace.
   namespace: ""
   port: 8000
   timeoutSeconds: 600
   intervalSeconds: 5
 
-# The fetcher's own keys, read above and in the profile files through tpl.
 kafka:
   saslSecretName: dfe-kafka-user
 credentials:
   secretName: dfe-fetcher-credentials
-# The app's pre-created DLQ topic on the kafka backend.
 dlq:
   topic: dfe_fetcher_dlq
   mode: kafka_only

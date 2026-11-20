@@ -1,22 +1,16 @@
-# The bus. Bare KAFKA_* names, which scalo's KafkaConfig::from_env reads.
 extraEnv:
   KAFKA_BOOTSTRAP_SERVERS: '{{ .Values.kafka.bootstrapServers }}'
   KAFKA_CONSUMER_PROTOCOL: '{{ .Values.kafka.consumerProtocol }}'
   KAFKA_SECURITY_PROTOCOL: '{{ .Values.kafka.securityProtocol }}'
-  # From the Secret holding the credential, where the kafka chart derives it from
-  # the broker's provider. With secrets.kafka off it names an optional key the
-  # app's own config ConfigMap never carries, so it stays unset.
   KAFKA_SASL_MECHANISM:
     valueFrom:
       '{{ if eq (toString (dig "kafka" "enabled" true .Values.secrets)) "false" }}configMapKeyRef{{ else }}secretKeyRef{{ end }}':
         name: '{{ if eq (toString (dig "kafka" "enabled" true .Values.secrets)) "false" }}{{ include "scalo-service.fullname" . }}-config{{ else }}{{ .Values.kafka.saslSecretName }}{{ end }}'
         key: sasl.mechanism
         optional: true
-  # The source's broker list, applied after the file is read.
   DFE_TRANSFORM_ELASTIC_SOURCE_BROKERS: '{{ .Values.kafka.bootstrapServers }}'
 
-# A named source block must carry every required key before env applies. These
-# are the app's idle defaults, which the engine's overlay replaces key by key.
+# A named source block needs every required key before env applies. The engine's overlay replaces these idle defaults.
 config:
   source:
     name: ""

@@ -189,7 +189,9 @@ class FilebeatCase(Case):
         #: The agent's containers, on a run that ships through a real filebeat only.
         self._pair: beats.Pair | None = None
         #: The receiver's lumberjack listener, which a --via beats run opens and cleanup closes.
-        self._listener = Listener("receiver-lumberjack", beats.LUMBERJACK_SWITCHES, beats.LUMBERJACK_ENV)
+        self._listener = Listener(
+            "receiver-lumberjack", beats.LUMBERJACK_SWITCHES, beats.LUMBERJACK_ENV
+        )
         #: Whether the source asks to be archived, which only a deployment running
         #: an archiver can honour.
         self._archive = True
@@ -200,11 +202,15 @@ class FilebeatCase(Case):
         driver, page = run.driver, run.driver.page
         self._archive = steps.archiver_runs(run.engine)
         # The page header repeats the nav entry as a link, so the nav one is first.
-        page.get_by_role("link", name="Sources", exact=True).first.click(timeout=STEP_TIMEOUT_MS)
+        page.get_by_role("link", name="Sources", exact=True).first.click(
+            timeout=STEP_TIMEOUT_MS
+        )
         page.wait_for_url("**/sources**", timeout=STEP_TIMEOUT_MS)
         driver.button("Add Source").first.click(timeout=STEP_TIMEOUT_MS)
         page.get_by_placeholder("Enter source").fill(self.name)
-        page.get_by_placeholder("Enter display name").fill(f"{self.DISPLAY} {self.name}")
+        page.get_by_placeholder("Enter display name").fill(
+            f"{self.DISPLAY} {self.name}"
+        )
         page.get_by_placeholder("Enter description").fill(self.DESCRIPTION)
         if self._archive:
             # The switches are Enabled (on) then Archive (off); the archive one is second.
@@ -212,24 +218,35 @@ class FilebeatCase(Case):
         page.get_by_placeholder("Enter field").fill(self.MATCH_FIELD)
         page.get_by_placeholder("Enter value").fill(self.MATCH_VALUE)
         archived = (
-            "archive on" if self._archive
+            "archive on"
+            if self._archive
             else f"archive off, because this deployment runs no {steps.ARCHIVER_SERVICE}"
         )
-        driver.record("add-source-configuration", "done",
-                      f"filled the Configuration tab for {self.name}, {archived}")
+        driver.record(
+            "add-source-configuration",
+            "done",
+            f"filled the Configuration tab for {self.name}, {archived}",
+        )
 
         # Own table (the form's default) shows this tab, which opens on the meta schema select.
-        page.get_by_role("tab", name="Table Settings", exact=True).click(timeout=STEP_TIMEOUT_MS)
+        page.get_by_role("tab", name="Table Settings", exact=True).click(
+            timeout=STEP_TIMEOUT_MS
+        )
         # The selects group by family and show the leaf: meta > beats > filebeat.
-        steps.select_field(page, "schema_meta_schema", self.META_SCHEMA.rsplit("/", 1)[-1])
+        steps.select_field(
+            page, "schema_meta_schema", self.META_SCHEMA.rsplit("/", 1)[-1]
+        )
         steps.select_field(page, "schema_meta_schema_version", self.META_SCHEMA_VERSION)
         # The header is a deployment default the form fills in; picking one is an override.
         driver.button("Override Defaults").click(timeout=STEP_TIMEOUT_MS)
         steps.select_field(page, "header_type", self.HEADER.rsplit("/", 1)[-1])
         steps.select_field(page, "header_version", self.HEADER_VERSION)
-        driver.record("add-source-meta-schema", "done",
-                      f"picked {self.HEADER} {self.HEADER_VERSION} and "
-                      f"{self.META_SCHEMA} {self.META_SCHEMA_VERSION}")
+        driver.record(
+            "add-source-meta-schema",
+            "done",
+            f"picked {self.HEADER} {self.HEADER_VERSION} and "
+            f"{self.META_SCHEMA} {self.META_SCHEMA_VERSION}",
+        )
 
         # The Transform tab renders only once a meta schema is picked, so it is
         # filled in here and the create carries the transform with it.
@@ -242,9 +259,13 @@ class FilebeatCase(Case):
         # The console shows no restart hint, so the reply it was handed is read here.
         with page.expect_response(source_created, timeout=STEP_TIMEOUT_MS) as created:
             driver.button("Add Source").last.click(timeout=STEP_TIMEOUT_MS)
-        page.get_by_text("Source created successfully").wait_for(timeout=STEP_TIMEOUT_MS)
+        page.get_by_text("Source created successfully").wait_for(
+            timeout=STEP_TIMEOUT_MS
+        )
         driver.record("add-source", "done", f"the console created {self.name}")
-        return steps.reply_hints(created.value.json()) + self._record_transform(run, refused)
+        return steps.reply_hints(created.value.json()) + self._record_transform(
+            run, refused
+        )
 
     def _pick_transform(self, page) -> None:
         """Transform tab: Define Transform, then the engine the catalogue offers.
@@ -252,7 +273,9 @@ class FilebeatCase(Case):
         The picker lists the catalogued transform apps by service, so the option
         is the app's name and the value it sets is the engine.
         """
-        page.get_by_role("tab", name="Transform", exact=True).click(timeout=STEP_TIMEOUT_MS)
+        page.get_by_role("tab", name="Transform", exact=True).click(
+            timeout=STEP_TIMEOUT_MS
+        )
         page.get_by_text("Define Transform", exact=True).click(timeout=STEP_TIMEOUT_MS)
         steps.select_field(page, "transform_engine", self.service)
 
@@ -296,14 +319,20 @@ class FilebeatCase(Case):
         """
         current = run.engine.call("GET", f"/sources/{self.name}")
         attached = (current.body or {}).get("transform") or {}
-        return {key: str(attached[key]) for key in self._transform_body() if attached.get(key)}
+        return {
+            key: str(attached[key])
+            for key in self._transform_body()
+            if attached.get(key)
+        }
 
     def _attach_by_api(self, run: Run) -> tuple[str, list[str]]:
         """The same transform through the engine, and the restarts the write reported."""
         engine = run.engine
         current = engine.call("GET", f"/sources/{self.name}")
         if current.status != 200:
-            raise RuntimeError(f"cannot read {self.name} back: {current.status} {current.body}")
+            raise RuntimeError(
+                f"cannot read {self.name} back: {current.status} {current.body}"
+            )
         transform = self._transform_body()
         body = {
             "source": self.name,
@@ -311,14 +340,21 @@ class FilebeatCase(Case):
             "description": current.body.get("description"),
             "match": current.body.get("match"),
             "header": {"type": self.HEADER, "version": self.HEADER_VERSION},
-            "schema": {"meta_schema": self.META_SCHEMA, "meta_schema_version": self.META_SCHEMA_VERSION},
+            "schema": {
+                "meta_schema": self.META_SCHEMA,
+                "meta_schema_version": self.META_SCHEMA_VERSION,
+            },
             "transform": transform,
             "archive": self._archive,
         }
         updated = engine.call("PUT", f"/sources/{self.name}", body)
         if updated.status != 200:
-            raise RuntimeError(f"attaching the transform was refused: {updated.status} {updated.body}")
-        return f"transform {transform} set on {self.name}", steps.reply_hints(updated.body)
+            raise RuntimeError(
+                f"attaching the transform was refused: {updated.status} {updated.body}"
+            )
+        return f"transform {transform} set on {self.name}", steps.reply_hints(
+            updated.body
+        )
 
     # -- provision ------------------------------------------------------------
 
@@ -330,8 +366,16 @@ class FilebeatCase(Case):
         """
         programs = run.programs()
         wanted = [
-            (self.PROGRAM_SET, Path(self.PROGRAM).name, (programs / self.PROGRAM).read_text(encoding="utf-8")),
-            (self.ENRICHMENT_SET, Path(self.ENRICHMENT).name, (programs / self.ENRICHMENT).read_text(encoding="utf-8")),
+            (
+                self.PROGRAM_SET,
+                Path(self.PROGRAM).name,
+                (programs / self.PROGRAM).read_text(encoding="utf-8"),
+            ),
+            (
+                self.ENRICHMENT_SET,
+                Path(self.ENRICHMENT).name,
+                (programs / self.ENRICHMENT).read_text(encoding="utf-8"),
+            ),
         ]
         console_detail, api_detail, refused = "", "", ""
         hints: list[str] = []
@@ -348,10 +392,14 @@ class FilebeatCase(Case):
     def _upload_in_console(self, run: Run, wanted: list[tuple[str, str, str]]) -> str:
         """Processing tab -> the instance's file sets -> one commit per file."""
         driver, page = run.driver, run.driver.page
-        version = str((run.engine.call("GET", f"/sources/{self.name}").body or {}).get("current") or "")
+        version = str(
+            (run.engine.call("GET", f"/sources/{self.name}").body or {}).get("current")
+            or ""
+        )
         page.goto(
             f"{driver.ui}/sources?source_name={self.name}&source_version={version}&tab=processing",
-            wait_until="domcontentloaded", timeout=STEP_TIMEOUT_MS * 2,
+            wait_until="domcontentloaded",
+            timeout=STEP_TIMEOUT_MS * 2,
         )
         page.get_by_role("heading", name="Transform", exact=True).first.wait_for(
             state="visible", timeout=STEP_TIMEOUT_MS
@@ -366,7 +414,9 @@ class FilebeatCase(Case):
             self._commit_file(page, set_name, filename, content)
             size = self._wait_committed(run, set_name, filename, len(content))
             landed.append(f"{filename} {size} bytes")
-        return f"the console committed {', '.join(landed)} to {self.service}/{self.name}"
+        return (
+            f"the console committed {', '.join(landed)} to {self.service}/{self.name}"
+        )
 
     def _commit_file(self, page, set_name: str, filename: str, content: str) -> None:
         """New file, name it, put the content in the editor, Commit file."""
@@ -374,7 +424,9 @@ class FilebeatCase(Case):
         if tab.count():
             tab.first.click(timeout=STEP_TIMEOUT_MS)
         page.get_by_role("button", name="New file").first.click(timeout=STEP_TIMEOUT_MS)
-        page.get_by_label("New filename", exact=True).fill(filename, timeout=STEP_TIMEOUT_MS)
+        page.get_by_label("New filename", exact=True).fill(
+            filename, timeout=STEP_TIMEOUT_MS
+        )
         editor = page.locator(f"#{set_name}-editor")
         editor.wait_for(state="visible", timeout=STEP_TIMEOUT_MS)
         editor.locator(".ace_content").click(timeout=STEP_TIMEOUT_MS)
@@ -382,7 +434,9 @@ class FilebeatCase(Case):
         page.keyboard.insert_text(content)
         # Live autocompletion opens on the insert and would swallow the click.
         page.keyboard.press("Escape")
-        page.get_by_role("button", name="Commit file").first.click(timeout=EDITOR_TIMEOUT_MS)
+        page.get_by_role("button", name="Commit file").first.click(
+            timeout=EDITOR_TIMEOUT_MS
+        )
 
     def _wait_committed(self, run: Run, set_name: str, filename: str, size: int) -> int:
         """The file as the engine holds it, which is the proof the commit landed."""
@@ -392,7 +446,10 @@ class FilebeatCase(Case):
             reply = run.engine.call(
                 "GET", f"/apps/{self.service}/{self.name}/files/{set_name}/{filename}"
             )
-            if reply.status == 200 and int((reply.body or {}).get("size_bytes") or 0) >= size:
+            if (
+                reply.status == 200
+                and int((reply.body or {}).get("size_bytes") or 0) >= size
+            ):
                 return int(reply.body["size_bytes"])
             last = f"{reply.status} {str(reply.body)[:120]}"
             if time.monotonic() >= until:
@@ -401,7 +458,9 @@ class FilebeatCase(Case):
                 )
             time.sleep(5)
 
-    def _upload_by_api(self, run: Run, wanted: list[tuple[str, str, str]]) -> tuple[str, list[str]]:
+    def _upload_by_api(
+        self, run: Run, wanted: list[tuple[str, str, str]]
+    ) -> tuple[str, list[str]]:
         """The same files through the engine, and the restarts the writes call for.
 
         The instance's config is only rendered with the source's topics once the
@@ -411,11 +470,14 @@ class FilebeatCase(Case):
         told, hints = [], []
         for set_name, filename, content in wanted:
             reply = run.engine.call(
-                "PUT", f"/apps/{self.service}/{self.name}/files/{set_name}/{filename}",
+                "PUT",
+                f"/apps/{self.service}/{self.name}/files/{set_name}/{filename}",
                 {"content": content},
             )
             if reply.status not in (200, 201):
-                raise RuntimeError(f"the {set_name} upload was refused: {reply.status} {reply.body}")
+                raise RuntimeError(
+                    f"the {set_name} upload was refused: {reply.status} {reply.body}"
+                )
             told.append(f"{filename} {len(content)} bytes accepted")
             hints += steps.reply_hints(reply.body)
         return ", ".join(told), hints
@@ -424,23 +486,42 @@ class FilebeatCase(Case):
 
     def feed(self, run: Run) -> None:
         if not run.receiver_url:
-            run.driver.record("feed", "skipped", "no receiver in this run (DFE_E2E_RECEIVER_URL unset)")
+            run.driver.record(
+                "feed",
+                "skipped",
+                "no receiver in this run (DFE_E2E_RECEIVER_URL unset)",
+            )
             return
         corpus = run.transform_repo / self.CORPUS
         detail = steps.wait_routed(
-            run.receiver_url, run.verify, run.engine_repo, corpus, run.store, self.name,
-            run.run_id, steps.ROUTING_DEADLINE, self.MODULES,
+            run.receiver_url,
+            run.verify,
+            run.engine_repo,
+            corpus,
+            run.store,
+            self.name,
+            run.run_id,
+            steps.ROUTING_DEADLINE,
+            self.MODULES,
         )
-        run.driver.record("routed", "done" if detail.startswith("routed") else "failed", detail)
+        run.driver.record(
+            "routed", "done" if detail.startswith("routed") else "failed", detail
+        )
         if run.args.via in SHIPPED:
             self._feed_through_agent(run, corpus)
             return
         self._posted = steps.post_corpus(
-            run.receiver_url, run.verify, run.engine_repo, corpus,
-            run.run_id, run.args.per_module, self.MODULES,
+            run.receiver_url,
+            run.verify,
+            run.engine_repo,
+            corpus,
+            run.run_id,
+            run.args.per_module,
+            self.MODULES,
         )
         run.driver.record(
-            "feed", "done",
+            "feed",
+            "done",
             f"posted {self._posted} corpus records marked {steps.MARKER}.run {run.run_id}",
         )
 
@@ -455,21 +536,33 @@ class FilebeatCase(Case):
         driver, args = run.driver, run.args
         direct = args.via == "beats"
         if not args.beats_network:
-            driver.record("feed", "skipped",
-                          f"--via {args.via} needs --beats-network, the docker network the stack runs on")
+            driver.record(
+                "feed",
+                "skipped",
+                f"--via {args.via} needs --beats-network, the docker network the stack runs on",
+            )
             return
         if direct and not self._open_lumberjack(run):
-            driver.record("feed", "failed", "the receiver has no lumberjack listener to ship to")
+            driver.record(
+                "feed", "failed", "the receiver has no lumberjack listener to ship to"
+            )
             return
         self._pair = beats.Pair(
-            network=args.beats_network, receiver_url=args.beats_receiver_url,
-            workdir=Path(args.shots_dir) / f"beats-{run.run_id}", run_id=run.run_id,
+            network=args.beats_network,
+            receiver_url=args.beats_receiver_url,
+            workdir=Path(args.shots_dir) / f"beats-{run.run_id}",
+            run_id=run.run_id,
             lumberjack=args.beats_lumberjack if direct else "",
         )
-        lines = steps.corpus_lines(run.engine_repo, corpus, args.per_module, self.MODULES)
+        lines = steps.corpus_lines(
+            run.engine_repo, corpus, args.per_module, self.MODULES
+        )
         beats.write_inputs(
-            self._pair, lines, self.MATCH_VALUE,
-            steps.MARKER, steps.run_marker(run.run_id, steps.CORPUS),
+            self._pair,
+            lines,
+            self.MATCH_VALUE,
+            steps.MARKER,
+            steps.run_marker(run.run_id, steps.CORPUS),
         )
         if not direct:
             ready, detail = beats.start_logstash(self._pair)
@@ -485,10 +578,13 @@ class FilebeatCase(Case):
         sent, detail = beats.published(self._pair, len(lines))
         self._posted = sent
         route = (
-            f"lumberjack straight to the receiver at {self._pair.target}" if direct
+            f"lumberjack straight to the receiver at {self._pair.target}"
+            if direct
             else f"lumberjack to logstash and its http output to {self._pair.receiver_url}"
         )
-        driver.record("feed", "done" if sent >= len(lines) else "failed", f"{detail}, {route}")
+        driver.record(
+            "feed", "done" if sent >= len(lines) else "failed", f"{detail}, {route}"
+        )
 
     def _open_lumberjack(self, run: Run) -> bool:
         """Switch the receiver's lumberjack listener on through the engine, as an operator would."""
@@ -502,37 +598,55 @@ class FilebeatCase(Case):
 
     def prove(self, run: Run) -> None:
         if not run.receiver_url:
-            run.driver.record("landed", "unproven", "no receiver in this run, so nothing was posted to land")
+            run.driver.record(
+                "landed",
+                "unproven",
+                "no receiver in this run, so nothing was posted to land",
+            )
             return
         # The routing probes land in this table too, so only rows marked as this run's corpus count.
         corpus = steps.marked(run.run_id, steps.CORPUS)
-        landed = steps.wait_rows(run.store, self.name, self._posted, self.LAND_DEADLINE, corpus)
+        landed = steps.wait_rows(
+            run.store, self.name, self._posted, self.LAND_DEADLINE, corpus
+        )
         strayed = steps.strayed_rows(run.store, run.run_id)
         whole = self._posted > 0 and landed >= self._posted
         run.driver.record(
-            "landed", "done" if whole and not strayed else "failed",
+            "landed",
+            "done" if whole and not strayed else "failed",
             f"dfe.{self.name} holds {landed} of {self._posted} corpus rows marked "
             f"{steps.MARKER}.run {run.run_id}, {strayed} strayed into dfe.main",
         )
-        run.driver.record("dataset", *steps.dataset_outcome(run.store, self.name, self.MATCH_VALUE))
+        run.driver.record(
+            "dataset", *steps.dataset_outcome(run.store, self.name, self.MATCH_VALUE)
+        )
         # Not every corpus line carries an address, so the bar is the corpus's own expected count.
         expected = steps.expected_carrying(
-            run.engine_repo, run.transform_repo / self.CORPUS, run.args.per_module,
-            self.MODULES, self.TRANSFORMED_FIELD,
+            run.engine_repo,
+            run.transform_repo / self.CORPUS,
+            run.args.per_module,
+            self.MODULES,
+            self.TRANSFORMED_FIELD,
         )
         transformed = steps.wait_rows(
-            run.store, self.name, expected, self.TRANSFORM_DEADLINE,
+            run.store,
+            self.name,
+            expected,
+            self.TRANSFORM_DEADLINE,
             f"{corpus} AND {self._transformed}",
         )
         every = expected > 0 and transformed >= expected
         run.driver.record(
-            "transformed", "done" if every else "failed",
+            "transformed",
+            "done" if every else "failed",
             f"{transformed} of {self._posted} corpus rows carry {self.TRANSFORMED_COLUMN}, "
             f"which only the transform sets; the corpus expects {expected}",
         )
         if run.args.via in SHIPPED:
             self._record_envelope(run)
-            run.driver.record("envelope-kept", *beats.kept_outcome(run.store, self.name))
+            run.driver.record(
+                "envelope-kept", *beats.kept_outcome(run.store, self.name)
+            )
 
     def _record_envelope(self, run: Run) -> None:
         """Name the envelope that reached the table, off the rows themselves.
@@ -545,7 +659,8 @@ class FilebeatCase(Case):
             run.driver.record("envelope", "failed", refused)
             return
         run.driver.record(
-            "envelope", "done",
+            "envelope",
+            "done",
             f"{carrying} row(s) carry log.file.path {beats.AGENT_PATH}, which only a Beats "
             f"agent sets, and one of them arrived with {', '.join(keys)}",
         )
@@ -567,15 +682,20 @@ class FilebeatCase(Case):
         """Take down anything this run stood up beside the stack, and put the receiver back."""
         rows = []
         if self._pair is not None:
-            rows.append(wizard.StepResult("beats-removed", "done", beats.stop(self._pair)))
+            rows.append(
+                wizard.StepResult("beats-removed", "done", beats.stop(self._pair))
+            )
         if self._listener.is_open:
             try:
                 rows.append(self._listener.close(run))
             except (OSError, RuntimeError) as exc:
-                rows.append(wizard.StepResult(
-                    "receiver-lumberjack-restored", "failed",
-                    f"{self._listener.route} was not put back ({exc}), so lumberjack may still be open",
-                ))
+                rows.append(
+                    wizard.StepResult(
+                        "receiver-lumberjack-restored",
+                        "failed",
+                        f"{self._listener.route} was not put back ({exc}), so lumberjack may still be open",
+                    )
+                )
         return rows
 
 
@@ -620,7 +740,8 @@ class ElasticCase(FilebeatCase):
         into the image and selected by name.
         """
         run.driver.record(
-            "upload-program", "skipped",
+            "upload-program",
+            "skipped",
             f"{self.service} reads no authored files; {self.VARIANT} is compiled in",
         )
         return []
@@ -696,7 +817,9 @@ class SyslogCase(Case):
         self.name = fetcher.new_name(self.prefix)
         #: The table each vendor's lines land in, which the detector names by the vendor.
         self.tables = {vendor: vendor for vendor in syslog.VENDORS}
-        self._listener = Listener("receiver-syslog", syslog.SYSLOG_SWITCHES, syslog.SYSLOG_ENV)
+        self._listener = Listener(
+            "receiver-syslog", syslog.SYSLOG_SWITCHES, syslog.SYSLOG_ENV
+        )
         self._before: dict[str, int] | None = None
         #: Whether the datastore answers clusterAllReplicas, None until the first count asks.
         self._clustered: bool | None = None
@@ -719,7 +842,9 @@ class SyslogCase(Case):
             if run.engine.call("GET", f"/sources/{table}").status == 200:
                 reused.append(table)
                 continue
-            created = run.engine.call("POST", "/sources", syslog.vendor_body(vendor, table))
+            created = run.engine.call(
+                "POST", "/sources", syslog.vendor_body(vendor, table)
+            )
             if created.status not in (200, 201, 202):
                 raise RuntimeError(
                     f"creating {table} for {vendor} was refused: {created.status} {created.body}"
@@ -727,7 +852,9 @@ class SyslogCase(Case):
             self._made[vendor] = table
             steps.deploy(run.engine, table)
             # A source created dormant gets no table, so it is deployed first and set dormant after.
-            dormant = run.engine.call("PATCH", f"/sources/{table}", {"state": "dormant"})
+            dormant = run.engine.call(
+                "PATCH", f"/sources/{table}", {"state": "dormant"}
+            )
             if dormant.status != 200:
                 raise RuntimeError(
                     f"setting {table} dormant was refused: {dormant.status} {dormant.body}"
@@ -740,7 +867,8 @@ class SyslogCase(Case):
         made = ", ".join(self._made.values()) or "none"
         kept = f", and found {', '.join(reused)} already there" if reused else ""
         run.driver.record(
-            "add-source", "api-fallback",
+            "add-source",
+            "api-fallback",
             f"the engine created {self.name} on the syslog listener and the vendor tables {made}{kept}",
         )
         # A dormant vendor source runs no transform, so only the intake's write can need a restart.
@@ -759,7 +887,9 @@ class SyslogCase(Case):
 
     def _counts(self, run: Run) -> dict[str, int]:
         """Rows each vendor table holds on its fullest replica, which is the run's alone."""
-        return {vendor: self._count(run, table) for vendor, table in self.tables.items()}
+        return {
+            vendor: self._count(run, table) for vendor, table in self.tables.items()
+        }
 
     def _replicas(self, run: Run, table: str, where: str = "") -> dict[str, int]:
         """Rows *table* holds on each replica, under "" for a datastore with no cluster.
@@ -816,7 +946,9 @@ class SyslogCase(Case):
         """Run-tagged lines that reached dfe.main, which no source's match claimed."""
         host = "_json.hostname.:String"
         return self._count(
-            run, "main", f"startsWith({host}, '{run.run_id}-') AND NOT endsWith({host}, '-probe')"
+            run,
+            "main",
+            f"startsWith({host}, '{run.run_id}-') AND NOT endsWith({host}, '-probe')",
         )
 
     #: Where the syslog header's hostname lands: the elastic transform's ECS copy, or
@@ -828,15 +960,17 @@ class SyslogCase(Case):
         match = " OR ".join(f"{path} = '{tag}'" for path in self.TAG_PATHS)
         tables = {**self.tables, "intake": self.name, "dfe.main": "main"}
         return {
-            label: self._count(run, table, match)
-            for label, table in tables.items()
+            label: self._count(run, table, match) for label, table in tables.items()
         }
 
     @staticmethod
     def _counted(run: Run) -> bool:
         """Whether the run was told where the receiver's counters are."""
         args = run.args
-        return bool(args.receiver_metrics_url or (args.receiver_metrics_selector and args.kubectl))
+        return bool(
+            args.receiver_metrics_url
+            or (args.receiver_metrics_selector and args.kubectl)
+        )
 
     @staticmethod
     def _counters(run: Run) -> dict[str, int]:
@@ -848,7 +982,9 @@ class SyslogCase(Case):
         args = run.args
         if args.receiver_metrics_selector and args.kubectl:
             return syslog.read_pod_counters(
-                shlex.split(args.kubectl), args.namespace, args.receiver_metrics_selector
+                shlex.split(args.kubectl),
+                args.namespace,
+                args.receiver_metrics_selector,
             )
         return syslog.read_counters(args.receiver_metrics_url)
 
@@ -869,7 +1005,9 @@ class SyslogCase(Case):
         now = self._read_counters(run)
         return None if now is None else now["accepted"] - self._before["accepted"]
 
-    def _probe(self, run: Run, start: dict[str, int]) -> tuple[bool, dict[str, int], int]:
+    def _probe(
+        self, run: Run, start: dict[str, int]
+    ) -> tuple[bool, dict[str, int], int]:
         """Send a cisco-asa line until its table gains a row, then wait for the counts to settle.
 
         The receiver rolls onto the new rule and Argo spawns the intake's transform, so the
@@ -885,7 +1023,9 @@ class SyslogCase(Case):
         tcp, sent = syslog.TRANSPORTS[0], 0
         while self._counts(run)["cisco-asa"] <= start["cisco-asa"]:
             probe = syslog.frame(tcp, syslog.message(line, host, syslog.stamp_now()))
-            syslog.send_tcp(args.syslog_host, args.syslog_port, [probe], self._exec(run))
+            syslog.send_tcp(
+                args.syslog_host, args.syslog_port, [probe], self._exec(run)
+            )
             sent += 1
             if time.monotonic() >= until:
                 return False, self._counts(run), sent
@@ -913,14 +1053,25 @@ class SyslogCase(Case):
         first: dict[str, tuple[str, float]] = {}
         every: dict[str, float] = {}
         while True:
-            spread = {vendor: self._replicas(run, table) for vendor, table in self.tables.items()}
-            found = {vendor: max(held.values(), default=0) for vendor, held in spread.items()}
+            spread = {
+                vendor: self._replicas(run, table)
+                for vendor, table in self.tables.items()
+            }
+            found = {
+                vendor: max(held.values(), default=0) for vendor, held in spread.items()
+            }
             took = time.monotonic() - start
             for vendor, want in wanted.items():
-                holding = sorted(host for host, count in spread[vendor].items() if count >= want)
+                holding = sorted(
+                    host for host, count in spread[vendor].items() if count >= want
+                )
                 if holding and vendor not in first:
                     first[vendor] = (holding[0], took)
-                if holding and len(holding) == len(spread[vendor]) and vendor not in every:
+                if (
+                    holding
+                    and len(holding) == len(spread[vendor])
+                    and vendor not in every
+                ):
                     every[vendor] = took
             missed = took >= self.MISS_DEADLINE and found == base
             if all(vendor in every for vendor in wanted) or missed or took >= deadline:
@@ -929,7 +1080,9 @@ class SyslogCase(Case):
 
     @staticmethod
     def _lag_note(
-        wanted: dict[str, int], first: dict[str, tuple[str, float]], every: dict[str, float],
+        wanted: dict[str, int],
+        first: dict[str, tuple[str, float]],
+        every: dict[str, float],
         took: float,
     ) -> str:
         """Where each vendor's rows were first seen, and how long every replica took."""
@@ -939,13 +1092,19 @@ class SyslogCase(Case):
                 parts.append(f"{vendor} on no replica after {took:.0f}s")
                 continue
             host, at = first[vendor]
-            tail = (f"every replica at {every[vendor]:.0f}s" if vendor in every
-                    else f"not on every replica after {took:.0f}s")
-            parts.append(f"{vendor} first on {host or 'the datastore'} at {at:.0f}s, {tail}")
+            tail = (
+                f"every replica at {every[vendor]:.0f}s"
+                if vendor in every
+                else f"not on every replica after {took:.0f}s"
+            )
+            parts.append(
+                f"{vendor} first on {host or 'the datastore'} at {at:.0f}s, {tail}"
+            )
         return "replicas: " + ", ".join(parts)
 
-    def _send(self, run: Run, transport: syslog.Transport,
-              lines: dict[str, list[str]]) -> tuple[int, int, str]:
+    def _send(
+        self, run: Run, transport: syslog.Transport, lines: dict[str, list[str]]
+    ) -> tuple[int, int, str]:
         """Send one transport's corpus.
 
         Returns:
@@ -955,43 +1114,65 @@ class SyslogCase(Case):
         host, stamp = self._tag(run, transport.slug), syslog.stamp_now()
         frames = [
             syslog.frame(transport, syslog.message(line, host, stamp))
-            for vendor in syslog.VENDORS for line in lines[vendor]
+            for vendor in syslog.VENDORS
+            for line in lines[vendor]
         ]
         if not transport.tcp:
-            note = syslog.send_udp(args.syslog_host, args.syslog_udp_port, frames, prefix)
+            note = syslog.send_udp(
+                args.syslog_host, args.syslog_udp_port, frames, prefix
+            )
             return len(frames), 0, note
         notes = [syslog.send_tcp(args.syslog_host, args.syslog_port, frames, prefix)]
         # A second connection: a good line, one past the limit, then a good line.
-        good = syslog.frame(transport, syslog.message(lines["cisco-asa"][0], host, stamp))
+        good = syslog.frame(
+            transport, syslog.message(lines["cisco-asa"][0], host, stamp)
+        )
         big = syslog.frame(transport, syslog.oversize(host, stamp))
         notes.append(
-            syslog.send_tcp(args.syslog_host, args.syslog_port, [good, big, good], prefix, watch=1)
+            syslog.send_tcp(
+                args.syslog_host, args.syslog_port, [good, big, good], prefix, watch=1
+            )
         )
         return len(frames) + 2, 1, " ".join(note for note in notes if note)
 
     def feed(self, run: Run) -> None:
         driver, args = run.driver, run.args
         if not run.store.host:
-            driver.record("feed", "unproven", "no datastore access in this run, so nothing sent could be counted")
+            driver.record(
+                "feed",
+                "unproven",
+                "no datastore access in this run, so nothing sent could be counted",
+            )
             return
         start = self._counts(run)
         self._before = self._read_counters(run)
         routed, base, probes = self._probe(run, start)
         table = self.tables["cisco-asa"]
         if routed:
-            driver.record("routed", "done", f"cisco-asa lines reached dfe.`{table}` through the syslog listener")
+            driver.record(
+                "routed",
+                "done",
+                f"cisco-asa lines reached dfe.`{table}` through the syslog listener",
+            )
         else:
             hops = syslog.hop_report(
-                probes, self._accepted(run), sum(base[v] - start[v] for v in base),
-                self._count(run, self.name), self._strayed(run),
+                probes,
+                self._accepted(run),
+                sum(base[v] - start[v] for v in base),
+                self._count(run, self.name),
+                self._strayed(run),
             )
             driver.record(
-                "routed", "failed",
+                "routed",
+                "failed",
                 f"no cisco-asa row in dfe.`{table}` after {steps.ROUTING_DEADLINE:.0f}s of probes; {hops}",
             )
             return
         self._before = self._read_counters(run)
-        lines = {vendor: syslog.corpus(vendor, args.syslog_lines) for vendor in syslog.VENDORS}
+        lines = {
+            vendor: syslog.corpus(vendor, args.syslog_lines)
+            for vendor in syslog.VENDORS
+        }
         seen = dict(base)
         started = dict(base)
         for transport in syslog.TRANSPORTS:
@@ -1000,16 +1181,22 @@ class SyslogCase(Case):
             self._oversize += big
             # The TCP connection around the oversize frame adds a good cisco-asa line either side.
             expected = {
-                vendor: len(rows) + (2 if transport.tcp and vendor == "cisco-asa" else 0)
+                vendor: len(rows)
+                + (2 if transport.tcp and vendor == "cisco-asa" else 0)
                 for vendor, rows in lines.items()
             }
-            wanted = {vendor: seen[vendor] + count for vendor, count in expected.items()}
+            wanted = {
+                vendor: seen[vendor] + count for vendor, count in expected.items()
+            }
             found, spread = self._land(run, wanted, seen, self.LAND_DEADLINE)
             landed = {vendor: found[vendor] - seen[vendor] for vendor in found}
             seen = found
             hops = syslog.hop_report(
-                self._good, self._accepted(run), sum(found[v] - started[v] for v in found),
-                self._count(run, self.name), self._strayed(run),
+                self._good,
+                self._accepted(run),
+                sum(found[v] - started[v] for v in found),
+                self._count(run, self.name),
+                self._strayed(run),
             )
             tagged = self._by_tag(run, self._tag(run, transport.slug))
             status, detail = syslog.phase_outcome(expected, landed, hops, note)
@@ -1017,14 +1204,20 @@ class SyslogCase(Case):
             if tagged != placed:
                 status = "failed"
             by_tag = ", ".join(f"{label} {count}" for label, count in tagged.items())
-            driver.record(f"syslog-{transport.slug}", status, f"{detail}; by tag: {by_tag}; {spread}")
+            driver.record(
+                f"syslog-{transport.slug}",
+                status,
+                f"{detail}; by tag: {by_tag}; {spread}",
+            )
         driver.record(
-            "syslog-tls", "skipped",
+            "syslog-tls",
+            "skipped",
             "NOT COVERED: the receiver chart has no TLS syslog listener, "
             "and no overlay in the cycle sets syslog.tls.enabled",
         )
         driver.record(
-            "feed", "done",
+            "feed",
+            "done",
             f"sent {self._good} good frame(s) and {self._oversize} oversize frame(s) over "
             f"{', '.join(t.slug for t in syslog.TRANSPORTS)}, tagged {run.run_id}",
         )
@@ -1034,16 +1227,22 @@ class SyslogCase(Case):
     def prove(self, run: Run) -> None:
         driver = run.driver
         if not run.store.host or not self._good:
-            driver.record("syslog-counters", "unproven", "nothing was sent, so there is nothing to count")
+            driver.record(
+                "syslog-counters",
+                "unproven",
+                "nothing was sent, so there is nothing to count",
+            )
             return
         strayed = self._strayed(run)
         driver.record(
-            "unrouted", "failed" if strayed else "done",
+            "unrouted",
+            "failed" if strayed else "done",
             f"{strayed} run-tagged line(s) reached dfe.main, where a line no source's match claims lands",
         )
         if not self._counted(run) or self._before is None:
             driver.record(
-                "syslog-counters", "unproven",
+                "syslog-counters",
+                "unproven",
                 "the receiver's counters were not read before the send (set "
                 "--receiver-metrics-selector with --kubectl, or --receiver-metrics-url)",
             )
@@ -1054,7 +1253,8 @@ class SyslogCase(Case):
             driver.record("syslog-counters", "failed", str(exc))
             return
         driver.record(
-            "syslog-counters", *syslog.counters_outcome(self._good, self._oversize, self._before, after)
+            "syslog-counters",
+            *syslog.counters_outcome(self._good, self._oversize, self._before, after),
         )
 
     def cleanup(self, run: Run) -> list[wizard.StepResult]:
@@ -1063,20 +1263,30 @@ class SyslogCase(Case):
         if not run.args.keep:
             for vendor, table in self._made.items():
                 detail = remove_source(
-                    run.engine.base, run.engine.verify, run.engine.token or "", table,
+                    run.engine.base,
+                    run.engine.verify,
+                    run.engine.token or "",
+                    table,
                     onboarding.TEARDOWN_DEADLINE,
                 )
-                rows.append(wizard.StepResult(
-                    f"teardown-{vendor}", "done" if detail.startswith("removed") else "failed", detail
-                ))
+                rows.append(
+                    wizard.StepResult(
+                        f"teardown-{vendor}",
+                        "done" if detail.startswith("removed") else "failed",
+                        detail,
+                    )
+                )
         if self._listener.is_open:
             try:
                 rows.append(self._listener.close(run))
             except (OSError, RuntimeError) as exc:
-                rows.append(wizard.StepResult(
-                    "receiver-syslog-restored", "failed",
-                    f"{self._listener.route} was not put back ({exc}), so syslog may still be open",
-                ))
+                rows.append(
+                    wizard.StepResult(
+                        "receiver-syslog-restored",
+                        "failed",
+                        f"{self._listener.route} was not put back ({exc}), so syslog may still be open",
+                    )
+                )
         return rows
 
 
@@ -1115,15 +1325,27 @@ class FetchedAwsCase(Case):
             )
         except Exception as exc:  # the console refusing to author IS the finding
             refused = steps.refusal(exc)
-            api_detail = fetcher.author_schema_by_api(run.engine, self.upstream, self.schema)
-        driver.record("author-schema", *steps.console_outcome(console_detail, refused, api_detail))
+            api_detail = fetcher.author_schema_by_api(
+                run.engine, self.upstream, self.schema
+            )
+        driver.record(
+            "author-schema", *steps.console_outcome(console_detail, refused, api_detail)
+        )
 
         # Add Source has no fetcher origin (dfe-ui #286), so the survey IS the
         # finding: the form is opened, read for a fetcher control, and reported.
-        driver.record("add-source-survey", "api-fallback", fetcher.survey_origin(driver, STEP_TIMEOUT_MS))
+        driver.record(
+            "add-source-survey",
+            "api-fallback",
+            fetcher.survey_origin(driver, STEP_TIMEOUT_MS),
+        )
         body = fetcher.source_body(
-            self.upstream, self.name, self.schema, run.args.aws_region,
-            run.args.aws_log_group, run.args.poll_interval_secs,
+            self.upstream,
+            self.name,
+            self.schema,
+            run.args.aws_region,
+            run.args.aws_log_group,
+            run.args.poll_interval_secs,
         )
         detail, hints = fetcher.create_source(run.engine, body)
         driver.record("add-source", "api-fallback", detail)
@@ -1132,12 +1354,18 @@ class FetchedAwsCase(Case):
     def feed(self, run: Run) -> None:
         """A fetched source feeds itself; what this records is that it had work."""
         service_name = fetcher.telemetry_name(run.engine, self.name)
-        samples, since = steps.idle_history(run.store, service_name, int(self.reporting_deadline))
+        samples, since = steps.idle_history(
+            run.store, service_name, int(self.reporting_deadline)
+        )
         run.driver.record(
-            "fetcher-idle", "done",
+            "fetcher-idle",
+            "done",
             f"{service_name} published {samples} pipeline_idle sample(s)"
-            + (f", last {since}s ago" if since is not None
-               else "; it was created carrying its stanza, so it had work from the start"),
+            + (
+                f", last {since}s ago"
+                if since is not None
+                else "; it was created carrying its stanza, so it had work from the start"
+            ),
         )
 
     def prove(self, run: Run) -> None:
@@ -1149,7 +1377,8 @@ class FetchedAwsCase(Case):
         deadline = run.args.poll_interval_secs * 2 + 300
         gained = steps.wait_rows(run.store, self.name, 1, deadline, interval=15.0)
         run.driver.record(
-            "fetched", "done" if gained else "failed",
+            "fetched",
+            "done" if gained else "failed",
             f"dfe.{self.name} holds {gained} row(s) from "
             f"{fetcher.upstream_note(self.upstream, run.args.aws_log_group)} "
             f"within {deadline:.0f}s, nothing written to AWS",
@@ -1157,9 +1386,12 @@ class FetchedAwsCase(Case):
         if gained:
             columns = self.upstream.proof_columns
             carried = " AND ".join(f"{column} != ''" for column in columns)
-            short = run.store.scalar(f"SELECT count() FROM {self.name} WHERE NOT ({carried})")
+            short = run.store.scalar(
+                f"SELECT count() FROM {self.name} WHERE NOT ({carried})"
+            )
             run.driver.record(
-                "fetched-columns", "failed" if short else "done",
+                "fetched-columns",
+                "failed" if short else "done",
                 f"{short} of the landed row(s) lack one of {', '.join(columns)}",
             )
 
@@ -1168,9 +1400,13 @@ class FetchedAwsCase(Case):
         if run.args.keep:
             return []
         detail = fetcher.remove_schema(run.engine, self.schema)
-        return [wizard.StepResult(
-            "schema-removed", "done" if detail.startswith("removed") else "failed", detail
-        )]
+        return [
+            wizard.StepResult(
+                "schema-removed",
+                "done" if detail.startswith("removed") else "failed",
+                detail,
+            )
+        ]
 
 
 #: Every case a run may ask for, which is also the runner's --case choices, so

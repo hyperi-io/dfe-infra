@@ -1,13 +1,5 @@
-// The identity the in-cluster bootstrap Job authenticates with.
-//
-// Kafka ACLs live in the Kafka data plane, not the AWS control plane, so tofu
-// cannot create them: it has no Kafka client and the brokers sit in private
-// subnets. Once the cluster stops granting by default, nothing can create the
-// FIRST ACL unless it is already permitted -- and SASL/IAM is the way out,
-// because there the IAM policy IS the authorisation and no ACL has to exist.
-//
-// The Job itself is chart work: it sets the SCRAM principal's ACLs and creates
-// no topic. This module mints what it needs and outputs the role.
+// The identity the in-cluster bootstrap Job uses to write the first Kafka ACL.
+// Why IAM and not an ACL: docs/deployment/kafka/aws-msk-operations.md#the-bootstrap-job----acls.
 
 resource "aws_iam_role" "bootstrap" {
   name                 = "${var.name}-kafka-bootstrap"
@@ -17,8 +9,7 @@ resource "aws_iam_role" "bootstrap" {
 }
 
 data "aws_iam_policy_document" "bootstrap" {
-  // Cluster scope: connect at all, read the cluster's metadata, and alter it --
-  // which on MSK is the permission an ACL write needs.
+  // Connect, read the cluster and AlterCluster, which is what an ACL write needs on MSK.
   statement {
     effect = "Allow"
 
@@ -31,8 +22,7 @@ data "aws_iam_policy_document" "bootstrap" {
     resources = [aws_msk_cluster.this.arn]
   }
 
-  // Nothing at topic or group scope: an ACL write, even one naming a topic or a
-  // group, is authorised as ALTER CLUSTER, and dfe-engine creates the topics.
+  // Nothing at topic or group scope: an ACL write is authorised as ALTER CLUSTER, and dfe-engine creates the topics.
 }
 
 resource "aws_iam_role_policy" "bootstrap" {

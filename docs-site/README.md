@@ -10,6 +10,7 @@ The source of https://dfe.docs.hyperi.io. A Docusaurus site with one build per r
 | Quickstarts (`/quickstart/...`) | `content-root/quickstart/` | every version, on merge |
 | A repository's section (`/dfe-infra/...`, `/dfe-ui/...`) | that repository's `docs/` | `/next/` nightly at 16:17 UTC, a version only once a stack pins the new tag |
 | The HTTP API reference | dfe-engine's `openapi-spec/openapi.json` | with the dfe-engine tag a stack pins |
+| The dfe CLI reference (`/dfe-engine/reference/cli/`) | the engine's own command tree: `scripts/cli_reference.py` renders it from the `ghcr.io/hyperi-io/dfe-engine` image a stack pins, so the build host needs docker | with the dfe-engine tag a stack pins, `/next/` from the newest release's image |
 | The landing page (`/`) | its words in `copy/landing.yaml`, its layout in `src/pages/index.js` and `src/components/landing/` | every version, on merge |
 | Navbar, footer and release bar | `copy/site.yaml` | every version, on merge |
 

@@ -26,7 +26,9 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-HANDLER = REPO_ROOT / "terraform" / "modules" / "managed-kafka" / "msk" / "broker_scaler.py"
+HANDLER = (
+    REPO_ROOT / "terraform" / "modules" / "managed-kafka" / "msk" / "broker_scaler.py"
+)
 
 _spec = importlib.util.spec_from_file_location("msk_broker_scaler", HANDLER)
 assert _spec is not None
@@ -37,7 +39,9 @@ _spec.loader.exec_module(scaler)
 
 ARN = "arn:aws:kafka:us-west-2:000000000000:cluster/dfe-example/00000000-0000-0000-0000-000000000000-3"
 NOW = datetime(2026, 11, 1, 12, 0, tzinfo=UTC)
-PER_BROKER = 65_000_000.0  # bytes per second a broker may carry before the scaler adds more
+PER_BROKER = (
+    65_000_000.0  # bytes per second a broker may carry before the scaler adds more
+)
 SETTINGS = scaler.Settings(
     cluster_arn=ARN,
     cluster_name="dfe-example",
@@ -55,7 +59,9 @@ class Kafka:
     boto3 takes keyword arguments in the API's own spelling, so each fake reads them from kwargs.
     """
 
-    def __init__(self, brokers: int, state: str = "ACTIVE", operations: list[dict] | None = None) -> None:
+    def __init__(
+        self, brokers: int, state: str = "ACTIVE", operations: list[dict] | None = None
+    ) -> None:
         self.brokers = brokers
         self.state = state
         self.operations = operations or []
@@ -63,8 +69,13 @@ class Kafka:
 
     def describe_cluster_v2(self, **kwargs: object) -> dict:
         assert kwargs["ClusterArn"] == ARN
-        return {"ClusterInfo": {"State": self.state, "CurrentVersion": "K1",
-                                "Provisioned": {"NumberOfBrokerNodes": self.brokers}}}
+        return {
+            "ClusterInfo": {
+                "State": self.state,
+                "CurrentVersion": "K1",
+                "Provisioned": {"NumberOfBrokerNodes": self.brokers},
+            }
+        }
 
     def list_cluster_operations_v2(self, **kwargs: object) -> dict:
         assert kwargs["ClusterArn"] == ARN
@@ -91,14 +102,31 @@ class CloudWatch:
         queries: list[dict] = kwargs["MetricDataQueries"]
         start: datetime = kwargs["StartTime"]
         end: datetime = kwargs["EndTime"]
-        assert end - start == timedelta(seconds=SETTINGS.period_seconds * SETTINGS.evaluation_periods)
-        dimensions = [q["MetricStat"]["Metric"]["Dimensions"] for q in queries if "MetricStat" in q]
-        self.asked_brokers.append(sorted(d["Value"] for dims in dimensions for d in dims if d["Name"] == "Broker ID"))
+        assert end - start == timedelta(
+            seconds=SETTINGS.period_seconds * SETTINGS.evaluation_periods
+        )
+        dimensions = [
+            q["MetricStat"]["Metric"]["Dimensions"]
+            for q in queries
+            if "MetricStat" in q
+        ]
+        self.asked_brokers.append(
+            sorted(
+                d["Value"]
+                for dims in dimensions
+                for d in dims
+                if d["Name"] == "Broker ID"
+            )
+        )
         returned = [q for q in queries if q.get("ReturnData", True)]
         assert len(returned) == 1
         assert "Expression" in returned[0]
         per_broker = self.total / len(dimensions)
-        return {"MetricDataResults": [{"Id": returned[0]["Id"], "Values": [per_broker] * self.periods}]}
+        return {
+            "MetricDataResults": [
+                {"Id": returned[0]["Id"], "Values": [per_broker] * self.periods}
+            ]
+        }
 
 
 @pytest.mark.parametrize(
@@ -145,7 +173,9 @@ def test_a_cluster_mid_operation_is_left_alone() -> None:
     ("ended_ago", "updates"),
     [
         pytest.param(timedelta(minutes=5), [], id="change-inside-the-window-waits"),
-        pytest.param(timedelta(minutes=15), [9], id="a-full-window-since-the-change-scales"),
+        pytest.param(
+            timedelta(minutes=15), [9], id="a-full-window-since-the-change-scales"
+        ),
     ],
 )
 def test_a_replayed_run_never_scales_on_load_read_before_the_last_change(
@@ -154,18 +184,33 @@ def test_a_replayed_run_never_scales_on_load_read_before_the_last_change(
     """The replay that once asked for six brokers and then nine: the second run's window
     still holds load from before the cluster grew, so it waits for a full window on six."""
     operations = [
-        {"OperationType": "UPDATE_BROKER_COUNT", "StartTime": NOW - timedelta(hours=1), "EndTime": NOW - ended_ago},
-        {"OperationType": "UPDATE_CLUSTER_CONFIGURATION", "StartTime": NOW - timedelta(days=9),
-         "EndTime": NOW - timedelta(days=9)},
+        {
+            "OperationType": "UPDATE_BROKER_COUNT",
+            "StartTime": NOW - timedelta(hours=1),
+            "EndTime": NOW - ended_ago,
+        },
+        {
+            "OperationType": "UPDATE_CLUSTER_CONFIGURATION",
+            "StartTime": NOW - timedelta(days=9),
+            "EndTime": NOW - timedelta(days=9),
+        },
     ]
-    kafka, cloudwatch = Kafka(6, operations=operations), CloudWatch(9 * PER_BROKER * 1.2)
+    kafka, cloudwatch = (
+        Kafka(6, operations=operations),
+        CloudWatch(9 * PER_BROKER * 1.2),
+    )
     scaler.scale(kafka, cloudwatch, SETTINGS, NOW)
     assert kafka.updates == updates
 
 
 def test_settings_come_from_the_lambda_environment() -> None:
     env = {
-        "CLUSTER_ARN": ARN, "CLUSTER_NAME": "dfe-example", "MAX_BROKERS": "9", "STEP": "3",
-        "THRESHOLD_BYTES_PER_SEC_PER_BROKER": "65000000", "PERIOD_SECONDS": "300", "EVALUATION_PERIODS": "3",
+        "CLUSTER_ARN": ARN,
+        "CLUSTER_NAME": "dfe-example",
+        "MAX_BROKERS": "9",
+        "STEP": "3",
+        "THRESHOLD_BYTES_PER_SEC_PER_BROKER": "65000000",
+        "PERIOD_SECONDS": "300",
+        "EVALUATION_PERIODS": "3",
     }
     assert scaler.Settings.from_env(env) == SETTINGS

@@ -1,15 +1,8 @@
 terraform {
-  // >= 1.10 for two things this root depends on: variables inside the backend
-  // block (early variable evaluation), and native S3 locking, which is what
-  // removes the DynamoDB lock table a customer would otherwise have to create.
-  //
-  // 1.11 is redpanda-cloud's own floor (write-only arguments for the SCRAM
-  // password), and 1.12 is kubernetes-cluster/aws's (lifecycle.destroy on the
-  // deployment key). This root inherits both, so the constraint states 1.12.
+  // The highest module floor: kubernetes-cluster/aws and s3-bucket need 1.12.
   required_version = ">= 1.12"
 
   required_providers {
-    // The lock holds 6.68.0: 6.69.0 fails decoding a large API response ("bufio.Scanner: token too long", terraform-provider-aws#50474, #50480, #50481).
     aws = {
       source  = "hashicorp/aws"
       version = "~> 6.64"
@@ -18,10 +11,7 @@ terraform {
       source  = "hashicorp/random"
       version = "~> 3.6"
     }
-    // Only configured when kafka.provider selects the matching SaaS body
-    // (managed-kafka/confluent-cloud, managed-kafka/redpanda-cloud); a provider
-    // block with no resource against it costs nothing at plan or apply.
-    // The lock holds 2.90.0: no Confluent cycle has completed on 2.91.0, published 2026-10-14.
+    // Used only when kafka.provider selects the matching SaaS body.
     confluent = {
       source  = "confluentinc/confluent"
       version = "~> 2.86"
@@ -32,8 +22,7 @@ terraform {
     }
   }
 
-  // Every field is a variable, so the state location is deployment config like
-  // everything else. terraform/environments/aws-state creates the bucket.
+  // terraform/environments/aws-state creates the bucket.
   backend "s3" {
     bucket       = var.state.bucket
     key          = var.state.key
@@ -42,33 +31,3 @@ terraform {
     use_lockfile = true
   }
 }
-
-// ONE provider for the deployment. The modules declare what they need and this
-// block configures it, so a tag policy or a region change lands in one place.
-// local.tags is the governance set plus a test run's id and expiry, so a
-// guardrail that refuses an untagged create sees both on the create call.
-provider "aws" {
-  region = var.provision.region
-
-  default_tags {
-    tags = local.tags
-  }
-}
-
-locals {
-  // The provider's own floor for its IAM, API key and RBAC clients. At the default 4, about 15s of connection resets from the cluster's REST endpoint fail the manager key's readiness wait, and the apply with it.
-  confluent_max_retries = 12
-}
-
-// Confluent Cloud's own org-level management credential. Never a tfvar: the
-// deployer's shell carries CONFLUENT_CLOUD_API_KEY and CONFLUENT_CLOUD_API_SECRET,
-// which the provider reads on its own the same way this root leans on the aws
-// provider's own AWS_* environment resolution rather than a credential variable.
-provider "confluent" {
-  max_retries = local.confluent_max_retries
-}
-
-// Redpanda Cloud's own organisation IAM client. Never a tfvar, for the same
-// reason: the deployer's shell carries REDPANDA_CLIENT_ID and
-// REDPANDA_CLIENT_SECRET.
-provider "redpanda" {}

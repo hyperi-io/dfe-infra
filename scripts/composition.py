@@ -79,7 +79,9 @@ CATALOGUE_BANNER = (
 )
 
 # Delimiters around the generated block in each profile values file.
-SEED_BEGIN = "# BEGIN seeded apps -- rendered by `python3 scripts/composition.py --write-seed`\n"
+SEED_BEGIN = (
+    "# BEGIN seeded apps -- rendered by `python3 scripts/composition.py --write-seed`\n"
+)
 SEED_END = "# END seeded apps\n"
 SEED_BANNER = (
     "# The apps this tier deploys by default. Derived from apps.yaml's\n"
@@ -298,7 +300,10 @@ def write_seed(check_only: bool = False) -> int:
             stale.append(str(path.relative_to(REPO_ROOT)))
             continue
         path.write_text(before + fresh + after, encoding="utf-8", newline="\n")
-        print(f"wrote the seeded app set into {path.relative_to(REPO_ROOT)}", file=sys.stderr)
+        print(
+            f"wrote the seeded app set into {path.relative_to(REPO_ROOT)}",
+            file=sys.stderr,
+        )
     if stale:
         print(
             "STALE against apps.yaml -- run `python3 scripts/composition.py "
@@ -372,10 +377,14 @@ def fragment(name: str) -> str:
     """
     path = FRAGMENTS / f"{name}.yaml"
     if not path.is_file():
-        raise CompositionError(f"no fragment {name!r} under {FRAGMENTS.relative_to(REPO_ROOT)}")
+        raise CompositionError(
+            f"no fragment {name!r} under {FRAGMENTS.relative_to(REPO_ROOT)}"
+        )
     lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
     start = 0
-    while start < len(lines) and (lines[start].startswith("#") or not lines[start].strip()):
+    while start < len(lines) and (
+        lines[start].startswith("#") or not lines[start].strip()
+    ):
         start += 1
     return "".join(lines[start:])
 
@@ -402,10 +411,14 @@ def render_fragments(text: str, where: str = "") -> str:
         if begin.start() < pos:
             continue
         indent, name = begin["indent"], begin["name"]
-        end_marker = re.compile(rf"^{indent}# END fragment {re.escape(name)}\n", re.MULTILINE)
+        end_marker = re.compile(
+            rf"^{indent}# END fragment {re.escape(name)}\n", re.MULTILINE
+        )
         end = end_marker.search(text, begin.end())
         if end is None:
-            raise CompositionError(f"{where}: BEGIN fragment {name} has no END marker below it")
+            raise CompositionError(
+                f"{where}: BEGIN fragment {name} has no END marker below it"
+            )
         body = [
             f"{indent}{line}" if line.strip() else "\n"
             for line in fragment(name).splitlines(keepends=True)
@@ -496,9 +509,13 @@ def _diff_declarations(ssot, snapshot, path: str = "") -> list[str]:
         for key in sorted(set(ssot) | set(snapshot)):
             sub = f"{path}.{key}" if path else key
             if key not in ssot:
-                diffs.append(f"{sub}: absent from apps.yaml, engine has {snapshot[key]!r}")
+                diffs.append(
+                    f"{sub}: absent from apps.yaml, engine has {snapshot[key]!r}"
+                )
             elif key not in snapshot:
-                diffs.append(f"{sub}: apps.yaml has {ssot[key]!r}, absent from the engine")
+                diffs.append(
+                    f"{sub}: apps.yaml has {ssot[key]!r}, absent from the engine"
+                )
             else:
                 diffs.extend(_diff_declarations(ssot[key], snapshot[key], sub))
         return diffs
@@ -542,7 +559,9 @@ def _engine_snapshot_text(path: str | None) -> str:
     try:
         return base64.b64decode(result.stdout).decode("utf-8")
     except (ValueError, UnicodeDecodeError) as error:
-        raise SnapshotUnavailableError(f"could not decode the API response: {error}") from error
+        raise SnapshotUnavailableError(
+            f"could not decode the API response: {error}"
+        ) from error
 
 
 def check_engine_snapshot(path: str | None = None) -> int:
@@ -563,7 +582,10 @@ def check_engine_snapshot(path: str | None = None) -> int:
     try:
         snapshot_text = _engine_snapshot_text(path)
     except SnapshotUnavailableError as error:
-        print(f"UNVERIFIED -- the engine snapshot could not be read: {error}", file=sys.stderr)
+        print(
+            f"UNVERIFIED -- the engine snapshot could not be read: {error}",
+            file=sys.stderr,
+        )
         return 2
     snapshot = _declarations(snapshot_text)
     diffs = _diff_declarations(ssot, snapshot)
@@ -575,7 +597,10 @@ def check_engine_snapshot(path: str | None = None) -> int:
         for line in diffs:
             print(f"  {line}", file=sys.stderr)
         return 1
-    print("the engine's bundled apps.yaml agrees with apps.yaml's declarations", file=sys.stderr)
+    print(
+        "the engine's bundled apps.yaml agrees with apps.yaml's declarations",
+        file=sys.stderr,
+    )
     return 0
 
 

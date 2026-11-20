@@ -48,44 +48,68 @@ DIAL_CELL = ("single", "local")
 def app_source(docs: list[dict]) -> dict:
     """The source block of the app's config.yaml as the thin chart renders it."""
     doc = next(d for d in docs if object_id(d) == f"ConfigMap/{APP}-config")
-    return (yaml.safe_load(configmap_files(doc)["config.yaml"]) or {}).get("source") or {}
+    return (yaml.safe_load(configmap_files(doc)["config.yaml"]) or {}).get(
+        "source"
+    ) or {}
 
 
 def overlay_source(source: dict) -> dict:
-    return app_source(render_app(APP, *DIAL_CELL, overlay={"config": {"source": source}}))
+    return app_source(
+        render_app(APP, *DIAL_CELL, overlay={"config": {"source": source}})
+    )
 
 
 def test_a_new_group_starts_at_the_log_start() -> None:
     source = app_source(golden(APP, *DIAL_CELL))
-    expect(f"the bus default is {EARLIEST}", source.get("auto_offset_reset") == EARLIEST,
-           f"got {source!r}")
+    expect(
+        f"the bus default is {EARLIEST}",
+        source.get("auto_offset_reset") == EARLIEST,
+        f"got {source!r}",
+    )
 
 
 def test_every_bus_profile_keeps_it() -> None:
     for profile in BUS_PROFILES:
         for cloud in CLOUDS:
             source = app_source(golden(APP, profile, cloud))
-            expect(f"{profile}/{cloud} renders {EARLIEST}",
-                   source.get("auto_offset_reset") == EARLIEST, f"got {source!r}")
+            expect(
+                f"{profile}/{cloud} renders {EARLIEST}",
+                source.get("auto_offset_reset") == EARLIEST,
+                f"got {source!r}",
+            )
 
 
 def test_the_overlay_wins() -> None:
     """The engine's per-instance overlay is the more specific statement."""
     source = overlay_source({"auto_offset_reset": LATEST})
-    expect(f"an overlay {LATEST} survives", source.get("auto_offset_reset") == LATEST,
-           f"got {source!r}")
+    expect(
+        f"an overlay {LATEST} survives",
+        source.get("auto_offset_reset") == LATEST,
+        f"got {source!r}",
+    )
 
 
 def test_the_overlay_keeps_its_other_source_keys() -> None:
     source = overlay_source({"group_id": "kept"})
-    expect("the overlay's own key survives", source.get("group_id") == "kept", f"got {source!r}")
-    expect("beside the default", source.get("auto_offset_reset") == EARLIEST, f"got {source!r}")
+    expect(
+        "the overlay's own key survives",
+        source.get("group_id") == "kept",
+        f"got {source!r}",
+    )
+    expect(
+        "beside the default",
+        source.get("auto_offset_reset") == EARLIEST,
+        f"got {source!r}",
+    )
 
 
 def test_empty_leaves_the_app_default() -> None:
     source = overlay_source({"auto_offset_reset": None})
-    expect("a cleared offset reset renders no key", "auto_offset_reset" not in source,
-           f"got {source!r}")
+    expect(
+        "a cleared offset reset renders no key",
+        "auto_offset_reset" not in source,
+        f"got {source!r}",
+    )
 
 
 def test_direct_carries_no_consumer_setting() -> None:
@@ -93,8 +117,11 @@ def test_direct_carries_no_consumer_setting() -> None:
     for profile in DIRECT_PROFILES:
         for cloud in CLOUDS:
             source = app_source(golden(APP, profile, cloud))
-            expect(f"{profile}/{cloud} renders no offset reset",
-                   "auto_offset_reset" not in source, f"got {source!r}")
+            expect(
+                f"{profile}/{cloud} renders no offset reset",
+                "auto_offset_reset" not in source,
+                f"got {source!r}",
+            )
 
 
 def main() -> int:

@@ -81,7 +81,14 @@ def render(chart: Path, *sets: str, layers: tuple[Path, ...] = ()) -> list[dict]
     cmd += ["--set", "appNamespace=dfe-local", "--set", "kafka.mode=single"]
     for s in sets:
         cmd += ["--set", s]
-    out = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
+    out = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
     if out.returncode != 0:
         return None
     return [d for d in yaml.safe_load_all(out.stdout) if d]
@@ -97,7 +104,11 @@ def integration_values(component: str) -> tuple[Path, ...]:
     """The per-app layers layer2-apps.yaml adds for a component on the local cloud."""
     service = "hyperdx" if component == "dfe-hyperdx" else component
     apps = VALUES / "apps"
-    return (apps / "_common.yaml", apps / service / "values.yaml", apps / service / "local.yaml")
+    return (
+        apps / "_common.yaml",
+        apps / service / "values.yaml",
+        apps / service / "local.yaml",
+    )
 
 
 @cache
@@ -110,7 +121,9 @@ def rendered() -> tuple[tuple[tuple[str, tuple[dict, ...]], ...], tuple[str, ...
     """
     covered: list[tuple[str, tuple[dict, ...]]] = []
     skipped: list[str] = []
-    charts = [p for root in CHART_TREES for p in root.iterdir() if (p / "Chart.yaml").exists()]
+    charts = [
+        p for root in CHART_TREES for p in root.iterdir() if (p / "Chart.yaml").exists()
+    ]
     renders = [(c.name, c, (), ()) for c in charts if c != EXTRAS]
     renders += [
         (f"dfe-extras/{c}", EXTRAS, (f"chartName={c}",), integration_values(c))
@@ -199,7 +212,9 @@ def test_every_chart_is_covered_or_declared() -> None:
         set(skipped) == UNRENDERABLE,
         f"skipped {sorted(skipped)}, declared {sorted(UNRENDERABLE)}",
     )
-    expect("the render reached something to check", len(covered) > 1, f"got {len(covered)}")
+    expect(
+        "the render reached something to check", len(covered) > 1, f"got {len(covered)}"
+    )
 
 
 def main() -> int:
@@ -208,7 +223,9 @@ def main() -> int:
         test_no_job_pod_matches_a_service()
         test_every_chart_is_covered_or_declared()
         covered, skipped = rendered()
-        print(f"\nchecked {len(covered)} chart(s), {len(skipped)} not rendered: {sorted(skipped)}")
+        print(
+            f"\nchecked {len(covered)} chart(s), {len(skipped)} not rendered: {sorted(skipped)}"
+        )
         return summary()
 
 

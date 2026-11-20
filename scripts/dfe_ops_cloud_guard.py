@@ -209,7 +209,10 @@ def load_tfvars(tf_dir: Path) -> dict[str, object]:
         GuardError: An HCL tfvars file is present, a JSON one does not parse, or
             an auto tfvars file sorts after the run's overlay and would override it.
     """
-    auto = sorted((*tf_dir.glob("*.auto.tfvars"), *tf_dir.glob("*.auto.tfvars.json")), key=lambda p: p.name)
+    auto = sorted(
+        (*tf_dir.glob("*.auto.tfvars"), *tf_dir.glob("*.auto.tfvars.json")),
+        key=lambda p: p.name,
+    )
     after_overlay = [p.name for p in auto if p.name > OVERLAY_NAME]
     if after_overlay:
         raise GuardError(
@@ -222,7 +225,9 @@ def load_tfvars(tf_dir: Path) -> dict[str, object]:
         if not path.is_file() or path.name == OVERLAY_NAME:
             continue
         if not path.name.endswith(".json"):
-            raise GuardError(f"{path} is HCL; the guard reads JSON tfvars only (render_dial.py --tofu writes JSON)")
+            raise GuardError(
+                f"{path} is HCL; the guard reads JSON tfvars only (render_dial.py --tofu writes JSON)"
+            )
         try:
             merged.update(json.loads(path.read_text(encoding="utf-8")))
         except (json.JSONDecodeError, AttributeError, TypeError) as exc:
@@ -230,7 +235,9 @@ def load_tfvars(tf_dir: Path) -> dict[str, object]:
     return merged
 
 
-def _setting(flag: str | None, env: Mapping[str, str], name: str, default: str = "") -> str:
+def _setting(
+    flag: str | None, env: Mapping[str, str], name: str, default: str = ""
+) -> str:
     # A workflow passes an unset variable as an empty string, which means unset here too.
     return flag if flag is not None else (env.get(name, "").strip() or default)
 
@@ -301,9 +308,13 @@ def resolve_config(args: argparse.Namespace, env: Mapping[str, str]) -> GuardCon
     try:
         tf_root = tf_dir.relative_to(REPO_ROOT).as_posix()
     except ValueError as exc:
-        raise GuardError(f"--tf-dir must be a root inside this repository, not {tf_dir}") from exc
+        raise GuardError(
+            f"--tf-dir must be a root inside this repository, not {tf_dir}"
+        ) from exc
     tfvars = load_tfvars(tf_dir)
-    provision = tfvars.get("provision") if isinstance(tfvars.get("provision"), dict) else {}
+    provision = (
+        tfvars.get("provision") if isinstance(tfvars.get("provision"), dict) else {}
+    )
     state = tfvars.get("state") if isinstance(tfvars.get("state"), dict) else {}
     tags = tfvars.get("tags") if isinstance(tfvars.get("tags"), dict) else {}
     if tags.get("lifecycle") != "ephemeral":
@@ -316,7 +327,12 @@ def resolve_config(args: argparse.Namespace, env: Mapping[str, str]) -> GuardCon
         run_length = cloud_run.parse_duration(args.run_length)
         teardown_margin = cloud_run.parse_duration(args.teardown_margin)
         state_prefix = cloud_run.validate_state_prefix(
-            _setting(args.state_prefix, env, cloud_run.STATE_PREFIX_ENV, cloud_run.DEFAULT_STATE_PREFIX)
+            _setting(
+                args.state_prefix,
+                env,
+                cloud_run.STATE_PREFIX_ENV,
+                cloud_run.DEFAULT_STATE_PREFIX,
+            )
         )
     except cloud_run.RunTagError as exc:
         raise GuardError(str(exc)) from exc
@@ -334,16 +350,24 @@ def resolve_config(args: argparse.Namespace, env: Mapping[str, str]) -> GuardCon
         state_prefix=state_prefix,
         role=_setting(args.guard_role, env, "DFE_GUARD_ROLE"),
         sweeper=_setting(args.guard_sweeper, env, "DFE_GUARD_SWEEPER"),
-        budget_action=_setting(args.guard_budget_action, env, "DFE_GUARD_BUDGET_ACTION"),
+        budget_action=_setting(
+            args.guard_budget_action, env, "DFE_GUARD_BUDGET_ACTION"
+        ),
         run_length=run_length,
         teardown_margin=teardown_margin,
         keys=keys,
-        permissions_boundary=_setting(args.permissions_boundary, env, "DFE_GUARD_PERMISSIONS_BOUNDARY"),
+        permissions_boundary=_setting(
+            args.permissions_boundary, env, "DFE_GUARD_PERMISSIONS_BOUNDARY"
+        ),
         iam_path=_setting(args.iam_path, env, "DFE_GUARD_IAM_PATH"),
-        s3_bucket_prefix=_setting(args.s3_bucket_prefix, env, "DFE_GUARD_S3_BUCKET_PREFIX"),
+        s3_bucket_prefix=_setting(
+            args.s3_bucket_prefix, env, "DFE_GUARD_S3_BUCKET_PREFIX"
+        ),
         inspector_exclusion=bool(args.inspector_exclusion)
         or env.get("DFE_GUARD_INSPECTOR_EXCLUSION", "").lower() in ("1", "true", "yes"),
-        endpoint_cidr=endpoint_cidr(_setting(args.endpoint_cidr, env, ENDPOINT_CIDR_ENV)),
+        endpoint_cidr=endpoint_cidr(
+            _setting(args.endpoint_cidr, env, ENDPOINT_CIDR_ENV)
+        ),
     )
     missing = [
         name
@@ -414,7 +438,9 @@ def check_budget_action(action: Mapping[str, object], *, budget: str, role: str)
         )
     action_type = str(action.get("ActionType", ""))
     if action_type != "APPLY_IAM_POLICY":
-        raise GuardError(f"its type is {action_type or 'unreadable'}, not APPLY_IAM_POLICY")
+        raise GuardError(
+            f"its type is {action_type or 'unreadable'}, not APPLY_IAM_POLICY"
+        )
 
     threshold = action.get("ActionThreshold")
     threshold = threshold if isinstance(threshold, Mapping) else {}
@@ -423,7 +449,9 @@ def check_budget_action(action: Mapping[str, object], *, budget: str, role: str)
     if not isinstance(value, int | float) or isinstance(value, bool) or value <= 0:
         raise GuardError(f"its threshold {value!r} is not a positive number")
     if threshold_type == "PERCENTAGE" and value > BUDGET_ACTION_MAX_PERCENT:
-        raise GuardError(f"its threshold is {value:g}%, past the budget it is meant to hold")
+        raise GuardError(
+            f"its threshold is {value:g}%, past the budget it is meant to hold"
+        )
     if threshold_type not in ("PERCENTAGE", "ABSOLUTE_VALUE"):
         raise GuardError(f"its threshold type is {threshold_type or 'unreadable'}")
 
@@ -432,14 +460,22 @@ def check_budget_action(action: Mapping[str, object], *, budget: str, role: str)
         raise GuardError(f"its status is {status}, not {BUDGET_ACTION_ARMED}")
 
     definition = action.get("Definition")
-    iam = definition.get("IamActionDefinition") if isinstance(definition, Mapping) else None
+    iam = (
+        definition.get("IamActionDefinition")
+        if isinstance(definition, Mapping)
+        else None
+    )
     iam = iam if isinstance(iam, Mapping) else {}
     policy = str(iam.get("PolicyArn", ""))
     if not budget.endswith(BUDGET_NAME_SUFFIX):
-        raise GuardError(f"its budget {budget!r} is not a {BUDGET_NAME_SUFFIX} budget from the e2e guardrails")
+        raise GuardError(
+            f"its budget {budget!r} is not a {BUDGET_NAME_SUFFIX} budget from the e2e guardrails"
+        )
     brake = budget.removesuffix(BUDGET_NAME_SUFFIX) + BRAKE_POLICY_SUFFIX
     if policy.rsplit("/", 1)[-1] != brake:
-        raise GuardError(f"it applies {policy or 'no policy'}, not the guardrails' {brake}")
+        raise GuardError(
+            f"it applies {policy or 'no policy'}, not the guardrails' {brake}"
+        )
     if not role or role not in (iam.get("Roles") or []):
         raise GuardError(
             f"its roles {list(iam.get('Roles') or [])} do not include {role or 'a role this run is executing as'}, "
@@ -451,11 +487,26 @@ def check_budget_action(action: Mapping[str, object], *, budget: str, role: str)
 _RATE = re.compile(r"^rate\(\s*(\d+)\s+(minute|minutes|hour|hours|day|days)\s*\)$")
 _RATE_UNIT_SECONDS = {"minute": 60, "hour": 3600, "day": 86400}
 _CRON = re.compile(r"^cron\(\s*(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s*\)$")
-_MONTH_NAMES = ("JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC")
+_MONTH_NAMES = (
+    "JAN",
+    "FEB",
+    "MAR",
+    "APR",
+    "MAY",
+    "JUN",
+    "JUL",
+    "AUG",
+    "SEP",
+    "OCT",
+    "NOV",
+    "DEC",
+)
 _WEEKDAY_NAMES = ("SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT")
 
 
-def _cron_values(field: str, low: int, high: int, names: tuple[str, ...] = (), name_base: int = 0) -> set[int]:
+def _cron_values(
+    field: str, low: int, high: int, names: tuple[str, ...] = (), name_base: int = 0
+) -> set[int]:
     """The values one EventBridge cron field selects, or GuardError for a form this cannot judge."""
     values: set[int] = set()
     for part in field.split(","):
@@ -476,9 +527,13 @@ def _cron_values(field: str, low: int, high: int, names: tuple[str, ...] = (), n
                 elif bound.isdigit():
                     bounds.append(int(bound))
                 else:
-                    raise GuardError(f"cron field {field!r} uses {bound!r}, which this check cannot judge")
+                    raise GuardError(
+                        f"cron field {field!r} uses {bound!r}, which this check cannot judge"
+                    )
             if len(bounds) > 2:
-                raise GuardError(f"cron field {field!r} is not a value, a range or a list")
+                raise GuardError(
+                    f"cron field {field!r} is not a value, a range or a list"
+                )
             start, end = bounds[0], bounds[-1]
             if len(bounds) == 1 and step > 1:
                 end = high
@@ -502,10 +557,14 @@ def schedule_gap_seconds(expression: str, now: float, horizon: int) -> int:
     if rate:
         return int(rate.group(1)) * _RATE_UNIT_SECONDS[rate.group(2).rstrip("s")]
     if expression.startswith("at("):
-        raise GuardError("its schedule is a one-shot at(), which runs once and never again")
+        raise GuardError(
+            "its schedule is a one-shot at(), which runs once and never again"
+        )
     cron = _CRON.match(expression)
     if cron is None:
-        raise GuardError(f"its schedule expression {expression!r} is neither rate() nor cron()")
+        raise GuardError(
+            f"its schedule expression {expression!r} is neither rate() nor cron()"
+        )
     minutes, hours, days, months, weekdays, years = cron.groups()
     allowed_minutes = _cron_values(minutes, 0, 59)
     allowed_hours = _cron_values(hours, 0, 23)
@@ -551,7 +610,9 @@ def _schedule_instant(raw: object) -> float | None:
         raise GuardError(f"schedule date {raw!r} is not an instant: {exc}") from exc
 
 
-def check_schedule(schedule: Mapping[str, object], *, function_arn: str, window: int, now: float) -> str:
+def check_schedule(
+    schedule: Mapping[str, object], *, function_arn: str, window: int, now: float
+) -> str:
     """Return what a working recurring schedule for the sweeper looks like, or refuse it.
 
     Args:
@@ -571,7 +632,9 @@ def check_schedule(schedule: Mapping[str, object], *, function_arn: str, window:
         raise GuardError(f"its schedule is {schedule.get('State')!r}, not ENABLED")
     timezone = str(schedule.get("ScheduleExpressionTimezone") or "UTC")
     if timezone not in ("UTC", "Etc/UTC"):
-        raise GuardError(f"its schedule runs in {timezone}, and the cadence is only judged in UTC")
+        raise GuardError(
+            f"its schedule runs in {timezone}, and the cadence is only judged in UTC"
+        )
     start = _schedule_instant(schedule.get("StartDate"))
     if start is not None and start > now:
         raise GuardError("its schedule has not started yet")
@@ -581,15 +644,23 @@ def check_schedule(schedule: Mapping[str, object], *, function_arn: str, window:
     target = schedule.get("Target")
     target = target if isinstance(target, Mapping) else {}
     target_arn = str(target.get("Arn", ""))
-    if not function_arn or not (target_arn == function_arn or target_arn.startswith(f"{function_arn}:")):
-        raise GuardError(f"its schedule targets {target_arn or 'nothing'}, not {function_arn}")
+    if not function_arn or not (
+        target_arn == function_arn or target_arn.startswith(f"{function_arn}:")
+    ):
+        raise GuardError(
+            f"its schedule targets {target_arn or 'nothing'}, not {function_arn}"
+        )
     if not target.get("RoleArn"):
         raise GuardError("its schedule names no role to invoke the function with")
     expression = str(schedule.get("ScheduleExpression", ""))
     gap = schedule_gap_seconds(expression, now, 2 * window)
     flexible = schedule.get("FlexibleTimeWindow")
     flexible = flexible if isinstance(flexible, Mapping) else {}
-    slack = int(flexible.get("MaximumWindowInMinutes") or 0) * 60 if flexible.get("Mode") == "FLEXIBLE" else 0
+    slack = (
+        int(flexible.get("MaximumWindowInMinutes") or 0) * 60
+        if flexible.get("Mode") == "FLEXIBLE"
+        else 0
+    )
     if gap + slack > window:
         raise GuardError(
             f"its schedule {expression} can leave {gap + slack}s between runs, more than the "
@@ -652,7 +723,9 @@ def cached_repository_samples(tfvars: Mapping[str, object]) -> list[str]:
     return [f"{namespace}/{upstream}/image" for upstream in upstreams]
 
 
-def enhanced_scan_filters(scanning: Mapping[str, object], repositories: list[str]) -> list[str]:
+def enhanced_scan_filters(
+    scanning: Mapping[str, object], repositories: list[str]
+) -> list[str]:
     """The registry scanning filters that would assess an image pushed to any of `repositories`.
 
     ECR enhanced scanning bills each image it assesses, and the cache pulls in fresh repositories
@@ -715,25 +788,39 @@ class AwsGuard:
             GuardError: The function is not Failed and no schedule in the default group passes
                 `check_schedule` for it, so nothing would run it often enough.
         """
-        body = self._read(["lambda", "get-function-configuration", "--function-name", identifier])
+        body = self._read(
+            ["lambda", "get-function-configuration", "--function-name", identifier]
+        )
         state = str(body.get("State") or "Active")
         if state == "Failed":
             return state
         function_arn = str(body.get("FunctionArn", ""))
-        summaries = self._read(["scheduler", "list-schedules", "--group-name", "default"]).get("Schedules", [])
+        summaries = self._read(
+            ["scheduler", "list-schedules", "--group-name", "default"]
+        ).get("Schedules", [])
         passing: list[str] = []
         refusals: list[str] = []
         for summary in summaries:
             target = str(summary.get("Target", {}).get("Arn", ""))
-            if not function_arn or not (target == function_arn or target.startswith(f"{function_arn}:")):
+            if not function_arn or not (
+                target == function_arn or target.startswith(f"{function_arn}:")
+            ):
                 continue
             name = str(summary.get("Name"))
             schedule = self._read(
-                ["scheduler", "get-schedule", "--name", name,
-                 "--group-name", str(summary.get("GroupName") or "default")]
+                [
+                    "scheduler",
+                    "get-schedule",
+                    "--name",
+                    name,
+                    "--group-name",
+                    str(summary.get("GroupName") or "default"),
+                ]
             )
             try:
-                check_schedule(schedule, function_arn=function_arn, window=window, now=now)
+                check_schedule(
+                    schedule, function_arn=function_arn, window=window, now=now
+                )
             except GuardError as exc:
                 refusals.append(f"{name}: {exc}")
             else:
@@ -755,7 +842,9 @@ class AwsGuard:
         arn = str(self._read(["sts", "get-caller-identity"]).get("Arn", ""))
         match = re.match(r"^arn:[^:]+:sts::\d{12}:assumed-role/([^/]+)/", arn)
         if match is None:
-            raise GuardError(f"the caller {arn or 'unreadable'} is not an assumed role, which the brake cannot cover")
+            raise GuardError(
+                f"the caller {arn or 'unreadable'} is not an assumed role, which the brake cannot cover"
+            )
         return match.group(1)
 
     def budget_action(self, account: str, identifier: str) -> str:
@@ -769,31 +858,63 @@ class AwsGuard:
         """
         budget, sep, action_id = identifier.rpartition(":")
         if not sep or not budget or not action_id:
-            raise GuardError(f"budget action {identifier!r} is not <budget-name>:<action-id>")
+            raise GuardError(
+                f"budget action {identifier!r} is not <budget-name>:<action-id>"
+            )
         body = self._read(
-            ["budgets", "describe-budget-action", "--account-id", account, "--budget-name", budget,
-             "--action-id", action_id]
+            [
+                "budgets",
+                "describe-budget-action",
+                "--account-id",
+                account,
+                "--budget-name",
+                budget,
+                "--action-id",
+                action_id,
+            ]
         )
         action = body.get("Action", {})
         summary = check_budget_action(action, budget=budget, role=self.caller_role())
         arn = str(action["Definition"]["IamActionDefinition"]["PolicyArn"])
-        version = self._read(["iam", "get-policy", "--policy-arn", arn])["Policy"]["DefaultVersionId"]
+        version = self._read(["iam", "get-policy", "--policy-arn", arn])["Policy"][
+            "DefaultVersionId"
+        ]
         document = self._read(
-            ["iam", "get-policy-version", "--policy-arn", arn, "--version-id", str(version)]
+            [
+                "iam",
+                "get-policy-version",
+                "--policy-arn",
+                arn,
+                "--version-id",
+                str(version),
+            ]
         )["PolicyVersion"]["Document"]
         if not policy_document_denies(document):
-            raise GuardError("its policy holds no Deny statement, so applying it stops nothing")
+            raise GuardError(
+                "its policy holds no Deny statement, so applying it stops nothing"
+            )
         return summary
 
     def policy(self, arn: str) -> str:
-        return str(self._read(["iam", "get-policy", "--policy-arn", arn])["Policy"]["Arn"])
+        return str(
+            self._read(["iam", "get-policy", "--policy-arn", arn])["Policy"]["Arn"]
+        )
 
     def policy_document(self, arn: str) -> object:
         """The default version's document of a managed policy."""
-        version = self._read(["iam", "get-policy", "--policy-arn", arn])["Policy"]["DefaultVersionId"]
-        return self._read(["iam", "get-policy-version", "--policy-arn", arn, "--version-id", str(version)])[
-            "PolicyVersion"
-        ]["Document"]
+        version = self._read(["iam", "get-policy", "--policy-arn", arn])["Policy"][
+            "DefaultVersionId"
+        ]
+        return self._read(
+            [
+                "iam",
+                "get-policy-version",
+                "--policy-arn",
+                arn,
+                "--version-id",
+                str(version),
+            ]
+        )["PolicyVersion"]["Document"]
 
     def registry_scanning(self) -> dict:
         """The registry's scanning configuration in the run's region."""
@@ -818,16 +939,24 @@ class AwsGuard:
             try:
                 return _parse_instant(raw), "AWS_CREDENTIAL_EXPIRATION"
             except ValueError as exc:
-                raise GuardError(f"AWS_CREDENTIAL_EXPIRATION is not an ISO-8601 instant: {exc}") from exc
-        result = aws_cli.run_aws(["configure", "export-credentials", "--format", "process"], timeout=60)
+                raise GuardError(
+                    f"AWS_CREDENTIAL_EXPIRATION is not an ISO-8601 instant: {exc}"
+                ) from exc
+        result = aws_cli.run_aws(
+            ["configure", "export-credentials", "--format", "process"], timeout=60
+        )
         if result.returncode != 0:
-            raise GuardError(f"could not resolve the active credential: {result.stderr.strip()}")
+            raise GuardError(
+                f"could not resolve the active credential: {result.stderr.strip()}"
+            )
         try:
             body = json.loads(result.stdout)
             expiration = body.get("Expiration")
             session = bool(body.get("SessionToken"))
         except (json.JSONDecodeError, AttributeError) as exc:
-            raise GuardError("aws configure export-credentials returned no JSON object") from exc
+            raise GuardError(
+                "aws configure export-credentials returned no JSON object"
+            ) from exc
         if not expiration:
             if session:
                 raise GuardError(
@@ -838,7 +967,9 @@ class AwsGuard:
         try:
             return _parse_instant(str(expiration)), "aws configure export-credentials"
         except ValueError as exc:
-            raise GuardError(f"the credential's Expiration is not an ISO-8601 instant: {exc}") from exc
+            raise GuardError(
+                f"the credential's Expiration is not an ISO-8601 instant: {exc}"
+            ) from exc
 
     def run_resources(
         self,
@@ -855,7 +986,8 @@ class AwsGuard:
         provider = cloud_sweep.AwsProvider(self.region)
         found = provider.collect({}, exclude_bucket, run_key=keys.run, gone=gone)
         return [
-            r for r in found
+            r
+            for r in found
             if r.tags.get(keys.run)
             and not (r.kind == "s3-bucket" and r.id == exclude_bucket)
         ]
@@ -867,7 +999,19 @@ class AwsGuard:
     def put_record(self, bucket: str, region: str, key: str, body: str) -> None:
         with tempfile.TemporaryDirectory(prefix="dfe-run-record-") as scratch:
             path = private_file.write_private(Path(scratch) / "run.json", body)
-            self._read(["s3api", "put-object", "--bucket", bucket, "--key", key, "--body", str(path)], region)
+            self._read(
+                [
+                    "s3api",
+                    "put-object",
+                    "--bucket",
+                    bucket,
+                    "--key",
+                    key,
+                    "--body",
+                    str(path),
+                ],
+                region,
+            )
 
     def delete_record(self, bucket: str, region: str, key: str) -> None:
         self._read(["s3api", "delete-object", "--bucket", bucket, "--key", key], region)
@@ -887,7 +1031,8 @@ class AwsGuard:
     def write_kubeconfig(self, cluster: str, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         cloud_sweep.run_aws_text(
-            ["eks", "update-kubeconfig", "--name", cluster, "--kubeconfig", str(path)], self.region
+            ["eks", "update-kubeconfig", "--name", cluster, "--kubeconfig", str(path)],
+            self.region,
         )
 
 
@@ -945,10 +1090,15 @@ class PreflightReport:
 
     def print(self) -> None:
         for check in self.checks:
-            print(f"{'PASS' if check.ok else 'FAIL'}  {check.name}: {check.detail}", file=sys.stderr)
+            print(
+                f"{'PASS' if check.ok else 'FAIL'}  {check.name}: {check.detail}",
+                file=sys.stderr,
+            )
 
 
-def _identifier_check(report: PreflightReport, name: str, identifier: str, env_name: str, read) -> None:
+def _identifier_check(
+    report: PreflightReport, name: str, identifier: str, env_name: str, read
+) -> None:
     if not identifier:
         report.add(name, False, f"not configured: pass the flag or set {env_name}")
         return
@@ -958,18 +1108,24 @@ def _identifier_check(report: PreflightReport, name: str, identifier: str, env_n
         report.add(name, False, f"{identifier} could not be read: {exc}")
 
 
-def _provider_logs_boundary_check(report: PreflightReport, config: GuardConfig, guard) -> None:
+def _provider_logs_boundary_check(
+    report: PreflightReport, config: GuardConfig, guard
+) -> None:
     """Refuse a run whose permissions boundary would deny the provider-logs receiver."""
     if not config.permissions_boundary or not reads_provider_logs(config.tfvars):
         return
     name = "(a) provider logs boundary"
     try:
-        allowed = boundary_allows(guard.policy_document(config.permissions_boundary), PROVIDER_LOGS_ACTION)
+        allowed = boundary_allows(
+            guard.policy_document(config.permissions_boundary), PROVIDER_LOGS_ACTION
+        )
     except (cloud_sweep.CloudSweepError, KeyError) as exc:
         report.add(name, False, f"the boundary could not be read: {exc}")
         return
     if allowed:
-        report.add(name, True, f"{config.permissions_boundary} allows {PROVIDER_LOGS_ACTION}")
+        report.add(
+            name, True, f"{config.permissions_boundary} allows {PROVIDER_LOGS_ACTION}"
+        )
     else:
         report.add(
             name,
@@ -980,7 +1136,9 @@ def _provider_logs_boundary_check(report: PreflightReport, config: GuardConfig, 
         )
 
 
-def _registry_scanning_check(report: PreflightReport, config: GuardConfig, guard) -> None:
+def _registry_scanning_check(
+    report: PreflightReport, config: GuardConfig, guard
+) -> None:
     """Refuse a run whose cache repositories the registry would put under enhanced scanning."""
     repositories = cached_repository_samples(config.tfvars)
     if not repositories:
@@ -1000,27 +1158,44 @@ def _registry_scanning_check(report: PreflightReport, config: GuardConfig, guard
             "scanning rules to exclude them",
         )
     else:
-        report.add(name, True, "no enhanced scanning rule matches the pull-through cache's repositories")
+        report.add(
+            name,
+            True,
+            "no enhanced scanning rule matches the pull-through cache's repositories",
+        )
 
 
-def run_preflight(config: GuardConfig, guard, *, now: float, env: Mapping[str, str]) -> PreflightReport:
+def run_preflight(
+    config: GuardConfig, guard, *, now: float, env: Mapping[str, str]
+) -> PreflightReport:
     """Run every read-only check; a check that cannot run is a FAIL, never a skip."""
     report = PreflightReport()
 
     try:
         actual = guard.caller_account()
-        report.add("account", actual == config.account, f"authenticated {actual or 'unknown'}, dial {config.account}")
+        report.add(
+            "account",
+            actual == config.account,
+            f"authenticated {actual or 'unknown'}, dial {config.account}",
+        )
     except cloud_sweep.CloudSweepError as exc:
         report.add("account", False, f"could not read the caller identity: {exc}")
 
     # (a) the guardrails this account is meant to carry, each read by its identifier.
-    _identifier_check(report, "(a) guardrail role", config.role, "DFE_GUARD_ROLE", guard.role)
     _identifier_check(
-        report, "(a) sweeper", config.sweeper, "DFE_GUARD_SWEEPER",
+        report, "(a) guardrail role", config.role, "DFE_GUARD_ROLE", guard.role
+    )
+    _identifier_check(
+        report,
+        "(a) sweeper",
+        config.sweeper,
+        "DFE_GUARD_SWEEPER",
         lambda ident: guard.sweeper(ident, config.window, now),
     )
     if report.checks[-1].ok and report.checks[-1].detail.endswith("-> Failed"):
-        report.checks[-1] = Check("(a) sweeper", False, f"{config.sweeper} is in state Failed")
+        report.checks[-1] = Check(
+            "(a) sweeper", False, f"{config.sweeper} is in state Failed"
+        )
     _identifier_check(
         report,
         "(a) budget action",
@@ -1030,7 +1205,10 @@ def run_preflight(config: GuardConfig, guard, *, now: float, env: Mapping[str, s
     )
     if config.permissions_boundary:
         _identifier_check(
-            report, "(a) permissions boundary", config.permissions_boundary, "DFE_GUARD_PERMISSIONS_BOUNDARY",
+            report,
+            "(a) permissions boundary",
+            config.permissions_boundary,
+            "DFE_GUARD_PERMISSIONS_BOUNDARY",
             guard.policy,
         )
 
@@ -1098,20 +1276,34 @@ def deploy_tools(provider: str, env: Mapping[str, str]) -> tuple[bool, str]:
     if done.returncode == 0:
         return True, done.stdout.strip()
     # check_tools.py exits 1 with one indented line per missing tool under a heading.
-    missing = [line.strip() for line in done.stderr.splitlines() if line.startswith("  ")]
+    missing = [
+        line.strip() for line in done.stderr.splitlines() if line.startswith("  ")
+    ]
     if done.returncode != 1 or not missing:
-        return False, f"{CHECK_TOOLS.name} exited {done.returncode}: {done.stderr.strip()}"
-    return False, f"not on PATH: {'; '.join(missing)}. Install them on this machine before a run"
+        return (
+            False,
+            f"{CHECK_TOOLS.name} exited {done.returncode}: {done.stderr.strip()}",
+        )
+    return (
+        False,
+        f"not on PATH: {'; '.join(missing)}. Install them on this machine before a run",
+    )
 
 
-def _run_resource_checks(report: PreflightReport, config: GuardConfig, guard, now: float) -> None:
+def _run_resource_checks(
+    report: PreflightReport, config: GuardConfig, guard, now: float
+) -> None:
     """(c) and (d): read the region's run-tagged resources once and split them by expiry."""
     ghosts: list[cloud_sweep.Resource] = []
     try:
         found = guard.run_resources(config.keys, config.state_bucket, gone=ghosts)
     except cloud_sweep.CloudSweepError as exc:
         report.add("(c) expired run resources", False, f"could not list: {exc}")
-        report.add("(d) unfinished runs", False, f"could not list the region's run resources: {exc}")
+        report.add(
+            "(d) unfinished runs",
+            False,
+            f"could not list the region's run resources: {exc}",
+        )
         return
     expiry = cloud_sweep.ExpirySelection(keys=config.keys, now=now, grace=0)
     classified = [(r, expiry.state(r)) for r in found]
@@ -1131,14 +1323,23 @@ def _run_resource_checks(report: PreflightReport, config: GuardConfig, guard, no
     # (d) no other run is still up, since an apply sharing its names would stop on AlreadyExists after
     # paying for part of a deployment. A run tag with no readable expiry is never swept, so it counts here.
     live = [
-        (r, f"until {r.tags.get(config.keys.expiry)}" if state is cloud_run.ExpiryState.LIVE else str(state))
+        (
+            r,
+            f"until {r.tags.get(config.keys.expiry)}"
+            if state is cloud_run.ExpiryState.LIVE
+            else str(state),
+        )
         for r, state in classified
         if state not in (cloud_run.ExpiryState.EXPIRED, cloud_run.ExpiryState.UNTAGGED)
     ]
     try:
-        records = guard.run_records(config.state_bucket, config.state_region, config.state_prefix)
+        records = guard.run_records(
+            config.state_bucket, config.state_region, config.state_prefix
+        )
     except cloud_sweep.CloudSweepError as exc:
-        report.add("(d) unfinished runs", False, f"could not list the run records: {exc}")
+        report.add(
+            "(d) unfinished runs", False, f"could not list the run records: {exc}"
+        )
         return
     held = [f"run record {key}" for key in records]
     if live:
@@ -1162,18 +1363,25 @@ def _run_resource_checks(report: PreflightReport, config: GuardConfig, guard, no
         report.add("(d) unfinished runs", True, clear)
 
 
-def _resource_names(resources: list[cloud_sweep.Resource], notes: list[str] | None = None) -> str:
+def _resource_names(
+    resources: list[cloud_sweep.Resource], notes: list[str] | None = None
+) -> str:
     """The first ten resources by kind and name, each with its note when given, and how many more."""
     shown = [
-        f"{r.kind} {r.name}" + (f" ({notes[i]})" if notes else "") for i, r in enumerate(resources[:10])
+        f"{r.kind} {r.name}" + (f" ({notes[i]})" if notes else "")
+        for i, r in enumerate(resources[:10])
     ]
-    return ", ".join(shown) + (f" and {len(resources) - 10} more" if len(resources) > 10 else "")
+    return ", ".join(shown) + (
+        f" and {len(resources) - 10} more" if len(resources) > 10 else ""
+    )
 
 
 # --- the run ---------------------------------------------------------------------
 
 
-def build_overlay(config: GuardConfig, run_id: str, expires_at: int) -> dict[str, object]:
+def build_overlay(
+    config: GuardConfig, run_id: str, expires_at: int
+) -> dict[str, object]:
     """The run's tfvars overlay: its own state key, its tags, the guardrail inputs, CloudTrail off.
 
     Given an endpoint CIDR it also replaces the dial's endpoint and makes the
@@ -1219,7 +1427,12 @@ def run_env(config: GuardConfig, **extra: str) -> dict[str, str]:
     A call that names no region goes wherever AWS_REGION or AWS_DEFAULT_REGION
     points, which in an operator's shell can be outside the run's region.
     """
-    return {**os.environ, "AWS_REGION": config.region, "AWS_DEFAULT_REGION": config.region, **extra}
+    return {
+        **os.environ,
+        "AWS_REGION": config.region,
+        "AWS_DEFAULT_REGION": config.region,
+        **extra,
+    }
 
 
 def clickhouse_external(tfvars: Mapping[str, object]) -> bool:
@@ -1228,14 +1441,18 @@ def clickhouse_external(tfvars: Mapping[str, object]) -> bool:
     return isinstance(clickhouse, Mapping) and clickhouse.get("mode") == "external"
 
 
-def clickhouse_access_missing(tfvars: Mapping[str, object], env: Mapping[str, str]) -> list[str]:
+def clickhouse_access_missing(
+    tfvars: Mapping[str, object], env: Mapping[str, str]
+) -> list[str]:
     """The settings an external-ClickHouse run needs that `env` leaves unset or blank; empty otherwise."""
     if not clickhouse_external(tfvars):
         return []
     return [name for name in CLICKHOUSE_ACCESS_ENV if not env.get(name, "").strip()]
 
 
-def require_clickhouse_access(tfvars: Mapping[str, object], env: Mapping[str, str]) -> None:
+def require_clickhouse_access(
+    tfvars: Mapping[str, object], env: Mapping[str, str]
+) -> None:
     """Refuse an external-ClickHouse dial whose run settings `env` leaves unset.
 
     Raises:
@@ -1264,8 +1481,17 @@ def run_sweep_args(config: GuardConfig, run_id: str) -> list[str]:
     """
     selector = f"{config.keys.run}={cloud_run.validate_run_id(run_id)}"
     return [
-        "--provider", config.provider, "--region", config.region, "--tag-filter", selector,
-        "--delete", "--account", config.account, "--exclude-bucket", config.state_bucket,
+        "--provider",
+        config.provider,
+        "--region",
+        config.region,
+        "--tag-filter",
+        selector,
+        "--delete",
+        "--account",
+        config.account,
+        "--exclude-bucket",
+        config.state_bucket,
     ]
 
 
@@ -1317,7 +1543,9 @@ class Runner:
             DeadlineError: The child was still running at its deadline and has been stopped.
         """
         print(f"==> {' '.join(cmd)}", file=sys.stderr)
-        proc = subprocess.Popen(cmd, env=None if env is None else dict(env), start_new_session=new_session)
+        proc = subprocess.Popen(
+            cmd, env=None if env is None else dict(env), start_new_session=new_session
+        )
         self.current = proc
         self.group = proc.pid if new_session and hasattr(os, "killpg") else None
         try:
@@ -1325,21 +1553,31 @@ class Runner:
         except subprocess.TimeoutExpired:
             print(f"==> deadline reached, stopping: {' '.join(cmd)}", file=sys.stderr)
             self.stop_current(stop_timeout)
-            raise DeadlineError(f"{' '.join(cmd[:3])} ran past its deadline and was stopped") from None
+            raise DeadlineError(
+                f"{' '.join(cmd[:3])} ran past its deadline and was stopped"
+            ) from None
         # Cleared only after a normal wait, so an interrupted wait leaves it for stop_current.
         self.current = None
         self.group = None
         return returncode
 
     @staticmethod
-    def _wait(proc: subprocess.Popen, deadline: float | None, extend: tuple[Path, float] | None) -> int:
+    def _wait(
+        proc: subprocess.Popen,
+        deadline: float | None,
+        extend: tuple[Path, float] | None,
+    ) -> int:
         """`proc.wait` up to `deadline`, moved to `extend`'s later one once its file exists.
 
         Raises:
             subprocess.TimeoutExpired: The child was still running at the deadline in force.
         """
         if deadline is None or extend is None:
-            return proc.wait(timeout=None if deadline is None else max(0.0, deadline - time.monotonic()))
+            return proc.wait(
+                timeout=None
+                if deadline is None
+                else max(0.0, deadline - time.monotonic())
+            )
         mark, later = extend
         while True:
             if mark.exists():
@@ -1375,7 +1613,9 @@ class Runner:
             with contextlib.suppress(ProcessLookupError):
                 os.killpg(pgid, signal.SIGTERM)
             give_up = time.monotonic() + timeout
-            while time.monotonic() < give_up and (proc.poll() is None or _group_alive(pgid)):
+            while time.monotonic() < give_up and (
+                proc.poll() is None or _group_alive(pgid)
+            ):
                 time.sleep(0.2)
             if proc.poll() is None or _group_alive(pgid):
                 with contextlib.suppress(ProcessLookupError):
@@ -1411,7 +1651,9 @@ class Teardown:
             # Nothing reached tofu, so there is no state to destroy, only the overlay and record to remove.
             overlay.unlink(missing_ok=True)
             with contextlib.suppress(cloud_sweep.CloudSweepError):
-                self.guard.delete_record(self.config.state_bucket, self.config.state_region, self.record_key)
+                self.guard.delete_record(
+                    self.config.state_bucket, self.config.state_region, self.record_key
+                )
             self.result = 0
             return 0
         access_left = self.close_clickhouse_access()
@@ -1456,8 +1698,14 @@ class Teardown:
             budget = self.config.teardown_margin * WORKLOAD_TEARDOWN_SHARE
             try:
                 self.runner.run(
-                    [sys.executable, str(DFE_OPS), "teardown", "--force",
-                     "--from-terraform", str(self.config.tf_dir)],
+                    [
+                        sys.executable,
+                        str(DFE_OPS),
+                        "teardown",
+                        "--force",
+                        "--from-terraform",
+                        str(self.config.tf_dir),
+                    ],
                     env=env,
                     new_session=True,
                     deadline=time.monotonic() + budget,
@@ -1482,16 +1730,26 @@ class Teardown:
             return destroyed
         overlay.unlink(missing_ok=True)
         try:
-            self.guard.delete_record(self.config.state_bucket, self.config.state_region, self.record_key)
+            self.guard.delete_record(
+                self.config.state_bucket, self.config.state_region, self.record_key
+            )
         except cloud_sweep.CloudSweepError as exc:
-            print(f"run {self.run_id} destroyed; its run record stays: {exc}", file=sys.stderr)
+            print(
+                f"run {self.run_id} destroyed; its run record stays: {exc}",
+                file=sys.stderr,
+            )
         return self.sweep_leftovers()
 
     def tofu_destroy(self) -> int:
         """`tofu destroy` of the run's state, in a session of its own; its exit code."""
         return self.runner.run(
-            [shutil.which("tofu") or "tofu", f"-chdir={self.config.tf_dir}", "destroy", "-auto-approve",
-             "-input=false"],
+            [
+                shutil.which("tofu") or "tofu",
+                f"-chdir={self.config.tf_dir}",
+                "destroy",
+                "-auto-approve",
+                "-input=false",
+            ],
             env=run_env(self.config),
             new_session=True,
         )
@@ -1515,7 +1773,10 @@ class Teardown:
         try:
             left = self.guard.sweep(args)
         except cloud_sweep.CloudSweepError as exc:
-            print(f"run {self.run_id}: the network interface sweep could not finish: {exc}", file=sys.stderr)
+            print(
+                f"run {self.run_id}: the network interface sweep could not finish: {exc}",
+                file=sys.stderr,
+            )
         else:
             if left:
                 print(
@@ -1532,7 +1793,10 @@ class Teardown:
         """
         args = run_sweep_args(self.config, self.run_id)
         selector = args[args.index("--tag-filter") + 1]
-        print(f"==> run {self.run_id}: deleting what still carries {selector}", file=sys.stderr)
+        print(
+            f"==> run {self.run_id}: deleting what still carries {selector}",
+            file=sys.stderr,
+        )
         try:
             left = self.guard.sweep([*args, "--yes"])
             why = "the sweep's output above names it"
@@ -1597,7 +1861,9 @@ def _tofu_output(tf_dir: Path, name: str) -> str:
 def _dfe_ops() -> ModuleType:
     """The dfe-ops CLI as a module, which has no .py name to import it by."""
     loader = importlib.machinery.SourceFileLoader("dfe_ops_cli", str(DFE_OPS))
-    module = importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name, loader))
+    module = importlib.util.module_from_spec(
+        importlib.util.spec_from_loader(loader.name, loader)
+    )
     loader.exec_module(module)
     return module
 
@@ -1609,19 +1875,27 @@ def _parse_cycle(argv: list[str], **defaults: object) -> argparse.Namespace:
         GuardError: The cycle's parser rejects the arguments.
     """
     parser = _dfe_ops().build_parser()
-    subparsers = next(a for a in parser._actions if isinstance(a, argparse._SubParsersAction))
+    subparsers = next(
+        a for a in parser._actions if isinstance(a, argparse._SubParsersAction)
+    )
     cycle = subparsers.choices["cycle"]
     cycle.exit_on_error = False
     cycle.set_defaults(**defaults)
     try:
         return cycle.parse_args(argv)
     except argparse.ArgumentError as exc:
-        raise GuardError(f"dfe-ops cycle would refuse the cycle arguments: {exc}") from exc
+        raise GuardError(
+            f"dfe-ops cycle would refuse the cycle arguments: {exc}"
+        ) from exc
     except SystemExit as exc:
-        raise GuardError("dfe-ops cycle would exit on the cycle arguments without running (-h?)") from exc
+        raise GuardError(
+            "dfe-ops cycle would exit on the cycle arguments without running (-h?)"
+        ) from exc
 
 
-def cycle_command(raw: list[str], profile: str, tf_dir: Path, kubeconfig: Path) -> list[str]:
+def cycle_command(
+    raw: list[str], profile: str, tf_dir: Path, kubeconfig: Path
+) -> list[str]:
     """The arguments `dfe-ops cycle` runs with, checked by its own parser before anything is created.
 
     The guard supplies --from-terraform, --kubeconfig and, when the caller names
@@ -1634,19 +1908,31 @@ def cycle_command(raw: list[str], profile: str, tf_dir: Path, kubeconfig: Path) 
     """
     args = raw[1:] if raw[:1] == ["--"] else raw
     if not profile:
-        raise GuardError("the root's tfvars name no profile, so the cycle has no mode: render the dial with "
-                         "render_dial.py --tofu")
+        raise GuardError(
+            "the root's tfvars name no profile, so the cycle has no mode: render the dial with "
+            "render_dial.py --tofu"
+        )
     base = ["--from-terraform", str(tf_dir), "--kubeconfig", str(kubeconfig)]
     # No defaults, so what comes back set is what the caller set.
     given = _parse_cycle(args, mode=None, kubeconfig=None, from_terraform=None)
-    clashing = [flag for flag, value in (("--from-terraform", given.from_terraform),
-                                         ("--kubeconfig", given.kubeconfig)) if value is not None]
+    clashing = [
+        flag
+        for flag, value in (
+            ("--from-terraform", given.from_terraform),
+            ("--kubeconfig", given.kubeconfig),
+        )
+        if value is not None
+    ]
     if clashing:
-        raise GuardError(f"cloud-cycle sets {' and '.join(clashing)} itself; drop them from the cycle arguments")
+        raise GuardError(
+            f"cloud-cycle sets {' and '.join(clashing)} itself; drop them from the cycle arguments"
+        )
     command = [*base, *args, *([] if given.mode is not None else ["--mode", profile])]
     parsed = _parse_cycle(command)
     if parsed.keep:
-        raise GuardError("--keep skips the cycle's destroy, which an unattended cloud run cannot do without")
+        raise GuardError(
+            "--keep skips the cycle's destroy, which an unattended cloud run cannot do without"
+        )
     if parsed.mode != profile:
         raise GuardError(
             f"--mode {parsed.mode!r} is not the dial's profile {profile!r}: one dial, one profile. Drop --mode "
@@ -1683,14 +1969,19 @@ def cmd_cloud_preflight(args: argparse.Namespace) -> int:
     try:
         config = resolve_config(args, os.environ)
         require_clickhouse_access(config.tfvars, os.environ)
-        report = run_preflight(config, _make_guard(config), now=time.time(), env=os.environ)
+        report = run_preflight(
+            config, _make_guard(config), now=time.time(), env=os.environ
+        )
     except (GuardError, NotImplementedError) as exc:
         print(f"cloud-preflight refused: {exc}", file=sys.stderr)
         return 2
     report.print()
     print(endpoint_summary(config), file=sys.stderr)
     if not report.ok:
-        print("cloud-preflight REFUSED: fix every FAIL above before an unattended run.", file=sys.stderr)
+        print(
+            "cloud-preflight REFUSED: fix every FAIL above before an unattended run.",
+            file=sys.stderr,
+        )
         return 2
     print("cloud-preflight passed.", file=sys.stderr)
     return 0
@@ -1701,7 +1992,11 @@ def cmd_cloud_cycle(args: argparse.Namespace) -> int:
     try:
         config = resolve_config(args, os.environ)
         now = time.time()
-        run_id = cloud_run.validate_run_id(args.run_id) if args.run_id else cloud_run.new_run_id(now)
+        run_id = (
+            cloud_run.validate_run_id(args.run_id)
+            if args.run_id
+            else cloud_run.new_run_id(now)
+        )
         kubeconfig = RUNS_DIR / run_id / "kubeconfig"
         profile = str(config.tfvars.get("profile") or "")
         cycle_argv = cycle_command(args.cycle_args, profile, config.tf_dir, kubeconfig)
@@ -1746,33 +2041,67 @@ def cmd_cloud_cycle(args: argparse.Namespace) -> int:
     # The runner is one of the gateway's self ranges, so its admin probe can tell a
     # dead door from a fenced one.
     probe_source = (
-        {PROBE_SOURCE_ENV: config.endpoint_cidr.split("/")[0]} if config.endpoint_cidr else {}
+        {PROBE_SOURCE_ENV: config.endpoint_cidr.split("/")[0]}
+        if config.endpoint_cidr
+        else {}
     )
     child_env = run_env(config, **probe_source)
     returncode = 1
     try:
         with teardown_on_exit(teardown):
-            private_file.write_private(config.tf_dir / OVERLAY_NAME, json.dumps(overlay, indent=2) + "\n")
-            guard.put_record(config.state_bucket, config.state_region, record_key, json.dumps(record))
+            private_file.write_private(
+                config.tf_dir / OVERLAY_NAME, json.dumps(overlay, indent=2) + "\n"
+            )
+            guard.put_record(
+                config.state_bucket, config.state_region, record_key, json.dumps(record)
+            )
             teardown.provisioning_started = True
             returncode = runner.run(
-                [tofu, f"-chdir={config.tf_dir}", "init", "-input=false", "-reconfigure"], env=child_env
+                [
+                    tofu,
+                    f"-chdir={config.tf_dir}",
+                    "init",
+                    "-input=false",
+                    "-reconfigure",
+                ],
+                env=child_env,
             )
             if returncode == 0:
                 returncode = runner.run(
-                    [tofu, f"-chdir={config.tf_dir}", "apply", "-auto-approve", "-input=false"], env=child_env
+                    [
+                        tofu,
+                        f"-chdir={config.tf_dir}",
+                        "apply",
+                        "-auto-approve",
+                        "-input=false",
+                    ],
+                    env=child_env,
                 )
             if returncode == 0:
-                guard.write_kubeconfig(_tofu_output(config.tf_dir, "cluster_name"), kubeconfig)
+                guard.write_kubeconfig(
+                    _tofu_output(config.tf_dir, "cluster_name"), kubeconfig
+                )
                 if time.monotonic() >= deadline:
-                    raise DeadlineError("tofu apply finished past it, so the cycle never started")
+                    raise DeadlineError(
+                        "tofu apply finished past it, so the cycle never started"
+                    )
                 if clickhouse_external(config.tfvars):
                     # Marked first, so an open cut short is still closed.
                     teardown.clickhouse_opened = True
-                    addresses = [_tofu_output(config.tf_dir, "DFE_EGRESS_CIDRS"), config.endpoint_cidr]
+                    addresses = [
+                        _tofu_output(config.tf_dir, "DFE_EGRESS_CIDRS"),
+                        config.endpoint_cidr,
+                    ]
                     returncode = runner.run(
-                        clickhouse_access_command("open", run_id, "--expires-at", str(expires_at)),
-                        env={**child_env, CLICKHOUSE_ACCESS_CIDRS_ENV: ",".join(a for a in addresses if a)},
+                        clickhouse_access_command(
+                            "open", run_id, "--expires-at", str(expires_at)
+                        ),
+                        env={
+                            **child_env,
+                            CLICKHOUSE_ACCESS_CIDRS_ENV: ",".join(
+                                a for a in addresses if a
+                            ),
+                        },
                     )
                 if returncode == 0:
                     destroy_mark.parent.mkdir(parents=True, exist_ok=True)
@@ -1788,11 +2117,16 @@ def cmd_cloud_cycle(args: argparse.Namespace) -> int:
                     teardown.cycle_finished = True
     except DeadlineError as exc:
         if destroy_mark.exists():
-            print(f"run {run_id}'s own destroy ran past its {config.teardown_margin}s teardown margin: {exc}; "
-                  "torn down above", file=sys.stderr)
+            print(
+                f"run {run_id}'s own destroy ran past its {config.teardown_margin}s teardown margin: {exc}; "
+                "torn down above",
+                file=sys.stderr,
+            )
         else:
-            print(f"run {run_id} reached its {config.run_length}s run length: {exc}; torn down above",
-                  file=sys.stderr)
+            print(
+                f"run {run_id} reached its {config.run_length}s run length: {exc}; torn down above",
+                file=sys.stderr,
+            )
         returncode = DEADLINE_EXIT
     except _Interrupted as exc:
         print(f"run {run_id} interrupted by {exc}; torn down above", file=sys.stderr)
@@ -1812,35 +2146,84 @@ def cmd_cloud_cycle(args: argparse.Namespace) -> int:
 
 
 def _common(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--tf-dir", required=True, help="the OpenTofu root the run applies, e.g. terraform/environments/aws")
-    parser.add_argument("--provider", choices=sorted(GUARDS), default="aws",
-                        help="cloud; gcp and azure have the interface and no checks yet, and refuse by name")
-    parser.add_argument("--run-length", required=True,
-                        help="how long apply and the cycle may take before the cycle is stopped and "
-                             "the teardown starts: 90m, 3h")
-    parser.add_argument("--teardown-margin", default=DEFAULT_TEARDOWN_MARGIN,
-                        help=f"time allowed for the teardown after the run length (default {DEFAULT_TEARDOWN_MARGIN})")
-    parser.add_argument("--account", default=None, help="account id the run must land in (default: provision.account)")
-    parser.add_argument("--region", default=None, help="region of the run (default: provision.region)")
-    parser.add_argument("--guard-role", default=None, help="the guardrail role's name or ARN (env DFE_GUARD_ROLE)")
-    parser.add_argument("--guard-sweeper", default=None,
-                        help="the in-cloud sweeper function's name or ARN (env DFE_GUARD_SWEEPER)")
-    parser.add_argument("--guard-budget-action", default=None,
-                        help="<budget-name>:<action-id> of the deny-create budget action (env DFE_GUARD_BUDGET_ACTION)")
-    parser.add_argument("--permissions-boundary", default=None,
-                        help="policy ARN set as every run role's boundary (env DFE_GUARD_PERMISSIONS_BOUNDARY)")
-    parser.add_argument("--iam-path", default=None, help="IAM path for every run role (env DFE_GUARD_IAM_PATH)")
-    parser.add_argument("--s3-bucket-prefix", default=None,
-                        help="prefix on every run bucket name (env DFE_GUARD_S3_BUCKET_PREFIX)")
-    parser.add_argument("--inspector-exclusion", action="store_true",
-                        help="tag run instances InspectorEc2Exclusion (env DFE_GUARD_INSPECTOR_EXCLUSION=true)")
-    parser.add_argument("--state-prefix", default=None,
-                        help=f"key prefix for per-run state (env {cloud_run.STATE_PREFIX_ENV}, "
-                             f"default {cloud_run.DEFAULT_STATE_PREFIX})")
-    parser.add_argument("--endpoint-cidr", default=None,
-                        help="open the Kubernetes API's public endpoint to this one public IPv4 "
-                             "address, <address>/32, in place of the dial's. The private endpoint "
-                             f"stays on (env {ENDPOINT_CIDR_ENV})")
+    parser.add_argument(
+        "--tf-dir",
+        required=True,
+        help="the OpenTofu root the run applies, e.g. terraform/environments/aws",
+    )
+    parser.add_argument(
+        "--provider",
+        choices=sorted(GUARDS),
+        default="aws",
+        help="cloud; gcp and azure have the interface and no checks yet, and refuse by name",
+    )
+    parser.add_argument(
+        "--run-length",
+        required=True,
+        help="how long apply and the cycle may take before the cycle is stopped and "
+        "the teardown starts: 90m, 3h",
+    )
+    parser.add_argument(
+        "--teardown-margin",
+        default=DEFAULT_TEARDOWN_MARGIN,
+        help=f"time allowed for the teardown after the run length (default {DEFAULT_TEARDOWN_MARGIN})",
+    )
+    parser.add_argument(
+        "--account",
+        default=None,
+        help="account id the run must land in (default: provision.account)",
+    )
+    parser.add_argument(
+        "--region", default=None, help="region of the run (default: provision.region)"
+    )
+    parser.add_argument(
+        "--guard-role",
+        default=None,
+        help="the guardrail role's name or ARN (env DFE_GUARD_ROLE)",
+    )
+    parser.add_argument(
+        "--guard-sweeper",
+        default=None,
+        help="the in-cloud sweeper function's name or ARN (env DFE_GUARD_SWEEPER)",
+    )
+    parser.add_argument(
+        "--guard-budget-action",
+        default=None,
+        help="<budget-name>:<action-id> of the deny-create budget action (env DFE_GUARD_BUDGET_ACTION)",
+    )
+    parser.add_argument(
+        "--permissions-boundary",
+        default=None,
+        help="policy ARN set as every run role's boundary (env DFE_GUARD_PERMISSIONS_BOUNDARY)",
+    )
+    parser.add_argument(
+        "--iam-path",
+        default=None,
+        help="IAM path for every run role (env DFE_GUARD_IAM_PATH)",
+    )
+    parser.add_argument(
+        "--s3-bucket-prefix",
+        default=None,
+        help="prefix on every run bucket name (env DFE_GUARD_S3_BUCKET_PREFIX)",
+    )
+    parser.add_argument(
+        "--inspector-exclusion",
+        action="store_true",
+        help="tag run instances InspectorEc2Exclusion (env DFE_GUARD_INSPECTOR_EXCLUSION=true)",
+    )
+    parser.add_argument(
+        "--state-prefix",
+        default=None,
+        help=f"key prefix for per-run state (env {cloud_run.STATE_PREFIX_ENV}, "
+        f"default {cloud_run.DEFAULT_STATE_PREFIX})",
+    )
+    parser.add_argument(
+        "--endpoint-cidr",
+        default=None,
+        help="open the Kubernetes API's public endpoint to this one public IPv4 "
+        "address, <address>/32, in place of the dial's. The private endpoint "
+        f"stays on (env {ENDPOINT_CIDR_ENV})",
+    )
 
 
 def add_cloud_guard_subparsers(sub: argparse._SubParsersAction) -> None:
@@ -1857,8 +2240,13 @@ def add_cloud_guard_subparsers(sub: argparse._SubParsersAction) -> None:
         help="the guarded cloud cycle: preflight, per-run state and tags, apply, cycle, destroy on every exit",
     )
     _common(cc)
-    cc.add_argument("--run-id", default=None, help="use this run id instead of minting one")
-    cc.add_argument("cycle_args", nargs=argparse.REMAINDER,
-                    help="after --: arguments for `dfe-ops cycle` (not --keep, --from-terraform or --kubeconfig). "
-                         "--mode is the dial's profile, added when absent and refused when it names another")
+    cc.add_argument(
+        "--run-id", default=None, help="use this run id instead of minting one"
+    )
+    cc.add_argument(
+        "cycle_args",
+        nargs=argparse.REMAINDER,
+        help="after --: arguments for `dfe-ops cycle` (not --keep, --from-terraform or --kubeconfig). "
+        "--mode is the dial's profile, added when absent and refused when it names another",
+    )
     cc.set_defaults(func=cmd_cloud_cycle)

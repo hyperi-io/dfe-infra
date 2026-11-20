@@ -53,7 +53,9 @@ from _gate import CELLS, NAMESPACE, WORKLOAD_KINDS, golden, references
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 VALUES = REPO_ROOT / "argocd" / "values"
 COMMON = yaml.safe_load((VALUES / "common.yaml").read_text(encoding="utf-8"))
-HYPERDX = yaml.safe_load((VALUES / "apps" / "dfe-hyperdx" / "values.yaml").read_text(encoding="utf-8"))
+HYPERDX = yaml.safe_load(
+    (VALUES / "apps" / "dfe-hyperdx" / "values.yaml").read_text(encoding="utf-8")
+)
 LAYER2_DATA = REPO_ROOT / "argocd" / "appsets" / "layer2-data.yaml"
 DOCUMENTDB_VALUES = yaml.safe_load(
     (chart_dir("documentdb") / "values.yaml").read_text(encoding="utf-8")
@@ -88,7 +90,10 @@ DECLARED = (
 )
 VARIANTS = {"default": (), "every external declared": DECLARED}
 # Emptying the Keeper opt-out must not put the instances back under data-ingress-policy.
-INGRESS_VARIANTS = {"default": (), "the Keeper opt-out empty": ("operatorIngressScoped=null",)}
+INGRESS_VARIANTS = {
+    "default": (),
+    "the Keeper opt-out empty": ("operatorIngressScoped=null",),
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,7 +108,12 @@ class Pod:
 
 def run(cmd: list[str]) -> list[dict]:
     out = subprocess.run(
-        cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False
+        cmd,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
     )
     if out.returncode != 0:
         raise SystemExit(f"{' '.join(cmd[:3])} failed:\n{out.stderr}")
@@ -131,7 +141,12 @@ STORE_NS = deployed_namespace("documentdb")
 @functools.cache
 def render_policies(*sets: str) -> tuple[dict, ...]:
     cmd = ["helm", "template", "network-policies", str(chart_dir("network-policies"))]
-    cmd += ["-f", str(VALUES / "common.yaml"), "--set", f"dfeNamespaces={{{NAMESPACE}}}"]
+    cmd += [
+        "-f",
+        str(VALUES / "common.yaml"),
+        "--set",
+        f"dfeNamespaces={{{NAMESPACE}}}",
+    ]
     for s in sets:
         cmd += ["--set", s]
     return tuple(d for d in run(cmd) if d.get("kind") == "NetworkPolicy")
@@ -154,7 +169,9 @@ def template_labels(doc: dict) -> dict[str, str]:
 
 def cluster_name() -> str:
     """The name the chart gives its DocumentDB, which CloudNativePG labels its pods with."""
-    found = [d["metadata"]["name"] for d in render_store() if d.get("kind") == "DocumentDB"]
+    found = [
+        d["metadata"]["name"] for d in render_store() if d.get("kind") == "DocumentDB"
+    ]
     if len(found) != 1:
         raise SystemExit(f"expected one DocumentDB in the render, got {found}")
     return found[0]
@@ -162,7 +179,10 @@ def cluster_name() -> str:
 
 def instance(index: int) -> Pod:
     """One instance pod of the cluster, as CloudNativePG and the operator label it."""
-    labels = {ACCESS["clusterLabel"]: cluster_name(), OPERATOR_APP_LABEL: cluster_name()}
+    labels = {
+        ACCESS["clusterLabel"]: cluster_name(),
+        OPERATOR_APP_LABEL: cluster_name(),
+    }
     return Pod(f"{cluster_name()}-{index + 1}", STORE_NS, labels, address(index))
 
 
@@ -170,7 +190,9 @@ def gateway_service() -> Pod:
     """The operator's gateway Service, as a CNI that judges egress before DNAT sees it."""
     labels = {OPERATOR_APP_LABEL: cluster_name(), **PRIMARY_ROLE}
     service_range = ipaddress.ip_network(COMMON["networkModel"]["serviceCIDR"])
-    return Pod(f"documentdb-service-{cluster_name()}", STORE_NS, labels, service_range[10])
+    return Pod(
+        f"documentdb-service-{cluster_name()}", STORE_NS, labels, service_range[10]
+    )
 
 
 def gateway_port() -> int:
@@ -197,7 +219,12 @@ def app_pods() -> tuple[tuple[Pod, tuple[dict, ...]], ...]:
             labels = template_labels(doc)
             key = (doc["metadata"]["name"], yaml.safe_dump(labels, sort_keys=True))
             if key not in found:
-                pod = Pod(doc["metadata"]["name"], NAMESPACE, labels, address(100 + len(found)))
+                pod = Pod(
+                    doc["metadata"]["name"],
+                    NAMESPACE,
+                    labels,
+                    address(100 + len(found)),
+                )
                 found[key] = (pod, tuple(own))
     nobody = Pod("unlabelled", NAMESPACE, {}, address(99))
     return (*found.values(), (nobody, ()))
@@ -207,7 +234,9 @@ def peer_matches(peer: dict, policy_ns: str, pod: Pod) -> bool:
     """Whether one entry of a rule's `to` or `from` names this pod."""
     if "ipBlock" in peer:
         block = peer["ipBlock"]
-        carved = any(pod.ip in ipaddress.ip_network(c) for c in block.get("except") or [])
+        carved = any(
+            pod.ip in ipaddress.ip_network(c) for c in block.get("except") or []
+        )
         return pod.ip in ipaddress.ip_network(block["cidr"]) and not carved
     namespaces = peer.get("namespaceSelector")
     if namespaces is None:
@@ -234,15 +263,22 @@ def port_matches(ports: list[dict] | None, port: int) -> bool:
     return False
 
 
-def admits(policies: tuple[dict, ...], pod: Pod, egress: bool, peer: Pod, port: int) -> bool:
+def admits(
+    policies: tuple[dict, ...], pod: Pod, egress: bool, peer: Pod, port: int
+) -> bool:
     """Whether the policies selecting `pod` admit traffic with `peer` in that direction.
 
     A pod no policy of that direction selects is not isolated, so everything passes."""
-    kind, key, side = ("Egress", "egress", "to") if egress else ("Ingress", "ingress", "from")
+    kind, key, side = (
+        ("Egress", "egress", "to") if egress else ("Ingress", "ingress", "from")
+    )
     isolating = []
     for policy in policies:
         spec = policy["spec"]
-        types = spec.get("policyTypes") or ["Ingress", *(["Egress"] if "egress" in spec else [])]
+        types = spec.get("policyTypes") or [
+            "Ingress",
+            *(["Egress"] if "egress" in spec else []),
+        ]
         if policy["metadata"]["namespace"] != pod.namespace or kind not in types:
             continue
         if selects(spec.get("podSelector") or {}, pod.labels):
@@ -268,7 +304,9 @@ def connects(policies: tuple[dict, ...], source: Pod, dest: Pod, port: int) -> b
 def reaching(variant: tuple[str, ...], dest: Pod, port: int) -> set[str]:
     """The app-namespace workloads that can open a connection to `dest` on `port`."""
     base = render_policies(*variant)
-    return {pod.name for pod, own in app_pods() if connects((*base, *own), pod, dest, port)}
+    return {
+        pod.name for pod, own in app_pods() if connects((*base, *own), pod, dest, port)
+    }
 
 
 def policy_value(key: str) -> object:
@@ -277,7 +315,9 @@ def policy_value(key: str) -> object:
 
 
 def operator_pod() -> Pod:
-    return Pod("cloudnativepg", policy_value("operatorNamespaces")["cnpg"], {}, address(64))
+    return Pod(
+        "cloudnativepg", policy_value("operatorNamespaces")["cnpg"], {}, address(64)
+    )
 
 
 def test_the_destinations_are_the_charts_own() -> None:
@@ -394,7 +434,9 @@ def test_cloudnativepg_reaches_the_status_port_alone() -> None:
 def backing_destinations() -> list[tuple[str, int]]:
     """(namespace, port) for every rule of the namespace-wide backing egress policy."""
     policy = next(
-        p for p in render_policies() if p["metadata"]["name"] == "allow-dfe-backing-egress"
+        p
+        for p in render_policies()
+        if p["metadata"]["name"] == "allow-dfe-backing-egress"
     )
     found = []
     for rule in policy["spec"]["egress"]:
@@ -405,7 +447,11 @@ def backing_destinations() -> list[tuple[str, int]]:
 
 def test_the_backing_egress_opens_nothing_in_the_store_namespace() -> None:
     found = [d for d in backing_destinations() if d[0] == STORE_NS]
-    expect(f"allow-dfe-backing-egress opens nothing in {STORE_NS}", found == [], f"got {found}")
+    expect(
+        f"allow-dfe-backing-egress opens nothing in {STORE_NS}",
+        found == [],
+        f"got {found}",
+    )
 
 
 def test_the_tunnel_reaches_no_backing_service() -> None:
@@ -428,7 +474,9 @@ def test_the_tunnel_reaches_no_backing_service() -> None:
 
 def gateway_rule() -> dict:
     """The one rule of the app namespace's egress to the gateway's proxy pods."""
-    policy = next(p for p in render_policies() if p["metadata"]["name"] == "allow-gateway-egress")
+    policy = next(
+        p for p in render_policies() if p["metadata"]["name"] == "allow-gateway-egress"
+    )
     return policy["spec"]["egress"][0]
 
 
@@ -437,10 +485,18 @@ def outside_pods() -> list[Pod]:
     own, and a pod beside the instances that is not one of them."""
     proxy_labels = gateway_rule()["to"][0]["podSelector"]["matchLabels"]
     return [
-        Pod("gateway proxy", str(policy_value("gatewayNamespace")), proxy_labels, address(60)),
+        Pod(
+            "gateway proxy",
+            str(policy_value("gatewayNamespace")),
+            proxy_labels,
+            address(60),
+        ),
         Pod("collector", str(policy_value("otelNamespace")), {}, address(61)),
         Pod(
-            "clickhouse operator", policy_value("operatorNamespaces")["clickhouse"], {}, address(62)
+            "clickhouse operator",
+            policy_value("operatorNamespaces")["clickhouse"],
+            {},
+            address(62),
         ),
         Pod("cnpg neighbour", STORE_NS, {}, address(63)),
     ]
@@ -473,7 +529,9 @@ def test_the_tunnel_reaches_no_gateway_proxy() -> None:
     other, other_own = pods["unlabelled"]
     rule = gateway_rule()
     labels = rule["to"][0]["podSelector"]["matchLabels"]
-    proxy = Pod("gateway proxy", str(policy_value("gatewayNamespace")), labels, address(70))
+    proxy = Pod(
+        "gateway proxy", str(policy_value("gatewayNamespace")), labels, address(70)
+    )
     base = render_policies()
     for entry in rule["ports"]:
         port = entry["port"]

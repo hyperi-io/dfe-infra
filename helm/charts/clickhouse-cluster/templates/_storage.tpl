@@ -1,26 +1,10 @@
 {{/*
-dfe-clickhouse.storageModel -- the storage model in force, and the ONLY reading
+dfe-clickhouse.storageModel -- the storage model in force, and the only reading
 of it any template takes. Never read .Values.clickhouse.storageModel directly.
 
-clickhouse.storageModel is a three-value dial. `auto` (the default -- also
-what an EMPTY value means, so an older values file with storageModel: ""
-still derives) leaves the choice to whether the deployment supplies an object
-store: an endpoint means the preferred `cached-object`, nothing means `local`.
-`cached-object` and `local` are explicit overrides and WIN over that
-derivation outright -- `cached-object` with no endpoint set fails the render
-in validateStorageModel below rather than deploying something inert, and
-`local` keeps local storage even when an endpoint IS set (the appset still
-passes the endpoint through in that case, so a later switch to cached-object
-stays possible -- though switching after first deploy is a data migration,
-not a values edit; see docs/deployment/storage.md). Derivation is skipped
-under mode=external, where the supplied ClickHouse owns its storage and a
-derived non-local model would fail the render for a value nobody set; an
-explicit one still fails there, which is the point of the guard below.
-
-The model is locked at first deploy -- the operator takes no new disk on an
-existing ClickHouseCluster, and the deployment repo's
-governance/policies/storage-layout.yaml refuses the change afterwards -- so this
-derivation decides once.
+auto, or an empty value, derives it: an objectStore endpoint gives cached-object,
+none gives local. An explicit value wins. Derivation is skipped under
+mode=external, where the supplied server owns its storage. docs/deployment/storage.md
 */}}
 {{- define "dfe-clickhouse.storageModel" -}}
 {{- $override := .Values.clickhouse.storageModel -}}
@@ -34,13 +18,7 @@ local
 {{- end }}
 
 {{/*
-dfe-clickhouse.storageFamily -- the half of storageModel that says what happens
-to the data. `tiered` MOVES parts to the bulk store, so the bulk copy is the only
-one and both stores must be durable; `cached` COPIES them, so the local copy is
-disposable. Empty for `local`.
-
-The vocabulary is `<family>-<bulk>` by construction, so a new model claims a cell
-without editing this; validateStorageModel rejects anything off the list first.
+dfe-clickhouse.storageFamily -- the first half of storageModel: tiered MOVES parts to the bulk store, cached COPIES them. Empty for local.
 */}}
 {{- define "dfe-clickhouse.storageFamily" -}}
 {{- $model := include "dfe-clickhouse.storageModel" . -}}
@@ -50,9 +28,7 @@ without editing this; validateStorageModel rejects anything off the list first.
 {{- end }}
 
 {{/*
-dfe-clickhouse.storageBulk -- the half of storageModel that says where the bulk
-copy lives: `block` for a second volume, `object` for an object store. Empty for
-`local`.
+dfe-clickhouse.storageBulk -- the second half of storageModel: block for a second volume, object for an object store. Empty for local.
 */}}
 {{- define "dfe-clickhouse.storageBulk" -}}
 {{- $model := include "dfe-clickhouse.storageModel" . -}}
@@ -62,16 +38,11 @@ copy lives: `block` for a second volume, `object` for an object store. Empty for
 {{- end }}
 
 {{/*
-dfe-clickhouse.validateStorageModel -- reject an unusable storage model at render
-time rather than emitting server config that silently does nothing.
-
-Called from validate.yaml so it fires in every mode, including the ones that
-render no ClickHouse object at all.
+dfe-clickhouse.validateStorageModel -- reject an unusable storage model at render time. Called from validate.yaml so it fires in every mode.
 */}}
 {{- define "dfe-clickhouse.validateStorageModel" -}}
 {{- $model := include "dfe-clickhouse.storageModel" . -}}
-{{- /* tiered-object and cached-block are named cells in the vocabulary that this
-chart does not render yet -- see docs/deployment/storage.md. */ -}}
+{{- /* tiered-object and cached-block are not rendered. docs/deployment/storage.md */ -}}
 {{- if not (has $model (list "local" "cached-object" "tiered-block")) -}}
 {{- fail (printf "clickhouse.storageModel must be local, cached-object or tiered-block, got %q" $model) -}}
 {{- end -}}
@@ -91,8 +62,7 @@ chart does not render yet -- see docs/deployment/storage.md. */ -}}
 {{- if eq $cold "default" -}}
 {{- fail "clickhouse.tieredBlock.coldName must not be \"default\" -- that is the hot disk, provisioned from clickhouse.storage" -}}
 {{- end -}}
-{{- /* Volume order is tier priority and the serialised order is alphabetical, so
-a cold name sorting first makes the bulk volume the hot tier with no error. */ -}}
+{{- /* Volume order is tier priority and the serialised order is alphabetical. */ -}}
 {{- if ne (index (sortAlpha (list "default" $cold)) 0) "default" -}}
 {{- fail (printf "clickhouse.tieredBlock.coldName %q sorts before \"default\", which silently inverts the tiers -- the bulk volume would become the hot one. Pick a name sorting after \"default\" (e.g. slow, tier2, warm)" $cold) -}}
 {{- end -}}
@@ -100,27 +70,21 @@ a cold name sorting first makes the bulk volume the hot tier with no error. */ -
 {{- end }}
 
 {{/*
-dfe-clickhouse.cacheVolume -- where the cached-object cache disk's bytes live:
-`pvc` (the current behaviour, and the only one clickhouse-single.yaml renders)
-or `instance-store` (cluster mode only -- see templates/clickhouse.yaml).
+dfe-clickhouse.cacheVolume -- pvc, or instance-store (cluster mode only). Single mode renders pvc alone.
 */}}
 {{- define "dfe-clickhouse.cacheVolume" -}}
 {{- .Values.clickhouse.objectStore.cache.volume | default "pvc" -}}
 {{- end }}
 
 {{/*
-dfe-clickhouse.instanceStoreCacheMount -- the instance-store emptyDir's mount
-path, outside the data PVC at /var/lib/clickhouse because a mount nested there
-leaves root-owned parents the non-root server cannot create its s3_object
-metadata_path under (docs/deployment/storage.md).
+dfe-clickhouse.instanceStoreCacheMount -- the emptyDir's mount path, outside the data PVC because a nested mount leaves root-owned parents (docs/deployment/storage.md, Extra mounts stay outside the data volume).
 */}}
 {{- define "dfe-clickhouse.instanceStoreCacheMount" -}}
 /var/lib/clickhouse-cache
 {{- end }}
 
 {{/*
-dfe-clickhouse.quantityBytes -- a binary storage quantity (87Gi, 500Mi, 1024) as
-a plain byte count. Anything else fails the render rather than guessing a unit.
+dfe-clickhouse.quantityBytes -- a binary storage quantity (87Gi, 500Mi, 1024) as bytes. Anything else fails the render.
 */}}
 {{- define "dfe-clickhouse.quantityBytes" -}}
 {{- $q := . | toString -}}
@@ -135,8 +99,7 @@ a plain byte count. Anything else fails the render rather than guessing a unit.
 {{- end }}
 
 {{/*
-dfe-clickhouse.instanceStoreCacheBytes -- the cache's max_size on an instance
-store: cache.maxSizeRatioToSizeLimit of cacheSize, which is the emptyDir's limit.
+dfe-clickhouse.instanceStoreCacheBytes -- the cache's max_size: cache.maxSizeRatioToSizeLimit of cacheSize.
 */}}
 {{- define "dfe-clickhouse.instanceStoreCacheBytes" -}}
 {{- $limit := include "dfe-clickhouse.quantityBytes" .Values.clickhouse.objectStore.cacheSize | int64 -}}
@@ -144,14 +107,7 @@ store: cache.maxSizeRatioToSizeLimit of cacheSize, which is the emptyDir's limit
 {{- end }}
 
 {{/*
-dfe-clickhouse.validateCacheVolume -- reject a cache-volume placement that
-cannot be honoured, alongside validateStorageModel above.
-
-instance-store needs an object-store cache to exist at all (storageBulk
-"object"), an explicit cacheSize (an emptyDir carries no PVC to size a ratio
-against, unlike the pvc volume), and cluster mode -- clickhouse-single.yaml
-renders no such volume yet, so requesting it there would silently leave the
-cache on the data PVC despite the value claiming otherwise.
+dfe-clickhouse.validateCacheVolume -- reject a placement that cannot be honoured. instance-store needs an object bulk store, an explicit cacheSize and cluster mode.
 */}}
 {{- define "dfe-clickhouse.validateCacheVolume" -}}
 {{- $volume := include "dfe-clickhouse.cacheVolume" . -}}
@@ -160,11 +116,7 @@ cache on the data PVC despite the value claiming otherwise.
 {{- end -}}
 {{- if eq $volume "instance-store" -}}
 {{- if ne (include "dfe-clickhouse.storageBulk" .) "object" -}}
-{{- /*
-  Name the value the deployer can act on. Under the `auto` default the derived
-  answer is `local` only because no endpoint reached the chart, so blaming
-  storageModel points at a key nobody set.
-*/ -}}
+{{- /* Under auto the model is local only because no endpoint arrived, so name the endpoint. */ -}}
 {{- if and (has .Values.clickhouse.storageModel (list "auto" "")) (not .Values.clickhouse.objectStore.endpoint) -}}
 {{- fail "clickhouse.objectStore.cache.volume=instance-store needs an object-store cache to place, and no clickhouse.objectStore.endpoint is set -- so clickhouse.storageModel derived to local. The deployment's object-store bucket never reached the chart." -}}
 {{- end -}}
@@ -184,35 +136,11 @@ cache on the data PVC despite the value claiming otherwise.
 {{- end }}
 
 {{/*
-dfe-clickhouse.storageConfiguration -- the server-config fragment that places
-MergeTree parts for the non-local storage models.
+dfe-clickhouse.storageConfiguration -- the server config that places MergeTree parts, for the operator CR's extraConfig (cluster) and the config.d ConfigMap (single). Emits nothing for local.
 
-ONE definition because two paths consume it: the operator CR's
-settings.extraConfig (cluster mode) and the config.d ConfigMap (single mode). A
-second spelling would give the two modes different on-disk layouts.
+The object store carries no credentials here: use_environment_credentials reads them from the pod's environment (objectStoreEnv below, or Pod Identity).
 
-An object bulk store carries no credentials here: use_environment_credentials
-makes the server read the AWS SDK's default credential chain from its
-environment. objectStore.usePodIdentity: false (the default, every target but
-AWS Pod Identity) wires AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY from the
-ESO-materialised Secret (objectStoreEnv below); usePodIdentity: true renders
-neither that Secret nor those env vars, so the chain falls through to the EKS
-Pod Identity Agent's injected credentials instead -- a static key in the
-environment would shadow them, since the SDK checks environment variables
-first.
-
-DISK AND VOLUME NAMES ARE ORDER-BEARING IN BOTH FAMILIES, and they are runtime
-identity -- renaming one on a live deployment is a rebuild, not a values edit.
-The operator serialises extraConfig as JSON with SORTED KEYS, so the order
-written here is discarded. ClickHouse builds a cache disk only after the disk it
-wraps, so the cache must sort AFTER its backing disk: `s3_object` then
-`s3_object_cache`. A cache sorting earlier fails the server at startup with
-BAD_ARGUMENTS "there is no such disk (it should be initialized before cache
-disk)" -- proven live 2026-08-30. Under a block bulk store, volume order IS tier
-priority, so the cold volume must sort after `default`; validateStorageModel
-above fails the render otherwise.
-
-Emits nothing for storageModel: local.
+Disk and volume names are order-bearing: the operator serialises extraConfig with sorted keys, so a cache disk must sort after the disk it wraps (s3_object, then s3_object_cache) and a cold volume after `default`. Renaming one on a live deployment is a rebuild. docs/deployment/storage.md, Runtime identity.
 */}}
 {{- define "dfe-clickhouse.storageConfiguration" -}}
 {{- $bulk := include "dfe-clickhouse.storageBulk" . -}}
@@ -227,13 +155,10 @@ storage_configuration:
       {{- with .Values.clickhouse.objectStore.region }}
       region: {{ . | quote }}
       {{- end }}
-      {{- /* Empty is tri-state, not false: GCS rejects batch delete, so a
-      deployment against it must be able to render an explicit false. */ -}}
+      {{- /* Empty is not false: only an explicit false is rendered. */ -}}
       {{- if ne (toString .Values.clickhouse.objectStore.supportBatchDelete) "" }}
       support_batch_delete: {{ .Values.clickhouse.objectStore.supportBatchDelete }}
       {{- end }}
-      {{- /* Unset leaves the server defaults, which retry for minutes against an
-      unreachable store. See clickhouse.objectStore in values.yaml. */ -}}
       {{- with .Values.clickhouse.objectStore.retryAttempts }}
       s3_retry_attempts: {{ . }}
       {{- end }}
@@ -251,9 +176,7 @@ storage_configuration:
       {{- else }}
       path: /var/lib/clickhouse/disks/s3_object_cache/
       {{- end }}
-      {{- /* The server refuses max_size and max_size_ratio_to_total_space
-      together with BAD_ARGUMENTS at startup, so this is either/or: a fixed
-      cacheSize when the deployment names one, the ratio otherwise. */ -}}
+      {{- /* The server refuses max_size with max_size_ratio_to_total_space, so it is one or the other. */ -}}
       {{- if eq (include "dfe-clickhouse.cacheVolume" .) "instance-store" }}
       max_size: {{ include "dfe-clickhouse.instanceStoreCacheBytes" . | quote }}
       {{- else if .Values.clickhouse.objectStore.cacheSize }}
@@ -303,8 +226,7 @@ storage_configuration:
 {{- end }}
 
 {{/*
-dfe-clickhouse.objectStoreEnv -- the object-store credential, read from the
-environment by both the operator CR and the single-mode StatefulSet.
+dfe-clickhouse.objectStoreEnv -- the object-store credential env vars, for the operator CR and the single-mode StatefulSet.
 */}}
 {{- define "dfe-clickhouse.objectStoreEnv" -}}
 - name: AWS_ACCESS_KEY_ID

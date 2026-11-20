@@ -27,6 +27,9 @@ metadata:
     # appset's Exists test is what stops an older cluster secret that carries
     # neither from matching.
     dfe.hyperi.io/edge: "${DFE_EDGE_ENABLED}"
+    # A LABEL copy of the kafka_provider annotation: layer-scale.yaml installs the
+    # Redpanda operator only on a cluster selected by this label.
+    dfe.hyperi.io/kafka-provider: "${DFE_KAFKA_PROVIDER}"
   annotations:
     # Identity
     dfe.hyperi.io/env: "${DFE_ENV}"

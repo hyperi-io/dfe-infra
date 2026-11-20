@@ -259,7 +259,7 @@ delete_data_resources() {
     run kubectl -n cnpg delete clusters.postgresql.cnpg.io --all --timeout="${DELETE_TIMEOUT}" 2>/dev/null || true
     # ClickHouseCluster and KeeperCluster are the clickhouse.com operator's kinds,
     # clickhouseinstallation the Altinity operator's, and any left keeps its
-    # finalizer and wedges step 4's namespace delete.
+    # finalizer and blocks step 4's namespace delete.
     run kubectl -n clickhouse delete clickhousecluster --all --timeout="${DELETE_TIMEOUT}" 2>/dev/null || true
     run kubectl -n clickhouse delete keepercluster --all --timeout="${DELETE_TIMEOUT}" 2>/dev/null || true
     run kubectl -n clickhouse delete clickhouseinstallation --all --timeout="${DELETE_TIMEOUT}" 2>/dev/null || true
@@ -645,8 +645,8 @@ for ns in "${DATA_NAMESPACES[@]}"; do
     delete_namespace "${ns}"
 done
 # KEDA registers the external-metrics APIService cluster-wide; deleting its
-# namespace strands the registration, which wedges the metrics API and every
-# later readiness/teardown pass that touches it.
+# namespace strands the registration, which leaves the metrics API unavailable and
+# fails every later readiness/teardown pass that touches it.
 run kubectl delete apiservice v1beta1.external.metrics.k8s.io --ignore-not-found 2>/dev/null || true
 # Delete any dfe-* namespaces. grep exits 1 on no match, which pipefail
 # would turn into an abort on an already-clean cluster.

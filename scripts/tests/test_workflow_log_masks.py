@@ -30,12 +30,17 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 WORKFLOWS = REPO_ROOT / ".github" / "workflows"
 # A variable that carries an account id, expanded as it is. `vars.X != ''` is a
 # boolean and prints nothing, so only the bare form counts.
-BARE_ROLE_OR_ACCOUNT = re.compile(r"\$\{\{\s*vars\.\w*(?:ROLE|ACCOUNT|BOUNDARY)\w*\s*\}\}")
+BARE_ROLE_OR_ACCOUNT = re.compile(
+    r"\$\{\{\s*vars\.\w*(?:ROLE|ACCOUNT|BOUNDARY)\w*\s*\}\}"
+)
 ASSUMES_A_ROLE = "aws-actions/configure-aws-credentials@"
 
 
 def _workflows() -> dict[str, dict]:
-    return {path.name: yaml.safe_load(path.read_text(encoding="utf-8")) for path in sorted(WORKFLOWS.glob("*.yml"))}
+    return {
+        path.name: yaml.safe_load(path.read_text(encoding="utf-8"))
+        for path in sorted(WORKFLOWS.glob("*.yml"))
+    }
 
 
 def _carries(node: object) -> bool:
@@ -43,7 +48,10 @@ def _carries(node: object) -> bool:
 
 
 def _assumes_a_role(job: dict) -> bool:
-    return any(str(step.get("uses", "")).startswith(ASSUMES_A_ROLE) for step in job.get("steps", []))
+    return any(
+        str(step.get("uses", "")).startswith(ASSUMES_A_ROLE)
+        for step in job.get("steps", [])
+    )
 
 
 def _handlers(workflows: dict[str, dict] | None = None) -> list[tuple[str, str]]:
@@ -64,9 +72,17 @@ def test_the_jobs_that_assume_a_role_are_found() -> None:
     """The discovery above would pass vacuously if the pattern stopped matching, and no
     committed workflow assumes a role, so it is proved on workflows written here."""
     assumes = {"jobs": {"run": {"steps": [{"uses": f"{ASSUMES_A_ROLE}{'0' * 40}"}]}}}
-    passes = {"jobs": {"run": {"steps": [{"env": {"ROLE": "${{ vars.EXAMPLE_ROLE }}"}}]}}}
-    boolean = {"jobs": {"run": {"steps": [{"env": {"HAS_ROLE": "${{ vars.EXAMPLE_ROLE != '' }}"}}]}}}
-    found = _handlers({"assumes.yml": assumes, "passes.yml": passes, "boolean.yml": boolean})
+    passes = {
+        "jobs": {"run": {"steps": [{"env": {"ROLE": "${{ vars.EXAMPLE_ROLE }}"}}]}}
+    }
+    boolean = {
+        "jobs": {
+            "run": {"steps": [{"env": {"HAS_ROLE": "${{ vars.EXAMPLE_ROLE != '' }}"}}]}
+        }
+    }
+    found = _handlers(
+        {"assumes.yml": assumes, "passes.yml": passes, "boolean.yml": boolean}
+    )
     assert found == [("assumes.yml", "run"), ("passes.yml", "run")]
 
 
@@ -75,17 +91,23 @@ def test_the_masking_step_comes_first_so_no_step_before_it_can_print_the_role_or
     name: str, job_id: str
 ) -> None:
     steps = _steps(name, job_id)
-    masking = [i for i, step in enumerate(steps) if "::add-mask::" in step.get("run", "")]
+    masking = [
+        i for i, step in enumerate(steps) if "::add-mask::" in step.get("run", "")
+    ]
     assert masking, f"{name}:{job_id} never masks"
     assert masking[0] == 0, f"{name}:{job_id} runs {masking[0]} step(s) before it masks"
 
 
 @pytest.mark.parametrize(("name", "job_id"), _handlers())
-def test_the_masking_step_is_handed_the_role_and_account_variables_and_nothing_else(name: str, job_id: str) -> None:
+def test_the_masking_step_is_handed_the_role_and_account_variables_and_nothing_else(
+    name: str, job_id: str
+) -> None:
     """Its own env dump is printed before it can mask, so whatever else it carried would print in the clear."""
     env = _steps(name, job_id)[0].get("env", {})
     for key, value in env.items():
-        assert BARE_ROLE_OR_ACCOUNT.fullmatch(str(value)), f"{name}:{job_id} hands {key} to the masking step"
+        assert BARE_ROLE_OR_ACCOUNT.fullmatch(str(value)), (
+            f"{name}:{job_id} hands {key} to the masking step"
+        )
 
 
 @pytest.mark.parametrize("name", sorted(_workflows()))

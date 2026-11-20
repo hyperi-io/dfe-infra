@@ -1,6 +1,4 @@
-// A module declares what it needs and nothing more. The provider itself --
-// region, credentials, default tags -- is configured by the root that calls it,
-// so that one deployment has one provider however many modules it composes.
+// The calling root configures the provider.
 
 terraform {
   required_version = ">= 1.10"
@@ -11,8 +9,7 @@ terraform {
       version = "~> 6.64"
     }
 
-    // Zips the broker-count autoscaler's Lambda source, which lives inline in
-    // autoscaler.tf rather than as a file in the repo.
+    // Zips broker_scaler.py for the autoscaler Lambda.
     archive = {
       source  = "hashicorp/archive"
       version = "~> 2.8"

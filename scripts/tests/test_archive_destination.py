@@ -45,7 +45,9 @@ ARCHIVER = "dfe-archiver"
 # The cloud whose values file names a local archive path.
 LOCAL_CLOUD = "local-dfe"
 LOCAL_PATH = yaml.safe_load(
-    (REPO_ROOT / "argocd" / "values" / f"{LOCAL_CLOUD}.yaml").read_text(encoding="utf-8")
+    (REPO_ROOT / "argocd" / "values" / f"{LOCAL_CLOUD}.yaml").read_text(
+        encoding="utf-8"
+    )
 )["archive"]["localPath"]
 BUS = ("single", "local")
 DIRECT_PROFILE = "slim"
@@ -68,7 +70,8 @@ def mount_at(docs: list[dict], path: str) -> tuple[dict | None, dict | None]:
     """The main container's mount at `path` and the volume behind it."""
     spec = pod(docs)
     mount = next(
-        (m for m in spec["containers"][0]["volumeMounts"] if m["mountPath"] == path), None
+        (m for m in spec["containers"][0]["volumeMounts"] if m["mountPath"] == path),
+        None,
     )
     if mount is None:
         return None, None
@@ -83,26 +86,43 @@ def bus_goldens() -> list[tuple[tuple[str, ...], list[dict]]]:
 def test_local_disk_is_a_destination_and_a_volume() -> None:
     docs = render_app(ARCHIVER, BUS[0], LOCAL_CLOUD)
     env = env_of(docs)
-    expect("the destination names the mounted path",
-           env.get("DFE_ARCHIVER_DESTINATION") == f"file://{LOCAL_PATH}",
-           f"got {env.get('DFE_ARCHIVER_DESTINATION')!r}")
+    expect(
+        "the destination names the mounted path",
+        env.get("DFE_ARCHIVER_DESTINATION") == f"file://{LOCAL_PATH}",
+        f"got {env.get('DFE_ARCHIVER_DESTINATION')!r}",
+    )
     mount, volume = mount_at(docs, LOCAL_PATH)
-    expect("and it is mounted, not written onto the read-only rootfs",
-           mount is not None and not mount.get("readOnly"), f"got {mount!r}")
-    expect("backed by an emptyDir", volume is not None and "emptyDir" in volume,
-           f"got {volume!r}")
+    expect(
+        "and it is mounted, not written onto the read-only rootfs",
+        mount is not None and not mount.get("readOnly"),
+        f"got {mount!r}",
+    )
+    expect(
+        "backed by an emptyDir",
+        volume is not None and "emptyDir" in volume,
+        f"got {volume!r}",
+    )
 
 
 def test_a_local_path_on_any_cloud_gets_its_volume() -> None:
     overlay = {"archive": {"localPath": LOCAL_PATH}}
     docs = render_app(ARCHIVER, BUS[0], "aws", overlay=overlay)
-    expect("the overlay's path is the destination",
-           env_of(docs).get("DFE_ARCHIVER_DESTINATION") == f"file://{LOCAL_PATH}",
-           f"got {env_of(docs).get('DFE_ARCHIVER_DESTINATION')!r}")
+    expect(
+        "the overlay's path is the destination",
+        env_of(docs).get("DFE_ARCHIVER_DESTINATION") == f"file://{LOCAL_PATH}",
+        f"got {env_of(docs).get('DFE_ARCHIVER_DESTINATION')!r}",
+    )
     mount, volume = mount_at(docs, LOCAL_PATH)
-    expect("and a writable volume is mounted there", mount is not None and volume is not None,
-           f"got mount {mount!r}")
-    expect("backed by an emptyDir", volume is not None and "emptyDir" in volume, f"got {volume!r}")
+    expect(
+        "and a writable volume is mounted there",
+        mount is not None and volume is not None,
+        f"got mount {mount!r}",
+    )
+    expect(
+        "backed by an emptyDir",
+        volume is not None and "emptyDir" in volume,
+        f"got {volume!r}",
+    )
 
 
 def test_no_local_path_adds_neither() -> None:
@@ -110,10 +130,19 @@ def test_no_local_path_adds_neither() -> None:
     for where, docs in goldens(ARCHIVER):
         at = "/".join(where[1:])
         destination = env_of(docs).get("DFE_ARCHIVER_DESTINATION")
-        expect(f"no destination env [{at}]", destination in (None, ""), f"got {destination!r}")
-        mounts = sorted(m["mountPath"] for m in pod(docs)["containers"][0]["volumeMounts"])
-        expect(f"and nothing mounted at the local path [{at}]", LOCAL_PATH not in mounts,
-               f"got {mounts}")
+        expect(
+            f"no destination env [{at}]",
+            destination in (None, ""),
+            f"got {destination!r}",
+        )
+        mounts = sorted(
+            m["mountPath"] for m in pod(docs)["containers"][0]["volumeMounts"]
+        )
+        expect(
+            f"and nothing mounted at the local path [{at}]",
+            LOCAL_PATH not in mounts,
+            f"got {mounts}",
+        )
 
 
 def test_the_spool_lands_on_a_writable_volume() -> None:
@@ -123,11 +152,17 @@ def test_the_spool_lands_on_a_writable_volume() -> None:
         container = pod(docs)["containers"][0]
         mounts = {m["mountPath"] for m in container["volumeMounts"]}
         working = container.get("workingDir")
-        expect(f"the working directory is a mounted volume [{at}]",
-               working in mounts, f"workingDir {working!r} is not one of {sorted(mounts)}")
+        expect(
+            f"the working directory is a mounted volume [{at}]",
+            working in mounts,
+            f"workingDir {working!r} is not one of {sorted(mounts)}",
+        )
         spool = env_of(docs).get("DFE_ARCHIVER_SPOOL_DIR")
-        expect(f"and so is the spool directory [{at}]", spool in mounts,
-               f"DFE_ARCHIVER_SPOOL_DIR {spool!r} is not one of {sorted(mounts)}")
+        expect(
+            f"and so is the spool directory [{at}]",
+            spool in mounts,
+            f"DFE_ARCHIVER_SPOOL_DIR {spool!r} is not one of {sorted(mounts)}",
+        )
 
 
 def test_the_spool_volume_is_bounded() -> None:
@@ -137,7 +172,11 @@ def test_the_spool_volume_is_bounded() -> None:
         at = "/".join(where[1:])
         _, spool = mount_at(docs, str(env_of(docs).get("DFE_ARCHIVER_SPOOL_DIR")))
         limit = ((spool or {}).get("emptyDir") or {}).get("sizeLimit")
-        expect(f"the spool emptyDir carries a sizeLimit [{at}]", bool(limit), f"got {spool!r}")
+        expect(
+            f"the spool emptyDir carries a sizeLimit [{at}]",
+            bool(limit),
+            f"got {spool!r}",
+        )
         expect(
             f"and it is the app's own max_spool_bytes default [{at}]",
             limit == "10Gi",
@@ -151,20 +190,32 @@ def test_an_unsized_spool_still_renders_a_volume() -> None:
     overlay = {"writablePaths": {"spool": {"sizeLimit": ""}}}
     docs = render_app(ARCHIVER, *BUS, overlay=overlay)
     _, spool = mount_at(docs, str(env_of(docs).get("DFE_ARCHIVER_SPOOL_DIR")))
-    expect("the volume is still an emptyDir", isinstance((spool or {}).get("emptyDir"), dict),
-           f"got {spool!r}")
+    expect(
+        "the volume is still an emptyDir",
+        isinstance((spool or {}).get("emptyDir"), dict),
+        f"got {spool!r}",
+    )
 
 
 def test_the_broker_reaches_the_app() -> None:
     """The app reads DFE_ARCHIVER_KAFKA_*; BOOTSTRAP_SERVERS left it on localhost:9092."""
-    env = env_of(render_app(ARCHIVER, *BUS, overlay={"kafka": {"bootstrapServers": "broker:9092"}}))
-    expect("the broker list arrives under the name the app reads",
-           env.get("DFE_ARCHIVER_KAFKA_BROKERS") == "broker:9092", f"got {env.get('DFE_ARCHIVER_KAFKA_BROKERS')!r}")
+    env = env_of(
+        render_app(
+            ARCHIVER, *BUS, overlay={"kafka": {"bootstrapServers": "broker:9092"}}
+        )
+    )
+    expect(
+        "the broker list arrives under the name the app reads",
+        env.get("DFE_ARCHIVER_KAFKA_BROKERS") == "broker:9092",
+        f"got {env.get('DFE_ARCHIVER_KAFKA_BROKERS')!r}",
+    )
     for where, docs in bus_goldens():
         env = env_of(docs)
-        expect(f"and not under one it ignores [{'/'.join(where[1:])}]",
-               "KAFKA_BOOTSTRAP_SERVERS" not in env,
-               f"got {env.get('KAFKA_BOOTSTRAP_SERVERS')!r}")
+        expect(
+            f"and not under one it ignores [{'/'.join(where[1:])}]",
+            "KAFKA_BOOTSTRAP_SERVERS" not in env,
+            f"got {env.get('KAFKA_BOOTSTRAP_SERVERS')!r}",
+        )
 
 
 def test_the_sasl_credential_rides_its_secret() -> None:
@@ -172,19 +223,28 @@ def test_the_sasl_credential_rides_its_secret() -> None:
     for where, docs in bus_goldens():
         at = "/".join(where[1:])
         env = env_of(docs)
-        expect(f"the listener protocol is named [{at}]",
-               env.get("DFE_ARCHIVER_KAFKA_SECURITY_PROTOCOL") == "SASL_PLAINTEXT",
-               f"got {env.get('DFE_ARCHIVER_KAFKA_SECURITY_PROTOCOL')!r}")
-        for name, key in (("DFE_ARCHIVER_KAFKA_SASL_USER", "username"),
-                          ("DFE_ARCHIVER_KAFKA_SASL_PASSWORD", "password"),
-                          ("DFE_ARCHIVER_KAFKA_SASL_MECHANISM", "sasl.mechanism")):
+        expect(
+            f"the listener protocol is named [{at}]",
+            env.get("DFE_ARCHIVER_KAFKA_SECURITY_PROTOCOL") == "SASL_PLAINTEXT",
+            f"got {env.get('DFE_ARCHIVER_KAFKA_SECURITY_PROTOCOL')!r}",
+        )
+        for name, key in (
+            ("DFE_ARCHIVER_KAFKA_SASL_USER", "username"),
+            ("DFE_ARCHIVER_KAFKA_SASL_PASSWORD", "password"),
+            ("DFE_ARCHIVER_KAFKA_SASL_MECHANISM", "sasl.mechanism"),
+        ):
             value = env.get(name)
-            ref = (value or {}).get("valueFrom", {}).get("secretKeyRef", {}) if isinstance(
-                value, dict) else {}
+            ref = (
+                (value or {}).get("valueFrom", {}).get("secretKeyRef", {})
+                if isinstance(value, dict)
+                else {}
+            )
             # The detail names the env entry only, so no Secret coordinate reaches a CI log.
-            expect(f"{name} comes from the kafka user secret [{at}]",
-                   ref.get("name") == "dfe-kafka-user" and ref.get("key") == key,
-                   f"{name} is missing, or reads another Secret or key")
+            expect(
+                f"{name} comes from the kafka user secret [{at}]",
+                ref.get("name") == "dfe-kafka-user" and ref.get("key") == key,
+                f"{name} is missing, or reads another Secret or key",
+            )
 
 
 def test_the_chart_sends_no_discovery_pattern() -> None:
@@ -192,44 +252,70 @@ def test_the_chart_sends_no_discovery_pattern() -> None:
     for where, docs in bus_goldens():
         at = "/".join(where[1:])
         env = env_of(docs)
-        expect(f"no discovery pattern on the bus [{at}]", "DFE_ARCHIVER_KAFKA_TOPIC_INCLUDE" not in env,
-               f"got {env.get('DFE_ARCHIVER_KAFKA_TOPIC_INCLUDE')!r}")
-        expect(f"and no topic list either [{at}]", "DFE_ARCHIVER_KAFKA_TOPICS" not in env,
-               f"got {env.get('DFE_ARCHIVER_KAFKA_TOPICS')!r}")
+        expect(
+            f"no discovery pattern on the bus [{at}]",
+            "DFE_ARCHIVER_KAFKA_TOPIC_INCLUDE" not in env,
+            f"got {env.get('DFE_ARCHIVER_KAFKA_TOPIC_INCLUDE')!r}",
+        )
+        expect(
+            f"and no topic list either [{at}]",
+            "DFE_ARCHIVER_KAFKA_TOPICS" not in env,
+            f"got {env.get('DFE_ARCHIVER_KAFKA_TOPICS')!r}",
+        )
 
 
 def test_a_values_pattern_still_renders_no_env() -> None:
     """The dial is gone, not emptied: a leftover values key must not revive the env."""
-    env = env_of(render_app(ARCHIVER, *BUS, overlay={"kafka": {"topicInclude": ["_land$"]}}))
-    expect("a stale topicInclude reaches nothing", "DFE_ARCHIVER_KAFKA_TOPIC_INCLUDE" not in env,
-           f"got {env.get('DFE_ARCHIVER_KAFKA_TOPIC_INCLUDE')!r}")
+    env = env_of(
+        render_app(ARCHIVER, *BUS, overlay={"kafka": {"topicInclude": ["_land$"]}})
+    )
+    expect(
+        "a stale topicInclude reaches nothing",
+        "DFE_ARCHIVER_KAFKA_TOPIC_INCLUDE" not in env,
+        f"got {env.get('DFE_ARCHIVER_KAFKA_TOPIC_INCLUDE')!r}",
+    )
 
 
 def test_the_overlay_topics_survive_into_the_config() -> None:
     """The compiled list arrives in the config blob with no env shadowing it."""
-    docs = render_app(ARCHIVER, *BUS, overlay={"config": {"kafka": {"topics": ["okta_land"]}}})
+    docs = render_app(
+        ARCHIVER, *BUS, overlay={"config": {"kafka": {"topics": ["okta_land"]}}}
+    )
     env = env_of(docs)
-    expect("nothing outranks the compiled list", "DFE_ARCHIVER_KAFKA_TOPIC_INCLUDE" not in env,
-           f"got {env.get('DFE_ARCHIVER_KAFKA_TOPIC_INCLUDE')!r}")
+    expect(
+        "nothing outranks the compiled list",
+        "DFE_ARCHIVER_KAFKA_TOPIC_INCLUDE" not in env,
+        f"got {env.get('DFE_ARCHIVER_KAFKA_TOPIC_INCLUDE')!r}",
+    )
     configmap = next(d for d in docs if object_id(d) == f"ConfigMap/{ARCHIVER}-config")
     blob = yaml.safe_load(configmap_files(configmap)["archiver.yaml"])
-    expect("and the overlay's topics reach archiver.yaml",
-           blob.get("kafka", {}).get("topics") == ["okta_land"],
-           f"got {blob.get('kafka', {}).get('topics')!r}")
+    expect(
+        "and the overlay's topics reach archiver.yaml",
+        blob.get("kafka", {}).get("topics") == ["okta_land"],
+        f"got {blob.get('kafka', {}).get('topics')!r}",
+    )
 
 
 def test_the_direct_transport_reads_no_topics() -> None:
     """A bound listener takes records from a sender, so a topic pattern is noise."""
     env = env_of(render_app(ARCHIVER, DIRECT_PROFILE, LOCAL_CLOUD))
-    expect("no topic env on the direct transport", "DFE_ARCHIVER_KAFKA_TOPIC_INCLUDE" not in env,
-           f"got {env.get('DFE_ARCHIVER_KAFKA_TOPIC_INCLUDE')!r}")
-    expect("but the destination still applies",
-           env.get("DFE_ARCHIVER_DESTINATION") == f"file://{LOCAL_PATH}",
-           f"got {env.get('DFE_ARCHIVER_DESTINATION')!r}")
+    expect(
+        "no topic env on the direct transport",
+        "DFE_ARCHIVER_KAFKA_TOPIC_INCLUDE" not in env,
+        f"got {env.get('DFE_ARCHIVER_KAFKA_TOPIC_INCLUDE')!r}",
+    )
+    expect(
+        "but the destination still applies",
+        env.get("DFE_ARCHIVER_DESTINATION") == f"file://{LOCAL_PATH}",
+        f"got {env.get('DFE_ARCHIVER_DESTINATION')!r}",
+    )
     for profile in (DIRECT_PROFILE, "mesh"):
         env = env_of(golden(ARCHIVER, profile, "aws"))
-        expect(f"no topic env on {profile}", "DFE_ARCHIVER_KAFKA_TOPIC_INCLUDE" not in env,
-               f"got {env.get('DFE_ARCHIVER_KAFKA_TOPIC_INCLUDE')!r}")
+        expect(
+            f"no topic env on {profile}",
+            "DFE_ARCHIVER_KAFKA_TOPIC_INCLUDE" not in env,
+            f"got {env.get('DFE_ARCHIVER_KAFKA_TOPIC_INCLUDE')!r}",
+        )
 
 
 def main() -> int:

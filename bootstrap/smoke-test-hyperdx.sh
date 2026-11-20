@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 #  Project:      dfe-infra
 #  File:         smoke-test-hyperdx.sh
-#  Purpose:      Verify the THREE DFE-specific HyperDX seams. dfe-hyperdx is a fork
-#                and these seams exist nowhere upstream, so nothing upstream tests
+#  Purpose:      Verify the THREE DFE-specific HyperDX additions. dfe-hyperdx is a fork
+#                and these additions exist nowhere upstream, so nothing upstream tests
 #                them and a clean-merging upstream sync can break any of them:
 #
 #                  AUTH  -- HyperDX verifies the ENGINE's ES384 JWT itself (it is a
 #                           Policy Enforcement Point, not a header-truster). Envoy
 #                           already checked the token at the edge; if this second
-#                           check regresses, the failure is silent and the blast
-#                           radius is every tenant.
+#                           check regresses, the failure is silent and it
+#                           reaches every tenant.
 #                  DATA  -- HyperDX reads the DFE ClickHouse and returns rows.
 #                           smoke-test-integration.sh proves rows LAND; this proves
 #                           the query side of the same tables is reachable.
@@ -17,7 +17,7 @@
 #                           frame-ancestors allowlist and NO X-Frame-Options.
 #
 #                Every check that cannot run SKIPS loudly with the reason. A skip is
-#                not a pass: an untested seam must never read as a green one.
+#                not a pass: an untested check must never read as a green one.
 #  Language:     Bash
 #
 #  License:      BUSL-1.1
@@ -160,11 +160,11 @@ hdx_head() {
   hdx_probe HEAD "http://127.0.0.1:${HYPERDX_PORT}$1"
 }
 
-echo "=== DFE HyperDX seam smoke test (auth / data / embed) ==="
+echo "=== DFE HyperDX smoke test (auth / data / embed) ==="
 
 if ! kubectl -n "$NS_HYPERDX" get deploy "$HYPERDX_DEPLOY" >/dev/null 2>&1; then
   echo ""
-  skip "ALL HyperDX seams -- deploy/${HYPERDX_DEPLOY} not found in ns/${NS_HYPERDX}."
+  skip "ALL HyperDX checks -- deploy/${HYPERDX_DEPLOY} not found in ns/${NS_HYPERDX}."
   note "HyperDX is the DEFAULT OTLP destination (telemetry.mode=hyperdx), so this is"
   note "a real gap in the deploy, not an optional extra. Nothing below was tested."
   echo ""
@@ -174,7 +174,7 @@ fi
 
 # ---------------------------------------------------------------------------
 echo ""
-echo "=== SEAM 1: auth (engine ES384 JWT verified BY HyperDX) ==="
+echo "=== CHECK 1: auth (engine ES384 JWT verified BY HyperDX) ==="
 
 # Which identity mode is the fork actually running? oidc-proxy = verify the engine
 # JWT; header-dev = trust identity headers WITHOUT verification, which is a dev-only
@@ -182,7 +182,7 @@ echo "=== SEAM 1: auth (engine ES384 JWT verified BY HyperDX) ==="
 if ! AUTH_MODE="$(hdx_env DFE_AUTH_MODE)"; then
   echo "  [FAIL] read HyperDX's runtime env (exec node in deploy/${HYPERDX_DEPLOY} -c ${HYPERDX_CONTAINER})"
   FAIL=$((FAIL+1))
-  note "Without it a setting cannot be told from an unset one, so this seam is not judged."
+  note "Without it a setting cannot be told from an unset one, so auth is not judged."
 elif [ -z "$AUTH_MODE" ]; then
   skip "DFE_AUTH_MODE unset -- the fork's DFE middleware is DISABLED and HyperDX is"
   note "running stock upstream auth. Nothing DFE-specific to verify."
@@ -200,7 +200,7 @@ else
 
   # The JWKS must be REACHABLE FROM the HyperDX pod, not merely configured. A URL
   # that resolves on the operator's laptop and not in-cluster is the classic way
-  # this seam dies quietly: every token then fails verification and the middleware
+  # auth breaks quietly: every token then fails verification and the middleware
   # falls through to the route guard, so users see 401s with no auth error logged.
   if [ -n "$JWKS_URL" ]; then
     # shellcheck disable=SC2034  # read inside the checks' eval.
@@ -223,7 +223,7 @@ else
     TOKEN="$(printf '%s\n' "$SIGNIN" | sed -n 2p)"
     if [ -n "$TOKEN" ]; then
       note "signed in to ${ENGINE_DEPLOY} as $(printf '%s\n' "$SIGNIN" | sed -n 1p)"
-      check "HyperDX accepts an engine-issued token (auth seam closed)" \
+      check "HyperDX accepts an engine-issued token" \
         "printf '%s' \"\$TOKEN\" | hdx_probe_bearer 'http://127.0.0.1:${HYPERDX_PORT}/api/me' | grep -q '\"email\"'"
       check "HyperDX refuses a token it did not issue and the engine did not sign" \
         "! printf '%s' 'not.a.jwt' | hdx_probe_bearer 'http://127.0.0.1:${HYPERDX_PORT}/api/me' | grep -q '\"email\"'"
@@ -241,7 +241,7 @@ fi
 
 # ---------------------------------------------------------------------------
 echo ""
-echo "=== SEAM 2: data (HyperDX queries the DFE ClickHouse) ==="
+echo "=== CHECK 2: data (HyperDX queries the DFE ClickHouse) ==="
 
 # The chart configures the connection as discrete CLICKHOUSE_* vars; the bundled
 # DEFAULT_CONNECTIONS blob is the upstream single-container form.
@@ -251,7 +251,7 @@ CH_HOST="$(hdx_env CLICKHOUSE_HOST)"
 
 check "HyperDX has a ClickHouse connection configured" "[ -n '$CH_HOST' ]"
 
-# Reaching ClickHouse FROM the HyperDX pod is the seam. Doing it from a CH pod (as
+# Reaching ClickHouse FROM the HyperDX pod is what this proves. Doing it from a CH pod (as
 # the integration test does) proves ClickHouse works, not that HyperDX can get to it
 # -- different NetworkPolicy, different service DNS, different credentials.
 # The URL dialled is the one HyperDX's proxy is handed: dfe-engine serves each team its
@@ -287,7 +287,7 @@ check "otel table ${OTEL_DB}.${OTEL_LOGS_TABLE} is queryable from HyperDX" \
 
 # ---------------------------------------------------------------------------
 echo ""
-echo "=== SEAM 3: embed (dfe-ui iframes HyperDX) ==="
+echo "=== CHECK 3: embed (dfe-ui iframes HyperDX) ==="
 
 # next.config.mjs sets `Content-Security-Policy: frame-ancestors 'self' <extra>` on
 # every route and deliberately does NOT set X-Frame-Options -- the latter is
@@ -335,7 +335,7 @@ echo ""
 echo "=== Results: ${PASS} passed, ${FAIL} failed, ${SKIP} skipped ==="
 
 if (( FAIL > 0 )); then
-  echo "HyperDX seams are NOT healthy."
+  echo "HyperDX auth, data and embed are NOT healthy."
   exit 1
 fi
-echo "HyperDX seams are healthy (${SKIP} untested -- see SKIP lines above)."
+echo "HyperDX auth, data and embed are healthy (${SKIP} untested -- see SKIP lines above)."

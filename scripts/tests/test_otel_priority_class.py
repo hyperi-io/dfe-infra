@@ -66,14 +66,28 @@ def test_the_daemonset_names_the_node_agent_class() -> None:
 
 def test_the_chart_creates_the_class_it_names() -> None:
     classes = of_kind(rendered(), "PriorityClass")
-    expect("exactly one PriorityClass renders", len(classes) == 1, f"got {len(classes)}")
+    expect(
+        "exactly one PriorityClass renders", len(classes) == 1, f"got {len(classes)}"
+    )
     if not classes:
         return
     pc = classes[0]
-    expect("it is scheduling.k8s.io/v1", pc.get("apiVersion") == "scheduling.k8s.io/v1", pc.get("apiVersion"))
-    expect("it is the class the daemonset names", pc["metadata"]["name"] == "dfe-node-critical", pc["metadata"])
+    expect(
+        "it is scheduling.k8s.io/v1",
+        pc.get("apiVersion") == "scheduling.k8s.io/v1",
+        pc.get("apiVersion"),
+    )
+    expect(
+        "it is the class the daemonset names",
+        pc["metadata"]["name"] == "dfe-node-critical",
+        pc["metadata"],
+    )
     value = pc.get("value", 0)
-    expect("it outranks a pod that names no class (0)", isinstance(value, int) and value > 0, repr(value))
+    expect(
+        "it outranks a pod that names no class (0)",
+        isinstance(value, int) and value > 0,
+        repr(value),
+    )
     expect(
         "it stays under the user-defined ceiling, so system-* classes still win",
         isinstance(value, int) and value <= USER_CLASS_CEILING,
@@ -84,20 +98,35 @@ def test_the_chart_creates_the_class_it_names() -> None:
         pc.get("preemptionPolicy") == "PreemptLowerPriority",
         repr(pc.get("preemptionPolicy")),
     )
-    expect("it is never the cluster's default class", pc.get("globalDefault") is not True, repr(pc))
+    expect(
+        "it is never the cluster's default class",
+        pc.get("globalDefault") is not True,
+        repr(pc),
+    )
 
 
 def test_argo_creates_the_class_before_the_daemonset() -> None:
     docs = rendered()
     classes = of_kind(docs, "PriorityClass")
     daemonset = of_kind(docs, "DaemonSet")[0]
-    pc_wave = int((classes[0]["metadata"].get("annotations") or {}).get(WAVE, "0")) if classes else 0
+    pc_wave = (
+        int((classes[0]["metadata"].get("annotations") or {}).get(WAVE, "0"))
+        if classes
+        else 0
+    )
     ds_wave = int((daemonset["metadata"].get("annotations") or {}).get(WAVE, "0"))
-    expect("the class syncs in an earlier wave than the daemonset", pc_wave < ds_wave, f"{pc_wave} vs {ds_wave}")
+    expect(
+        "the class syncs in an earlier wave than the daemonset",
+        pc_wave < ds_wave,
+        f"{pc_wave} vs {ds_wave}",
+    )
 
 
 def test_a_cluster_with_its_own_class_turns_creation_off() -> None:
-    docs = rendered("daemonset.priorityClass.create=false", "daemonset.priorityClass.name=org-node-agents")
+    docs = rendered(
+        "daemonset.priorityClass.create=false",
+        "daemonset.priorityClass.name=org-node-agents",
+    )
     expect("no PriorityClass renders", not of_kind(docs, "PriorityClass"), "")
     pod = of_kind(docs, "DaemonSet")[0]["spec"]["template"]["spec"]
     expect(
@@ -110,7 +139,11 @@ def test_a_cluster_with_its_own_class_turns_creation_off() -> None:
 def test_a_system_prefixed_name_is_refused_when_the_chart_creates_it() -> None:
     out = render("daemonset.priorityClass.name=system-node-critical")
     expect("the render fails", out.returncode != 0, out.stdout[:200])
-    expect("it names the field", "daemonset.priorityClass.name" in out.stderr, out.stderr[-400:])
+    expect(
+        "it names the field",
+        "daemonset.priorityClass.name" in out.stderr,
+        out.stderr[-400:],
+    )
 
 
 def main() -> int:

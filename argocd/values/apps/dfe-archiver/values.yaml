@@ -1,33 +1,22 @@
-# dfe-archiver's integration values over its thin chart, layered after
-# apps/_common.yaml: the archiver's wiring, under the keys the scalo-service
-# library reads. What depends on the transport sits in the
-# profile files beside this one.
+# dfe-archiver's wiring over its thin chart. See docs/deployment/values-tiers-apps.md#per-app-notes.
 
-# The app spools under DFE_ARCHIVER_SPOOL_DIR. An image that spools to a path relative
-# to the working directory still finds a writable one here.
+# An image that spools to a relative path still finds a writable one.
 workingDir: /tmp
 
 extraEnv:
-  # The contract's writable path `spool` mounts here.
   DFE_ARCHIVER_SPOOL_DIR: /var/spool/dfe/archiver
-  # Env beats the config file. The app reads an empty value as unset, so the
-  # engine's destination stands unless the deployment names one here.
+  # Env beats the config file, and an empty value reads as unset.
   DFE_ARCHIVER_DESTINATION: '{{ with (.Values.archive | default dict).localPath }}file://{{ . }}{{ end }}'
   DFE_ARCHIVER_S3_ENDPOINT: '{{ .Values.s3.endpoint }}'
   DFE_ARCHIVER_S3_BUCKET: '{{ .Values.s3.bucket }}'
 
-# The contract's secret groups, on the Secrets these values name.
 secrets:
   kafka:
     existingSecret: '{{ .Values.kafka.saslSecretName }}'
   s3:
-    # An empty s3.secretName falls back to the library's own name, which the
-    # optional reference reads only where that Secret exists.
     existingSecret: '{{ .Values.s3.secretName | default (printf "%s-s3" (include "scalo-service.fullname" .)) }}'
 
-# A file:// destination writes to archive.localPath on a read-only root
-# filesystem, so a writable directory is mounted there on every cloud. With no
-# local path it sits unused at its default.
+# A file:// destination needs a writable directory on a read-only root filesystem.
 extraVolumes:
   - name: archive
     emptyDir: {}
@@ -77,26 +66,19 @@ initContainers:
 
 waitForEngine:
   service: dfe-engine
-  # Empty is the release's own namespace.
   namespace: ""
   port: 8000
   timeoutSeconds: 600
   intervalSeconds: 5
 
-# The archiver's own keys, read above and in the profile files through tpl.
 kafka:
   saslSecretName: dfe-kafka-user
-# archive.localPath comes from the cloud file or the overlay, beside the volume
-# extraVolumes mounts at that path. This file layers after the cloud file, so a
-# default here would beat it.
+# A default here would beat the cloud file, which sets archive.localPath.
 archive: {}
 s3:
   endpoint: ""
   bucket: ""
-  # Static keys for a store with no workload identity. The references are
-  # optional, so the SDK's own credential chain runs without the Secret.
   secretName: dfe-archiver-s3
-# The app's pre-created DLQ topic on the kafka backend.
 dlq:
   topic: dfe_archiver_dlq
   mode: kafka_only

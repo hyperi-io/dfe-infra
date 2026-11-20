@@ -58,6 +58,12 @@ DEPLOY_REPO = {
     "dfe.hyperi.io/config_repo_url": "https://git.example.org/acme/dfe-deploy.git",
     "dfe.hyperi.io/config_repo_revision": "release",
 }
+# The fact that moves the engine's store to Secrets Manager, in example shapes only.
+AWS_STORE = {
+    "dfe.hyperi.io/region": "us-west-2",
+    "dfe.hyperi.io/engine_secrets_prefix": "dfe/test/engine",
+    "dfe.hyperi.io/kms_key_arn": "arn:aws:kms:us-west-2:000000000000:key/00000000-0000-0000-0000-000000000000",
+}
 
 
 def runner_defaults() -> dict:
@@ -72,13 +78,18 @@ def gitsync_defaults() -> dict:
 
 def config_mount() -> str:
     """The engine's config mount, as its integration values set it."""
-    return yaml.safe_load(ENGINE_VALUES.read_text(encoding="utf-8"))["config"]["mountPath"]
+    return yaml.safe_load(ENGINE_VALUES.read_text(encoding="utf-8"))["config"][
+        "mountPath"
+    ]
 
 
 def runner(docs: list[dict]) -> dict:
     """The hunt-runner Deployment, or {} when the render holds none."""
     for doc in docs:
-        if doc.get("kind") == "Deployment" and doc["metadata"]["name"] == "dfe-hunt-runner":
+        if (
+            doc.get("kind") == "Deployment"
+            and doc["metadata"]["name"] == "dfe-hunt-runner"
+        ):
             return doc
     return {}
 
@@ -125,7 +136,9 @@ def secret_refs(c: dict) -> dict:
 
 def secret_ref(entry: object) -> tuple[str, str] | None:
     """(secret, key) of one effective env entry, or None when it is a literal."""
-    ref = ((entry if isinstance(entry, dict) else {}).get("valueFrom") or {}).get("secretKeyRef")
+    ref = ((entry if isinstance(entry, dict) else {}).get("valueFrom") or {}).get(
+        "secretKeyRef"
+    )
     return (ref["name"], ref["key"]) if ref else None
 
 
@@ -147,7 +160,10 @@ def mount_of(c: dict, volume: str) -> dict:
 def engine_env_data(docs: list[dict]) -> dict:
     """The literal env dfe-extras hands the engine, from its dfe-engine-env ConfigMap."""
     for doc in docs:
-        if doc.get("kind") == "ConfigMap" and doc["metadata"]["name"] == f"{ENGINE}-env":
+        if (
+            doc.get("kind") == "ConfigMap"
+            and doc["metadata"]["name"] == f"{ENGINE}-env"
+        ):
             return doc["data"]
     return {}
 
@@ -179,8 +195,10 @@ def test_the_sidecar_syncs_the_engines_own_deploy_repo() -> None:
     refs = secret_refs(sidecar)
     expect(
         "it reuses the engine's deploy-repo credential, both keys",
-        refs.get("GITSYNC_USERNAME") == secret_ref(engine.get("DFE_ENGINE_GITOPS_USERNAME"))
-        and refs.get("GITSYNC_PASSWORD") == secret_ref(engine.get("DFE_ENGINE_GITOPS_TOKEN"))
+        refs.get("GITSYNC_USERNAME")
+        == secret_ref(engine.get("DFE_ENGINE_GITOPS_USERNAME"))
+        and refs.get("GITSYNC_PASSWORD")
+        == secret_ref(engine.get("DFE_ENGINE_GITOPS_TOKEN"))
         and refs.get("GITSYNC_USERNAME") is not None,
         f"{refs} vs {engine.get('DFE_ENGINE_GITOPS_USERNAME')} {engine.get('DFE_ENGINE_GITOPS_TOKEN')}",
     )
@@ -200,9 +218,11 @@ def test_the_sidecar_syncs_the_engines_own_deploy_repo() -> None:
     literal = engine_env_data(moved)
     expect(
         "a deployment's own deploy repo moves the sidecar and the engine together",
-        flag(moved_sidecar, "repo") == literal.get("DFE_ENGINE_GITOPS_REPO_URL")
+        flag(moved_sidecar, "repo")
+        == literal.get("DFE_ENGINE_GITOPS_REPO_URL")
         == DEPLOY_REPO["dfe.hyperi.io/config_repo_url"]
-        and flag(moved_sidecar, "ref") == literal.get("DFE_ENGINE_GITOPS_BRANCH")
+        and flag(moved_sidecar, "ref")
+        == literal.get("DFE_ENGINE_GITOPS_BRANCH")
         == DEPLOY_REPO["dfe.hyperi.io/config_repo_revision"],
         f"{moved_sidecar.get('args')} vs {literal.get('DFE_ENGINE_GITOPS_REPO_URL')}",
     )
@@ -241,7 +261,8 @@ def test_the_first_sync_is_bounded() -> None:
     )
     expect(
         "it seeds the worktree the sidecar and the runner then use",
-        flag(init, "root") == f"{gs['mountPath']}/repo" and flag(init, "link") == gs["link"],
+        flag(init, "root") == f"{gs['mountPath']}/repo"
+        and flag(init, "link") == gs["link"],
         f"{flag(init, 'root')} {flag(init, 'link')}",
     )
     expect(
@@ -394,14 +415,14 @@ def test_disabled_restores_the_single_container_pod() -> None:
 def test_no_deploy_repo_means_no_sidecar() -> None:
     """gitops.enabled=false leaves no repo to sync and no credential Secret.
 
-    Rendering the sidecar anyway would wedge the pod in
+    Rendering the sidecar anyway would hold the pod in
     CreateContainerConfigError on a Secret nothing creates.
     """
     doc = render({"gitops": {"enabled": False}})
     names = [c["name"] for c in pod(doc)["containers"]]
     expect("the sidecar is not rendered", names == ["hunt-runner"], f"{names}")
     expect(
-        "nor the init container that would wedge the pod on it",
+        "nor the init container that would block the pod on it",
         init_names(doc) == ["wait-for-engine"],
         f"{init_names(doc)}",
     )
@@ -417,7 +438,9 @@ def test_the_runner_waits_for_the_engine() -> None:
         f"{init_names(doc)}",
     )
     service = next(
-        d for d in docs if d.get("kind") == "Service" and d["metadata"]["name"] == ENGINE
+        d
+        for d in docs
+        if d.get("kind") == "Service" and d["metadata"]["name"] == ENGINE
     )
     port = next(p["port"] for p in service["spec"]["ports"] if p.get("name") == "http")
     script = (container(doc, "wait-for-engine").get("command") or [""])[-1]
@@ -432,7 +455,8 @@ def test_the_runner_waits_for_the_engine() -> None:
     local_script = (container(elsewhere, "wait-for-engine").get("command") or [""])[-1]
     expect(
         "in the namespace the release lands in",
-        f'URL="http://{ENGINE}.dfe-local.svc.cluster.local:{port}/readyz"' in local_script,
+        f'URL="http://{ENGINE}.dfe-local.svc.cluster.local:{port}/readyz"'
+        in local_script,
         local_script,
     )
     off = render({"waitForEngine": {"enabled": False}})
@@ -441,7 +465,10 @@ def test_the_runner_waits_for_the_engine() -> None:
         init_names(off) == ["git-sync-init"],
         f"{init_names(off)}",
     )
-    neither = {"waitForEngine": {"enabled": False}, "huntRunner": {"gitSync": {"enabled": False}}}
+    neither = {
+        "waitForEngine": {"enabled": False},
+        "huntRunner": {"gitSync": {"enabled": False}},
+    }
     bare = render(neither)
     expect(
         "and with neither, the pod has no initContainers key",
@@ -453,63 +480,83 @@ def test_the_runner_waits_for_the_engine() -> None:
 def test_the_runner_reads_the_destinations_the_api_writes() -> None:
     """An API-created alert destination must reach the runner that delivers hunt matches.
 
-    The engine writes them as YAML under <config>/alerts on its ReadWriteOnce claim,
-    not into git, so the runner mounts that claim read-only on the engine's node.
+    The engine keeps each URL at alert-destinations/<name> in its secrets store and,
+    off Secrets Manager, mirrors it into a Secret the runner mounts where its file
+    provider reads. The runner never mounts the engine's ReadWriteOnce claim.
     """
-    alerts = f"{config_mount()}/alerts"
+    secrets = f"{config_mount()}/.secrets"
+    secret = runner_defaults()["alertDestinations"]["secretName"]
     doc = render()
     main = container(doc, "hunt-runner")
     engine = engine_env_data(deployed())
     expect(
-        "the runner reads the directory the engine writes",
-        env_of(main).get("DFE_ENGINE_HUNTS_ALERT_DESTINATIONS_DIR") == alerts
-        and engine.get("DFE_ENGINE_HUNTS_ALERT_DESTINATIONS_DIR") == alerts,
-        f"{env_of(main).get('DFE_ENGINE_HUNTS_ALERT_DESTINATIONS_DIR')} vs {engine.get('DFE_ENGINE_HUNTS_ALERT_DESTINATIONS_DIR')}",
+        "the runner's file provider reads the directory the engine's does",
+        env_of(main).get("DFE_ENGINE_SECRETS_PATH")
+        == secrets
+        == engine.get("DFE_ENGINE_SECRETS_PATH"),
+        f"{env_of(main).get('DFE_ENGINE_SECRETS_PATH')} vs {engine.get('DFE_ENGINE_SECRETS_PATH')}",
+    )
+    expect(
+        "the engine is told the Secret it mirrors destinations into",
+        engine.get("DFE_ENGINE_HUNTS_ALERT_DESTINATIONS_SECRET") == secret,
+        f"{engine.get('DFE_ENGINE_HUNTS_ALERT_DESTINATIONS_SECRET')}",
     )
     mount = mount_of(main, "alert-destinations")
     expect(
-        "it is the alerts subdirectory of the config claim, read-only",
-        mount.get("mountPath") == alerts
-        and mount.get("subPath") == "alerts"
-        and mount.get("readOnly") is True,
+        "that Secret sits at <secrets>/alert-destinations, read-only, as a directory",
+        mount
+        == {
+            "name": "alert-destinations",
+            "mountPath": f"{secrets}/alert-destinations",
+            "readOnly": True,
+        },
         f"{mount}",
     )
-    claims = [
-        v["persistentVolumeClaim"] for v in pod(doc)["volumes"] if v["name"] == "alert-destinations"
-    ]
+    volumes = [v for v in pod(doc)["volumes"] if v["name"] == "alert-destinations"]
     expect(
-        "off the engine's own claim, read-only",
-        claims == [{"claimName": "dfe-engine-config", "readOnly": True}],
-        f"{claims}",
-    )
-    terms = pod(doc)["affinity"]["podAffinity"]["requiredDuringSchedulingIgnoredDuringExecution"]
-    expect(
-        "on the engine's node, since the claim is ReadWriteOnce",
-        terms
+        "off the mirrored Secret, optional, and no claim anywhere in the pod",
+        volumes
         == [
             {
-                "topologyKey": "kubernetes.io/hostname",
-                "labelSelector": {"matchLabels": {"app.kubernetes.io/name": ENGINE}},
+                "name": "alert-destinations",
+                "secret": {"secretName": secret, "optional": True},
             }
-        ],
-        f"{terms}",
+        ]
+        and not [v for v in pod(doc)["volumes"] if "persistentVolumeClaim" in v],
+        f"{volumes}",
     )
-    for label, overlay in (
-        ("switched off", {"huntRunner": {"alertDestinations": {"enabled": False}}}),
-        (
-            "with no config claim",
-            {"writablePaths": {"config": {"persistence": {"enabled": False}}}},
-        ),
-    ):
-        bare = render(overlay)
-        expect(
-            f"{label}, no mount, volume, env or affinity",
-            not mount_of(container(bare, "hunt-runner"), "alert-destinations")
-            and "DFE_ENGINE_HUNTS_ALERT_DESTINATIONS_DIR" not in env_of(container(bare, "hunt-runner"))
-            and not [v for v in pod(bare)["volumes"] if v["name"] == "alert-destinations"]
-            and "affinity" not in pod(bare),
-            f"{label}",
-        )
+    expect(
+        "free to schedule on any node",
+        "affinity" not in pod(doc),
+        f"{pod(doc).get('affinity')}",
+    )
+    expect(
+        "the engine still keeps its metadata index on its own volume",
+        engine.get("DFE_ENGINE_HUNTS_ALERT_DESTINATIONS_DIR")
+        == f"{config_mount()}/alerts"
+        and "DFE_ENGINE_HUNTS_ALERT_DESTINATIONS_DIR" not in env_of(main),
+        f"{engine.get('DFE_ENGINE_HUNTS_ALERT_DESTINATIONS_DIR')}",
+    )
+    aws = runner(render_extras(ENGINE, "slim", "aws", annotations=AWS_STORE))
+    aws_main = container(aws, "hunt-runner")
+    expect(
+        "on Secrets Manager the runner reads the engine's region and prefix, and mounts nothing",
+        {
+            k: v
+            for k, v in env_of(aws_main).items()
+            if k.startswith("DFE_ENGINE_SECRETS_")
+        }
+        == {
+            "DFE_ENGINE_SECRETS_PROVIDER": "aws",
+            "DFE_ENGINE_SECRETS_REGION": AWS_STORE["dfe.hyperi.io/region"],
+            "DFE_ENGINE_SECRETS_NAME_PREFIX": AWS_STORE[
+                "dfe.hyperi.io/engine_secrets_prefix"
+            ],
+        }
+        and not mount_of(aws_main, "alert-destinations")
+        and not [v for v in pod(aws)["volumes"] if v["name"] == "alert-destinations"],
+        f"{env_of(aws_main)}",
+    )
 
 
 def main() -> int:

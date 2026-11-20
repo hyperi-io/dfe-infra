@@ -49,7 +49,9 @@ def _sizing_without(line_start: str, after: str) -> str:
     return "\n".join(out) + "\n"
 
 
-def _sizing_with(replacement: str, after: str, line_start: str, text: str | None = None) -> str:
+def _sizing_with(
+    replacement: str, after: str, line_start: str, text: str | None = None
+) -> str:
     """The sizing file (or a `text` already mutated by a prior call) with the
     first `line_start` line after `after` replaced."""
     out: list[str] = []
@@ -84,7 +86,9 @@ def test_a_ratio_with_no_source_is_refused(tmp_path: Path) -> None:
     assert _run(sizing=broken) == 1
 
 
-def test_the_finding_names_the_ratio_and_the_missing_field(tmp_path: Path, capsys) -> None:
+def test_the_finding_names_the_ratio_and_the_missing_field(
+    tmp_path: Path, capsys
+) -> None:
     broken = tmp_path / "sizing.yaml"
     broken.write_text(_sizing_without("source:", "peak_factor:"), encoding="utf-8")
     _run(sizing=broken)
@@ -96,15 +100,19 @@ def test_the_finding_names_the_ratio_and_the_missing_field(tmp_path: Path, capsy
 def test_an_unknown_confidence_is_refused(tmp_path: Path) -> None:
     broken = tmp_path / "sizing.yaml"
     broken.write_text(
-        _sizing_with("confidence: pretty-sure", "peak_factor:", "confidence:"), encoding="utf-8"
+        _sizing_with("confidence: pretty-sure", "peak_factor:", "confidence:"),
+        encoding="utf-8",
     )
     assert _run(sizing=broken) == 1
 
 
-def test_a_source_that_is_neither_a_url_nor_a_repo_path_is_refused(tmp_path: Path) -> None:
+def test_a_source_that_is_neither_a_url_nor_a_repo_path_is_refused(
+    tmp_path: Path,
+) -> None:
     broken = tmp_path / "sizing.yaml"
     broken.write_text(
-        _sizing_with("source: a vendor blog somewhere", "peak_factor:", "source:"), encoding="utf-8"
+        _sizing_with("source: a vendor blog somewhere", "peak_factor:", "source:"),
+        encoding="utf-8",
     )
     assert _run(sizing=broken) == 1
 
@@ -112,13 +120,17 @@ def test_a_source_that_is_neither_a_url_nor_a_repo_path_is_refused(tmp_path: Pat
 def test_a_read_date_in_the_future_is_refused(tmp_path: Path) -> None:
     """A date nobody could have read on is a copied line, not provenance."""
     broken = tmp_path / "sizing.yaml"
-    broken.write_text(_sizing_with("read: 2099-01-01", "peak_factor:", "read:"), encoding="utf-8")
+    broken.write_text(
+        _sizing_with("read: 2099-01-01", "peak_factor:", "read:"), encoding="utf-8"
+    )
     assert _run(sizing=broken) == 1
 
 
 def test_a_ratio_value_that_is_not_a_number_is_refused(tmp_path: Path) -> None:
     broken = tmp_path / "sizing.yaml"
-    broken.write_text(_sizing_with("value: about two", "peak_factor:", "value:"), encoding="utf-8")
+    broken.write_text(
+        _sizing_with("value: about two", "peak_factor:", "value:"), encoding="utf-8"
+    )
     assert _run(sizing=broken) == 1
 
 
@@ -129,7 +141,10 @@ def test_an_unmeasured_value_needs_the_measure_only_confidence(tmp_path: Path) -
     broken = tmp_path / "sizing.yaml"
     with_unmeasured_value = _sizing_with("value: unmeasured", "iops_driver:", "value:")
     body = _sizing_with(
-        "confidence: vendor-documented", "iops_driver:", "confidence:", text=with_unmeasured_value
+        "confidence: vendor-documented",
+        "iops_driver:",
+        "confidence:",
+        text=with_unmeasured_value,
     )
     broken.write_text(body, encoding="utf-8")
     assert _run(sizing=broken) == 1
@@ -147,7 +162,9 @@ def test_a_duplicate_key_is_a_finding_not_a_crash(tmp_path: Path) -> None:
 
 def test_a_cloud_missing_a_use_case_is_refused(tmp_path: Path) -> None:
     broken = tmp_path / "compute-shapes.yaml"
-    body = SHAPES.read_text(encoding="utf-8").replace("      toolbox:\n", "      toolbin:\n", 1)
+    body = SHAPES.read_text(encoding="utf-8").replace(
+        "      toolbox:\n", "      toolbin:\n", 1
+    )
     broken.write_text(body, encoding="utf-8")
     assert _run(shapes=broken) == 1
 
@@ -191,7 +208,10 @@ def test_the_headroom_multipliers_clear_every_vendor_floor() -> None:
     """20% headroom sat under MSK's 60% CPU rule; 40% is the floor we start at."""
     sizing = yaml_subset.parse(SIZING.read_text(encoding="utf-8"), source=str(SIZING))
     focus = sizing["focus"]
-    headrooms = [float(focus[level]["headroom"]["value"]) for level in validate_sizing.FOCUS_LEVELS]
+    headrooms = [
+        float(focus[level]["headroom"]["value"])
+        for level in validate_sizing.FOCUS_LEVELS
+    ]
     assert headrooms == sorted(headrooms)
     assert headrooms[0] >= 0.40
 
@@ -209,7 +229,7 @@ def test_instance_baseline_throughput_needs_no_number(tmp_path: Path) -> None:
     broken = tmp_path / "compute-shapes.yaml"
     body = SHAPES.read_text(encoding="utf-8").replace(
         "            throughput_mib_s: 125\n            throughput_policy: instance-baseline\n",
-        "            throughput_mib_s: \"\"\n            throughput_policy: instance-baseline\n",
+        '            throughput_mib_s: ""\n            throughput_policy: instance-baseline\n',
         1,
     )
     broken.write_text(body, encoding="utf-8")
@@ -227,7 +247,9 @@ def test_a_throughput_policy_that_is_not_recognised_is_refused(tmp_path: Path) -
     assert _run(shapes=broken) == 1
 
 
-def test_a_volume_with_no_policy_still_needs_a_numeric_throughput(tmp_path: Path) -> None:
+def test_a_volume_with_no_policy_still_needs_a_numeric_throughput(
+    tmp_path: Path,
+) -> None:
     """The numeric form stays valid, and stays required, with no policy set."""
     broken = tmp_path / "compute-shapes.yaml"
     body = SHAPES.read_text(encoding="utf-8").replace(

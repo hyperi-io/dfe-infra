@@ -9,7 +9,7 @@
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
 """Tests for the onboarding run's field-label pattern.
 
-    python3 -m pytest scripts/tests/test_onboarding_labels.py
+python3 -m pytest scripts/tests/test_onboarding_labels.py
 """
 
 from __future__ import annotations
@@ -39,7 +39,9 @@ def test_any_listed_label_matches():
     assert pattern.match("Username *")
 
 
-@pytest.mark.parametrize("accessible_name", ["Username", "* Username", "Name of user", "Names"])
+@pytest.mark.parametrize(
+    "accessible_name", ["Username", "* Username", "Name of user", "Names"]
+)
 def test_a_label_does_not_match_inside_a_longer_name(accessible_name):
     assert not _label("Name").match(accessible_name)
 
