@@ -67,8 +67,8 @@ class Run:
     transform_repo: Path
     receiver_url: str
     verify: bool
-    #: Where the program a case uploads is read from. The same checkout as the
-    #: corpus for every case but vector, whose app ships its own pipeline.
+    #: Where the program a case uploads is read from, when it is not
+    #: ``transform_repo``. Only vector sets it: its app ships its own pipeline.
     program_repo: Path | None = None
 
     def programs(self) -> Path:
@@ -87,8 +87,7 @@ class Case:
     #: a run that was given no --transform-repo. Empty when it reads none.
     companion_repo: str = ""
     #: The checkout the program comes from, when it is not the one above. Only
-    #: the vector case splits them: its app ships the pipeline, dfe-transform-vrl
-    #: ships the corpus both of them grade against.
+    #: the vector case sets it, because its app ships its own pipeline.
     program_repo: str = ""
     #: What the two shared waits report as, so the report keeps this kind's words.
     instance_step: str = ""
@@ -136,15 +135,16 @@ class Case:
         return []
 
 
-# --- filebeat: real lines pushed at the receiver ------------------------------
+# --- filebeat: synthetic lines pushed at the receiver -------------------------
 
 
 class FilebeatCase(Case):
-    """Real cisco_ios lines in the Elastic Agent envelope, through the bundled VRL, archived.
+    """Synthetic cisco_ios lines in the Elastic Agent envelope, through the bundled VRL, archived.
 
     The shipped meta schema, a receiver match on the shipper's own
     ``data_stream.dataset``, the bundled filebeat program with its timezone
-    table, the archive on.
+    table, the archive on. The lines and their expected events are dfe-engine's
+    synthetic corpus (``steps.corpus_reader``).
     """
 
     META_SCHEMA = "meta/beats/filebeat"
@@ -157,13 +157,12 @@ class FilebeatCase(Case):
     TRANSFORM_ENGINE = "vrl"
     PROGRAM = "pipelines/filebeat/filebeat.vrl"
     ENRICHMENT = "pipelines/filebeat/timezones.csv"
-    CORPUS = "tests/fixtures/filebeat/filebeat-testdata.tar.gz"
     # The one module MATCH_VALUE names: one equals match routes one dataset, so
     # cisco_meraki and cisco_umbrella lines would miss the source by design.
     MODULES: tuple[str, ...] = ("cisco_ios",)
     # Display name and description the console form is filled with.
     DISPLAY = "Filebeat source test"
-    DESCRIPTION = "Post-deploy source test: real cisco_ios lines through the bundled VRL, archived."
+    DESCRIPTION = "Post-deploy source test: synthetic cisco_ios lines through the bundled VRL, archived."
     # ECS source.ip, which meta/beats/filebeat declares and the cisco_ios branch
     # reads out of the syslog body; the posted envelope carries no such field.
     TRANSFORMED_COLUMN = "source_ip"
@@ -492,12 +491,10 @@ class FilebeatCase(Case):
                 "no receiver in this run (DFE_E2E_RECEIVER_URL unset)",
             )
             return
-        corpus = run.transform_repo / self.CORPUS
         detail = steps.wait_routed(
             run.receiver_url,
             run.verify,
             run.engine_repo,
-            corpus,
             run.store,
             self.name,
             run.run_id,
@@ -508,13 +505,12 @@ class FilebeatCase(Case):
             "routed", "done" if detail.startswith("routed") else "failed", detail
         )
         if run.args.via in SHIPPED:
-            self._feed_through_agent(run, corpus)
+            self._feed_through_agent(run)
             return
         self._posted = steps.post_corpus(
             run.receiver_url,
             run.verify,
             run.engine_repo,
-            corpus,
             run.run_id,
             run.args.per_module,
             self.MODULES,
@@ -525,7 +521,7 @@ class FilebeatCase(Case):
             f"posted {self._posted} corpus records marked {steps.MARKER}.run {run.run_id}",
         )
 
-    def _feed_through_agent(self, run: Run, corpus: Path) -> None:
+    def _feed_through_agent(self, run: Run) -> None:
         """The same corpus lines, shipped by a real filebeat.
 
         The POSTed envelope is reconstructed. ``--via logstash`` pushes the one
@@ -554,9 +550,7 @@ class FilebeatCase(Case):
             run_id=run.run_id,
             lumberjack=args.beats_lumberjack if direct else "",
         )
-        lines = steps.corpus_lines(
-            run.engine_repo, corpus, args.per_module, self.MODULES
-        )
+        lines = steps.corpus_lines(run.engine_repo, args.per_module, self.MODULES)
         beats.write_inputs(
             self._pair,
             lines,
@@ -623,7 +617,6 @@ class FilebeatCase(Case):
         # Not every corpus line carries an address, so the bar is the corpus's own expected count.
         expected = steps.expected_carrying(
             run.engine_repo,
-            run.transform_repo / self.CORPUS,
             run.args.per_module,
             self.MODULES,
             self.TRANSFORMED_FIELD,
@@ -703,7 +696,7 @@ class FilebeatCase(Case):
 
 
 class ElasticCase(FilebeatCase):
-    """Real cisco_ios lines pushed at the receiver, through dfe-transform-elastic.
+    """Synthetic cisco_ios lines pushed at the receiver, through dfe-transform-elastic.
 
     The same push and the same meta schema as the filebeat case, with two halves
     of its own. The app carries one transform per Elastic data stream and an
@@ -717,11 +710,13 @@ class ElasticCase(FilebeatCase):
     VARIANT = "filebeat.cisco_ios.default"
     DISPLAY = "Elastic transform source test"
     DESCRIPTION = (
-        "Post-deploy source test: real cisco_ios lines through the compiled-in "
+        "Post-deploy source test: synthetic cisco_ios lines through the compiled-in "
         "elastic transform, archived."
     )
 
     service = f"dfe-transform-{TRANSFORM_ENGINE}"
+    # The transform is compiled in, so no checkout holds anything this case reads.
+    companion_repo = ""
     prefix = "el"
 
     def _transform_body(self) -> dict[str, str]:
@@ -759,9 +754,6 @@ class VectorCase(FilebeatCase):
     and the commit). So this is the filebeat case with the program written as
     Vector YAML into an app that supervises Vector, and the same column proves
     it: one program, two runtimes, one expected output.
-
-    The corpus still comes out of dfe-transform-vrl; only the program moves, so
-    the case names two checkouts.
     """
 
     TRANSFORM_ENGINE = "vector"
@@ -772,14 +764,13 @@ class VectorCase(FilebeatCase):
     ENRICHMENT = "pipelines/filebeat/timezones.csv"
     DISPLAY = "Vector transform source test"
     DESCRIPTION = (
-        "Post-deploy source test: real filebeat lines through the supervised "
+        "Post-deploy source test: synthetic filebeat lines through the supervised "
         "Vector pipeline, archived."
     )
 
     service = f"dfe-transform-{TRANSFORM_ENGINE}"
-    #: The corpus archive, shared with the filebeat and elastic cases.
-    companion_repo = "dfe-transform-vrl"
-    #: The checkout the program and its table are read from.
+    companion_repo = ""
+    #: The checkout the program and its table are read from, ahead of any --transform-repo.
     program_repo = "dfe-transform-vector"
     prefix = "vc"
 
