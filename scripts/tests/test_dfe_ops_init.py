@@ -453,6 +453,21 @@ def test_a_yes_no_prompt_shows_its_default_once() -> None:
     assert prompts == ["Enable the in-cluster toolbox pod [y/N]: "]
 
 
+@pytest.mark.parametrize(("target", "tier"), sorted(wiz.DEFAULT_BROKER_TEXT))
+def test_the_tier_list_names_the_broker_the_default_dial_builds(
+    target: str, tier: str
+) -> None:
+    """AWS Medium defaults to MSK, so a tier line promising an in-cluster broker misleads."""
+    provider = wiz._default_kafka_provider(target, tier)
+    named = {"msk": "Amazon MSK", "confluent-cloud": "Confluent Cloud"}.get(provider)
+    line = wiz._tier_line(target, tier)
+    if named:
+        assert named in line
+    else:
+        assert "MSK" not in line
+        assert "Confluent" not in line
+
+
 def test_az_count_uses_render_dial_validator() -> None:
     io = wiz.WizardIO(answers={"az_count": "7"})  # render_dial._az_count caps at 6
     answers = wiz.Answers(target="aws")

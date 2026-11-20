@@ -90,6 +90,28 @@ NOT_YET_AVAILABLE = ("gcp", "azure")
 TIER_CHOICES = ("slim", "single", "scale")
 TIER_LABELS = {"slim": "Small", "single": "Medium", "scale": "Large"}
 
+# The broker each tier's default Kafka provider builds, by target, for the tier list.
+DEFAULT_BROKER_TEXT = {
+    ("on-prem", "single"): "one in-cluster broker (no operator)",
+    ("on-prem", "scale"): "Strimzi Kafka",
+    ("aws", "single"): "Amazon MSK",
+    ("aws", "scale"): "Confluent Cloud",
+}
+# The brokered tiers without their broker, which profiles.py names for on-prem alone.
+TIER_SHAPE = {
+    "single": "one node of everything",
+    "scale": "HA replicas, operator ClickHouse cluster",
+}
+
+
+def _tier_line(target: str, tier: str) -> str:
+    """One tier as the list shows it, naming the broker its default dial builds on `target`."""
+    broker = DEFAULT_BROKER_TEXT.get((target, tier))
+    if broker is None:
+        return profiles.PROFILES[tier].description
+    return f"{TIER_SHAPE[tier]}, with {broker} by default"
+
+
 # sizing.yaml's own focus.<level>.headroom values (2026-09-13): 0.40/0.60/1.00.
 FOCUS_HELP = {
     "economy": "the minimum that could do it -- 40% headroom over the sized peak.",
@@ -349,7 +371,7 @@ def step_target(io: WizardIO, a: Answers) -> None:
 def step_tier(io: WizardIO, a: Answers) -> None:
     io.write("Tiers:")
     for t in TIER_CHOICES:
-        io.write(f"  {t:<7} {TIER_LABELS[t]}: {profiles.PROFILES[t].description}")
+        io.write(f"  {t:<7} {TIER_LABELS[t]}: {_tier_line(a.target, t)}")
     a.profile = ask_choice(io, "profile", "Profile/tier", a.profile, TIER_CHOICES)
 
     def validate_ingest(raw: str) -> str:

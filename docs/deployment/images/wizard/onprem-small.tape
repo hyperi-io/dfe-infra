@@ -4,7 +4,7 @@
 Set Shell "bash"
 Set FontSize 15
 Set Width 1000
-Set Height 980
+Set Height 1000
 Set Padding 20
 Set TypingSpeed 15ms
 Set Theme "Builtin Dark"
