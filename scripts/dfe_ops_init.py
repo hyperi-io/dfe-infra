@@ -983,7 +983,7 @@ def build_dial_text(a: Answers) -> str:
         f"  cloud: {'aws' if is_aws else 'local'}\n"
         f"  region: {a.aws_region if is_aws else 'local'}\n"
         '  domain: ""\n'
-        f"  storage_class: {'gp3' if is_aws else 'local-path'}\n"
+        f"  storage_class: {'gp3' if is_aws else '""'}\n"
         '  repo_url: ""\n'
         "  target_revision: main\n"
         '  workload_identity_annotations: "{}"\n'

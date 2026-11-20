@@ -91,6 +91,7 @@ RUN_FACTS: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = (
     (("state", "bucket"), ("state", "bucket")),
     (("state", "region"), ("state", "region")),
     (("repo_url",), ("k8s", "repo_url")),
+    (("storage_class",), ("k8s", "storage_class")),
     (("network", "az_count"), ("network", "az_count")),
     (("kafka", "provider"), ("kafka", "provider")),
     (("clickhouse", "mode"), ("clickhouse", "mode")),

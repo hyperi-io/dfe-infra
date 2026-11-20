@@ -15,7 +15,7 @@
     python3 docs-site/scripts/aggregate.py --work-dir .tmp/docs-clones   # keep the clones
 
 A released stack is a versions.yaml block at `maturity: release`, not withdrawn,
-named X.Y.Z with no prerelease suffix, less the stacks docs-site/publish.yaml drops.
+named X.Y.Z or X.Y.Z-fix.N, less the stacks docs-site/publish.yaml drops.
 Membership and the sidebar order come from `dfe-stack suite`, lane by lane, first
 appearance winning. Each member is fetched anonymously at the ref its stack pins:
 `apps.<member>` or `content.<member>`, and the stack's own tag for dfe-infra. A
@@ -127,7 +127,8 @@ REFUSED = ("could not read Username", "Repository not found", "Authentication fa
 CATEGORY_FILE = "_category_.json"
 SITE_FILE = "site.json"
 
-_RELEASE_NAME = re.compile(r"(\d+)\.(\d+)\.(\d+)")
+# X.Y.Z, or X.Y.Z-fix.N for a fix release cut on an earlier stack.
+_RELEASE_NAME = re.compile(r"(\d+)\.(\d+)\.(\d+)(?:-fix\.(\d+))?")
 _FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 _CODE_SPAN = re.compile(r"(?<!`)(`+)(?!`).*?(?<!`)\1(?!`)")
 _INLINE_TARGET = re.compile(r"(\]\(\s*)(<[^>\n]*>|[^)\s]+)")
@@ -485,7 +486,7 @@ def released_stacks(tree: Mapping[str, object]) -> list[str]:
         tree: versions.yaml as `yaml_subset.parse` returns it.
 
     Returns:
-        Every stack at `maturity: release`, not withdrawn, named X.Y.Z.
+        Every stack at `maturity: release`, not withdrawn, named X.Y.Z or X.Y.Z-fix.N.
     """
     stacks = tree.get("stacks")
     if not isinstance(stacks, dict):
@@ -496,7 +497,7 @@ def released_stacks(tree: Mapping[str, object]) -> list[str]:
         if not match or not isinstance(block, dict):
             continue
         if block.get("maturity") == RELEASE and block.get("support") != WITHDRAWN:
-            found.append((tuple(int(part) for part in match.groups()), name))
+            found.append((tuple(int(part or 0) for part in match.groups()), name))
     return [name for _, name in sorted(found, reverse=True)]
 
 
