@@ -4,7 +4,7 @@ global:
   domain: dfe.example.com
 
 domain: dfe.example.com
-storageClass: local-path
+storageClass: ""  # the cluster default, which bootstrap adopts or installs (local-path)
 
 nodeScheduling: {}
 nodeSelector: {}

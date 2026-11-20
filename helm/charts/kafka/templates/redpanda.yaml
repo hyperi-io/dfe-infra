@@ -4,8 +4,9 @@
 {{- if not .Values.kafka.redpanda.acceptLicense }}
 {{- fail "Redpanda is source-available under the Business Source License 1.1: set kafka.redpanda.acceptLicense=true once you have read it. See docs/deployment/kafka/redpanda-limitations.md." }}
 {{- end }}
-{{- if not (has .Values.kafka.rebalancing.redpanda.partitionAutobalancingMode (list "off" "node_add")) }}
-{{- fail (printf "kafka.rebalancing.redpanda.partitionAutobalancingMode %q is a Redpanda Enterprise feature: use node_add or off." .Values.kafka.rebalancing.redpanda.partitionAutobalancingMode) }}
+{{- $licence := .Values.kafka.redpanda.enterprise.licenseSecretRef }}
+{{- if and (not $licence.name) (not (has .Values.kafka.rebalancing.redpanda.partitionAutobalancingMode (list "off" "node_add"))) }}
+{{- fail (printf "kafka.rebalancing.redpanda.partitionAutobalancingMode %q is a Redpanda Enterprise feature: use node_add or off, or name a licence in kafka.redpanda.enterprise.licenseSecretRef." .Values.kafka.rebalancing.redpanda.partitionAutobalancingMode) }}
 {{- end }}
 {{- $replicas := int (include "dfe-kafka.brokerCount" .) }}
 {{- $rf := min (int .Values.kafka.profile.scale.replicationFactor) $replicas }}
@@ -33,9 +34,18 @@ spec:
         kafka_max_message_size_upper_limit_bytes: {{ include "dfe-kafka.messageMaxBytes" . }}
         # Pinned: Redpanda's defaults turn both on as Enterprise features, and one in use when the trial licence lapses blocks broker upgrades.
         partition_autobalancing_mode: {{ ternary .Values.kafka.rebalancing.redpanda.partitionAutobalancingMode "off" .Values.kafka.rebalancing.enabled | quote }}
+        {{- if not $licence.name }}
         core_balancing_continuous: false
+        {{- end }}
         # Per-sender bandwidth while a replica catches up, Redpanda's equivalent of the Strimzi replication throttle.
         raft_learner_recovery_rate: {{ int64 .Values.kafka.rebalancing.redpanda.raftLearnerRecoveryRate }}
+    {{- with $licence.name }}
+    # Beta: a licensed cluster keeps Redpanda's default Enterprise features.
+    enterprise:
+      licenseSecretRef:
+        name: {{ . | quote }}
+        key: {{ $licence.key | quote }}
+    {{- end }}
     # No Console UI (an extra pod, config and Secret).
     console:
       enabled: false
