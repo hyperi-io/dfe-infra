@@ -64,6 +64,17 @@ spec:
               RP_PID=$!
               until rpk cluster health >/dev/null 2>&1; do kill -0 "${RP_PID}" || exit 1; sleep 2; done
               rpk security user create "${KAFKA_USER}" -p "${KAFKA_PASSWORD}" --mechanism SCRAM-SHA-512 || true
+              {{- if .Values.kafka.redpanda.enterprise.licenseSecretRef.name }}
+              # Beta: a licensed broker keeps Redpanda's default Enterprise features, and must report no violation.
+              (umask 077 && printf '%s' "${REDPANDA_LICENSE}" > /tmp/redpanda.license)
+              rpk cluster license set --path /tmp/redpanda.license
+              rm -f /tmp/redpanda.license
+              licence="$(rpk cluster license info --format json | tr -d ' \n\t')"
+              case "${licence}" in
+                *'"license_violation":false'*) ;;
+                *) echo "ERROR: Redpanda licence violation: ${licence}" >&2; kill "${RP_PID}"; exit 1 ;;
+              esac
+              {{- else }}
               # Set on every start, because .bootstrap.yaml reaches only a new volume. Both are Enterprise features Redpanda turns on by default.
               rpk cluster config set partition_autobalancing_mode node_add
               rpk cluster config set core_balancing_continuous false
@@ -73,8 +84,16 @@ spec:
                 *'"enterprise_features_in_use":[]'*) ;;
                 *) echo "ERROR: Redpanda Enterprise features in use: ${licence}" >&2; kill "${RP_PID}"; exit 1 ;;
               esac
+              {{- end }}
               wait $RP_PID
           env:
+            {{- with .Values.kafka.redpanda.enterprise.licenseSecretRef }}
+            {{- if .name }}
+            - name: REDPANDA_LICENSE
+              valueFrom:
+                secretKeyRef: { name: {{ .name }}, key: {{ .key }} }
+            {{- end }}
+            {{- end }}
             - name: KAFKA_USER
               valueFrom:
                 secretKeyRef: { name: {{ .Values.user.name }}, key: username }

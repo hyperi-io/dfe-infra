@@ -48,6 +48,11 @@ kafka:
     auth:
       # The bootstrap superuser the operator creates and manages, and whose password Secret it generates.
       superuserName: "admin"
+    # Beta, untested against a paid licence. Naming a Secret that holds a Redpanda Enterprise licence keeps Redpanda's default Enterprise features on.
+    enterprise:
+      licenseSecretRef:
+        name: ""
+        key: license
   # mode=external: connect to a supplied bootstrap. auth.type is scram, tls or msk_iam. scram and tls use a Vault-backed secret.
   # msk_iam has no static secret, and scalo rejects it, so no app connects (dfe-infra#292).
   external:

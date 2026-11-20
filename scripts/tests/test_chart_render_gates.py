@@ -302,6 +302,62 @@ def test_single_redpanda_turns_both_off_on_every_start_and_checks() -> None:
         expect(f"the start script runs {line!r}", line in script, "missing")
 
 
+LICENSED = (
+    "kafka.redpanda.enterprise.licenseSecretRef.name=redpanda-license",
+    "kafka.rebalancing.redpanda.partitionAutobalancingMode=continuous",
+)
+
+
+def test_a_licensed_cluster_keeps_redpandas_enterprise_defaults() -> None:
+    """Beta: naming a licence Secret hands it to the operator and stops forcing the features off."""
+    docs = render(KAFKA, *REDPANDA_CLUSTER, *LICENSED)
+    spec = next(d for d in docs if d.get("kind") == "Redpanda")["spec"]["clusterSpec"]
+    expect(
+        "the operator gets the licence Secret",
+        spec.get("enterprise", {}).get("licenseSecretRef")
+        == {"name": "redpanda-license", "key": "license"},
+        str(spec.get("enterprise")),
+    )
+    cluster = spec["config"]["cluster"]
+    expect(
+        "core balancing keeps Redpanda's default and continuous partition balancing renders",
+        "core_balancing_continuous" not in cluster
+        and cluster["partition_autobalancing_mode"] == "continuous",
+        str(cluster),
+    )
+
+
+def test_a_licensed_single_broker_applies_the_licence_and_checks_for_a_violation() -> (
+    None
+):
+    docs = render(
+        KAFKA,
+        "kafka.mode=single",
+        "kafka.provider=redpanda",
+        "kafka.redpanda.acceptLicense=true",
+        "appNamespace=dfe-local",
+        LICENSED[0],
+    )
+    container = next(d for d in docs if d.get("kind") == "StatefulSet")["spec"][
+        "template"
+    ]["spec"]["containers"][0]
+    script = container["args"][0]
+    env = {e["name"]: e for e in container["env"]}
+    expect(
+        "the licence reaches the broker from its Secret",
+        env.get("REDPANDA_LICENSE", {}).get("valueFrom", {}).get("secretKeyRef")
+        == {"name": "redpanda-license", "key": "license"},
+        str(env.get("REDPANDA_LICENSE")),
+    )
+    expect(
+        "the script applies the licence, checks for a violation and forces nothing off",
+        "rpk cluster license set --path" in script
+        and '"license_violation":false' in script
+        and "core_balancing_continuous" not in script,
+        script,
+    )
+
+
 def test_the_kafka_provider_is_untouched_by_the_gate() -> None:
     """The gate is Redpanda's licence, not a mode check: Strimzi must be unaffected."""
     # The Strimzi path renders a KafkaUser credential, which needs the namespace
@@ -331,6 +387,8 @@ def main() -> int:
         test_the_redpanda_cluster_turns_off_both_enterprise_balancers()
         test_continuous_partition_balancing_is_refused()
         test_single_redpanda_turns_both_off_on_every_start_and_checks()
+        test_a_licensed_cluster_keeps_redpandas_enterprise_defaults()
+        test_a_licensed_single_broker_applies_the_licence_and_checks_for_a_violation()
         test_the_kafka_provider_is_untouched_by_the_gate()
         return summary()
 
