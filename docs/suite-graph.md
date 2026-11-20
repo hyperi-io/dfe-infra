@@ -1194,16 +1194,14 @@ config:
 ---
 flowchart LR
     accTitle: L4 Detail -- dfe-loader build cycle
-    accDescr: A dfe-loader release puts 2 consumers in motion. dfe-engine takes mirrored-logic. dfe-infra takes image-pin.
+    accDescr: A dfe-loader release puts 1 consumer in motion. dfe-infra takes image-pin.
 
     dfe_loader("<b>dfe-loader</b>")
-    dfe_engine("<b>dfe-engine</b>")
     dfe_infra("<b>dfe-infra</b>")
 
-    dfe_loader -->|mirrored-logic| dfe_engine
     dfe_loader -->|image-pin| dfe_infra
 
-    class dfe_engine,dfe_infra control
+    class dfe_infra control
     class dfe_loader load
     %% merrow:begin
     classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A
@@ -1277,16 +1275,14 @@ config:
 ---
 flowchart LR
     accTitle: L4 Detail -- dfe-receiver build cycle
-    accDescr: A dfe-receiver release puts 2 consumers in motion. dfe-engine takes mirrored-logic. dfe-infra takes image-pin.
+    accDescr: A dfe-receiver release puts 1 consumer in motion. dfe-infra takes image-pin.
 
     dfe_receiver("<b>dfe-receiver</b>")
-    dfe_engine("<b>dfe-engine</b>")
     dfe_infra("<b>dfe-infra</b>")
 
-    dfe_receiver -->|mirrored-logic| dfe_engine
     dfe_receiver -->|image-pin| dfe_infra
 
-    class dfe_engine,dfe_infra control
+    class dfe_infra control
     class dfe_receiver ingest
     %% merrow:begin
     classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A

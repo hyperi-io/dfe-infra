@@ -114,8 +114,13 @@ internal:
     transport/GRPC.md: "developer docs: design, internals or dev setup"
     transport/README.md: "developer docs: design, internals or dev setup"
   dfe-receiver:
-    DESIGN.md: "developer docs: design, internals or dev setup"
+    internals.md: "developer docs: design, internals or dev setup"
     testing.md: "how the receiver is tested"
+    log-spamming.md: "developer docs: design, internals or dev setup"
+    performance.md: "developer docs: design, internals or dev setup"
+    sidecar-transports.md: "developer docs: design, internals or dev setup"
+    # The upper-case names are the receiver's docs at 2.2.1's pin, v1.15.58.
+    DESIGN.md: "developer docs: design, internals or dev setup"
     METRICS.md: "a historical planning doc, out of date"
     LOG-SPAMMING.md: "developer docs: design, internals or dev setup"
     PERFORMANCE.md: "developer docs: design, internals or dev setup"
