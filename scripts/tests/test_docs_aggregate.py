@@ -1564,6 +1564,27 @@ def test_the_gate_fails_only_on_findings_the_baseline_lacks(
 
 
 @pytest.mark.parametrize(
+    ("line", "exit_code"),
+    [
+        ("Old; see [notes](https://github.com/o/dfe-ui/blob/main/docs/notes.md).", 0),
+        ("Old, edited; see [notes](notes.md).", 1),
+    ],
+    ids=["link-rewritten", "words-edited"],
+)
+def test_a_rewritten_link_target_is_not_a_new_finding(
+    tmp_path: Path, line: str, exit_code: int
+) -> None:
+    """aggregate.py points a link at GitHub when its page stays off the site."""
+    baseline = write_content(
+        tmp_path / "main", {"dfe-ui/a.md": "# A\n\nOld; see [notes](notes.md).\n"}
+    )
+    content = write_content(tmp_path / "pr", {"dfe-ui/a.md": f"# A\n\n{line}\n"})
+    assert (
+        gate.main(["--content", str(content), "--baseline", str(baseline)]) == exit_code
+    )
+
+
+@pytest.mark.parametrize(
     ("pages", "args", "exit_code"),
     [
         ({"dfe-ui/a.md": "# A\n\nA deployment seam.\n"}, [], 1),
