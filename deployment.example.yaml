@@ -837,7 +837,7 @@ k8s:
   cloud: local               # DFE_CLOUD -- local | aws | gcp | azure | rancher
   region: local              # DFE_REGION
   domain: ""                 # DFE_DOMAIN -- estate, blank in template
-  storage_class: local-path  # DFE_STORAGE_CLASS -- local-path | gp3 | standard-rwo | managed-csi
+  storage_class: ""  # DFE_STORAGE_CLASS -- blank = the cluster default (on-prem), gp3 on AWS
   repo_url: ""               # DFE_REPO_URL -- the dfe-infra chart repo Argo reads, with DFE_REPO_TOKEN only if your copy is private
   target_revision: main      # DFE_TARGET_REVISION -- the ref under deployment (versionSet ref)
   workload_identity_annotations: "{}"  # DFE_WORKLOAD_IDENTITY_ANNOTATIONS -- IRSA / WI, cloud

@@ -269,7 +269,7 @@ k8s:
   cloud: local
   region: local
   domain: ""
-  storage_class: local-path
+  storage_class: ""
   repo_url: ""
   target_revision: main
   workload_identity_annotations: "{}"
