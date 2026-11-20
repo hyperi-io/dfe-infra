@@ -100,7 +100,9 @@ def build_arg(text: str) -> str:
         argparse.ArgumentTypeError: When the text is not NAME=VALUE.
     """
     if not _BUILD_ARG.fullmatch(text):
-        raise argparse.ArgumentTypeError(f"{text!r} is not NAME=VALUE with no whitespace")
+        raise argparse.ArgumentTypeError(
+            f"{text!r} is not NAME=VALUE with no whitespace"
+        )
     return text
 
 
@@ -123,7 +125,9 @@ def platforms(text: str) -> list[str]:
     """
     found = sorted({item.strip() for item in text.split(",") if item.strip()})
     if not found or any(re.search(r"\s", item) for item in found):
-        raise argparse.ArgumentTypeError(f"{text!r} is not a comma-separated platform list")
+        raise argparse.ArgumentTypeError(
+            f"{text!r} is not a comma-separated platform list"
+        )
     return found
 
 
@@ -140,7 +144,10 @@ def context_files(context: Path) -> list[tuple[str, str]]:
     is sent rather than where the checkout sits.
     """
     files = [
-        (path.relative_to(context).as_posix(), hashlib.sha256(path.read_bytes()).hexdigest())
+        (
+            path.relative_to(context).as_posix(),
+            hashlib.sha256(path.read_bytes()).hexdigest(),
+        )
         for path in context.rglob("*")
         if path.is_file()
     ]
@@ -192,7 +199,9 @@ def decide(published: Published | None, inputs: str) -> Reason:
     return Reason.MATCH
 
 
-def plan_outputs(reason: Reason, inputs: str, flags: list[str]) -> dict[str, str] | None:
+def plan_outputs(
+    reason: Reason, inputs: str, flags: list[str]
+) -> dict[str, str] | None:
     """The plan step's outputs for a decision, or None when the plan refuses to build."""
     if reason in REFUSED:
         return None
@@ -224,7 +233,11 @@ def plan_line(ref: str, reason: Reason, published: Published | None) -> str:
         )
     if reason is Reason.ABSENT or published is None:
         return f"{ref} is not published -- building it"
-    recorded = f"built from inputs {published.inputs}" if published.inputs else "no inputs hash"
+    recorded = (
+        f"built from inputs {published.inputs}"
+        if published.inputs
+        else "no inputs hash"
+    )
     return (
         f"::error::the inputs changed under the published tag {ref} ({published.digest}, "
         f"{recorded}). A published family tag never moves: bump toolbox.dfe-toolbox in "
@@ -248,9 +261,7 @@ def platform_error(ref: str, found: set[str] | None, want: list[str]) -> str | N
     """Why a just-pushed index does not hold exactly the hashed platforms, or None."""
     if found is None or found != set(want):
         have = ", ".join(sorted(found or ())) or "no platforms"
-        return (
-            f"{ref} holds {have}, expected exactly {', '.join(want)} -- the merge lost or added one"
-        )
+        return f"{ref} holds {have}, expected exactly {', '.join(want)} -- the merge lost or added one"
     return None
 
 
@@ -331,7 +342,9 @@ def cmd_verify(args: argparse.Namespace) -> int:
     if error:
         print(f"::error::{error}")
         return 1
-    print(f"{args.ref}: index {published.digest} carries {INPUTS_ANNOTATION}={published.inputs}")
+    print(
+        f"{args.ref}: index {published.digest} carries {INPUTS_ANNOTATION}={published.inputs}"
+    )
     print(f"{args.ref}: index {published.digest} holds {', '.join(args.platform)}")
     print(f"::notice::{args.ref} published at {published.digest}")
     return 0
@@ -343,9 +356,15 @@ def _parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    plan = sub.add_parser("plan", help="build, skip or refuse, and emit the build flags")
-    plan.add_argument("--ref", required=True, help="the published tag, registry/name:tag")
-    plan.add_argument("--context", required=True, help="the docker build context directory")
+    plan = sub.add_parser(
+        "plan", help="build, skip or refuse, and emit the build flags"
+    )
+    plan.add_argument(
+        "--ref", required=True, help="the published tag, registry/name:tag"
+    )
+    plan.add_argument(
+        "--context", required=True, help="the docker build context directory"
+    )
     plan.add_argument(
         "--platform", required=True, type=platforms, help="comma-separated os/arch list"
     )
@@ -362,13 +381,20 @@ def _parser() -> argparse.ArgumentParser:
         help="the inputs hash of the image this one builds FROM",
     )
     plan.add_argument(
-        "--github-output", help="append the outputs to this file (the step's $GITHUB_OUTPUT)"
+        "--github-output",
+        help="append the outputs to this file (the step's $GITHUB_OUTPUT)",
     )
     plan.set_defaults(func=cmd_plan)
 
-    verify = sub.add_parser("verify", help="check the pushed index carries the inputs hash")
-    verify.add_argument("--ref", required=True, help="the tag just pushed, registry/name:tag")
-    verify.add_argument("--inputs", required=True, type=sha256_hex, help="the hash plan emitted")
+    verify = sub.add_parser(
+        "verify", help="check the pushed index carries the inputs hash"
+    )
+    verify.add_argument(
+        "--ref", required=True, help="the tag just pushed, registry/name:tag"
+    )
+    verify.add_argument(
+        "--inputs", required=True, type=sha256_hex, help="the hash plan emitted"
+    )
     verify.add_argument(
         "--platform", required=True, type=platforms, help="the os/arch list plan hashed"
     )

@@ -4,7 +4,7 @@
 #  Purpose:      VERTICAL-INTEGRATION smoke test -- verify the dependency CHAINS
 #                actually work end to end, not just that pods are Running.
 #                "Up" != "working": a pod can pass its liveness probe while its
-#                backend connection is broken. These checks exercise the real seam.
+#                backend connection is broken. These checks exercise the real connection.
 #
 #                CORE e2e tests (the START -- both DEFAULT ingest pipelines must be
 #                live, streaming data, not just instrumented):
@@ -21,7 +21,7 @@
 #                     customer-data ingest pipeline is live AND that structured
 #                     _json ingest works -- a typed sub-column read (_json.answer)
 #                     and the _raw contract are asserted, not just row presence.
-#                  3. KAFKA SEAM (single/scale tiers only): the default landing
+#                  3. KAFKA PATH (single/scale tiers only): the default landing
 #                     topic `main_land` is created, PRODUCED to (receiver) and
 #                     CONSUMED from (loader). Slim has no kafka -> skipped.
 #                An external ClickHouse (ClickHouse Cloud) is queried from the
@@ -54,9 +54,9 @@ set -uo pipefail
 # Namespace defaults MUST match the layout bootstrap.sh actually creates (see its
 # namespace loop: argocd ${DFE_NAMESPACE} strimzi clickhouse otel hyperdx forgejo).
 # A default that names a namespace the deploy never creates does not fail loudly --
-# the checks below just find nothing, and the kafka seam SKIPS itself as "no broker"
+# the checks below just find nothing, and the kafka check SKIPS itself as "no broker"
 # (live-proven 2026-07-16: NS_KAFKA defaulted to `kafka` while the broker was in
-# `strimzi`, so CORE 3 reported a reassuring SKIP and the seam went untested).
+# `strimzi`, so CORE 3 reported a reassuring SKIP and the kafka path went untested).
 NS_CNPG="${DFE_CNPG_NS:-cnpg}"
 NS_CH="${DFE_CH_NS:-clickhouse}"
 NS_APP="${DFE_NS:-${DFE_NAMESPACE:-dfe}}"
@@ -67,7 +67,7 @@ NS_APP="${DFE_NS:-${DFE_NAMESPACE:-dfe}}"
 NS_HYPERDX="${DFE_HYPERDX_NS:-$NS_APP}"
 NS_KAFKA="${DFE_KAFKA_NS:-strimzi}"
 
-# Which tier is this? A tier that runs a broker MUST prove the kafka seam; only a
+# Which tier is this? A tier that runs a broker MUST prove the kafka path; only a
 # brokerless tier may skip it. Empty = unknown -> fall back to probing for a broker.
 PROFILE="${DFE_PROFILE:-}"
 
@@ -799,7 +799,7 @@ check "payloads without a _raw field land with _raw NULL (stored once, in _json)
 
 # ---------------------------------------------------------------------------
 echo ""
-echo "=== CORE 3: kafka seam (main_land created + produced + consumed) ==="
+echo "=== CORE 3: kafka path (main_land created + produced + consumed) ==="
 # Only the kafka-based tiers (single/scale) run a broker. On slim and mesh the
 # receiver feeds the loader directly, so there is no topic to assert -> SKIP, not FAIL.
 KPOD=""
@@ -838,12 +838,12 @@ if [ -n "$KPOD" ]; then
     # SCRAM creds: the operator mints them into the broker's own namespace. The props
     # file is written INSIDE the pod so the password never lands in a host-side
     # process arg. Empty password -> the checks fail loudly (correct: no credential
-    # means the seam genuinely cannot be proven).
+    # means the kafka path cannot be proven).
     #
     # kafka_cli() exists because the previous form inlined the JAAS string -- which
     # itself contains double quotes -- through `check`'s eval and a nested sh -c. The
     # quoting did not survive, so every CORE 3 check failed on mangled args while the
-    # seam underneath was fine (live-proven 2026-07-17: the same commands run by hand
+    # kafka path underneath was fine (live-proven 2026-07-17: the same commands run by hand
     # listed main_land immediately). One layer of quoting, one place to get right.
     #
     # A managed broker serves SASL_SSL only, and its client reads dfe-kafka-user's
@@ -924,7 +924,7 @@ elif profile_has_kafka; then
   # reassurance this gate exists to prevent.
   check "kafka broker pod present in ns/$NS_KAFKA (required by the $PROFILE tier)" "false"
 else
-  skip "kafka seam -- no broker pod in ns/$NS_KAFKA (brokerless tier: receiver feeds loader directly)"
+  skip "kafka path -- no broker pod in ns/$NS_KAFKA (brokerless tier: receiver feeds loader directly)"
 fi
 if [ "$KAFKA_MODE" = external ]; then
   kafka_client_down

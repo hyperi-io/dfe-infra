@@ -8,13 +8,10 @@
 {{- /* A complete pair from the two-entry layout, else from the single-entry one, else no write at all. */ -}}
 {{- $pick := `{{ if and (index . "cert") (index . "key") }}{{ index . "%[1]s" }}{{ else if and (index . "%[2]s") (index . "%[3]s") }}{{ index . "%[4]s" }}{{ else }}{{ fail "the store holds no complete internal CA root" }}{{ end }}` -}}
 {{- if include "envoy-gateway-config.internalRootPersisted" (dict "ctx" .) }}
-# Root PERSISTENCE for the self-signed internal CA (#238). Two halves against the
-# same store entries: the ExternalSecret RESTORES the root, the PushSecret SAVES it.
-# First bootstrap: nothing to restore, cert-manager mints, the push stores it.
-# Later bootstraps: the restore writes dfe-internal-ca-tls and cert-manager
-# adopts a CA that already satisfies the Certificate spec.
-# bootstrap.sh applies this same rendered file ahead of Argo, so the restore is
-# ordered before the Certificate rather than racing it.
+# Root persistence for the self-signed internal CA (docs/deploy-tls-trust.md). The
+# ExternalSecret RESTORES the root and the PushSecret SAVES it. bootstrap.sh
+# applies this same file ahead of Argo, so the restore is ordered before the
+# Certificate rather than racing it.
 apiVersion: external-secrets.io/v1
 kind: ExternalSecret
 metadata:
@@ -74,9 +71,8 @@ spec:
   # reach the path wins it, and no later rebuild overwrites a stored root with
   # the one it just minted.
   updatePolicy: IfNotExists
-  # A persistent deployment's stored root must survive its teardown, which is the
-  # whole point. A tagged test run's entries carry the run's tags, so its own
-  # sweep deletes them with the run and the next run mints a fresh root.
+  # A persistent deployment's root must outlive its teardown. A tagged test run's
+  # entries carry its tags, so its own sweep deletes them.
   deletionPolicy: None
   secretStoreRefs:
     - name: {{ $p.secretStoreName }}

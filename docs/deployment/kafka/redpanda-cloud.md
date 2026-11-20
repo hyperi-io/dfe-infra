@@ -34,24 +34,24 @@ This is Redpanda's MANAGED cloud, which isn't the self-hosted Redpanda DFE can d
 | `unclean.leader.election` off | N/A. Raft never elects a non-quorum leader | N/A (Raft) |
 | `num.partitions=12` | Per-topic (`partition_count`), auto-scales | Per-topic (`partition_count=12`) |
 | `compression.type=producer` | Per-topic (`compression.type`), and Redpanda defaults to `producer` | Per-topic, default `producer` |
-| `log.retention.hours=72` | Per-topic `retention.ms` | Per-topic `retention.ms`, or cluster `log_retention_ms` |
+| `log.retention.hours=72`, what `dfe-ops init` writes to the dial for a managed broker | Per-topic `retention.ms` | Per-topic `retention.ms`, or cluster `log_retention_ms` |
 | `log.retention.bytes` (unset) | Per-topic `retention.bytes` | Per-topic `retention.bytes`, or cluster `retention_bytes` |
-| `log.segment.bytes=512 MiB` | Managed | Cluster `log_segment_size` (Redpanda property name) |
+| `log.segment.bytes` (left at the default) | Managed | Cluster `log_segment_size` (Redpanda property name), left at the default |
 | `cleanup.policy=delete` | Per-topic (default `delete`) | Per-topic (default `delete`) |
 | `message.max.bytes` (default) | Per-topic `max.message.bytes` | Per-topic `max.message.bytes` |
 
 Redpanda's Raft consensus makes `unclean.leader.election` moot, because a leader always holds a committed quorum. It gives you the RF3 durability equivalent through majority acknowledgement when the client sends `acks=all` (the scalo default). Set `min.insync.replicas` per topic if you want a stricter explicit floor.
 
-## Terraform / OpenTofu -- Redpanda Cloud (SCRAM-SHA-512)
+## OpenTofu: Redpanda Cloud (SCRAM-SHA-512)
 
-The `redpanda` provider authenticates with a Redpanda Cloud service-account client ID and secret (Organization IAM). There are two shapes below, Serverless (fewest dials) and Dedicated/BYOC (full topic and cluster config). The SCRAM user is a `redpanda_user` with `mechanism = "scram-sha-512"` and its ACLs, against the cluster's Data Plane API URL (`dataplane_api.url`). There's no topic resource, because dfe-engine creates every topic.
+The `redpanda` provider authenticates with a Redpanda Cloud service-account client ID and secret (Organization IAM). There are two kinds of cluster below, Serverless (fewest dials) and Dedicated/BYOC (full topic and cluster config). The SCRAM user is a `redpanda_user` with `mechanism = "scram-sha-512"` and its ACLs, against the cluster's Data Plane API URL (`dataplane_api.url`). There's no topic resource, because dfe-engine creates every topic.
 
 ```hcl
 terraform {
   required_providers {
     redpanda = {
       source  = "redpanda-data/redpanda"
-      version = "~> 2.3" # the line managed-kafka/redpanda-cloud pins
+      version = "<pin>" # the line managed-kafka/redpanda-cloud pins
     }
   }
 }
@@ -137,27 +137,36 @@ output "cluster_api_url" {
 }
 ```
 
-For the Dedicated / BYOC tier, point the local at `redpanda_cluster.dfe.cluster_api_url`. Then set cluster-level defaults (`log_segment_size = 536870912`, `log_retention_ms = 259200000`, `default_topic_partitions = 12`, `default_topic_replications = 3`) through the cluster config surface. They're the same Redpanda property names DFE's own self-hosted Redpanda CR uses (`helm/charts/kafka/templates/redpanda.yaml`).
+For the Dedicated / BYOC tier, point the local at `redpanda_cluster.dfe.cluster_api_url`. Then set cluster-level defaults (`log_retention_ms = 259200000`, `default_topic_partitions = 12`, `default_topic_replications = 3`) through the cluster config surface. They're the same Redpanda property names DFE's self-hosted Redpanda CR uses (`helm/charts/kafka/templates/redpanda.yaml`).
+
+## Module design notes
+
+`managed-kafka/redpanda-cloud` builds Serverless over AWS PrivateLink, the only tier this organisation can create. Dedicated and BYOC are quote-only, so the module refuses them at plan. Redpanda runs the brokers, so the module sizes and tunes nothing, and dfe-engine creates the topics. Serverless offers private connectivity on AWS alone, and takes the aws provider's region as its own.
+
+Redpanda publishes a VPC endpoint service and allows the deployment's own account to connect to it. The module creates the interface endpoint in the private subnets the DFE pods run on, and its security group opens 443, 8081 and 9092 to 9095 (Kafka bootstrap, brokers, schema registry, data plane API and Prometheus) from `client_cidrs`. The service publishes a verified private DNS name, so `private_dns_enabled` resolves the cluster inside the VPC and the module creates no hosted zone. Another VPC or an on-prem network resolves the cluster domain through a Route 53 Resolver inbound endpoint plus a forwarding rule, never a rule aimed at the VPC's own `.2` resolver, which Redpanda documents as not working.
+
+On private connectivity the data plane answers only through the endpoint, so the user and ACLs are written against the private URL and tofu has to run inside the VPC or behind that forwarding rule.
+
+The SCRAM user is one principal for the fleet, SCRAM-SHA-512 to match the on-prem user where the provider defaults to 256. Its password is a write-only argument, so it reaches Redpanda and never state, and `scram_password_version` tells the provider the value moved. Write-only arguments need OpenTofu 1.11. The grants are the on-prem set, topic `*` literal and groups under the `dfe-` prefix, because topic names belong to the deployment and a prefix rule would have to guess them.
 
 ## Wiring back to DFE
 
 - `kafka.mode=external`, `kafka.external.bootstrap=<the SASL bootstrap host:port>`. That's the seed brokers. It isn't the HTTP `cluster_api_url`, which is the admin/REST plane the Terraform provider uses. The client bootstrap is the Kafka SASL endpoint from the cluster's connectivity details.
-- `kafka.securityProtocol=SASL_SSL`, the one dial every app chart and dfe-engine read their protocol from. Redpanda Cloud serves SCRAM-SHA-512 over TLS only. On the aws root you set none of the mode, the endpoint or this by hand. `DFE_KAFKA_PROVIDER=redpanda-cloud` reaches bootstrap, which puts all three on the Argo cluster secret for the layer 2 appsets to hand on.
-- Credentials: the `redpanda_user` name (username) and password go in the Vault-backed external secret, with `kafka.external.auth.type=scram`.
+- `kafka.securityProtocol=SASL_SSL`, the one dial every app chart and dfe-engine read their protocol from. Redpanda Cloud serves SCRAM-SHA-512 over TLS alone. On the aws root you set none of the mode, the endpoint or this by hand. `DFE_KAFKA_PROVIDER=redpanda-cloud` reaches bootstrap, which puts all three on the Argo cluster secret for the layer 2 appsets to hand on.
+- Credentials: the `redpanda_user` name (username) and password go in the external secret in the deployment's secrets store (Secrets Manager on AWS, OpenBao elsewhere), with `kafka.external.auth.type=scram`.
 - Client config: `dfe kafka client-config --provider redpanda-cloud`.
 
 ## Verification: what is and isn't confirmed
 
-Confirmed by 2026 research (sources in the README):
+Confirmed against the platform's documentation (sources in the README):
 
 - The `redpanda` provider is GA.
 - `redpanda_serverless_cluster` (name, resource_group_id, serverless_region), `redpanda_cluster` (Dedicated/BYOC), `redpanda_topic` (partition_count, replication_factor, a `configuration` map with `cleanup.policy`, `retention.ms` and so on) and `redpanda_user` with `mechanism = "scram-sha-512"` are all current.
 - The Redpanda cluster property names `log_segment_size`, `log_retention_ms`, `default_topic_partitions` and `default_topic_replications` are confirmed.
 - The DFE `redpanda-cloud` provider is SASL_SSL SCRAM-SHA-512 (scalo `providers.rs`).
 
-NOT verified, because we have no Redpanda Cloud account here and can't deploy:
+NOT verified for the hand-written snippet above, which the `managed-kafka/redpanda-cloud` module path does not exercise:
 
-- The exact provider version to pin.
 - The precise `serverless_region`, `throughput_tier` and `zones` strings for your account.
 - Whether Serverless honours per-topic `replication_factor`. It may manage RF and ignore the field.
 - The exact Kafka SASL bootstrap host to feed `kafka.external.bootstrap`. Read it from the cluster's connectivity details after apply.

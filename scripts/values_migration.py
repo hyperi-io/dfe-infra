@@ -42,14 +42,23 @@ from pathlib import Path
 import yaml_subset
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-MAP_FILE = REPO_ROOT / "helm" / "charts" / "dfe-extras" / "files" / "values-migrations.yaml"
+MAP_FILE = (
+    REPO_ROOT / "helm" / "charts" / "dfe-extras" / "files" / "values-migrations.yaml"
+)
 
 # The deploy repo's instance overlays, and the overlay every appset layers under them.
 OVERLAY_DIR = Path("values")
 OVERLAY_GLOB = "*-values.yaml"
 COMMON_OVERLAY = Path("infra") / "common.yaml"
 
-KINDS = ("move", "copy", "derive-identity", "derive-entries", "refuse", "report-dropped")
+KINDS = (
+    "move",
+    "copy",
+    "derive-identity",
+    "derive-entries",
+    "refuse",
+    "report-dropped",
+)
 GUARDS = ("", "empty", "equal")
 UNLESS = ("", "pinned-override")
 
@@ -70,7 +79,9 @@ _KEY = re.compile(
     r"""^(?P<indent> *)(?P<key>[A-Za-z_][\w.\-/]*|"[^"\n]*"|'[^'\n]*')[ \t]*:(?:[ \t]+(?P<rest>.*?))?[ \t]*$"""
 )
 # A key on a sequence item's dash line: `- name: x`.
-_ITEM_KEY = re.compile(r"""^(?P<key>[A-Za-z_][\w.\-]*)[ \t]*:(?:[ \t]+(?P<rest>.*?))?[ \t]*$""")
+_ITEM_KEY = re.compile(
+    r"""^(?P<key>[A-Za-z_][\w.\-]*)[ \t]*:(?:[ \t]+(?P<rest>.*?))?[ \t]*$"""
+)
 # A value written on a key's line that holds nothing.
 _NOTHING = ("", "~", "null", "Null", "NULL", "{}", "[]")
 # A scalar safe to write unquoted: no YAML indicator, never read as another type.
@@ -194,17 +205,28 @@ def load_map(path: Path | None = None) -> MigrationMap:
 def _check_rule(path: Path, rule: Rule) -> None:
     where = f"{path}: rule {rule.id}"
     if rule.kind not in KINDS:
-        raise MigrationMapError(f"{where}: kind {rule.kind!r} is not one of {', '.join(KINDS)}")
+        raise MigrationMapError(
+            f"{where}: kind {rule.kind!r} is not one of {', '.join(KINDS)}"
+        )
     if rule.guard not in GUARDS:
         raise MigrationMapError(f"{where}: guard {rule.guard!r} is not empty or equal")
     if rule.unless not in UNLESS or (rule.unless and rule.kind != "refuse"):
-        raise MigrationMapError(f"{where}: unless {rule.unless!r} is not empty or pinned-override on a refuse rule")
+        raise MigrationMapError(
+            f"{where}: unless {rule.unless!r} is not empty or pinned-override on a refuse rule"
+        )
     if not rule.apps or not rule.sources:
         raise MigrationMapError(f"{where}: needs `apps` and `from`")
-    if rule.kind in ("move", "copy", "derive-identity", "derive-entries") and not rule.to:
+    if (
+        rule.kind in ("move", "copy", "derive-identity", "derive-entries")
+        and not rule.to
+    ):
         raise MigrationMapError(f"{where}: a {rule.kind} rule needs `to`")
-    if rule.kind == "derive-entries" and not (rule.directory and rule.dir_key and rule.legacy_dir):
-        raise MigrationMapError(f"{where}: a derive-entries rule needs `dir`, `dirKey` and `legacyDir`")
+    if rule.kind == "derive-entries" and not (
+        rule.directory and rule.dir_key and rule.legacy_dir
+    ):
+        raise MigrationMapError(
+            f"{where}: a derive-entries rule needs `dir`, `dirKey` and `legacyDir`"
+        )
 
 
 # --- the line model -----------------------------------------------------------
@@ -329,7 +351,9 @@ class _Doc:
                 continue
             column = self._indent(j)
             if column > indent or (
-                column == indent and open_block and (stripped == "-" or stripped.startswith("- "))
+                column == indent
+                and open_block
+                and (stripped == "-" or stripped.startswith("- "))
             ):
                 last = j
                 continue
@@ -363,9 +387,15 @@ class _Doc:
             found = None
             for j in range(start + 1, end):
                 match = _KEY.match(self.lines[j])
-                if match and len(match["indent"]) == indent and _unquote(match["key"]) == step:
+                if (
+                    match
+                    and len(match["indent"]) == indent
+                    and _unquote(match["key"]) == step
+                ):
                     rest = match["rest"] or ""
-                    found = _Node(j, self._end(j, indent, rest), indent, match["key"], rest)
+                    found = _Node(
+                        j, self._end(j, indent, rest), indent, match["key"], rest
+                    )
                     break
             if found is None:
                 return None
@@ -383,7 +413,9 @@ class _Doc:
 
     def value_text(self, node: _Node) -> tuple[str, list[str]]:
         """The key's value as written, comment-free inline and indent-free block, for comparing two keys."""
-        block = [line for line in _shift(self.block(node), -node.indent) if line.strip()]
+        block = [
+            line for line in _shift(self.block(node), -node.indent) if line.strip()
+        ]
         return _strip_comment(node.rest), block
 
     def items(self, node: _Node) -> list[_Item] | None:
@@ -470,7 +502,10 @@ class _Doc:
             indent = self.child_indent(None) or 0
             at = len(self.lines)
             if beside is not None:
-                top = next((n for n in self._top_level() if n.start <= beside.start < n.end), None)
+                top = next(
+                    (n for n in self._top_level() if n.start <= beside.start < n.end),
+                    None,
+                )
                 at = top.end if top is not None else at
         new: list[str] = []
         for step in path[depth:-1]:
@@ -490,8 +525,13 @@ class _Doc:
                 if refound is None:
                     raise MigrationError(f"{'.'.join(path)} could not be read back")
                 node = refound
-            if any(self._content(j) for j in range(node.start + 1, node.end)) and self.child_indent(node) is None:
-                raise MigrationError(f"{'.'.join(path)} holds a list, so no key can go under it")
+            if (
+                any(self._content(j) for j in range(node.start + 1, node.end))
+                and self.child_indent(node) is None
+            ):
+                raise MigrationError(
+                    f"{'.'.join(path)} holds a list, so no key can go under it"
+                )
             return node
         raise MigrationError(
             f"{'.'.join(path)} is written on one line ({inline}), so it takes no new key -- "
@@ -507,13 +547,20 @@ class _Doc:
             match = _KEY.match(line)
             if match and len(match["indent"]) == indent:
                 rest = match["rest"] or ""
-                nodes.append(_Node(j, self._end(j, indent, rest), indent, match["key"], rest))
+                nodes.append(
+                    _Node(j, self._end(j, indent, rest), indent, match["key"], rest)
+                )
         return nodes
 
-    def replace_value(self, node: _Node, rest: str, block: list[str], *, source_indent: int) -> None:
+    def replace_value(
+        self, node: _Node, rest: str, block: list[str], *, source_indent: int
+    ) -> None:
         """Give the key on `node` a new value, written as `insert` writes one."""
         head = f"{' ' * node.indent}{node.key}:" + (f" {rest}" if rest else "")
-        self.lines[node.start : node.end] = [head, *_shift(block, node.indent - source_indent)]
+        self.lines[node.start : node.end] = [
+            head,
+            *_shift(block, node.indent - source_indent),
+        ]
 
     def delete(self, path: tuple[str, ...]) -> bool:
         """Remove the key at `path` and its block, then each parent it leaves empty."""
@@ -539,7 +586,9 @@ def _shaped(doc: _Doc, node: _Node, shape: str) -> tuple[str, list[str], int]:
     if shape == "list":
         inline = _strip_comment(node.rest)
         if not inline or doc.block(node):
-            raise MigrationError(f"{node.key} is not a one-line value, so it cannot become a one-item list")
+            raise MigrationError(
+                f"{node.key} is not a one-line value, so it cannot become a one-item list"
+            )
         return f"[{inline}]", [], node.indent
     return node.rest.strip(), doc.block(node), node.indent
 
@@ -555,10 +604,16 @@ def _move(doc: _Doc, rule: Rule, *, resync: bool) -> tuple[str, str] | None:
     if new is None:
         doc.insert(_path(rule.to), rest, block, source_indent=indent, beside=old)
         return MIGRATE, label
-    target = (_strip_comment(rest), [line for line in _shift(block, -indent) if line.strip()])
+    target = (
+        _strip_comment(rest),
+        [line for line in _shift(block, -indent) if line.strip()],
+    )
     if resync and doc.value_text(new) != target:
         doc.replace_value(new, rest, block, source_indent=indent)
-        return RESYNC, f"{label} (the new key differed, and the 2.2.0 charts still read the old one)"
+        return (
+            RESYNC,
+            f"{label} (the new key differed, and the 2.2.0 charts still read the old one)",
+        )
     return DONE, label
 
 
@@ -568,7 +623,9 @@ def _identity(doc: _Doc, rule: Rule) -> tuple[str, str] | None:
     if old is None or not doc.holds_value(old):
         return None
     if doc.block(old):
-        raise MigrationError(f"{source} is not a one-line value, so {rule.to} cannot be derived from it")
+        raise MigrationError(
+            f"{source} is not a one-line value, so {rule.to} cannot be derived from it"
+        )
     value = rule.prefix + scalar(old.rest)
     new = doc.find(_path(rule.to))
     if new is not None:
@@ -582,7 +639,9 @@ def _table_name(filename: str) -> str:
     return filename.rsplit(".", 1)[0]
 
 
-def _entries(doc: _Doc, rule: Rule, service: str, *, resync: bool) -> tuple[str, str] | None:
+def _entries(
+    doc: _Doc, rule: Rule, service: str, *, resync: bool
+) -> tuple[str, str] | None:
     """An enrichment_tables entry for each table file, at the directory both charts mount.
 
     The 2.2.0 chart mounted the tables at legacyDir and added an entry for each
@@ -600,9 +659,17 @@ def _entries(doc: _Doc, rule: Rule, service: str, *, resync: bool) -> tuple[str,
     if not files:
         return None
     dir_node = doc.find((rule.dir_key,))
-    directory = scalar(dir_node.rest) if dir_node is not None and _strip_comment(dir_node.rest) else rule.directory
+    directory = (
+        scalar(dir_node.rest)
+        if dir_node is not None and _strip_comment(dir_node.rest)
+        else rule.directory
+    )
     component_node = doc.find(("component",))
-    component = scalar(component_node.rest) if component_node is not None else service.removeprefix("dfe-")
+    component = (
+        scalar(component_node.rest)
+        if component_node is not None
+        else service.removeprefix("dfe-")
+    )
     legacy = rule.legacy_dir.replace("<component>", component)
 
     entries_path = _path(rule.to)
@@ -611,7 +678,9 @@ def _entries(doc: _Doc, rule: Rule, service: str, *, resync: bool) -> tuple[str,
     if entries is not None:
         inline = _strip_comment(entries.rest)
         if inline not in ("", "[]", "~", "null"):
-            raise MigrationError(f"{rule.to} is written on one line, so no entry can be added -- write it as a block list")
+            raise MigrationError(
+                f"{rule.to} is written on one line, so no entry can be added -- write it as a block list"
+            )
         declared = doc.items(entries) or []
 
     moved: list[tuple[int, str]] = []
@@ -633,14 +702,17 @@ def _entries(doc: _Doc, rule: Rule, service: str, *, resync: bool) -> tuple[str,
             f"point each entry at {directory}/<file> by hand"
         )
 
-    names = {scalar(item.fields["name"][1]) for item in declared if "name" in item.fields}
+    names = {
+        scalar(item.fields["name"][1]) for item in declared if "name" in item.fields
+    }
     added: list[tuple[str, str]] = []
     for name in files:
         table = _table_name(name)
         if table not in names and table not in {a for a, _ in added}:
             added.append((table, f"{directory}/{name}"))
     dead = [
-        item for item in declared
+        item
+        for item in declared
         if resync and _derived_and_gone(item, directory, files)
     ]
     if not (moved or added or dead or dir_node is None):
@@ -649,15 +721,29 @@ def _entries(doc: _Doc, rule: Rule, service: str, *, resync: bool) -> tuple[str,
     for line, value in moved:
         head = re.match(r"^(\s*(?:-\s+)?path[ \t]*:[ \t]*)", doc.lines[line])
         if head is None:
-            raise MigrationError(f"cannot rewrite the path on {doc.lines[line].strip()!r}")
+            raise MigrationError(
+                f"cannot rewrite the path on {doc.lines[line].strip()!r}"
+            )
         doc.lines[line] = head[1] + yaml_scalar(value)
     for item in sorted(dead, key=lambda i: i.start, reverse=True):
         del doc.lines[item.start : item.end]
     if added:
         entries = doc.find(entries_path)
-        new_items = [line for table, path in added for line in (f"- name: {yaml_scalar(table)}", f"  path: {yaml_scalar(path)}")]
+        new_items = [
+            line
+            for table, path in added
+            for line in (
+                f"- name: {yaml_scalar(table)}",
+                f"  path: {yaml_scalar(path)}",
+            )
+        ]
         if entries is None:
-            doc.insert(entries_path, "", [f"  {line}" for line in new_items], beside=doc.find(_path(rule.sources[0])))
+            doc.insert(
+                entries_path,
+                "",
+                [f"  {line}" for line in new_items],
+                beside=doc.find(_path(rule.sources[0])),
+            )
         else:
             if _strip_comment(entries.rest):
                 doc.lines[entries.start] = f"{' ' * entries.indent}{entries.key}:"
@@ -665,19 +751,35 @@ def _entries(doc: _Doc, rule: Rule, service: str, *, resync: bool) -> tuple[str,
             if entries is None:
                 raise MigrationError(f"{rule.to} could not be read back")
             current = doc.items(entries) or []
-            item_indent = doc._indent(current[0].start) if current else entries.indent + 2
-            doc.lines[entries.end : entries.end] = [f"{' ' * item_indent}{line}" for line in new_items]
+            item_indent = (
+                doc._indent(current[0].start) if current else entries.indent + 2
+            )
+            doc.lines[entries.end : entries.end] = [
+                f"{' ' * item_indent}{line}" for line in new_items
+            ]
     if dir_node is None:
-        doc.insert((rule.dir_key,), yaml_scalar(directory), beside=doc.find(_path(rule.sources[0])))
+        doc.insert(
+            (rule.dir_key,),
+            yaml_scalar(directory),
+            beside=doc.find(_path(rule.sources[0])),
+        )
 
-    detail = [f"{rule.to}: {', '.join(table for table, _ in added)} at {directory}"] if added else []
+    detail = (
+        [f"{rule.to}: {', '.join(table for table, _ in added)} at {directory}"]
+        if added
+        else []
+    )
     if moved:
         detail.append(f"{len(moved)} entry path(s) moved from {legacy} to {directory}")
     if dead:
         detail.append(f"{len(dead)} entry(ies) for a table no longer carried dropped")
     if dir_node is None:
-        detail.append(f"{rule.dir_key}: {directory}, so the 2.2.0 chart mounts the tables there too")
-    return (RESYNC if dead and not added and not moved and dir_node is not None else MIGRATE), "; ".join(detail)
+        detail.append(
+            f"{rule.dir_key}: {directory}, so the 2.2.0 chart mounts the tables there too"
+        )
+    return (
+        RESYNC if dead and not added and not moved and dir_node is not None else MIGRATE
+    ), "; ".join(detail)
 
 
 def _derived_and_gone(item: _Item, directory: str, files: list[str]) -> bool:
@@ -688,7 +790,10 @@ def _derived_and_gone(item: _Item, directory: str, files: list[str]) -> bool:
     if not path.startswith(f"{directory}/"):
         return False
     filename = path[len(directory) + 1 :]
-    return scalar(item.fields["name"][1]) == _table_name(filename) and filename not in files
+    return (
+        scalar(item.fields["name"][1]) == _table_name(filename)
+        and filename not in files
+    )
 
 
 def _present(doc: _Doc, rule: Rule) -> list[str]:
@@ -701,7 +806,12 @@ def _present(doc: _Doc, rule: Rule) -> list[str]:
 
 
 def _apply(
-    doc: _Doc, rule: Rule, service: str | None, *, resync: bool, overrides: dict[str, str]
+    doc: _Doc,
+    rule: Rule,
+    service: str | None,
+    *,
+    resync: bool,
+    overrides: dict[str, str],
 ) -> tuple[str, str] | None:
     if rule.kind in ("move", "copy"):
         return _move(doc, rule, resync=resync)
@@ -711,13 +821,20 @@ def _apply(
         return _entries(doc, rule, service or "", resync=resync)
     found = _present(doc, rule)
     if rule.unless == "pinned-override":
-        found = [source for source in found if not _is_override(doc, source, overrides.get(service or ""))]
+        found = [
+            source
+            for source in found
+            if not _is_override(doc, source, overrides.get(service or ""))
+        ]
     if not found:
         return None
     reason = f" -- {rule.why}" if rule.why else ""
     if rule.kind == "refuse":
         return REFUSED, f"{', '.join(found)}{reason}"
-    return DROPPED, f"{', '.join(found)}: the thin charts from {{since}} read nothing in its place{reason}"
+    return (
+        DROPPED,
+        f"{', '.join(found)}: the thin charts from {{since}} read nothing in its place{reason}",
+    )
 
 
 def _is_override(doc: _Doc, source: str, pinned: str | None) -> bool:
@@ -750,7 +867,14 @@ def _contract(doc: _Doc, rule: Rule) -> tuple[str, str] | None:
         return None
     label = f"{source} (now {rule.to})"
     if doc.find(_path(rule.to)) is None:
-        return (MIGRATE, f"{source} -> {rule.to}, which must be there before {source} can go") if doc.holds_value(old) else None
+        return (
+            (
+                MIGRATE,
+                f"{source} -> {rule.to}, which must be there before {source} can go",
+            )
+            if doc.holds_value(old)
+            else None
+        )
     doc.delete(_path(source))
     return CONTRACT, label
 
@@ -761,7 +885,9 @@ def _files(deploy: Path) -> list[tuple[str, Path, str | None, bool]]:
     overlays = deploy / OVERLAY_DIR
     if overlays.is_dir():
         for path in sorted(overlays.glob(OVERLAY_GLOB)):
-            service = yaml_subset.value_at(path.read_text(encoding="utf-8"), ("deploy", "service"))
+            service = yaml_subset.value_at(
+                path.read_text(encoding="utf-8"), ("deploy", "service")
+            )
             found.append(((OVERLAY_DIR / path.name).as_posix(), path, service, False))
     common = deploy / COMMON_OVERLAY
     if common.is_file():
@@ -769,7 +895,14 @@ def _files(deploy: Path) -> list[tuple[str, Path, str | None, bool]]:
     return found
 
 
-def _walk(deploy: Path, migration: MigrationMap, *, write: bool, step: str, resync: bool = False) -> list[Hit]:
+def _walk(
+    deploy: Path,
+    migration: MigrationMap,
+    *,
+    write: bool,
+    step: str,
+    resync: bool = False,
+) -> list[Hit]:
     hits: list[Hit] = []
     overrides = _pinned_overrides(deploy)
     for name, path, service, common in _files(deploy):
@@ -783,13 +916,17 @@ def _walk(deploy: Path, migration: MigrationMap, *, write: bool, step: str, resy
                 if step == "contract":
                     found = _contract(doc, rule)
                 else:
-                    found = _apply(doc, rule, service, resync=resync, overrides=overrides)
+                    found = _apply(
+                        doc, rule, service, resync=resync, overrides=overrides
+                    )
             except MigrationError as err:
                 doc.lines = saved
                 found = (REFUSED, f"{rule.id}: {err}")
             if found is not None:
                 state, detail = found
-                hits.append(Hit(name, rule, state, detail.replace("{since}", migration.since)))
+                hits.append(
+                    Hit(name, rule, state, detail.replace("{since}", migration.since))
+                )
         if write and doc.text != original:
             path.write_text(doc.text, encoding="utf-8", newline="\n")
     return hits
@@ -843,10 +980,15 @@ def list_items(text: str, dotted: str) -> list[dict[str, str]] | None:
     items = doc.items(node)
     if items is None:
         return None
-    return [{key: scalar(rest) for key, (_line, rest) in item.fields.items()} for item in items]
+    return [
+        {key: scalar(rest) for key, (_line, rest) in item.fields.items()}
+        for item in items
+    ]
 
 
-def _literal_block(lines: list[str], start: int, key_column: int, header: str) -> str | None:
+def _literal_block(
+    lines: list[str], start: int, key_column: int, header: str
+) -> str | None:
     """A literal block scalar's text, from the lines after its key; None for a header this does not read.
 
     Reads `|` with its chomping (`-` strip, `+` keep) and indentation indicators.
@@ -864,8 +1006,12 @@ def _literal_block(lines: list[str], start: int, key_column: int, header: str) -
         if line.strip() and len(line) - len(line.lstrip(" ")) <= key_column:
             break
         block.append(line)
-    indent = key_column + int(digit) if digit else next(
-        (len(line) - len(line.lstrip(" ")) for line in block if line.strip()), 0
+    indent = (
+        key_column + int(digit)
+        if digit
+        else next(
+            (len(line) - len(line.lstrip(" ")) for line in block if line.strip()), 0
+        )
     )
     body = [line[indent:] if line.strip() else "" for line in block]
     kept = len(body)
@@ -913,7 +1059,9 @@ def list_contents(
         header = _strip_comment(rest)
         if header.startswith(("|", ">")):
             key_column = doc.lines[line].index(field_name)
-            contents[scalar(name[1])] = _literal_block(doc.lines, line, key_column, header)
+            contents[scalar(name[1])] = _literal_block(
+                doc.lines, line, key_column, header
+            )
         else:
             contents[scalar(name[1])] = scalar(rest)
     return contents

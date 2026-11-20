@@ -17,7 +17,7 @@ python3 scripts/resolve_sizing.py --dial deployment.yaml --live \
 python3 scripts/render_dial.py --tofu
 ```
 
-`dfe-ops init` asks nine questions and writes `deployment.yaml`, the one file the deployment reads. Answer `aws` for the target, `scale` for the tier, and `msk`, `confluent-cloud` or `redpanda-cloud` for Kafka. The resolver asks the AWS API what the region offers and sizes the node pools from your GB/day estimate. Leave the estimate blank for the smallest shape that runs.
+`dfe-ops init` asks nine questions and writes `deployment.yaml`, the one file the deployment reads. Answer `aws` for the target, `scale` for the tier, and `msk`, `confluent-cloud` or `redpanda-cloud` for Kafka. The resolver asks the AWS API what the region offers and sizes the node pools from your GB/day estimate. Leave the estimate blank for the smallest node pools that run.
 
 Confluent Cloud and Redpanda Cloud take their API credentials from your shell, never a file. Export `CONFLUENT_CLOUD_API_KEY` and `CONFLUENT_CLOUD_API_SECRET` for Confluent Cloud before the plan. The Redpanda provider checks for `REDPANDA_CLIENT_ID` and `REDPANDA_CLIENT_SECRET` on every plan, whichever Kafka you chose.
 
@@ -32,6 +32,8 @@ python3 scripts/dfe-ops stack-deploy --stack <version> --mode scale \
 ```
 
 The apply builds the VPC, EKS and its node groups, the managed Kafka, the KMS key, the Route 53 zones and the Secrets Manager store. `stack-deploy` reads its outputs, deploys the stack at `<version>`, and finishes by sending an event through to ClickHouse and checking the stack's own telemetry landed.
+
+The gateway is internet-facing, so the console and the engine API answer 403 to every outside address from the first sync until you name who may reach them. Set `exposure.groups.console.allow` and `exposure.groups.api.allow` in your deploy repo's `infra/common.yaml` ([internet-facing defaults](../dfe-infra/edge-auth-cloud.md#internet-facing-defaults)).
 
 Next:
 

@@ -43,7 +43,12 @@ def smoke(fixture: dict, *, wait: str = "30", **env: str):
 
 
 def test_every_pushing_service_with_a_fresh_row_passes() -> None:
-    out, counts = smoke({"workloads": workloads(*APPS), "metric_services": [*APPS, "k8s-node", "otelcol-contrib"]})
+    out, counts = smoke(
+        {
+            "workloads": workloads(*APPS),
+            "metric_services": [*APPS, "k8s-node", "otelcol-contrib"],
+        }
+    )
 
     assert PASS in out.stdout, out.stdout
     assert counts["metrics"] == 1
@@ -51,7 +56,10 @@ def test_every_pushing_service_with_a_fresh_row_passes() -> None:
 
 def test_a_service_with_no_metric_row_fails_and_is_named() -> None:
     out, _ = smoke(
-        {"workloads": workloads(*APPS), "metric_services": ["dfe-receiver", "dfe-archiver", "dfe-engine"]},
+        {
+            "workloads": workloads(*APPS),
+            "metric_services": ["dfe-receiver", "dfe-archiver", "dfe-engine"],
+        },
         wait="2",
     )
 
@@ -62,7 +70,11 @@ def test_a_service_with_no_metric_row_fails_and_is_named() -> None:
 
 def test_a_service_that_pushes_late_still_passes() -> None:
     out, counts = smoke(
-        {"workloads": workloads(*APPS), "metric_services": list(APPS), "metric_zero_answers": 2},
+        {
+            "workloads": workloads(*APPS),
+            "metric_services": list(APPS),
+            "metric_zero_answers": 2,
+        },
     )
 
     assert PASS in out.stdout, out.stdout
@@ -72,13 +84,24 @@ def test_a_service_that_pushes_late_still_passes() -> None:
 
 @pytest.mark.parametrize("series", ["dfe-transform-vrl-flowvrl", "dfe-transform-vrl"])
 def test_a_per_config_deployment_is_matched_by_its_family(series: str) -> None:
-    out, _ = smoke({"workloads": workloads("dfe-transform-vrl-flowvrl"), "metric_services": [series]})
+    out, _ = smoke(
+        {
+            "workloads": workloads("dfe-transform-vrl-flowvrl"),
+            "metric_services": [series],
+        }
+    )
 
     assert PASS in out.stdout, out.stdout
 
 
 def test_a_lookalike_name_does_not_stand_in_for_the_service() -> None:
-    out, _ = smoke({"workloads": workloads("dfe-loader"), "metric_services": ["dfe-loaderx", "dfe-loading"]}, wait="2")
+    out, _ = smoke(
+        {
+            "workloads": workloads("dfe-loader"),
+            "metric_services": ["dfe-loaderx", "dfe-loading"],
+        },
+        wait="2",
+    )
 
     assert FAIL in out.stdout, out.stdout
 
@@ -92,21 +115,30 @@ def test_a_lookalike_name_does_not_stand_in_for_the_service() -> None:
     ],
     ids=["prometheus-mode", "external-endpoint", "not-ready"],
 )
-def test_a_workload_that_is_not_expected_to_push_is_not_held_to_it(workload: dict) -> None:
-    out, _ = smoke({"workloads": workloads("dfe-loader", **workload), "metric_services": []})
+def test_a_workload_that_is_not_expected_to_push_is_not_held_to_it(
+    workload: dict,
+) -> None:
+    out, _ = smoke(
+        {"workloads": workloads("dfe-loader", **workload), "metric_services": []}
+    )
 
     assert "[SKIP] per-service telemetry" in out.stdout, out.stdout
     assert FAIL not in out.stdout
 
 
 def test_a_workload_that_is_not_a_scalo_service_is_not_held_to_it() -> None:
-    out, _ = smoke({"workloads": workloads("dfe-ui", "dfe-hyperdx"), "metric_services": []})
+    out, _ = smoke(
+        {"workloads": workloads("dfe-ui", "dfe-hyperdx"), "metric_services": []}
+    )
 
     assert "[SKIP] per-service telemetry" in out.stdout
 
 
 def test_the_section_can_be_switched_off() -> None:
-    out, counts = smoke({"workloads": workloads(*APPS), "metric_services": []}, DFE_SERVICE_TELEMETRY="skip")
+    out, counts = smoke(
+        {"workloads": workloads(*APPS), "metric_services": []},
+        DFE_SERVICE_TELEMETRY="skip",
+    )
 
     assert "[SKIP] per-service telemetry -- DFE_SERVICE_TELEMETRY=skip" in out.stdout
     assert "metrics" not in counts

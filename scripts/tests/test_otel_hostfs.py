@@ -49,7 +49,9 @@ def daemonset_pod(docs: list[dict]) -> dict:
 
 def daemonset_config(docs: list[dict]) -> dict:
     for doc in docs:
-        if doc.get("kind") == "ConfigMap" and "daemonset-config.yaml" in doc.get("data", {}):
+        if doc.get("kind") == "ConfigMap" and "daemonset-config.yaml" in doc.get(
+            "data", {}
+        ):
             return yaml.safe_load(doc["data"]["daemonset-config.yaml"])
     raise SystemExit("no daemonset config rendered")
 
@@ -75,7 +77,9 @@ def test_root_path_is_where_the_node_root_is_mounted() -> None:
         f"{root_path!r} vs {sorted(node_root)}",
     )
     mount = node_root.get(root_path, {})
-    expect("the node root is mounted read-only", mount.get("readOnly") is True, repr(mount))
+    expect(
+        "the node root is mounted read-only", mount.get("readOnly") is True, repr(mount)
+    )
 
 
 def test_the_filesystem_scraper_skips_container_overlays() -> None:
@@ -88,8 +92,14 @@ def test_the_deprecated_receiver_name_is_gone() -> None:
     """`hostmetrics` is the receiver's deprecated type name; `host_metrics` replaced it."""
     config = daemonset_config(rendered())
     receivers = config["service"]["pipelines"]["metrics"]["receivers"]
-    expect("hostmetrics is not configured", "hostmetrics" not in config["receivers"], "")
-    expect("the metrics pipeline reads host_metrics", "host_metrics" in receivers, repr(receivers))
+    expect(
+        "hostmetrics is not configured", "hostmetrics" not in config["receivers"], ""
+    )
+    expect(
+        "the metrics pipeline reads host_metrics",
+        "host_metrics" in receivers,
+        repr(receivers),
+    )
 
 
 def main() -> int:

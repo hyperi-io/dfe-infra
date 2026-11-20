@@ -1,8 +1,6 @@
 {{- if eq .Values.clickhouse.mode "cluster" }}
 {{- if .Values.clickhouse.keeper.serviceAccount.create }}
-# Keeper's own identity -- never the release namespace's default account (see
-# clickhouse.serviceAccount in values.yaml for why sharing it is the fault
-# being avoided). No Pod Identity association ever targets this account.
+# docs/deployment/clickhouse.md, Placement and identity.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -12,8 +10,7 @@ metadata:
 automountServiceAccountToken: {{ .Values.clickhouse.keeper.serviceAccount.automountServiceAccountToken }}
 ---
 {{- end }}
-# DFE-owned ClickHouse Keeper for cluster mode (self-contained -- not shared with
-# any other product's keeper). Backs the ReplicatedMergeTree coordination.
+# DFE's own Keeper for ReplicatedMergeTree coordination.
 apiVersion: clickhouse.com/v1alpha1
 kind: KeeperCluster
 metadata:
@@ -23,7 +20,7 @@ metadata:
 spec:
   replicas: {{ .Values.clickhouse.keeper.replicas }}
   containerTemplate:
-    # The operator renders repository:tag and drops `hash` whenever a tag is set (its defaulting sets one), so the digest rides in the tag.
+    # The operator drops `hash` whenever a tag is set, so the digest rides in the tag.
     image:
       repository: {{ .Values.clickhouse.keeper.image.repository }}
       tag: "{{ .Values.clickhouse.keeper.image.tag }}{{ with .Values.clickhouse.keeper.image.digest }}@{{ . }}{{ end }}"
@@ -35,7 +32,6 @@ spec:
         cpu: {{ .Values.clickhouse.keeper.resources.limits.cpu }}
         memory: {{ .Values.clickhouse.keeper.resources.limits.memory }}
     {{- with .Values.clickhouse.keeper.livenessProbe }}
-    # Replaces the operator's TCP probe whole; see clickhouse.keeper.livenessProbe.
     livenessProbe:
       {{- toYaml . | nindent 6 }}
     {{- end }}
@@ -47,18 +43,13 @@ spec:
     {{- with (.Values.clickhouse.keeper.storage.storageClass | default .Values.storageClass) }}
     storageClassName: {{ . | quote }}
     {{- end }}
-  # The operator's own ingress policy: raft 9234 from the other keepers, and 2181, 2281 and 9123
-  # from pods labelled as the operator in any namespace and the ClickHouse clusters that reference
-  # this keeper. network-policies leaves these pods out of data-ingress-policy, which would open
-  # every port to every DFE namespace.
+  # The operator's own ingress policy. network-policies leaves these pods out of data-ingress-policy, which would open every port to every DFE namespace.
   # Risk-accepted: the any-namespace operator peer (docs/threat-model.md, Accepted risks).
   networkPolicy:
     policy: Enabled
   settings:
-    # Keeper's log shares the data PVC with the raft log and snapshots.
     logger:
       {{- include "dfe-clickhouse.logger" .Values.clickhouse.keeper.log | nindent 6 }}
-    # The operator writes extraConfig as 99-extra-config.yaml, which merges after its own config.
     extraConfig:
       keeper_server:
         four_letter_word_white_list: {{ .Values.clickhouse.keeper.fourLetterWords | quote }}
@@ -78,8 +69,7 @@ spec:
     {{- end }}
     {{- end }}
     {{- if .Values.clickhouse.podSpread.enabled }}
-    {{- /* Selects the labels the operator writes on keeper pods, so only keepers
-    are counted (label source: scripts/tests/test_clickhouse_replica_spread.py). */}}
+    {{- /* The operator's labels on keeper pods, so only keepers are counted. */}}
     topologySpreadConstraints:
       - maxSkew: {{ .Values.clickhouse.podSpread.maxSkew }}
         topologyKey: {{ .Values.clickhouse.podSpread.topologyKey }}

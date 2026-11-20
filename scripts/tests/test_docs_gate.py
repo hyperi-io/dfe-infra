@@ -53,15 +53,22 @@ def test_copy_prose_keeps_values_on_their_lines_and_drops_the_rest(
     ("yaml_text", "rules"),
     [
         ("tagline: A data pipeline you run yourself.\n", set()),
-        ("tagline: We leverage it; it should work.\n", {"register", "semicolon", "hedge"}),
+        (
+            "tagline: We leverage it; it should work.\n",
+            {"register", "semicolon", "hedge"},
+        ),
         ("- code: |-\n    a; b\n", set()),
         ("- {label: Robust docs, to: /x/}\n", {"register"}),
     ],
 )
-def test_the_gate_reads_a_copy_file(tmp_path: Path, yaml_text: str, rules: set[str]) -> None:
+def test_the_gate_reads_a_copy_file(
+    tmp_path: Path, yaml_text: str, rules: set[str]
+) -> None:
     copy = tmp_path / "landing.yaml"
     copy.write_text(yaml_text, encoding="utf-8")
-    phrases = gate.load_phrases(gate.aggregate.yaml_subset.parse(gate.GATE_FILE.read_text()))
+    phrases = gate.load_phrases(
+        gate.aggregate.yaml_subset.parse(gate.GATE_FILE.read_text())
+    )
     assert {finding.rule for finding in gate.gate_files([copy], phrases)} == rules
 
 
@@ -69,13 +76,21 @@ def test_the_gate_reads_a_copy_file(tmp_path: Path, yaml_text: str, rules: set[s
     ("line", "flagged"),
     [
         pytest.param(
-            "Index engines such as Elasticsearch build an index.", False, id="product_name"
+            "Index engines such as Elasticsearch build an index.",
+            False,
+            id="product_name",
         ),
-        pytest.param("Index engines such as ElasticSearch build an index.", True, id="misspelt"),
-        pytest.param("Your Elastic ingest pipelines come across.", False, id="company_and_stack"),
+        pytest.param(
+            "Index engines such as ElasticSearch build an index.", True, id="misspelt"
+        ),
+        pytest.param(
+            "Your Elastic ingest pipelines come across.", False, id="company_and_stack"
+        ),
     ],
 )
-def test_the_gate_flags_only_the_misspelt_product_name(line: str, flagged: bool) -> None:
+def test_the_gate_flags_only_the_misspelt_product_name(
+    line: str, flagged: bool
+) -> None:
     rules = {rule for rule, _, _ in gate.check_line(line, {})}
     assert ("elasticsearch" in rules) is flagged
 
@@ -96,4 +111,7 @@ def test_the_gate_skips_generated_section_indexes_and_api_pages(tmp_path: Path) 
         path.write_text(text, encoding="utf-8")
     site = {"builds": [{"name": "2.2.1", "openapi": {"output": "2.2.1/api"}}]}
     (tmp_path / gate.aggregate.SITE_FILE).write_text(json.dumps(site), encoding="utf-8")
-    assert [page for _, page, _ in gate.pages_in(tmp_path)] == ["own/index.md", "own/page.md"]
+    assert [page for _, page, _ in gate.pages_in(tmp_path)] == [
+        "own/index.md",
+        "own/page.md",
+    ]

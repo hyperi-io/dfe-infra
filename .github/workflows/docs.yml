@@ -1,6 +1,5 @@
-# Builds the DFE docs site from every released stack's pins, plus the unlisted
-# /next/ preview from each member's default branch, and deploys it to the docs
-# Worker. A pull request that touches the site builds it and uploads a preview, and never deploys.
+# Builds the docs site, deploys it to the docs Worker from main, and uploads a preview for a pull request that touches the site.
+# docs-site/README.md covers the build and the gate.
 name: Docs Site
 
 on:
@@ -13,8 +12,7 @@ on:
     workflows: ["Stack Release"]
     types: [completed]
     branches: [main]
-  # A merged docs change publishes now. content-root/ and publish.yaml reach every
-  # version, and docs/ reaches /next/, which reads this repo's default branch.
+  # docs/ reaches /next/, which reads this repo's default branch.
   push:
     branches: [main]
     paths:
@@ -39,7 +37,6 @@ jobs:
   site:
     name: build, and deploy from main
     if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
-    # A named runner image, so a move of the ubuntu-latest label cannot swap the python3 these steps run on.
     runs-on: ubuntu-26.04
     timeout-minutes: 60
     steps:
@@ -47,14 +44,12 @@ jobs:
         with:
           persist-credentials: false
 
-      # 24 is the Active LTS major hyperi-ci's versions.yaml sets for TypeScript CI.
       - name: Set up Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: "24"
+          node-version: "26"
           package-manager-cache: false
 
-      # npm ci checks every tarball against the lockfile's integrity hash. The build needs no install script.
       - name: Install from the committed lockfile
         working-directory: docs-site
         run: npm ci --ignore-scripts --no-audit --no-fund
@@ -69,7 +64,7 @@ jobs:
       - name: Build every version and merge them
         run: python3 docs-site/scripts/build_site.py
 
-      # Uploads without deploying, so production traffic never moves. A fork's pull request gets no secret, so no preview.
+      # A fork's pull request gets no secret, so no preview.
       - name: Upload a preview of this pull request
         if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
         working-directory: docs-site
@@ -88,11 +83,13 @@ jobs:
       - name: Assemble main's pages for the docs gate
         if: ${{ github.event_name == 'pull_request' }}
         run: |
-          git fetch --no-tags --depth 1 origin main
-          git worktree add "$RUNNER_TEMP/main" FETCH_HEAD
-          python3 "$RUNNER_TEMP/main/docs-site/scripts/aggregate.py" --next --out "$RUNNER_TEMP/content-main"
+          # The checkout is the pull request merged onto main as GitHub merged it for this run. Its first parent is that main, so a merge to main since then reaches neither tree.
+          git fetch --no-tags --deepen 1 origin "$GITHUB_SHA"
+          git worktree add "$RUNNER_TEMP/main" HEAD^1
+          # The member commits this pull request's tree was built at, so a member merging between the two clones adds nothing.
+          python3 "$RUNNER_TEMP/main/docs-site/scripts/aggregate.py" --next --next-refs docs-site/content/site.json --out "$RUNNER_TEMP/content-main"
 
-      # A pull request fails only on findings main's pages do not already carry, so a page awaiting its rewrite blocks nobody. Elsewhere the gate reports.
+      # A pull request fails only on findings main's pages lack. Elsewhere the gate reports.
       - name: Docs gate
         env:
           EVENT: ${{ github.event_name }}
@@ -103,7 +100,7 @@ jobs:
             python3 docs-site/scripts/gate.py --report-only --summary "$GITHUB_STEP_SUMMARY"
           fi
 
-      # Uploads a version and sends it all traffic. The Worker and its domain are created by OpenTofu, never here.
+      # The Worker and its domain are created by OpenTofu, never here.
       - name: Deploy to the docs Worker
         if: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' }}
         working-directory: docs-site
@@ -116,4 +113,20 @@ jobs:
           npx --no-install wrangler versions upload --tag "$GIT_SHA" --message "dfe-infra $GIT_SHA"
           version_id="$(jq -r 'select(.type == "version-upload") | .version_id' "$WRANGLER_OUTPUT_FILE_PATH")"
           test -n "$version_id"
-          npx --no-install wrangler versions deploy --version-id "$version_id" --percentage 100 --yes
+          # Cloudflare can answer 100146 (version not found) for a version it uploaded seconds ago, so only that code is retried.
+          deploy_log="$RUNNER_TEMP/wrangler-deploy.log"
+          for wait_s in 10 20 30 0; do
+            if npx --no-install wrangler versions deploy --version-id "$version_id" --percentage 100 --yes >"$deploy_log" 2>&1; then
+              cat "$deploy_log"
+              exit 0
+            fi
+            cat "$deploy_log"
+            grep -q 100146 "$deploy_log" || exit 1
+            sleep "$wait_s"
+          done
+          exit 1
+
+      # /next/ reads members' main, which no gate here guards, so a register word fails the run after the deploy. Older releases read frozen tags and only report.
+      - name: Register words on /next/ and the newest release
+        if: ${{ github.event_name != 'pull_request' }}
+        run: python3 docs-site/scripts/gate.py --report-only --fail-on register --fail-on-build next,newest

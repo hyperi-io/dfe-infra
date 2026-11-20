@@ -65,14 +65,23 @@ MSK_VALUES = {
             "bootstrap": "b-1.dfe.example:9096,b-2.dfe.example:9096",
             "msk": {"bootstrapIam": "b-1.dfe.example:9098,b-2.dfe.example:9098"},
         },
-        "landingTopics": {"sources": [{"name": "okta"}, {"name": "m365", "partitions": 24}]},
+        "landingTopics": {
+            "sources": [{"name": "okta"}, {"name": "m365", "partitions": 24}]
+        },
     },
 }
 
 # The on-prem grants, read from helm/charts/kafka/templates/kafka-user.yaml:
 # every topic call dfe-engine makes, which that file maps operation by operation.
 TOPIC_OPERATIONS = {
-    "Read", "Write", "Create", "Describe", "Alter", "Delete", "DescribeConfigs", "AlterConfigs",
+    "Read",
+    "Write",
+    "Create",
+    "Describe",
+    "Alter",
+    "Delete",
+    "DescribeConfigs",
+    "AlterConfigs",
 }
 GROUP_OPERATIONS = {"Read", "Describe"}
 # What on-prem deliberately withholds. A cluster operation is not in this set
@@ -86,7 +95,11 @@ def merged(*overlays: dict) -> dict:
     def deep(base: dict, over: dict) -> dict:
         out = dict(base)
         for k, v in over.items():
-            out[k] = deep(out[k], v) if isinstance(v, dict) and isinstance(out.get(k), dict) else v
+            out[k] = (
+                deep(out[k], v)
+                if isinstance(v, dict) and isinstance(out.get(k), dict)
+                else v
+            )
         return out
 
     out = MSK_VALUES
@@ -127,7 +140,9 @@ def script(job: dict) -> str:
 
 def commands(job: dict) -> list[str]:
     """The script's real commands -- a comment naming a flag is not one."""
-    return [ln.strip() for ln in script(job).splitlines() if not ln.strip().startswith("#")]
+    return [
+        ln.strip() for ln in script(job).splitlines() if not ln.strip().startswith("#")
+    ]
 
 
 def acl_lines(job: dict) -> list[str]:
@@ -138,10 +153,15 @@ def test_the_job_and_its_account_render_for_msk() -> None:
     docs = render()
     job = bootstrap_job(docs)
     accounts = [d for d in docs if d.get("kind") == "ServiceAccount"]
-    expect("one ServiceAccount renders with the Job", len(accounts) == 1, f"got {len(accounts)}")
+    expect(
+        "one ServiceAccount renders with the Job",
+        len(accounts) == 1,
+        f"got {len(accounts)}",
+    )
     expect(
         "the Job runs as that account, which is what the Pod Identity association names",
-        job["spec"]["template"]["spec"]["serviceAccountName"] == accounts[0]["metadata"]["name"],
+        job["spec"]["template"]["spec"]["serviceAccountName"]
+        == accounts[0]["metadata"]["name"],
         f"{job['spec']['template']['spec'].get('serviceAccountName')} vs {accounts[0]['metadata']['name']}",
     )
     expect(
@@ -173,7 +193,9 @@ def test_the_job_renders_for_msk_alone() -> None:
 def test_the_job_needs_somewhere_to_connect_and_an_off_switch() -> None:
     docs = render(merged({"kafka": {"external": {"msk": {"bootstrapIam": ""}}}}))
     expect("no IAM bootstrap string means no Job", not jobs(docs))
-    docs = render(merged({"kafka": {"external": {"msk": {"bootstrap": {"enabled": False}}}}}))
+    docs = render(
+        merged({"kafka": {"external": {"msk": {"bootstrap": {"enabled": False}}}}})
+    )
     expect("the off switch bites", not jobs(docs))
 
 
@@ -190,21 +212,43 @@ def test_the_acls_are_the_on_prem_grants_and_nothing_more() -> None:
         parts = line.split()
         return {parts[i + 1] for i, p in enumerate(parts) if p == "--operation"}
 
-    expect("the topic grant is every topic call dfe-engine makes",
-           operations(topic[0]) == TOPIC_OPERATIONS, f"got {operations(topic[0])}")
-    expect("the group grant is Read/Describe",
-           operations(group[0]) == GROUP_OPERATIONS, f"got {operations(group[0])}")
-    expect('the topic resource is the literal "*"',
-           '--topic "*" --resource-pattern-type literal' in topic[0], topic[0])
-    expect('the group resource is the "dfe-" PREFIX, with no glob',
-           '--group "dfe-" --resource-pattern-type prefixed' in group[0], group[0])
-    expect("both grants name the SCRAM principal",
-           all('--allow-principal "User:dfe-kafka-user"' in ln for ln in adds), f"got {adds}")
+    expect(
+        "the topic grant is every topic call dfe-engine makes",
+        operations(topic[0]) == TOPIC_OPERATIONS,
+        f"got {operations(topic[0])}",
+    )
+    expect(
+        "the group grant is Read/Describe",
+        operations(group[0]) == GROUP_OPERATIONS,
+        f"got {operations(group[0])}",
+    )
+    expect(
+        'the topic resource is the literal "*"',
+        '--topic "*" --resource-pattern-type literal' in topic[0],
+        topic[0],
+    )
+    expect(
+        'the group resource is the "dfe-" PREFIX, with no glob',
+        '--group "dfe-" --resource-pattern-type prefixed' in group[0],
+        group[0],
+    )
+    expect(
+        "both grants name the SCRAM principal",
+        all('--allow-principal "User:dfe-kafka-user"' in ln for ln in adds),
+        f"got {adds}",
+    )
     granted = operations(topic[0]) | operations(group[0])
-    expect("nothing on-prem withholds is granted",
-           not granted & WITHHELD_OPERATIONS, f"got {granted & WITHHELD_OPERATIONS}")
+    expect(
+        "nothing on-prem withholds is granted",
+        not granted & WITHHELD_OPERATIONS,
+        f"got {granted & WITHHELD_OPERATIONS}",
+    )
     expect("no cluster-scoped grant", "--cluster" not in " ".join(adds), f"got {adds}")
-    expect("the resulting ACLs are printed", any("--list" in ln for ln in lines), f"got {lines}")
+    expect(
+        "the resulting ACLs are printed",
+        any("--list" in ln for ln in lines),
+        f"got {lines}",
+    )
 
 
 def test_the_job_grants_exactly_what_the_kafkauser_grants() -> None:
@@ -216,30 +260,64 @@ def test_the_job_grants_exactly_what_the_kafkauser_grants() -> None:
     """
     docs = render(merged({"kafka": {"mode": "cluster", "provider": "strimzi"}}))
     users = [d for d in docs if d.get("kind") == "KafkaUser"]
-    expect("the strimzi path renders one KafkaUser", len(users) == 1, f"got {len(users)}")
-    acls = {a["resource"]["type"]: set(a["operations"]) for a in users[0]["spec"]["authorization"]["acls"]}
-    expect("the KafkaUser topic grant is the set this file names",
-           acls["topic"] == TOPIC_OPERATIONS, f"got {acls['topic']}")
-    expect("the KafkaUser group grant is the set this file names",
-           acls["group"] == GROUP_OPERATIONS, f"got {acls['group']}")
+    expect(
+        "the strimzi path renders one KafkaUser", len(users) == 1, f"got {len(users)}"
+    )
+    acls = {
+        a["resource"]["type"]: set(a["operations"])
+        for a in users[0]["spec"]["authorization"]["acls"]
+    }
+    expect(
+        "the KafkaUser topic grant is the set this file names",
+        acls["topic"] == TOPIC_OPERATIONS,
+        f"got {acls['topic']}",
+    )
+    expect(
+        "the KafkaUser group grant is the set this file names",
+        acls["group"] == GROUP_OPERATIONS,
+        f"got {acls['group']}",
+    )
 
 
 def test_the_in_cluster_redpanda_user_grants_the_same_set() -> None:
-    docs = render(merged({"kafka": {"mode": "cluster", "provider": "redpanda",
-                                    "redpanda": {"acceptLicense": True}}}))
+    docs = render(
+        merged(
+            {
+                "kafka": {
+                    "mode": "cluster",
+                    "provider": "redpanda",
+                    "redpanda": {"acceptLicense": True},
+                }
+            }
+        )
+    )
     users = [d for d in docs if d.get("kind") == "User"]
     expect("the redpanda path renders one User", len(users) == 1, f"got {len(users)}")
-    acls = {a["resource"]["type"]: set(a["operations"]) for a in users[0]["spec"]["authorization"]["acls"]}
-    expect("the User topic grant is the set this file names",
-           acls["topic"] == TOPIC_OPERATIONS, f"got {acls['topic']}")
-    expect("the User group grant is the set this file names",
-           acls["group"] == GROUP_OPERATIONS, f"got {acls['group']}")
+    acls = {
+        a["resource"]["type"]: set(a["operations"])
+        for a in users[0]["spec"]["authorization"]["acls"]
+    }
+    expect(
+        "the User topic grant is the set this file names",
+        acls["topic"] == TOPIC_OPERATIONS,
+        f"got {acls['topic']}",
+    )
+    expect(
+        "the User group grant is the set this file names",
+        acls["group"] == GROUP_OPERATIONS,
+        f"got {acls['group']}",
+    )
 
 
 def test_the_principal_is_a_value() -> None:
-    job = bootstrap_job(render(merged({"kafka": {"external": {"msk": {"scramUsername": "dfe-cloud"}}}})))
-    expect("the renamed principal reaches both grants",
-           script(job).count('--allow-principal "User:dfe-cloud"') == 2, script(job))
+    job = bootstrap_job(
+        render(merged({"kafka": {"external": {"msk": {"scramUsername": "dfe-cloud"}}}}))
+    )
+    expect(
+        "the renamed principal reaches both grants",
+        script(job).count('--allow-principal "User:dfe-cloud"') == 2,
+        script(job),
+    )
 
 
 def test_the_job_creates_no_topic() -> None:
@@ -248,8 +326,11 @@ def test_the_job_creates_no_topic() -> None:
     body = script(job)
     expect("no kafka-topics.sh call", "kafka-topics.sh" not in body, body)
     expect("no --create flag", "--create" not in body, body)
-    expect("no topic name reaches the Job",
-           "main_land" not in body and "okta_land" not in body and "_dlq" not in body, body)
+    expect(
+        "no topic name reaches the Job",
+        "main_land" not in body and "okta_land" not in body and "_dlq" not in body,
+        body,
+    )
 
 
 def test_the_iam_jar_is_pinned_and_verified() -> None:
@@ -258,21 +339,50 @@ def test_the_iam_jar_is_pinned_and_verified() -> None:
     init = pod["initContainers"][0]
     fetch = init["command"][2]
     expect("the jar is fetched by an init container", len(pod["initContainers"]) == 1)
-    expect("the pinned version is in the URL",
-           "releases/download/v2.3.9/aws-msk-iam-auth-2.3.9-all.jar" in fetch, fetch)
-    expect("the published checksum is pinned",
-           "922064f312ddc8a5f3dbe65fcef3d02ddbd588a02e3a6f0fca4b5a4dbec1ba43" in fetch, fetch)
+    expect(
+        "the pinned version is in the URL",
+        "releases/download/v2.3.9/aws-msk-iam-auth-2.3.9-all.jar" in fetch,
+        fetch,
+    )
+    expect(
+        "the published checksum is pinned",
+        "922064f312ddc8a5f3dbe65fcef3d02ddbd588a02e3a6f0fca4b5a4dbec1ba43" in fetch,
+        fetch,
+    )
     expect("the checksum is checked, not just carried", "sha256sum" in fetch, fetch)
     expect("a mismatch fails the Job", "exit 1" in fetch, fetch)
-    expect("the CLI loads the verified jar off the shared volume",
-           any(e["name"] == "CLASSPATH" and e["value"].startswith("/opt/msk-iam/")
-               for e in pod["containers"][0]["env"]),
-           repr(pod["containers"][0]["env"]))
-    mirrored = bootstrap_job(render(merged({"kafka": {"external": {"msk": {"bootstrap": {
-        "iamAuth": {"url": "https://mirror.example/aws-msk-iam-auth-2.3.9-all.jar"}}}}}})))
-    expect("an air-gapped deploy can point the URL at a mirror",
-           "https://mirror.example/aws-msk-iam-auth-2.3.9-all.jar"
-           in mirrored["spec"]["template"]["spec"]["initContainers"][0]["command"][2])
+    expect(
+        "the CLI loads the verified jar off the shared volume",
+        any(
+            e["name"] == "CLASSPATH" and e["value"].startswith("/opt/msk-iam/")
+            for e in pod["containers"][0]["env"]
+        ),
+        repr(pod["containers"][0]["env"]),
+    )
+    mirrored = bootstrap_job(
+        render(
+            merged(
+                {
+                    "kafka": {
+                        "external": {
+                            "msk": {
+                                "bootstrap": {
+                                    "iamAuth": {
+                                        "url": "https://mirror.example/aws-msk-iam-auth-2.3.9-all.jar"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            )
+        )
+    )
+    expect(
+        "an air-gapped deploy can point the URL at a mirror",
+        "https://mirror.example/aws-msk-iam-auth-2.3.9-all.jar"
+        in mirrored["spec"]["template"]["spec"]["initContainers"][0]["command"][2],
+    )
 
 
 def test_the_job_carries_no_credential() -> None:
@@ -280,10 +390,16 @@ def test_the_job_carries_no_credential() -> None:
     text = yaml.safe_dump(job)
     expect("no Secret is mounted or projected", "secretKeyRef" not in text, text[:400])
     expect("no static AWS key", "AWS_SECRET_ACCESS_KEY" not in text)
-    expect("the login module is the IAM one, with no inline credential",
-           "software.amazon.msk.auth.iam.IAMLoginModule required;" in script(job), script(job))
-    expect("SASL_SSL over AWS_MSK_IAM",
-           "security.protocol=SASL_SSL" in script(job) and "sasl.mechanism=AWS_MSK_IAM" in script(job))
+    expect(
+        "the login module is the IAM one, with no inline credential",
+        "software.amazon.msk.auth.iam.IAMLoginModule required;" in script(job),
+        script(job),
+    )
+    expect(
+        "SASL_SSL over AWS_MSK_IAM",
+        "security.protocol=SASL_SSL" in script(job)
+        and "sasl.mechanism=AWS_MSK_IAM" in script(job),
+    )
 
 
 def test_the_job_is_tracked_and_bounded() -> None:
@@ -291,17 +407,33 @@ def test_the_job_is_tracked_and_bounded() -> None:
     job = bootstrap_job(docs)
     account = next(d for d in docs if d.get("kind") == "ServiceAccount")
     annotations = job["metadata"].get("annotations", {})
-    expect("the Job is a tracked resource, not an Argo hook",
-           "argocd.argoproj.io/hook" not in annotations, repr(annotations))
-    expect("the account syncs before the Job that names it",
-           int(account["metadata"]["annotations"]["argocd.argoproj.io/sync-wave"])
-           < int(annotations["argocd.argoproj.io/sync-wave"]))
-    expect("backoffLimit is a value", job["spec"]["backoffLimit"] == 5, repr(job["spec"]))
-    expect("ttlSecondsAfterFinished is a value",
-           job["spec"]["ttlSecondsAfterFinished"] == 600, repr(job["spec"]))
-    expect("a changed principal is a NEW Job name",
-           bootstrap_job(render(merged({"kafka": {"external": {"msk": {"scramUsername": "dfe-cloud"}}}})))
-           ["metadata"]["name"] != job["metadata"]["name"])
+    expect(
+        "the Job is a tracked resource, not an Argo hook",
+        "argocd.argoproj.io/hook" not in annotations,
+        repr(annotations),
+    )
+    expect(
+        "the account syncs before the Job that names it",
+        int(account["metadata"]["annotations"]["argocd.argoproj.io/sync-wave"])
+        < int(annotations["argocd.argoproj.io/sync-wave"]),
+    )
+    expect(
+        "backoffLimit is a value", job["spec"]["backoffLimit"] == 5, repr(job["spec"])
+    )
+    expect(
+        "ttlSecondsAfterFinished is a value",
+        job["spec"]["ttlSecondsAfterFinished"] == 600,
+        repr(job["spec"]),
+    )
+    expect(
+        "a changed principal is a NEW Job name",
+        bootstrap_job(
+            render(
+                merged({"kafka": {"external": {"msk": {"scramUsername": "dfe-cloud"}}}})
+            )
+        )["metadata"]["name"]
+        != job["metadata"]["name"],
+    )
 
 
 # --- the pipeline that reaches the chart: bootstrap.sh -> cluster secret -----
@@ -316,23 +448,31 @@ def test_bootstrap_derives_kafka_mode_for_every_managed_provider() -> None:
     body = BOOTSTRAP.read_text(encoding="utf-8")
     expect(
         "DFE_KAFKA_MODE is derived, not accepted as an input",
-        'DFE_KAFKA_MODE=""' in body and "case \"${DFE_KAFKA_PROVIDER}\" in" in body,
+        'DFE_KAFKA_MODE=""' in body and 'case "${DFE_KAFKA_PROVIDER}" in' in body,
         "the derivation is missing",
     )
     expect(
         "all three managed providers flip it to external",
-        "msk|confluent-cloud|redpanda-cloud) DFE_KAFKA_MODE=\"external\" ;;" in body,
+        'msk|confluent-cloud|redpanda-cloud) DFE_KAFKA_MODE="external" ;;' in body,
         "the case arm is missing or lists the wrong providers",
     )
-    expect("the derived value is exported", 'export DFE_KAFKA_MODE' in body)
+    expect("the derived value is exported", "export DFE_KAFKA_MODE" in body)
 
 
 def test_bootstrap_defaults_the_tofu_outputs_it_carries_forward() -> None:
     """Empty by default so the annotations below always render, on every
     provider but msk -- the same pattern DFE_KAFKA_BOOTSTRAP already uses."""
     body = BOOTSTRAP.read_text(encoding="utf-8")
-    for key in ("DFE_KAFKA_BOOTSTRAP_IAM", "DFE_KAFKA_BOOTSTRAP_ROLE_ARN", "DFE_KAFKA_CREDENTIAL_REF"):
-        expect(f"{key} is defaulted empty", f'export {key}="${{{key}:-}}"' in body, f"{key} missing")
+    for key in (
+        "DFE_KAFKA_BOOTSTRAP_IAM",
+        "DFE_KAFKA_BOOTSTRAP_ROLE_ARN",
+        "DFE_KAFKA_CREDENTIAL_REF",
+    ):
+        expect(
+            f"{key} is defaulted empty",
+            f'export {key}="${{{key}:-}}"' in body,
+            f"{key} missing",
+        )
 
 
 def test_the_cluster_secret_carries_every_new_kafka_annotation() -> None:
@@ -350,7 +490,9 @@ def test_the_cluster_secret_carries_every_new_kafka_annotation() -> None:
         )
 
 
-def test_the_appset_turns_the_annotations_into_the_chart_values_that_render_the_job() -> None:
+def test_the_appset_turns_the_annotations_into_the_chart_values_that_render_the_job() -> (
+    None
+):
     """A `parameters:` entry is a structured list this file's own tests parse
     as plain YAML before Go templating runs, so a per-element conditional
     cannot live there -- this is a `values:` block string instead, the same
@@ -372,7 +514,8 @@ def test_the_appset_turns_the_annotations_into_the_chart_values_that_render_the_
     expect(
         "kafka.external.msk.bootstrapIam reads the kafka_bootstrap_iam annotation",
         "bootstrapIam: {{ $bootstrapIam | quote }}" in values_block
-        and 'index .metadata.annotations "dfe.hyperi.io/kafka_bootstrap_iam"' in values_block,
+        and 'index .metadata.annotations "dfe.hyperi.io/kafka_bootstrap_iam"'
+        in values_block,
         values_block,
     )
     expect(

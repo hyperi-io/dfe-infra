@@ -1,9 +1,7 @@
 {{- if and (include "dfe-clickhouse.tlsEnabled" .) (dig "ca" "secretName" "" .Values.clickhouse.tls) }}
 {{- $reader := printf "%s-reader" .Values.clickhouse.tls.secretName }}
 {{- $caOnly := include "dfe-clickhouse.tlsCaSecret" . }}
-# The only reader of the keypair Secret, which carries tls.key. A namespaced
-# SecretStore, so only an ExternalSecret in this namespace can use it; it copies
-# ca.crt into a CA-only Secret, and only that Secret is copied to the apps.
+# The only reader of the keypair Secret, which carries tls.key. A namespaced SecretStore, so only this namespace's ExternalSecret can use it. docs/deploy-tls-trust.md, In-cluster ClickHouse.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -50,7 +48,6 @@ spec:
     kubernetes:
       remoteNamespace: {{ .Release.Namespace }}
       server:
-        # A namespaced store names no namespace here; ESO reads this one's own.
         caProvider:
           type: ConfigMap
           name: kube-root-ca.crt

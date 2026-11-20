@@ -10,7 +10,7 @@
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
 """The check against the real tree, and against every shape a literal hides in.
 
-    python3 -m pytest scripts/tests/test_check_tofu_literals.py -q
+python3 -m pytest scripts/tests/test_check_tofu_literals.py -q
 """
 
 import shutil
@@ -31,7 +31,10 @@ FORWARDER = Path("terraform") / "modules" / "edge" / "aws" / "forwarder.tf"
 
 def literals(text: str) -> list[tuple[str, str, str]]:
     """Each hit in one snippet, as (address, attribute, literal)."""
-    return [(hit.address, hit.attribute, hit.literal) for hit in check.scan_text(text, "probe.tf")]
+    return [
+        (hit.address, hit.attribute, hit.literal)
+        for hit in check.scan_text(text, "probe.tf")
+    ]
 
 
 def test_the_tree_carries_no_literal_outside_the_allowed_list() -> None:
@@ -79,7 +82,9 @@ def test_expected_fail_an_instance_type_put_back_in_a_real_module_is_refused(
     module = root / TOOLBOX_MAIN
     text = module.read_text(encoding="utf-8")
     assert "instance_type = var.instance_type" in text
-    literal = text.replace("instance_type = var.instance_type", 'instance_type = "t4g.small"')
+    literal = text.replace(
+        "instance_type = var.instance_type", 'instance_type = "t4g.small"'
+    )
     module.write_text(literal, encoding="utf-8", newline="\n")
     assert check.main(root) == 1
     out = capsys.readouterr().out
@@ -95,7 +100,9 @@ def test_expected_fail_an_eks_ami_type_put_back_in_the_cluster_module_is_refused
     module = root / EKS
     text = module.read_text(encoding="utf-8")
     assert "ami_type = var.node_image.family" in text
-    literal = text.replace("ami_type = var.node_image.family", 'ami_type = "AL2023_ARM_64_STANDARD"')
+    literal = text.replace(
+        "ami_type = var.node_image.family", 'ami_type = "AL2023_ARM_64_STANDARD"'
+    )
     module.write_text(literal, encoding="utf-8", newline="\n")
     assert check.main(root) == 1
     out = capsys.readouterr().out
@@ -118,7 +125,10 @@ def test_expected_fail_an_ssm_image_lookup_put_back_in_tofu_is_refused(
     module.write_text(text + "\n" + lookup, encoding="utf-8", newline="\n")
     assert check.main(root) == 1
     out = capsys.readouterr().out
-    assert "data.aws_ssm_parameter.al2023_arm64 name = '/aws/service/ami-amazon-linux-latest/" in out
+    assert (
+        "data.aws_ssm_parameter.al2023_arm64 name = '/aws/service/ami-amazon-linux-latest/"
+        in out
+    )
 
 
 def test_the_tree_carries_no_node_image_literal() -> None:
@@ -136,7 +146,11 @@ REFUSED = {
     "a nested block": (
         'resource "aws_launch_template" "x" {\n  block_device_mappings {\n    ebs {\n'
         "      volume_size = 20\n    }\n  }\n}\n",
-        ("resource.aws_launch_template.x", "block_device_mappings.ebs.volume_size", "20"),
+        (
+            "resource.aws_launch_template.x",
+            "block_device_mappings.ebs.volume_size",
+            "20",
+        ),
     ),
     "a dynamic block's content": (
         'resource "aws_instance" "x" {\n  dynamic "ebs_block_device" {\n'
@@ -222,7 +236,11 @@ REFUSED = {
     "a GKE image type": (
         'resource "google_container_node_pool" "x" {\n  node_config {\n'
         '    image_type = "COS_CONTAINERD"\n  }\n}\n',
-        ("resource.google_container_node_pool.x", "node_config.image_type", "COS_CONTAINERD"),
+        (
+            "resource.google_container_node_pool.x",
+            "node_config.image_type",
+            "COS_CONTAINERD",
+        ),
     ),
     "an AKS OS SKU": (
         'resource "azurerm_kubernetes_cluster_node_pool" "x" {\n  os_sku = "AzureLinux"\n}\n',
@@ -242,7 +260,11 @@ REFUSED = {
     ),
     "an SSM path data source": (
         'data "aws_ssm_parameters_by_path" "x" {\n  path = var.path\n}\n',
-        ("data.aws_ssm_parameters_by_path.x", "data source", "aws_ssm_parameters_by_path"),
+        (
+            "data.aws_ssm_parameters_by_path.x",
+            "data source",
+            "aws_ssm_parameters_by_path",
+        ),
     ),
     "an AMI id in upper-case hex, under a name out of scope": (
         'locals {\n  base = "ami-0123456789ABCDEF0"\n}\n',
@@ -250,7 +272,11 @@ REFUSED = {
     ),
     "Canonical's Ubuntu SSM path": (
         'locals {\n  base = "/aws/service/canonical/ubuntu/server/24.04/stable/current/arm64/hvm/ebs-gp3/ami-id"\n}\n',
-        ("locals", "base", "/aws/service/canonical/ubuntu/server/24.04/stable/current/arm64/hvm/ebs-gp3/ami-id"),
+        (
+            "locals",
+            "base",
+            "/aws/service/canonical/ubuntu/server/24.04/stable/current/arm64/hvm/ebs-gp3/ami-id",
+        ),
     ),
     "Debian's SSM path": (
         'locals {\n  base = "/aws/service/debian/release/12/latest/arm64"\n}\n',
@@ -262,7 +288,11 @@ REFUSED = {
     ),
     "the ECS-optimised SSM path": (
         'locals {\n  base = "/aws/service/ecs/optimized-ami/amazon-linux-2023/arm64/recommended"\n}\n',
-        ("locals", "base", "/aws/service/ecs/optimized-ami/amazon-linux-2023/arm64/recommended"),
+        (
+            "locals",
+            "base",
+            "/aws/service/ecs/optimized-ami/amazon-linux-2023/arm64/recommended",
+        ),
     ),
     "an AMI id in a heredoc script": (
         'resource "aws_instance" "x" {\n  user_data = <<-EOT\n    #!/bin/bash\n'
@@ -282,7 +312,9 @@ REFUSED = {
 
 
 @pytest.mark.parametrize("snippet", REFUSED.values(), ids=REFUSED.keys())
-def test_expected_fail_each_hiding_place_is_found(snippet: tuple[str, tuple[str, str, str]]) -> None:
+def test_expected_fail_each_hiding_place_is_found(
+    snippet: tuple[str, tuple[str, str, str]],
+) -> None:
     text, hit = snippet
     assert hit in literals(text)
 
@@ -336,4 +368,7 @@ def test_a_value_that_is_not_chosen_is_passed(text: str) -> None:
 
 def test_expected_fail_a_construct_the_scanner_cannot_read_stops_it() -> None:
     with pytest.raises(check.ScanError):
-        check.scan_text('resource "aws_instance" "x" {\n  instance_type = "t4g.small\n}\n', "probe.tf")
+        check.scan_text(
+            'resource "aws_instance" "x" {\n  instance_type = "t4g.small\n}\n',
+            "probe.tf",
+        )

@@ -12,6 +12,7 @@
     python3 docs-site/scripts/gate.py                                # every build in docs-site/content
     python3 docs-site/scripts/gate.py --baseline /tmp/content-main   # fail only on findings it lacks
     python3 docs-site/scripts/gate.py --report-only --summary "$GITHUB_STEP_SUMMARY"
+    python3 docs-site/scripts/gate.py --report-only --fail-on register  # any register word fails
     python3 docs-site/scripts/gate.py docs/deployment/aws.md         # any markdown, before it merges
 
 Each finding names the member repository, the file under its docs/ and the line,
@@ -24,6 +25,7 @@ Rules:
                    candidates (rc.N), rounds, stub and placeholder admonitions
     hedge          a hedge in front of a fact (gate.yaml)
     register       words the house style replaces (gate.yaml)
+    style          more such words, which --fail-on register leaves to the baseline (gate.yaml)
     semicolon      a semicolon in prose
     ascii          non-ASCII typography in prose: dashes, curly quotes, arrows
     elasticsearch  "ElasticSearch", the product's name misspelt
@@ -68,7 +70,7 @@ _COPY_LINE = re.compile(r"^(\s*)(-\s+)?([A-Za-z_][\w-]*):(?:\s+(.*))?$")
 _FLOW_LABEL = re.compile(r"label:\s*([^,}]+)")
 _BLOCK_SCALARS = ("|", "|-", "|+", ">", ">-", ">+")
 _NOT_PROSE = frozenset({"to", "href", "icon", "value", "primary", "logo_alt"})
-PHRASE_RULES = ("process", "hedge", "register")
+PHRASE_RULES = ("process", "hedge", "register", "style")
 RULES = frozenset({*PHRASE_RULES, "semicolon", "ascii", "elasticsearch"})
 ALL = "all"
 MARKER_RULE = "marker"
@@ -89,11 +91,21 @@ _TAG = re.compile(r"</?[A-Za-z][^>]*>")
 _ENTITY = re.compile(r"&#?\w+;")
 _INLINE_MATH = re.compile(r"\$[^$\n]+\$")
 _EXTRA_PROCESS = (
-    (re.compile(r"\brc\.\d+\b", re.IGNORECASE), "rc.N", "name the release, not a candidate"),
-    (re.compile(r"\bround \d+\b", re.IGNORECASE), "round N", "describe the product, not the work"),
+    (
+        re.compile(r"\brc\.\d+\b", re.IGNORECASE),
+        "rc.N",
+        "name the release, not a candidate",
+    ),
+    (
+        re.compile(r"\bround \d+\b", re.IGNORECASE),
+        "round N",
+        "describe the product, not the work",
+    ),
     (re.compile(r"\bTBD\b"), "TBD", "write it, or leave it out"),
 )
-_STUB_ADMONITION = re.compile(r"^\s*:::\s*\w*\s*(stub|placeholder|todo)\b", re.IGNORECASE)
+_STUB_ADMONITION = re.compile(
+    r"^\s*:::\s*\w*\s*(stub|placeholder|todo)\b", re.IGNORECASE
+)
 _ELASTICSEARCH = re.compile(r"\bElasticSearch\b")
 
 
@@ -141,9 +153,15 @@ def load_phrases(tree: dict) -> Phrases:
     for rule in PHRASE_RULES:
         section = tree.get(rule)
         if not isinstance(section, dict):
-            raise SystemExit(f"error: {GATE_FILE.name}: `{rule}` is not a map of phrases")
+            raise SystemExit(
+                f"error: {GATE_FILE.name}: `{rule}` is not a map of phrases"
+            )
         phrases[rule] = [
-            (re.compile(rf"(?<![\w-]){re.escape(phrase)}(?![\w-])", re.IGNORECASE), phrase, advice)
+            (
+                re.compile(rf"(?<![\w-]){re.escape(phrase)}(?![\w-])", re.IGNORECASE),
+                phrase,
+                advice,
+            )
             for phrase, advice in section.items()
         ]
     return phrases
@@ -185,7 +203,11 @@ def prose_lines(text: str) -> Iterator[tuple[int, str, str]]:
             yield number, line, ""
             continue
         if in_math or stripped.startswith("$$"):
-            one_line = stripped.startswith("$$") and len(stripped) > 4 and stripped.endswith("$$")
+            one_line = (
+                stripped.startswith("$$")
+                and len(stripped) > 4
+                and stripped.endswith("$$")
+            )
             if stripped.startswith("$$") and not one_line:
                 in_math = not in_math
             elif in_math and stripped.endswith("$$"):
@@ -212,7 +234,9 @@ def prose_lines(text: str) -> Iterator[tuple[int, str, str]]:
 
 
 def _char_names(chars: Iterable[str]) -> str:
-    return ", ".join(f"U+{ord(c):04X} {unicodedata.name(c, '?').lower()}" for c in chars)
+    return ", ".join(
+        f"U+{ord(c):04X} {unicodedata.name(c, '?').lower()}" for c in chars
+    )
 
 
 def check_line(prose: str, phrases: Phrases) -> Iterator[tuple[str, str, str]]:
@@ -238,7 +262,11 @@ def check_line(prose: str, phrases: Phrases) -> Iterator[tuple[str, str, str]]:
         yield "semicolon", ";", "two sentences, or join with and, but or because"
     odd = sorted({char for char in prose if ord(char) > 127})
     if odd:
-        yield "ascii", _char_names(odd), "-- or - for a dash, ' and \" for quotes, -> for an arrow"
+        yield (
+            "ascii",
+            _char_names(odd),
+            "-- or - for a dash, ' and \" for quotes, -> for an arrow",
+        )
     if _ELASTICSEARCH.search(prose):
         yield "elasticsearch", "ElasticSearch", "say Elasticsearch"
 
@@ -274,11 +302,21 @@ def check_page(text: str, phrases: Phrases, *, build: str, page: str) -> list[Fi
         allowed = set(off)
         for marker in _MARKER.finditer(line):
             verb, reason = marker["verb"], (marker["reason"] or "").strip()
-            rules = {rule.strip() for rule in marker["rules"].split(",") if rule.strip()}
+            rules = {
+                rule.strip() for rule in marker["rules"].split(",") if rule.strip()
+            }
             problem = _marker_problem(verb, rules, reason)
             if problem:
                 findings.append(
-                    Finding(build, page, number, MARKER_RULE, problem, "fix it", line.strip())
+                    Finding(
+                        build,
+                        page,
+                        number,
+                        MARKER_RULE,
+                        problem,
+                        "fix it",
+                        line.strip(),
+                    )
                 )
                 continue
             named = set(RULES) if ALL in rules else rules
@@ -296,7 +334,9 @@ def check_page(text: str, phrases: Phrases, *, build: str, page: str) -> list[Fi
         pending = set()
         for rule, term, advice in check_line(prose, phrases):
             if rule not in allowed:
-                findings.append(Finding(build, page, number, rule, term, advice, line.strip()))
+                findings.append(
+                    Finding(build, page, number, rule, term, advice, line.strip())
+                )
     return findings
 
 
@@ -307,18 +347,20 @@ def pages_in(content: Path) -> Iterator[tuple[str, str, Path]]:
         content: A tree aggregate.py wrote, holding site.json.
 
     Yields:
-        (build, page path in the build, file). The generated API pages and section
-        indexes are skipped.
+        (build, page path in the build, file). The generated API pages, the generated
+        CLI page and section indexes are skipped.
     """
     site = json.loads((content / aggregate.SITE_FILE).read_text(encoding="utf-8"))
     for build in site["builds"]:
         root = content / build["name"]
         generated = (build.get("openapi") or {}).get("output")
         skip = content / generated if generated else None
+        cli_page = (build.get("cli") or {}).get("page")
+        cli = root / cli_page if cli_page else None
         for path in sorted(root.rglob("*")):
             if not path.is_file() or not path.name.lower().endswith(aggregate.MARKDOWN):
                 continue
-            if skip and skip in path.parents:
+            if (skip and skip in path.parents) or path == cli:
                 continue
             if path.name == aggregate.SECTION_INDEX and path.read_text(
                 encoding="utf-8", errors="replace"
@@ -476,10 +518,14 @@ def report(
         builds = ", ".join(f.build for f in same if f.build)
         tag = f" [{builds}]" if builds else ""
         console.append(f"{where}:{line}: {rule}: {term} -> {same[0].advice}{tag}")
-        rows.append(f"| `{where}:{line}` | {rule} | {term.replace('|', '/')} | {same[0].advice} |")
+        rows.append(
+            f"| `{where}:{line}` | {rule} | {term.replace('|', '/')} | {same[0].advice} |"
+        )
     counts = Counter(where[2] for where in grouped)
     label = "new against main" if baselined else "found"
-    headline = f"{len(grouped)} finding(s) {label}, {len(findings)} across every build in all."
+    headline = (
+        f"{len(grouped)} finding(s) {label}, {len(findings)} across every build in all."
+    )
     summary = ["## Docs gate", "", headline, ""]
     if counts:
         summary += ["| rule | count |", "|---|---|"]
@@ -496,6 +542,41 @@ def report(
     return console, summary
 
 
+def fail_scope(content: Path, named: Iterable[str]) -> set[str]:
+    """The builds --fail-on reads, with `newest` as the release site.json names newest.
+
+    Args:
+        content: A tree aggregate.py wrote, holding site.json.
+        named: Build names, or `newest`.
+
+    Returns:
+        The build names.
+
+    Raises:
+        SystemExit: A name is not a build in the tree, or `newest` finds no release.
+    """
+    site_file = content / aggregate.SITE_FILE
+    if not site_file.is_file():
+        raise SystemExit(f"error: {content} holds no site.json: run aggregate.py first")
+    site = json.loads(site_file.read_text(encoding="utf-8"))
+    builds = [build["name"] for build in site["builds"]]
+    scope = set()
+    for name in named:
+        if name == "newest":
+            if not site.get("newest"):
+                raise SystemExit(
+                    f"error: --fail-on-build newest: {content} holds no listed release"
+                )
+            scope.add(site["newest"])
+        elif name in builds:
+            scope.add(name)
+        else:
+            raise SystemExit(
+                f"error: --fail-on-build {name}: not a build in {content} ({', '.join(builds)})"
+            )
+    return scope
+
+
 def main(argv: list[str] | None = None) -> int:
     """Gate the assembled pages, or the files named.
 
@@ -504,19 +585,42 @@ def main(argv: list[str] | None = None) -> int:
 
     Returns:
         The exit status: 1 when a finding is new (every finding without --baseline),
-        unless --report-only.
+        unless --report-only, and 1 whenever any finding breaks a --fail-on rule.
     """
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument("paths", nargs="*", type=Path, help="markdown files or directories")
+    parser.add_argument(
+        "paths", nargs="*", type=Path, help="markdown files or directories"
+    )
     parser.add_argument(
         "--content", type=Path, default=aggregate.DEFAULT_OUT, help="the assembled tree"
     )
-    parser.add_argument("--baseline", type=Path, help="an assembled tree whose findings are old")
+    parser.add_argument(
+        "--baseline", type=Path, help="an assembled tree whose findings are old"
+    )
     parser.add_argument("--summary", type=Path, help="append a markdown summary here")
-    parser.add_argument("--report-only", action="store_true", help="always exit 0")
+    parser.add_argument(
+        "--report-only", action="store_true", help="exit 0 unless --fail-on trips"
+    )
+    parser.add_argument(
+        "--fail-on",
+        default="",
+        help="comma-separated rules that fail on any finding, old or new, even with --report-only",
+    )
+    parser.add_argument(
+        "--fail-on-build",
+        default="",
+        help="comma-separated builds --fail-on reads, `newest` for the newest release; default every build",
+    )
     args = parser.parse_args(argv)
+    fail_on = {rule.strip() for rule in args.fail_on.split(",") if rule.strip()}
+    if unknown := fail_on - RULES:
+        raise SystemExit(
+            f"error: --fail-on names unknown rule(s): {', '.join(sorted(unknown))}"
+        )
+    named = [build.strip() for build in args.fail_on_build.split(",") if build.strip()]
+    scope = fail_scope(args.content, named) if named and not args.paths else None
 
     text = GATE_FILE.read_text(encoding="utf-8")
     phrases = load_phrases(aggregate.yaml_subset.parse(text, source=str(GATE_FILE)))
@@ -524,7 +628,9 @@ def main(argv: list[str] | None = None) -> int:
         findings, repos = gate_files(args.paths, phrases), {}
     else:
         if not (args.content / aggregate.SITE_FILE).is_file():
-            raise SystemExit(f"error: {args.content} holds no site.json: run aggregate.py first")
+            raise SystemExit(
+                f"error: {args.content} holds no site.json: run aggregate.py first"
+            )
         findings, repos = gate_tree(args.content, phrases), sources(args.content)
         findings += gate_files([COPY_DIR], phrases)
     new = findings
@@ -536,6 +642,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.summary:
         with args.summary.open("a", encoding="utf-8", newline="\n") as handle:
             handle.write("\n".join(summary) + "\n")
+    # A finding with no build (the copy files, a named file) holds for every build.
+    in_scope = [f for f in findings if scope is None or not f.build or f.build in scope]
+    if any(finding.rule in fail_on for finding in in_scope):
+        return 1
     return 1 if new and not args.report_only else 0
 
 

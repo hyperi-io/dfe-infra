@@ -32,8 +32,15 @@ def test_a_missing_tool_fails_under_ci_and_skips_elsewhere(found, ci, outcome):
 
 @pytest.mark.parametrize(
     ("value", "expected"),
-    [(None, False), ("", False), ("0", False), ("false", False), ("False", False),
-     ("true", True), ("1", True)],
+    [
+        (None, False),
+        ("", False),
+        ("0", False),
+        ("false", False),
+        ("False", False),
+        ("true", True),
+        ("1", True),
+    ],
 )
 def test_ci_is_any_value_but_empty_zero_or_false(monkeypatch, value, expected):
     if value is None:

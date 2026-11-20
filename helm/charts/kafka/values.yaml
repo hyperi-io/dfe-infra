@@ -3,171 +3,92 @@ component: kafka
 env: local
 cloud: local
 
-# Namespace the DFE apps run in. Supplied by the appset from the cluster's
-# dfe.hyperi.io/dfe_namespace annotation (the SAME annotation layer2-apps uses to
-# place the apps), so the two can never drift. Empty -> the app-namespace credential
-# projection is skipped entirely.
+# Namespace the DFE apps run in, from the cluster's dfe.hyperi.io/dfe_namespace annotation. Empty skips the app-namespace credential projection.
 appNamespace: ""
 
-# DFE KAFKA AUTH STANDARD: SASL/SCRAM-SHA-512, everywhere, the same way.
-# SCRAM-512 is the ONE auth mechanism that works reliably and identically across
-# every option -- Strimzi (local/k8s), Redpanda, and every cloud-managed Kafka
-# (Confluent, MSK SASL/SCRAM). It is the DFE standard for all deployed brokers.
-# (mode=external may use msk_iam where the supplied broker mandates IAM, but the
-# DFE-owned brokers are always SCRAM-512.) BOTH provider paths now enforce it:
-# Strimzi via its listeners + KafkaUser, Redpanda via the operator's Redpanda CR
-# (auth.sasl) + User CR. For both, the ClusterExternalSecret writes the
-# app-namespace dfe-kafka-user Secret (username, password, sasl.mechanism), so
-# clients authenticate identically regardless of provider.
+# SCRAM-SHA-512 is the auth mechanism on every broker DFE deploys, Strimzi and Redpanda alike (docs/deployment/kafka/README.md).
+# msk_iam still renders at mode=external, but scalo-rs and scalo-py reject it, so no DFE app connects with it (dfe-infra#292, not planned).
 kafka:
-  # Deployment mode (DFE owns its substrate; deploy unless external given):
-  #   disabled -> no broker (the brokerless tiers slim + mesh use gRPC)
-  #   single   -> 1 broker, NON-OPERATOR standalone StatefulSet (single tier),
-  #               like ClickHouse-single -> no Strimzi/Redpanda operator needed.
-  #   cluster  -> multi-broker via the OPERATOR (scale tier); replicas below.
-  #   external -> deploy nothing; connect to a supplied bootstrap (BYO/Confluent/MSK)
-  # Profile sets the default (slim + mesh -> disabled, single -> single,
-  # scale -> cluster).
+  # disabled: no broker (slim and mesh use gRPC). single: one broker as a plain StatefulSet, no operator.
+  # cluster: multi-broker through the operator. external: deploy nothing and connect to a supplied bootstrap.
+  # The profile sets the default: slim and mesh disabled, single single, scale cluster.
   mode: disabled
-  # Broker provider when deployed: strimzi (default, Apache-2.0) or redpanda
-  # (opt-in, BSL -- see docs/REDPANDA-LIMITATIONS.md; requires redpanda.acceptLicense).
+  # strimzi (Apache-2.0) or redpanda (BSL, needs redpanda.acceptLicense: docs/deployment/kafka/redpanda-limitations.md).
   provider: strimzi
   name: dfe-kafka
   version: "4.3.1"
-  # The digest of apache/kafka at the version above, which the single-mode broker
-  # runs. == versions.yaml services-digests.kafka-version (drift-checked).
+  # Digest of apache/kafka at the version above, for single mode. == versions.yaml services-digests.kafka-version
   imageDigest: "sha256:77e3df9054047a88b520d0cc46e16696d3b22022e1d580aeccd2632df6532837"
-  # The Kafka CLI image: the MSK bootstrap Job runs it, and the smoke test and dfe-ops diagnostics run their managed-broker client pods on it.
-  # From quay.io, which the registry cache serves with no credential. Its -kafka- suffix must equal version above.
+  # The Kafka CLI image for the MSK bootstrap Job, the smoke test and dfe-ops client pods. Its -kafka- suffix must equal version.
   cliImage: "quay.io/strimzi/kafka:1.3.0-kafka-4.3.1@sha256:1f189b1f0f32684302d8b018b1d21b411e2469a9c465fbdc18fa3599cb5bbdad"
   # Strimzi cluster mode only; empty lets Strimzi raise it, one way, as soon as a version roll finishes (docs/deployment/upgrades.md).
   metadataVersion: ""
-  # cluster node count. Defaults to 3; set higher for more brokers.
-  # (single mode forces 1.)
+  # Brokers at mode=cluster. Single mode forces 1.
   replicas: 3
-  # Strimzi only: spread the brokers across nodes, and separately the dedicated
-  # controllers when controllerPool is on. It is enforced (DoNotSchedule): a
-  # broker stays Pending rather than land on a node holding more brokers than
-  # the emptiest eligible node. A one-node cluster is one domain, so every broker
-  # still schedules there. Nodes the pod does not tolerate still count as
-  # domains, because nodeTaintsPolicy defaults to Ignore.
+  # Strimzi only: spread the brokers, and the dedicated controllers when controllerPool is on, across nodes. DoNotSchedule keeps a broker Pending rather than share a node unevenly.
   podSpread:
     enabled: true
     maxSkew: 1
     topologyKey: kubernetes.io/hostname
-  # Which sources this deployment carries, for the KEDA triggers only -- the
-  # autoscaler needs the topic NAME to read a consumer group's lag, and it can
-  # neither invent the list nor create anything. The topics themselves are
-  # declared in dfe-schemas and created by dfe-engine at its own startup; nothing
-  # in this chart creates a topic. Each entry is a map; `partitions` is optional
-  # and sizes that one source's trigger ceiling, which is dfe-infra#148's
-  # per-source value. `transform` is optional and overrides
-  # kafka.autoscaling.transformKind for that one source's trigger, when its
-  # landing topic is read by a transform kind other than the default:
-  #   sources:
-  #     - name: okta
-  #     - name: m365
-  #       partitions: 24
-  #     - name: some_filebeat_source
-  #       transform: elastic
+  # Sources this deployment carries, for the KEDA triggers only: the autoscaler needs the topic name to read a consumer group's lag.
+  # dfe-engine creates the topics from dfe-schemas, and this chart creates none. Each entry has a name, an optional partitions (that source's trigger ceiling, dfe-infra#148)
+  # and an optional transform, which overrides kafka.autoscaling.transformKind. Example: [{name: okta}, {name: m365, partitions: 24}, {name: some_filebeat_source, transform: elastic}]
   landingTopics:
     sources: []
     suffix: _land
-  # Redpanda provider opts (BSL gate). Deployed via the Redpanda OPERATOR
-  # (Redpanda + User CRDs), the same operator+thin-CR model as Strimzi.
+  # Redpanda provider options, behind the BSL gate. Deployed through the Redpanda operator, as Strimzi is.
   redpanda:
     acceptLicense: false
     image:
       repository: docker.redpanda.com/redpandadata/redpanda
-      # == versions.yaml services.redpanda-version (drift-checked).
+      # == versions.yaml services.redpanda-version
       tag: "v26.2.6"
-      # Single mode only; the operator's chart refuses a tag that is not bare semver.
-      # == versions.yaml services-digests.redpanda-version (drift-checked).
+      # Single mode only, because the operator's chart refuses a tag that is not bare semver. == versions.yaml services-digests.redpanda-version
       digest: "sha256:8b1076e0d61bfceb66594dc01536427ce0b529f8ead35fdab9763ab6085891ce"
     auth:
-      # Bootstrap superuser the operator creates + manages (its admin identity
-      # for reconciling the User CR). Operator generates its password Secret.
+      # The bootstrap superuser the operator creates and manages, and whose password Secret it generates.
       superuserName: "admin"
-  # External Kafka (mode=external): connect to a supplied bootstrap endpoint.
-  # auth.type: scram | tls | msk_iam. scram/tls use a Vault-backed secret; msk_iam
-  # uses AWS IAM (IRSA/workload-identity, SASL OAUTHBEARER) -- no static secret.
+    # Beta, untested against a paid licence. Naming a Secret that holds a Redpanda Enterprise licence stops the chart forcing core balancing off and lets continuous partition balancing render.
+    enterprise:
+      licenseSecretRef:
+        name: ""
+        key: license
+  # mode=external: connect to a supplied bootstrap. auth.type is scram, tls or msk_iam. scram and tls use a Vault-backed secret.
+  # msk_iam has no static secret, and scalo rejects it, so no app connects (dfe-infra#292).
   external:
     bootstrap: ""
-    # The managed broker's own partition count (its num_partitions tofu
-    # variable). dfe-kafka.partitions cannot derive one from kafka.replicas at
-    # mode=external -- that field is this chart's own, never the managed
-    # cluster's real broker count -- so this is read VERBATIM instead of
-    # falling back to the chart's own num.partitions formula. Empty falls back
-    # to that formula anyway (at whatever kafka.replicas happens to default
-    # to), which is a stated gap until this is wired from the dial.
+    # The managed broker's own partition count (its num_partitions tofu variable), read verbatim because kafka.replicas is not the managed broker count.
+    # Empty falls back to the chart's formula, a known gap until it is wired from the dial.
     numPartitions: ""
-    # Which managed/BYO Kafka this is, as a key in the shared provider table
-    # (helm/library/dfe-common/templates/_kafka.tpl): strimzi | redpanda | msk |
-    # redpanda-cloud | confluent-cloud | msk_iam, or the -no-tls pair for a
-    # supplied broker on a cleartext listener. The chart DERIVES
-    # security.protocol and sasl.mechanism from it; never hand-set a mechanism.
-    #
-    # confluent-cloud is the one sanctioned PLAIN target: Confluent Cloud offers
-    # no SCRAM (self-managed Confluent Platform only) and its API key/secret pair
-    # IS the username/password, so the contract's SCRAM-SHA-512 floor takes a
-    # documented exception there -- always over SASL_SSL, never cleartext
-    # (dfe-infra#9, dfe-engine#98). Confluent's own tier limits bite too: broker
-    # topic auto-create is Dedicated-only, so topic provisioning goes through the
-    # engine's topic-admin path rather than the broker.
-    #
-    # Named alongside appNamespace (the layer2-data appset sets both from the
-    # cluster secret), the credential is read from <project>/<env>/kafka/<provider>
-    # and lands in the app namespaces as user.name, the same projection the
-    # in-cluster broker gets; auth.secretName below is then not rendered.
-    #
-    # Empty keeps the pre-contract shape: the credential secret carries a
-    # password only and nothing is derived.
+    # Which managed or supplied Kafka this is, a key in the provider table (helm/library/dfe-common/templates/_kafka.tpl): strimzi, redpanda, msk, redpanda-cloud, confluent-cloud,
+    # msk_iam (renders, scalo rejects it, dfe-infra#292), or the -no-tls pair for a cleartext listener. security.protocol and sasl.mechanism derive from it, never by hand.
+    # confluent-cloud is the one PLAIN target, since Confluent Cloud has no SCRAM and its API key is the username. It runs over SASL_SSL (dfe-infra#9, dfe-engine#98).
+    # Its broker auto-create is Dedicated-only, so topics go through the engine's topic-admin path. Guides: docs/deployment/kafka/.
+    # Set with appNamespace, the credential is read from <project>/<env>/kafka/<provider> and projected into the app namespaces, and auth.secretName is not rendered.
+    # Empty keeps the legacy shape: a password-only secret and nothing derived.
     provider: ""
     auth:
       type: scram
       secretName: dfe-kafka-external
       secretStoreName: dfe-secret-store
-    # AWS MSK bootstrap, rendered ONLY at mode: external with external.provider: msk
-    # (msk-bootstrap-job.yaml). MSK's ACLs live in the Kafka data plane, not the
-    # AWS control plane, so no tofu apply can write the first one -- and once the
-    # cluster stops granting by default, nothing can write it unless it is already
-    # permitted. The Job authenticates by SASL/IAM, where the IAM policy IS the
-    # authorisation and no ACL has to exist yet, then writes the SCRAM principal's
-    # ACLs at on-prem parity. dfe-engine then creates the landing and DLQ topics
-    # under those ACLs, since auto.create.topics.enable=false. The IAM identity
-    # exists for THIS path alone -- every DFE app still authenticates with SCRAM.
+    # AWS MSK bootstrap Job, rendered only at mode=external with provider: msk (msk-bootstrap-job.yaml). Why it exists: docs/deployment/kafka/aws-msk-operations.md.
     msk:
-      # The SASL/IAM bootstrap string on port 9098 -- the managed-kafka/msk
-      # module's `bootstrap_iam` output, carried here by the deploy's
-      # DFE_KAFKA_BOOTSTRAP_IAM. Empty renders no Job: there is nothing to reach.
+      # The SASL/IAM bootstrap string on port 9098 (the msk module's bootstrap_iam output). Empty renders no Job.
       bootstrapIam: ""
-      # The SCRAM principal the ACLs are written FOR, which must equal the
-      # username in the cluster's AmazonMSK_ secret or the grants name nobody.
+      # The SCRAM principal the ACLs are written for. Must equal the username in the AmazonMSK_ secret.
       scramUsername: dfe-kafka-user
-      # The ARN of that AmazonMSK_ secret -- the managed-kafka/msk module's
-      # credential_ref output, carried by the cluster secret's
-      # dfe.hyperi.io/kafka_credential_ref. Set, it is the one copy of the
-      # credential: the apps' user.name copy reads its password from here through
-      # user.password.unprefixedStoreName, and nothing seeds a second one.
+      # ARN of the AmazonMSK_ secret (the msk module's credential_ref output). Set, it is the one copy of the credential: the apps' copy reads its password from here through user.password.unprefixedStoreName.
       credentialRef: ""
-      # Region the SASL/IAM handshake signs against. Empty leaves it to the
-      # AWS_REGION the EKS Pod Identity agent already injects into the pod.
+      # Signing region. Empty leaves it to the AWS_REGION the EKS Pod Identity agent injects.
       region: ""
       bootstrap:
-        # The OFF switch, never an on switch -- the mode and provider gates above
-        # are what keep this Job out of every non-MSK deployment.
+        # The OFF switch: the mode and provider gates keep the Job out of non-MSK deployments.
         enabled: true
-        # The ServiceAccount the Job runs as. The tofu's Pod Identity association
-        # names this service account AND this release namespace, so the two must
-        # match exactly or the pod is handed no AWS credential at all.
+        # Must match the Pod Identity association's service account and release namespace, or the pod gets no AWS credential.
         serviceAccount: dfe-kafka-bootstrap
-        # Pod failures before the Job gives up and the Application reports
-        # degraded.
         backoffLimit: 5
-        # How long the finished Job survives, in seconds; its pod log is the only
-        # record of which ACLs were written, so it outlives the sync.
+        # Seconds the finished Job survives. Its pod log is the only record of the ACLs written.
         ttlSecondsAfterFinished: 600
-        # A short-lived CLI pod.
         resources:
           requests:
             cpu: 50m
@@ -175,53 +96,32 @@ kafka:
           limits:
             cpu: 500m
             memory: 512Mi
-        # The MSK IAM auth library. kafka.cliImage ships kafka-acls.sh and
-        # kafka-topics.sh but NOT this jar, so an init container fetches it and
-        # verifies it before the CLI is ever asked to load it.
+        # kafka.cliImage has no MSK IAM auth jar, so an init container fetches and verifies it.
         iamAuth:
-          # Pinned to an aws/aws-msk-iam-auth release tag (v2.3.9, 2026-09-24).
+          # An aws/aws-msk-iam-auth release tag.
           version: "2.3.9"
-          # sha256 of aws-msk-iam-auth-<version>-all.jar as published beside the
-          # jar; a download that does not match is refused and the Job fails.
+          # sha256 of aws-msk-iam-auth-<version>-all.jar as published. A mismatch fails the Job.
           sha256: "922064f312ddc8a5f3dbe65fcef3d02ddbd588a02e3a6f0fca4b5a4dbec1ba43"
-          # Full download URL. Empty derives the GitHub release URL from the
-          # version above; an air-gapped deploy points this at an internal mirror
-          # holding the same jar, and the checksum still has to match.
+          # Empty derives the GitHub release URL from version. An air-gapped deploy sets a mirror, and the checksum must still match.
           url: ""
-  # Storage model, decided at deploy and refused afterwards (the engine holds
-  # kafka.storageModel as a protected var). Named <family>-<bulk> in the
-  # suite-wide vocabulary; full matrix: docs/deployment/storage.md
-  #   local          -> every segment stays on the PVC, which is the capacity
-  #                     ceiling.
-  #   tiered-object  -> closed segments move to object storage (KIP-405 tiered
-  #                     storage) and the PVC sizes the hot window only.
-  # tiered-object is CLUSTER mode with the strimzi provider only: it is a
-  # Strimzi Kafka CR field, and the single tier runs no operator.
+  # Decided at deploy and refused afterwards (the engine holds it as a protected var). Matrix: docs/deployment/storage.md.
+  # local keeps every segment on the PVC. tiered-object moves closed segments to object storage (KIP-405) and the PVC sizes the hot window.
+  # tiered-object is cluster mode with strimzi only, because tieredStorage is a Strimzi Kafka CR field.
   storageModel: local
-  # Strimzi operator version this deployment runs -- MUST match versions.yaml
-  # strimzi-kafka-operator. spec.kafka.tieredStorage landed in 0.38.0, so a lower
-  # pin fails the render rather than emitting config the operator drops silently.
+  # Strimzi operator version, must match versions.yaml strimzi-kafka-operator. Below 0.38.0 the render fails, since tieredStorage did not exist.
   operatorVersion: "1.2.0"
-  # Plugin binding for storageModel: tiered-object. Strimzi supports type=custom
-  # ONLY: it ships no RemoteStorageManager, so the broker image must carry a
-  # plugin on classPath.
+  # Strimzi supports type=custom only and ships no RemoteStorageManager, so the broker image must carry a plugin on classPath.
   tieredObject:
     className: ""
     classPath: ""
-    # Plugin config keys verbatim (bucket, region, chunk size, ...). Secrets here
-    # would be committed to git; use the environment instead.
+    # Plugin config keys verbatim. No secrets here, because they would be committed to git.
     config: {}
-  # Object bulk store credential. It NEVER appears in config -- the plugin reads
-  # it from the environment, wired from an ESO-materialised Secret.
+  # Object store credential. Never in config: wired into the broker environment from an ESO-materialised Secret.
   objectStore:
     secretName: dfe-kafka-tiered
     secretStoreName: dfe-secret-store
-    # Where the credential sits in the store. Empty derives the DFE-seeded path
-    # <project>/<env>/kafka/tiered, which is frozen: moving it would strand a
-    # deployment that seeded there and never set this. Set it to reuse an
-    # existing entry, e.g. services/minio on a store mounting kv.
+    # Where the credential sits in the store. Empty derives <project>/<env>/kafka/tiered, which is frozen. Set it to reuse an entry, e.g. services/minio on a store mounting kv.
     remoteKey: ""
-    # Field names within that entry.
     accessKeyProperty: access_key_id
     secretKeyProperty: secret_access_key
   storage:
@@ -235,163 +135,57 @@ kafka:
     limits:
       cpu: "2"
       memory: 4Gi
-  # The largest single event the chain has to carry, in bytes. ONE number,
-  # because broker message.max.bytes, broker replica.fetch.max.bytes and every
-  # topic's max.message.bytes must agree -- raise one alone and a produce is
-  # rejected or a follower stalls. 16 MiB: filebeat truncates at its own 10 MiB
-  # ceiling, and enrichment re-enters Kafka measuring ~1.48x the source event.
-  # socket.request.max.bytes is deliberately NOT rendered: the 100 MiB Kafka
-  # default already leaves framing headroom above this figure.
-  # This is the chart's OWN default, for a deploy with no resolved sizing
-  # fragment. scripts/resolve_sizing.py's build_values overrides it from
-  # sizing.yaml's event.message_chain_bytes (kafka.messageMaxBytes in the
-  # emitted values.yaml) whenever a dial has been resolved.
+  # The largest single event the chain carries, in bytes: one figure for broker message.max.bytes, replica.fetch.max.bytes and every topic's max.message.bytes.
+  # Why 16 MiB: docs/deployment/kafka/README.md. scripts/resolve_sizing.py overrides it from sizing.yaml's event.message_chain_bytes.
   messageMaxBytes: 16777216
   broker:
-    # Broker NIC throughput in MB/s, treated as full duplex. Cruise Control
-    # SILENTLY STRIPS every network goal when brokerCapacity leaves inbound and
-    # outbound unset, so this is what stops a rebalance filling the NIC. 1250 is
-    # 10 GbE -- lower it wherever the real NIC is smaller, because a capacity
-    # figure above the truth makes the network goals non-binding again.
+    # Broker NIC in MB/s, full duplex, for Cruise Control's network goals. 1250 is 10 GbE. Set the real NIC: a figure above it makes the goals non-binding.
     networkMbS: 1250
-  # Partition derivation. num.partitions and every landing topic's partition
-  # count are ONE number computed here, never two literals that drift apart:
-  #   partitions = roundUpToMultiple(
-  #                  max(consumerCeiling,
-  #                      ceil(peakMbS / perPartitionCapMbS),
-  #                      brokers x minPartitionsPerBroker),
-  #                  brokers)
-  # INCREASE-ONLY: Kafka can raise a topic's partition count and never lower it,
-  # so the sizing resolver overwrites these upward and never down.
+  # Partition derivation: one number for num.partitions and every landing topic. Formula and rationale: docs/deployment/kafka/README.md, "Sizing dials". Increase-only, so the resolver never lowers it.
   sizing:
-    # Consumer-group parallelism ceiling -- a classic group assigns at most one
-    # consumer per partition, so a replica past this count joins and idles. 10 is
-    # the chart default. The scale profile's KEDA maxReplicaCount is 12
-    # (profile-scale.yaml).
+    # Consumer-group parallelism ceiling: a group has at most one consumer per partition.
     consumerCeiling: 10
-    # Expected peak ingest across the cluster in MB/s. 0 until the sizing
-    # resolver supplies an estimate, which drops the throughput term out.
+    # Expected peak ingest in MB/s. 0 drops the throughput term.
     peakMbS: 0
-    # Per-partition throughput ceiling in MB/s -- one partition has one leader,
-    # so this is what a single partition can absorb. 15 is MSK Express's
-    # documented cap; Strimzi and Redpanda carry the measured figure once the
-    # calibration run produces one.
     perPartitionCapMbS: 15
-    # Partitions per broker at minimum, so the default 3 brokers give 12 -- a
-    # count that 3, 6 and 12 brokers all divide evenly as the cluster scales out.
     minPartitionsPerBroker: 4
-  # Retention derivation. Kafka is the buffer in front of dfe-archiver, so time
-  # retention is how long a consumer may be down before events are lost:
-  #   log.retention.ms    = (assumedConsumerDowntimeH + archiverLagH) x 3600000
-  #   log.retention.bytes = floor(pvcBytes x usableFraction / partitionsPerBroker)
-  # The byte bound exists because time retention alone cannot stop a 20Gi PVC
-  # filling at 116 MB/s.
+  # Retention derivation (formulas: docs/deployment/kafka/README.md, "Sizing dials"). Time retention is how long a consumer may be down before events are lost.
   retention:
-    # Longest consumer outage a deploy is expected to survive, in hours. 24 is
-    # the default; 72 is the documented weekend profile, enough to carry a
-    # Friday-night outage that nobody sees until Monday.
     assumedConsumerDowntimeH: 24
-    # Extra hours of dfe-archiver lag carried on top of that. 0 while the
-    # archiver keeps up; raise this rather than inflating the downtime figure,
-    # so the report can still say which half the retention was bought for.
+    # Hours of dfe-archiver lag added on top. Raise this rather than the downtime figure.
     archiverLagH: 0
-    # Fraction of the broker PVC the log may occupy. The remaining 15% is the
-    # index, snapshot and in-flight segment space that a full disk takes out.
+    # Fraction of the PVC the log may occupy. The rest is index, snapshot and in-flight segment space.
     usableFraction: 0.85
-  # The canonical KRaft broker profile. Derived for the Kafka 4.2/4.3 lines --
-  # every default it overrides is identical across both -- rather than ported
-  # from a ZooKeeper-era block. Applied by the Strimzi Kafka CR (cluster) and
-  # the non-operator single-broker server.properties; the Redpanda paths map
-  # the equivalents in redpanda.yaml clusterSpec.config.cluster.
+  # The KRaft broker profile, applied by the Strimzi Kafka CR and the single-broker server.properties. Redpanda maps the equivalents in redpanda.yaml.
   profile:
-    # Applied ONLY at kafka.mode: cluster -- RF3 and minISR2 fail outright on
-    # one broker, and the thread pools are overhead on a 2-core one.
+    # Cluster mode only: RF3 and minISR2 fail on one broker.
     scale:
-      # Kafka's request-handler and network-thread defaults (3 and 8) are fixed,
-      # not core-scaled, so a busy broker starves at any size. Raise io BEFORE
-      # network or the request queue saturates behind idle network threads.
-      # Check with RequestHandlerAvgIdlePercent / NetworkProcessorAvgIdlePercent
-      # -- below 30% idle is the signal these are still too low.
+      # Kafka's thread defaults are fixed, not core-scaled. Raise io before network. Below 30% idle on RequestHandlerAvgIdlePercent or NetworkProcessorAvgIdlePercent means still too low.
       numNetworkThreads: 8
       numIoThreads: 16
-      # Follower fetch threads. The default of 1 serialises replication across
-      # every leader a broker follows; AWS's managed default is max(2, vCPUs/4).
+      # Follower fetch threads. The default of 1 serialises replication across every leader a broker follows.
       numReplicaFetchers: 2
-      # Log recovery runs per data dir and serialises after an unclean stop, so
-      # this is what decides how long a crashed broker stays down.
+      # Log recovery per data dir decides how long a crashed broker stays down.
       numRecoveryThreadsPerDataDir: 8
-      # The durability triad with the client's acks=all (scalo enables
-      # idempotence, which implies it): survive one broker loss with no data
-      # loss. Both are clamped to the broker count at render.
+      # With the client's acks=all (idempotence implies it), survives one broker loss. Both clamp to the broker count at render.
       replicationFactor: 3
       minInsyncReplicas: 2
-      # OFF at the cluster tier: dfe-infra#148 makes the partition count per
-      # source an explicit value, and a broker-defaulted auto-created topic
-      # ignores it. dfe-engine creates the landing and DLQ topics at startup instead.
+      # Off: dfe-engine creates the landing and DLQ topics at startup with explicit partition counts (dfe-infra#148).
       autoCreateTopics: false
-      # The four thread dials above render only once the broker CPU LIMIT (the
-      # request where no limit is set) reaches this many vCPU. Below it they buy
-      # context switching and nothing else, so a cluster-mode deploy on small
-      # brokers gets the durability and sizing half of the profile without the
-      # thread half.
+      # The four thread dials render only at a broker CPU limit (else request) of this many vCPU or more. Below it they only add context switching.
       threadDialVcpuFloor: 4
     single:
-      # ON at the single tier: it runs no topic operator, so nothing else can
-      # create the receiver's dynamic {source}_land topics.
+      # On: the single tier has no topic operator to create the receiver's dynamic {source}_land topics.
       autoCreateTopics: true
-  # Dropped from the previous block, each for a stated reason rather than lost:
-  # compression.type=producer at the BROKER level (already the Kafka default
-  # here, and Redpanda ignores the property outright regardless) -- but a
-  # customer's cluster may run a different broker default, which would then
-  # recompress every topic that does not say otherwise. So it ships per TOPIC
-  # instead: dfe-engine creates every topic, and sets compression.type=producer
-  # on each from its kafka.topic_compression_type setting;
-  # unclean.leader.election.enable=false (the 4.x
-  # default, and read-only on MSK Express); log.segment.bytes 512 MiB (it
-  # DOUBLES the mmap count against vm.max_map_count at this shape -- the 1 GiB
-  # default is the right one at high throughput);
-  # leader.imbalance.per.broker.percentage (no longer exists in Kafka 4.x,
-  # though Strimzi's and MSK's docs still print it); 1 MiB socket buffers (a
-  # cross-datacentre recipe, and Express ships 102400);
-  # socket.request.max.bytes 10 MiB (LOWERS the 100 MiB default tenfold); and
-  # the restated defaults auto.create.topics.enable on single, delete.topic.enable,
-  # connections.max.idle.ms and group.initial.rebalance.delay.ms.
 
-  # Cruise Control, ON by default at kafka.mode: cluster. Plain Kafka places
-  # partitions stickily: add a broker and only NEW topics land on it, so without
-  # a rebalancer a scale-out grows the cluster and leaves the load where it was.
-  # A single broker has nothing to balance, so the single tier deploys none.
+  # Cruise Control, on by default at cluster mode. Kafka places partitions stickily, so without a rebalancer a scale-out leaves the load where it was. A single broker has none.
   rebalancing:
-    # The OFF switch, never an on switch. Enabling Cruise Control writes
-    # metric.reporters into every broker, so flipping this rolls all brokers.
+    # The OFF switch. Enabling writes metric.reporters into every broker, so flipping it rolls all brokers.
     enabled: true
-    # Upper bound in bytes/s on replica movement during a rebalance. Strimzi
-    # leaves replication UNLIMITED when this is unset, which lets a rebalance
-    # take the NIC off ingest; 300 MiB/s is about a quarter of a 10 GbE NIC, so
-    # move it with kafka.broker.networkMbS rather than on its own.
+    # Replica movement cap in bytes/s. Strimzi leaves it unlimited when unset. Move it with kafka.broker.networkMbS.
     replicationThrottleBytesS: 314572800
-    # A 6-broker add-brokers rebalance with no explicit goals here left
-    # Cruise Control on its own default order, and converged replica skew to
-    # 16.8% (within a 20% target) while leader skew stayed at 57% -- one
-    # broker held 17 leaders against a mean of 29.8. The reason is priority
-    # order: Strimzi's documented default runs the seven hard goals first
-    # (RackAwareGoal..CpuCapacityGoal), then ReplicaDistributionGoal and five
-    # more soft goals, and only then LeaderReplicaDistributionGoal and
-    # LeaderBytesInDistributionGoal -- second-last and last of eighteen
-    # (Strimzi 1.2.0 documentation/modules/cruise-control/
-    # con-cruise-control-overview.adoc, "Goals order of priority"). Cruise
-    # Control satisfies earlier-listed goals first, so the leader goals
-    # rarely get the same optimisation effort.
-    #
-    # This list is that same default order with LeaderReplicaDistributionGoal
-    # and LeaderBytesInDistributionGoal PROMOTED to run immediately after the
-    # seven hard goals, ahead of the remaining soft goals -- nothing removed,
-    # nothing else reordered. Rendered into both rebalance templates'
-    # spec.goals (kafka-rebalance-templates.yaml). Strimzi documents
-    # KafkaRebalance.spec.goals as a subset of the supported goals in
-    # descending priority order, taking bare class names (not the
-    # fully-qualified com.linkedin... form Kafka.spec.cruiseControl.config
-    # uses). Set to [] to fall back to Cruise Control's untouched default.
+    # Strimzi's default goal order with LeaderReplicaDistributionGoal and LeaderBytesInDistributionGoal promoted to follow the seven hard goals, and nothing else reordered.
+    # Rendered into both rebalance templates (kafka-rebalance-templates.yaml). [] falls back to Cruise Control's default. Why: docs/deployment/kafka/autoscaling.md.
     goals:
       - RackAwareGoal
       - MinTopicLeadersPerBrokerGoal
@@ -411,8 +205,7 @@ kafka:
       - TopicReplicaDistributionGoal
       - IntraBrokerDiskCapacityGoal
       - IntraBrokerDiskUsageDistributionGoal
-    # Cruise Control's own pod. Strimzi ships NO defaults here, so an unset
-    # deployment has no requests and is the first thing evicted under pressure.
+    # Cruise Control's pod. Strimzi sets no defaults, so unset it is the first thing evicted.
     resources:
       requests:
         cpu: 500m
@@ -420,42 +213,25 @@ kafka:
       limits:
         cpu: "1"
         memory: 2Gi
-    # The Cruise Control UI -- the rebalancer's front end, deployed wherever the
-    # rebalancer is. Strimzi ships none and keeps the Cruise Control REST API on
-    # HTTPS behind HTTP Basic auth, so without this the only view of a rebalance
-    # is the KafkaRebalance resource.
+    # The Cruise Control UI, deployed wherever the rebalancer is. Strimzi ships none. docs/deployment/kafka/autoscaling.md.
     ui:
-      # Follows kafka.rebalancing.enabled rather than standing on its own: a UI
-      # over a rebalancer that is off reports an empty cluster state.
+      # Follows kafka.rebalancing.enabled: a UI over an off rebalancer reports an empty cluster.
       enabled: true
-      # linkedin/cruise-control-ui publishes a release TARBALL and no container
-      # image. The images on Docker Hub are all third-party rebuilds and the
-      # most credible of them carries linux/amd64 alone, which an arm64 node
-      # cannot run and scripts/check_image_arch.py refuses. So the static files
-      # are fetched and checksum-verified at pod start and served by the nginx
-      # image already pinned here -- the shape the MSK bootstrap Job uses for
-      # its SASL/IAM jar.
+      # linkedin/cruise-control-ui publishes a tarball and no image, so the pod fetches and checksum-verifies it and nginx serves it, as the MSK bootstrap Job does its jar.
       release:
-        # v0.4.0, released 2022-05-27, is the newest and the project's last
-        # commit is 2024-08 -- it is a finished front end, not a live one.
         version: "0.4.0"
-        # Empty derives the GitHub release asset URL from the version. Name a
-        # mirror for a deployment whose pods have no egress to github.com.
+        # Empty derives the GitHub release URL. Set a mirror for pods with no egress to github.com.
         url: ""
-        # sha256 of cruise-control-ui-<version>.tar.gz. Nothing upstream signs
-        # the asset, so this checksum is the whole integrity check and the init
-        # container refuses a download that does not match it.
+        # sha256 of cruise-control-ui-<version>.tar.gz. Nothing upstream signs it, so this is the whole integrity check.
         sha256: "aa490482b023feb251651d1c86121a0625a515d7f3bd422f161b5206afbd383f"
-      # The static server, and the single proxy hop that holds the API
-      # credential -- the browser is never given it.
+      # The static server, and the proxy hop that holds the API credential.
       image:
         repository: nginxinc/nginx-unprivileged
         tag: "1.31.7-trixie"   # == versions.yaml services.nginx-unprivileged (drift-checked)
         # == versions.yaml services-digests.nginx-unprivileged (drift-checked).
         digest: "sha256:09b0d3eda2aa592d2487f284519419015cab010d7df16cd0fe224b585fc60eb6"
         pullPolicy: IfNotPresent
-      # A static file server in front of one upstream, read by a handful of
-      # admins -- this is not a data path.
+      # Sized for a static file server read by a few admins.
       resources:
         requests:
           cpu: 50m
@@ -464,36 +240,18 @@ kafka:
           cpu: 200m
           memory: 128Mi
     redpanda:
-      # Pinned explicitly: the shipped default at v26.2.2 is `continuous`, which
-      # is licence-gated, so an enterprise licence appearing later would change
-      # balancing behaviour with no config change of ours. node_add is the free
-      # mode, and it is what moves replicas onto a broker that just joined.
+      # node_add or off. Redpanda's default, continuous, is an Enterprise feature, and the chart refuses it unless enterprise.licenseSecretRef names a licence. node_add moves replicas onto a new broker.
       partitionAutobalancingMode: node_add
-      # Recovery bandwidth per sender in bytes/s while a new replica catches up.
-      # 100 MiB/s is Redpanda's own default, pinned so the throttle sits beside
-      # the Strimzi one instead of being implied.
+      # Recovery bandwidth per sender in bytes/s. Redpanda's own default, pinned.
       raftLearnerRecoveryRate: 104857600
-  # A separate KRaft controller pool at kafka.mode: cluster. Apache 4.3 says
-  # combined controller+broker "should be avoided in critical deployment
-  # environments": in combined mode a broker under GC or IO pressure IS the
-  # metadata quorum, so an ingest stall becomes a control-plane stall. That
-  # makes the separate pool the recommended shape for a NEW deployment, and
-  # scripts/resolve_sizing.py sets this true in the values fragment it writes
-  # for every deployment it sizes.
+  # A separate KRaft controller pool at cluster mode. In combined mode a broker under GC or IO pressure is the metadata quorum, so separate is recommended for a new deployment (docs/deployment/kafka/README.md, "Sizing dials").
+  # scripts/resolve_sizing.py sets it true in the values it writes.
   controllerPool:
-    # false (combined mode) is the chart default: the on-prem status quo, and
-    # what every rc.13 deployment already runs. Flipping this to true on a
-    # cluster that already exists re-forms the metadata quorum -- combined to
-    # separate is not proven live on Strimzi 1.2, and sizing/sizing.yaml's
-    # controller_mode lock refuses the move without --migrate -- so true is a
-    # decision for a fresh deployment, never a default.
+    # false (combined) is the chart default. Flipping it on a live cluster re-forms the metadata quorum, and sizing.yaml's controller_mode lock refuses that without --migrate.
     enabled: false
-    # Three for a quorum that tolerates losing one. Controllers are sized by
-    # PARTITION COUNT, not throughput, so this does not grow with ingest.
+    # Three tolerates losing one. Controllers are sized by partition count, not ingest.
     replicas: 3
-    # Confluent's documented production minimum per controller: 1 dedicated
-    # vCPU, 4 GB RAM, >= 1 GB heap. The memory limit matches the request because
-    # a JVM that sizes its heap from the limit must not then be evicted for it.
+    # Per controller: 1 dedicated vCPU, 4 GB RAM, 1 GB heap or more. The memory limit equals the request so the pod is not evicted for the heap it sized from the limit.
     resources:
       requests:
         cpu: "1"
@@ -502,84 +260,40 @@ kafka:
         cpu: "2"
         memory: 4Gi
     storage:
-      # The metadata log and its snapshots use 10-20 GiB at our partition
-      # counts, against a 64 GB SSD recommendation. This is that floor, not a
-      # capacity estimate that grows with ingest.
+      # The metadata log and snapshots use 10-20 GiB at our partition counts. A floor, not an estimate that grows with ingest.
       size: 20Gi
       storageClass: ""
-  # Broker-count autoscaling via KEDA (kafka-autoscaler.yaml), scaling the
-  # broker KafkaNodePool's replicas through its scale subresource directly --
-  # Strimzi 1.2.0's KafkaNodePool CRD carries specReplicasPath: .spec.replicas,
-  # statusReplicasPath: .status.replicas. STANDARD and ON by default: scale-OUT
-  # is automatic (moving spec.replicas is exactly what triggers Strimzi's own
-  # autoRebalance add-brokers template -- kafka-rebalance-templates.yaml);
-  # scale-IN stays off below. Renders only at kafka.provider=strimzi and
-  # kafka.mode=cluster -- a single broker has nothing to scale -- so this is
-  # silently absent there rather than an error, the same way
-  # kafka.rebalancing.enabled already is.
-  # Broker disk pressure, as a PrometheusRule on the kubelet's own volume stats
-  # for each broker PVC. Time retention keeps a record for its whole window and
-  # the per-partition size cap lets any one topic use the whole volume, so a disk
-  # sized too small FILLS rather than dropping unread data, and this is how an
-  # operator hears before it does. Rendered at kafka.mode cluster on
-  # Strimzi, and only where the cluster serves monitoring.coreos.com/v1
-  # (Prometheus Operator); anything else renders nothing.
+  # Broker disk pressure, a PrometheusRule on the kubelet's volume stats for each broker PVC. Retention holds a record for its whole window, so an undersized disk fills instead of dropping data.
+  # Renders at strimzi cluster mode where the cluster serves monitoring.coreos.com/v1.
   diskAlert:
     enabled: true
-    # Percent of the broker PVC used before each level fires. warning < critical.
+    # Percent of the PVC used before each level fires. warning < critical.
     warningPercent: 70
     criticalPercent: 85
     # How long the volume stays over a level before it fires.
     for: 10m
+  # Broker-count autoscaling by KEDA (kafka-autoscaler.yaml) on the broker KafkaNodePool. Scale-out is automatic and scale-in is off below. Renders at strimzi cluster mode only. docs/deployment/kafka/autoscaling.md.
   autoscaling:
     enabled: true
-    # KEDA maxReplicaCount. There is no floor dial: minReplicaCount is always
-    # kafka.replicas (the resolved broker count), so this ceiling is the only
-    # thing a deployer raises. Kept under the sizing-derived partition count
-    # (12 at these defaults -- dfe-kafka.partitions) so a broker added at the
-    # ceiling still gets a share of partitions instead of sitting idle.
+    # KEDA maxReplicaCount. There is no floor dial: minReplicaCount is kafka.replicas. Keep it under the sizing-derived partition count (dfe-kafka.partitions) so an added broker gets partitions.
     maxBrokers: 6
-    # KEDA pollingInterval in seconds, both triggers below.
+    # KEDA pollingInterval in seconds, for both triggers.
     pollingInterval: 30
-    # The kafka trigger's lag target, shared by every per-source trigger below:
-    # lag on ONE source's landing topic, in its own transform's consumer
-    # group, before KEDA asks for another broker. This is the always-available
-    # signal -- see metrics.usePrometheus below for why it is the default
-    # rather than an option.
+    # Lag on one source's landing topic, in its transform's consumer group, before KEDA asks for another broker. Shared by every per-source trigger.
     lagThreshold: 10
-    # The transform kind a landing source's consumer group is named for
-    # (apps.yaml's source_binding.config.source.group_id:
-    # "dfe-transform-{kind}-{source}"), when kafka.landingTopics.sources[].
-    # transform does not override it for that one source. vrl is the generic
-    # transform app; elastic (filebeat-catalogue sources) is the other kind
-    # apps.yaml defines today.
+    # The transform kind a source's consumer group is named for (dfe-transform-{kind}-{source}), unless kafka.landingTopics.sources[].transform overrides it. vrl is the generic app, elastic the filebeat catalogue.
     transformKind: vrl
-    # The PromQL signal's per-broker capacity, in MB/s (decimal, matching
-    # kafka.broker.networkMbS's convention) -- divides the cluster's total
-    # bytes-in rate to get the broker count that rate needs. Only read when
-    # metrics.usePrometheus is true.
+    # Per-broker capacity in MB/s for the PromQL trigger, which divides total bytes-in by it. Read only when metrics.usePrometheus is true.
     bytesInPerBrokerThresholdMBs: 80
     metrics:
-      # The OFF switch, never an on switch. The on-prem reference cluster ships
-      # no PromQL-queryable backend today: the otel-collector's own `prometheus`
-      # block (helm/charts/otel-collector) is an EXPOSITION endpoint feeding
-      # ClickHouse, not a server KEDA can run a query against. Flip this on
-      # only once a deployment has a real Prometheus/Thanos/Mimir/
-      # VictoriaMetrics/AMP endpoint AND the Kafka CR's JMX metrics are wired
-      # up -- Strimzi's metricsConfig is not part of this chart yet, so
-      # kafka_server_brokertopicmetrics_bytesin_total does not exist until it
-      # is. The chart refuses the render if this is true with no URL below.
+      # The OFF switch. The on-prem cluster has no PromQL-queryable backend, so enable it only with a Prometheus-compatible endpoint and Strimzi JMX metrics, which this chart does not wire.
+      # The render fails when this is true with no URL.
       usePrometheus: false
       prometheusUrl: ""
-    # The OFF switch, never an on switch. Once KEDA scales brokers out, they
-    # stay out until a human raises kafka.replicas or flips this -- shrinking
-    # the pool means Strimzi evacuates the departing broker's partitions first
-    # (kafka-rebalance-templates.yaml's remove-brokers template), and that is
-    # worth proving safe here before it runs unattended.
+    # The OFF switch. Once KEDA scales brokers out they stay out until kafka.replicas is raised or this is on, because scale-in evacuates partitions first (the remove-brokers template).
     scaleIn:
       enabled: false
-      # HPA scaleDown stabilisation window in seconds, once enabled -- capped
-      # at 3600 by the Kubernetes HPA API (autoscaling/v2 HPAScalingRules).
+      # HPA scaleDown stabilisation window in seconds. The HPA API caps it at 3600.
       cooldownSeconds: 1800
 
 # DFE service user (SCRAM-SHA-512)
@@ -588,36 +302,16 @@ user:
   authentication:
     type: scram-sha-512
   password:
-    # Route the SCRAM password through the secrets store instead of letting Strimzi's
-    # User Operator generate one it keeps to itself. The DEPLOY layer seeds the store
-    # (terraform/modules/tf-secrets `seed_kafka_user`); ESO only reads it, into both
-    # this namespace and the app namespace. See kafka-user-credential.yaml.
-    #
-    # WHY the store rather than an in-cluster generator: it is the one seam that swaps
-    # for a public-cloud deploy (ClusterSecretStore provider -> aws/gcp/azure on EKS).
-    # Generating straight into a Secret would leave cloud needing a different
-    # mechanism and the store path unexercised on-prem.
-    #
-    # REQUIRES the store to be seeded first -- `tofu apply` on tf-secrets. Without
-    # the seed the ExternalSecret cannot resolve, the KafkaUser never gets a
-    # password, and Kafka auth does not come up. Set false to fall back to the User
-    # Operator generating into the broker namespace only, which is the CURRENT
-    # behaviour and leaves the app namespace with no credential
-    # (dfe-local/dfe-kafka-user NotFound, transforms in CreateContainerConfigError).
+    # Reads the SCRAM password from the secrets store, which the deploy layer seeds (terraform/modules/tf-secrets seed_kafka_user). ESO projects it into this namespace and the app namespace.
+    # Needs the store seeded first (tofu apply on tf-secrets). false falls back to a User Operator password in the broker namespace only, which leaves the app namespace with no dfe-kafka-user.
+    # Why the store: docs/deployment/kafka/README.md, "Service user credential".
     fromSecretsStore: true
     secretStoreName: dfe-secret-store
-    # The store with no path prefix that bootstrap creates beside it on aws-sm,
-    # for a secret named outside the path: MSK's own (kafka.external.msk.credentialRef).
+    # The store with no path prefix, for a secret named outside the path: MSK's own (kafka.external.msk.credentialRef).
     unprefixedStoreName: dfe-secret-store-unprefixed
-    # Extra namespaces to project the credential into, beyond appNamespace.
     extraAppNamespaces: []
 
-# Scheduling. These tolerations are the chart's half of the dedicated node pools
-# scripts/resolve_sizing.py taints: a pool labelled for kafka-broker or
-# kraft-controller refuses every pod that does not tolerate it. Inert on a
-# cluster with no such taint. A deployment overlay setting
-# nodeScheduling.tolerations REPLACES this list, because Helm replaces a list
-# rather than merging it.
+# Tolerations for the dedicated node pools scripts/resolve_sizing.py taints. Inert without such a taint. An overlay's nodeScheduling.tolerations replaces this list.
 nodeScheduling:
   tolerations:
     - key: dfe.hyperi.io/workload
@@ -628,7 +322,5 @@ nodeScheduling:
       operator: Equal
       value: kraft-controller
       effect: NoSchedule
-  # The dedicated pools this cluster runs, which layer2-data reads off the
-  # cluster secret. A pool named here is REQUIRED by its pods (brokers on
-  # kafka-broker, a separate quorum on kraft-controller). Empty requires none.
+  # The dedicated pools this cluster runs, read by layer2-data from the cluster secret. A named pool is required by its pods.
   dedicatedPools: []

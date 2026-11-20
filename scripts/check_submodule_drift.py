@@ -161,7 +161,9 @@ def audit() -> tuple[list[str], list[dict], list[str]]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--json", action="store_true", help="emit the pin table as JSON")
+    parser.add_argument(
+        "--json", action="store_true", help="emit the pin table as JSON"
+    )
     args = parser.parse_args()
 
     # An empty table is a real state, not an unverified one: nothing in the

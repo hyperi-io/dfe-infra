@@ -48,10 +48,10 @@ run_test "CORE e2e (pipelines streaming)" "smoke-test-integration.sh"
 run_test "Layer 1 (Bootstrap)" "smoke-test.sh"
 run_test "Layer 2 (Data Platform)" "smoke-test-data.sh"
 run_test "Auth & Ingress" "smoke-test-auth.sh"
-# The fork's three DFE-specific seams (engine JWT / ClickHouse reads / embed
+# The fork's three DFE-specific additions (engine JWT / ClickHouse reads / embed
 # headers). Nothing upstream covers them, so an upstream sync can merge clean and
 # still break them -- this is where that shows up.
-run_test "HyperDX seams (auth/data/embed)" "smoke-test-hyperdx.sh"
+run_test "HyperDX (auth/data/embed)" "smoke-test-hyperdx.sh"
 # A source write reaches Argo on the push, not on the 300s repo poll.
 run_test "Forgejo -> Argo push webhook" "smoke-test-argo-webhook.sh"
 run_test "Transform file sets (engine files = pod mount, byte for byte)" "smoke-test-transforms.sh"

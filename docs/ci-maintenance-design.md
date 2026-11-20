@@ -2,83 +2,98 @@
   Project:      dfe-infra
   File:         docs/ci-maintenance-design.md
   Purpose:      How a shared fact stays current across repos: a bot to move it,
-                a gate to prove it moved.
+                a gate to show it moved.
   License:      BUSL-1.1
   Copyright:    (c) 2026 HYPERI PTY LIMITED
 -->
 
 # Keeping shared facts current
 
-Every shared fact gets two mechanisms, never one: a bot to move it, and a gate to prove it moved.
+Every shared fact gets two mechanisms, never one: a bot to move it, and a gate to show it moved.
 
-A bot alone raises a pull request and has no opinion about whether anyone merges it. A gate alone says something is stale and leaves a human to work out the new value.
+A bot alone raises a pull request and has no opinion about whether anyone merges it. A gate alone says something is stale and leaves a human to work out the value.
 
-## Why one half is not enough
-
-dfe-schemas is consumed as a git submodule by dfe-engine, dfe-loader and dfe-fetcher. Renovate ships its `git-submodules` manager DISABLED (it's opt-in beta), so no bot watched those pins and nothing reported the silence. The three consumers drifted to three different commits: engine current, loader 26 behind, fetcher 27.
-
-The stale two were missing the `_org_id` rename on `detection_checkpoint` and the fix for JSON columns that can't be `Nullable`, so two apps were building against a schema definition the third had already corrected, and nothing failed or warned.
-
-## The two halves
+dfe-schemas was once consumed as a git submodule by dfe-engine, dfe-loader and dfe-fetcher. Renovate ships its `git-submodules` manager DISABLED (it's opt-in beta), so no bot watched those pins and nothing reported the silence. The three consumers drifted to three different commits, engine current, loader 26 behind and fetcher 27, and two apps built against a schema definition the third had corrected, with nothing failing or warning. dfe-schemas ships as a pinned wheel and no suite repo has a submodule, so `check_submodule_drift.py` keeps an empty table for the next one.
 
 The bot is Renovate. It's configured once in the org preset (`github>hyperi-io/renovate-config`), so a repo joins by having a dependency, not by remembering to opt in. It raises a PR under the standing policy: `fix(deps):` so merging ships, a 7-day cooldown for external dependencies, PR-only with no automerge.
 
-The gate is a `check_*_drift.py` in `scripts/`. Each one asserts that a fact resolved in more than one place still agrees, and fails CI when it doesn't. They share a shape: read the SSoT, read every mirror, report each disagreement by name, exit non-zero.
+The gate is a `check_*` script in `scripts/`. Each one asserts that a fact resolved in more than one place still agrees, and fails CI when it doesn't. They all work the same way: read the SSoT, read every mirror, report each disagreement by name, exit non-zero.
 
 | guard | asserts |
 |---|---|
 | `check_versions_drift.py` | every pin mirror matches `versions.yaml` |
 | `check_namespace_drift.py` | the operator-namespace SSoT matches where the appsets install |
-| `check_submodule_drift.py` | every consumer of a shared submodule pins the same commit |
-| `check_governance_drift.py` | governance actions resolve to real chart values |
+| `check_submodule_drift.py` | every consumer of a shared submodule pins the same commit (none listed) |
+| `check_governance_drift.py` | governance actions resolve to chart values that exist |
 | `test_governance_actions.py` | the thin path rendered with each governance action leaves no pod reading a Secret nothing mints |
-| `check_image_pins.py` | image references carry a digest |
+| `check_image_pins.py` | every app pin's tag exists in the registry and its digest equals the pinned one |
 
-They run in `helm-lint.yml` on every PR, and the deploy-affecting ones run again in the `dfe-ops stack-deploy` pre-flight.
+All but `check_image_pins.py` run in `helm-lint.yml` on every PR, and the deploy-affecting ones run again in the `dfe-ops stack-deploy` pre-flight. `check_image_pins.py` reads the registry, so it runs by hand when pins change.
 
 ## Rules a guard follows
 
 - Name what disagreed, not that something did. `dfe-loader: pins dfe-schemas at b7e58c6, 26 commits behind 6586f54` is actionable. "drift detected" isn't.
 - Say how to close it. The submodule guard ends with "Renovate raises the bump PR; merging it is what closes this." <!-- docs-gate: allow semicolon -- quotes the guard's own output -->
-- A skip isn't a pass. When a guard can't verify (no `gh`, no token, a private repo it can't read) it says so loudly and never reports green. `check_governance_drift.py` takes `--require` to turn absence into failure on the CI legs expected to have the checkout.
-- Prove the failure path. A guard nobody has seen fail isn't a guard, so each has a failure-path test that reproduces the defect it exists for. `test_check_namespace_drift.py` feeds it the exact shape of dfe-infra#136.
+- A skip isn't a pass. When a guard can't verify (no `gh`, no token, a private repo it can't read) it says so loudly and never reports a pass. `check_governance_drift.py` takes `--require` to turn absence into failure on the CI legs expected to have the checkout.
+- Test the failure path. A guard nobody has seen fail isn't a guard, so each has a failure-path test that reproduces the defect it exists for. `test_check_namespace_drift.py` feeds it the exact case of dfe-infra#136.
 - Fail on an unverifiable entry. A consumer listed with nothing to compare it against fails instead of passing silently.
 
 ## Propagation, where a mirror cannot be avoided
 
-Some SSoT values legitimately have mirrors. `versions.yaml` feeds appset pins, `Chart.yaml` appVersions and bare `version:` keys, and Renovate can only edit the SSoT. `renovate-propagate.yml` closes that gap:
+Some SSoT values legitimately have mirrors. `versions.yaml` feeds appset pins, `Chart.yaml` appVersions and bare `version:` keys, and Renovate edits the SSoT alone. `renovate-propagate.yml` closes that gap:
 
-- It triggers on Renovate's own branch push and re-resolves the digests.
+- It triggers on Renovate's branch push and re-resolves the digests.
 - It runs `check_versions_drift.py --fix` to write every mirror.
-- It gates on the drift check and pushes back only when it passes, so the PR arrives green.
+- It gates on the drift check and pushes back once it passes, so the PR arrives passing.
 
-Renovate ignores the propagator's commits (`gitIgnoredAuthors`), so it still rebases the branch. `refresh-digests` refuses a stack whose git tag exists, because a released stack is frozen. The digest or app move goes into the next cut (`docs/cutting-a-stack.md`).
+The job runs on push and not `pull_request`, because a bot's `pull_request` run gets a read-only token and can't push. Renovate pushes its branches to this repo, never a fork, so the push trigger is same-repo. The write-back uses a GitHub App token, because a pull request updated with `GITHUB_TOKEN` starts its `pull_request` runs waiting for a human's approval. It only acts on `renovate[bot]` pushes, so a human pushing a `renovate/**` branch keeps their commit unaltered.
+
+Renovate ignores the propagator's commits (`gitIgnoredAuthors`), so it still rebases the branch. `refresh-digests` rejects a stack with a git tag, because a released stack is frozen. The digest or app move goes into the next cut ([cutting-a-stack.md](cutting-a-stack.md)).
 
 Prefer deriving over mirroring. The otel collector held a second copy of the ClickHouse endpoint and crashlooped on the profile it wasn't written for. The fix was to derive it from the shared fact, which removed the mirror instead of synchronising it.
 
+## CI workflows
+
+Jobs run on a named runner image (`ubuntu-26.04`), not `ubuntu-latest`, so a move of that label can't change the tools a step runs on.
+
+**Path filters.** `helm-lint.yml`, `tf-validate.yml` and `e2e-ui.yml` are required checks, so none has an `on.<event>.paths:` filter. A pull request a filter never starts reports no check, and a required check that never reports blocks the merge. Each starts on every pull request and push to main, and its `changes` job runs `.github/actions/changes` against the paths. The jobs behind it run unless it positively found nothing, so a failure in `changes` runs the checks and never skips them. `docs.yml` and `dockerfile-lint.yml` aren't required checks and filter with `paths:`.
+
+`helm-lint.yml` has two narrower filters, `images` and `published`, for the third-party arch check and the published-chart renders. Both read public registries, which rate-limit a shared runner, so they run only where their verdict can change. `test_helm_lint_triggers.py` holds each list to what its job reads. Every test step's module docstring says what it guards, so the workflow doesn't repeat it.
+
+**Stack Release (`release.yml`).** The stack version is `current` in `versions.yaml`, a curated decision and not derived from commits. On a push to main the workflow:
+
+1. Gates the stack with the drift check, `dfe-stack compat-check --strict`, `release-gate`, the third-party amd64/arm64 check and a registry digest verify. All of them read anonymously, because every pinned image is public.
+2. Reads `current` and stops if its tag exists, so editing pins without bumping `current` re-runs the gate and nothing else.
+3. Otherwise cuts the tag, then renders, signs and publishes the manifest in the same run. A tag pushed with `GITHUB_TOKEN` doesn't start another workflow, so the publish can't live in a separate one.
+4. For a release-maturity tag, advances `latest` through a pull request that merges once main's required checks pass. The pull request is opened with the GitHub App token, because one opened with `GITHUB_TOKEN` starts its checks waiting for approval.
+
+Runs are serialised and never cancelled, so two quick pushes can't cut or advance `latest` at once and a publish in flight finishes. `check_versions_drift.py` holds the Helm version equal to `helm-lint.yml`'s, so the gate resolves chart appVersions with the Helm the pull request check used.
+
+**Stack pin propagate (`stack-pin-propagate.yml`).** `versions.yaml` is the SSoT for both deploy targets, but only dfe-infra reads it live, through GitOps. dfe-docker holds a committed dial, so a `current` move reaches it only when someone edits that number by hand. The workflow carries the move across as a pull request, through an App token scoped to dfe-docker. It moves one number. What that number selects still comes from the signed stack manifest, so nothing here is a second copy of a pin, and config that differs between the docker and k8s topologies isn't synced. It also runs after Stack Release, because a `current` move lands before its tag exists and `propagate_stack_pin.py` skips until the tag is on origin.
+
 ## Hard-coding a shared fact is a defect
 
-A literal that restates a fact defined elsewhere is the same failure as a stale mirror, minus the guard. Every one found so far reported a broken pipeline against a healthy one:
+A literal that restates a fact defined elsewhere is the same failure as a stale mirror, minus the guard. Every one found reported a broken pipeline against a healthy one:
 
 | literal | what it broke |
 |---|---|
-| otel exporter's ClickHouse endpoint | collector crashlooped on `no such host` -- single mode emits `dfe-clickhouse`, the operator emits only a headless Service |
+| otel exporter's ClickHouse endpoint | collector crashlooped on `no such host` -- single mode emits `dfe-clickhouse`, the operator a headless Service alone |
 | smoke-test pod selector `app.kubernetes.io/name=dfe-clickhouse` | reported a dead datastore against three healthy servers |
 | the same selector in the KEDA scale proof | `no ClickHouse pod found` |
-| smoke-test `CH_URL` | built from a literal while ignoring the correct host resolved nine lines above it |
+| smoke-test `CH_URL` | built from a literal, ignoring the correct host resolved nine lines above it |
 
-When you find one, replace it with the value's real source, in this order:
+When you find one, replace it with the value's source, in this order:
 
-1. Derive it from the shared fact already in scope. The otel endpoint became `printf "tcp://%s:%v" .Values.clickhouse.host .Values.clickhouse.nativePort`.
+1. Derive it from the shared fact in scope. The otel endpoint became `printf "tcp://%s:%v" .Values.clickhouse.host .Values.clickhouse.nativePort`.
 2. Read it from the thing being tested. A smoke test asks the pod what it's configured with instead of asserting what it should be, so it tests the deployment and not its own assumptions.
-3. Take it from the config cascade. For a scalo service, the terminal default belongs in the binary and every layer above it overrides. For a chart, the SSoT is `argocd/values/common.yaml` and the chart default is only the standalone-render fallback.
+3. Take it from the config cascade. For a scalo service, the terminal default belongs in the binary and every layer above it overrides. For a chart, the SSoT is `argocd/values/common.yaml` and the chart default is the standalone-render fallback and nothing more.
 
-A literal is acceptable in exactly one case: it IS the definition, appears once, and is overridable. `bootstrap.sh` naming the bundled Forgejo URL is that case. It's the only statement of the fact and `DFE_CONFIG_REPO_URL` replaces it.
+A literal is acceptable in exactly one case: it IS the definition, appears once, and is overridable. `bootstrap.sh` naming the bundled Forgejo URL is that case. It's the one statement of the fact and `DFE_CONFIG_REPO_URL` replaces it.
 
-## Adding a shared fact
+To add a shared fact:
 
 1. Put the SSoT in one file and say in a comment that it's the SSoT.
-2. Derive consumers from it where you can. Mirror only where you must.
+2. Derive consumers from it where you can. Mirror where you must and nowhere else.
 3. Let Renovate move it if an upstream owns the value.
 4. Write the guard, with a failure-path test.
 5. Wire the guard into `helm-lint.yml`, and into the pre-flight if a wrong value would reach a cluster.

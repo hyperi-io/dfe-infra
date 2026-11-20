@@ -11,11 +11,11 @@
 /* Roles follow hyperi-graphics docs/web-style-reference.md. Each fallback is the token's value in tokens.css. */
 :root {
   --role-canvas: var(--hyperi-light-canvas, #ffffff);
-  --role-raised: var(--hyperi-light-raised, #f5f5f8);
-  --role-border: var(--hyperi-light-border, #d9dae3);
-  --role-ink: var(--hyperi-light-ink, #000647);
-  --role-body: var(--hyperi-light-body, #000000);
-  --role-muted: var(--hyperi-light-muted, #666a91);
+  --role-raised: #f6f7f8;
+  --role-border: #dadde1;
+  --role-ink: #1c1e21;
+  --role-body: #1c1e21;
+  --role-muted: #606770;
   --role-link: var(--hyperi-light-link, #1e6db9);
   --role-plate: var(--hyperi-light-plate, #000647);
   --role-on-plate: var(--hyperi-light-on-plate, #ffffff);
@@ -23,16 +23,16 @@
   --role-accent-ink: var(--hyperi-light-accent-ink, #177a68);
   --role-chrome: var(--role-canvas);
   --role-card: var(--role-canvas);
-  --role-tint: color-mix(in srgb, var(--dfe-blue) 9%, transparent);
-  --role-card-border: color-mix(in srgb, var(--dfe-blue) 35%, var(--role-border));
-  --role-glow: color-mix(in srgb, var(--dfe-blue) 28%, transparent);
-  --role-band: radial-gradient(56rem 28rem at 88% -12%, color-mix(in srgb, var(--dfe-blue) 20%, transparent), transparent 70%),
-    radial-gradient(40rem 22rem at -4% 112%, color-mix(in srgb, var(--dfe-accent) 16%, transparent), transparent 70%),
-    var(--role-raised);
+  --role-tint: color-mix(in srgb, var(--role-link) 8%, transparent);
+  --role-card-border: var(--role-border);
+  --role-glow: transparent;
+  --role-band: var(--role-raised);
 
   --dfe-navy: var(--hyperi-navy, #000647);
   --dfe-blue: var(--hyperi-blue, #2ea4f6);
   --dfe-accent: var(--hyperi-accent, #2ded88);
+  --dfe-warn: #d97706;
+  --dfe-on-warn: #ffffff;
   --dfe-font-logo: var(--hyperi-font-marketing-logo, Montserrat, "Helvetica Neue", Arial, sans-serif);
   --dfe-font-display: var(--hyperi-font-marketing-display, "Martel Sans", "Helvetica Neue", Arial, sans-serif);
   --dfe-font-sans: var(--hyperi-font-ui-sans, Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
@@ -97,25 +97,23 @@
 /* Every surface follows the colour mode. The footer alone is a navy band in both, as on hyperi.io. */
 html[data-theme='dark'],
 .footer--dark {
-  --role-canvas: var(--hyperi-dark-canvas, #000324);
-  --role-raised: var(--hyperi-dark-raised, #000647);
-  --role-border: var(--hyperi-dark-border, #17559f);
+  --role-canvas: #1b1b1d;
+  --role-raised: #242526;
+  --role-border: #444950;
   --role-ink: var(--hyperi-dark-ink, #ffffff);
-  --role-body: var(--hyperi-dark-body, #d9dae3);
-  --role-muted: var(--hyperi-dark-muted, #999bb5);
+  --role-body: #e3e3e3;
+  --role-muted: #a8acb3;
   --role-link: var(--hyperi-dark-link, #2ea4f6);
   --role-plate: var(--hyperi-dark-plate, #2ea4f6);
   --role-on-plate: var(--hyperi-dark-on-plate, #000647);
   --role-plate-hover: var(--hyperi-dark-plate-hover, #6dbff9);
   --role-accent-ink: var(--hyperi-dark-accent-ink, #2ded88);
-  --role-chrome: var(--dfe-navy);
-  --role-card: color-mix(in srgb, var(--dfe-navy) 70%, transparent);
-  --role-tint: color-mix(in srgb, var(--dfe-blue) 14%, transparent);
-  --role-card-border: color-mix(in srgb, var(--dfe-blue) 40%, transparent);
-  --role-glow: color-mix(in srgb, var(--dfe-blue) 40%, transparent);
-  --role-band: radial-gradient(56rem 28rem at 88% -12%, color-mix(in srgb, var(--dfe-blue) 32%, transparent), transparent 70%),
-    radial-gradient(40rem 22rem at -4% 112%, color-mix(in srgb, var(--dfe-accent) 12%, transparent), transparent 70%),
-    linear-gradient(180deg, var(--dfe-navy), var(--hyperi-dark-canvas, #000324));
+  --role-chrome: #242526;
+  --role-card: #242526;
+  --role-tint: color-mix(in srgb, var(--role-link) 12%, transparent);
+  --role-card-border: var(--role-border);
+  --role-glow: transparent;
+  --role-band: var(--role-raised);
   color-scheme: dark;
 }
 
@@ -186,7 +184,51 @@ h6 {
 }
 
 code {
-  border: var(--dfe-stroke-hairline) solid var(--role-border);
+  border: 0;
+}
+
+/* A doc page fills the window: the text takes every pixel between the sidebar and a TOC held against the right edge. */
+.plugin-docs main > .container {
+  max-width: none;
+  margin-inline: 0;
+}
+
+@media (min-width: 997px) {
+  .plugin-docs main > .container > .row {
+    flex-wrap: nowrap;
+  }
+
+  /* Docusaurus caps this column at 75% with !important. min-width 0 lets a long code token wrap instead of pushing the TOC below. */
+  .plugin-docs main > .container > .row > .col[class*='docItemCol'] {
+    flex: 1 1 0;
+    min-width: 0;
+    max-width: none !important;
+  }
+
+  .plugin-docs main > .container > .row > .col--3 {
+    flex: 0 0 min(25%, 18rem);
+    max-width: min(25%, 18rem);
+  }
+}
+
+/* A table wraps its cells to the content width instead of scrolling sideways. */
+.markdown table {
+  display: table;
+  width: 100%;
+}
+
+.markdown td code,
+.markdown th code {
+  overflow-wrap: anywhere;
+}
+
+/* On a phone a word too long for its cell breaks rather than widening the page.
+   Desktop keeps whole words, which sets the column widths. */
+@media (max-width: 996px) {
+  .markdown td,
+  .markdown th {
+    overflow-wrap: anywhere;
+  }
 }
 
 pre code,
@@ -281,8 +323,9 @@ html[data-theme='dark'] {
 }
 
 /* The hound sits before the product name, set in the HyperI wordmark face,
-   its feet on the name's baseline. */
-.navbar__brand {
+   its feet on the name's baseline. Infima centres the brand, so the selector
+   carries the navbar to outrank it. */
+.navbar .navbar__brand {
   gap: var(--dfe-space-3);
   align-items: baseline;
 }
@@ -296,9 +339,13 @@ html[data-theme='dark'] {
   display: block;
 }
 
-/* The menu links share that baseline, so they line up with the product name. */
-.navbar__items:not(.navbar__items--right) {
-  align-items: baseline;
+/* Desktop only: every navbar text shares the product name's baseline, and on a
+   phone the search button must stay centred. */
+@media (min-width: 997px) {
+  .navbar__inner,
+  .navbar__items {
+    align-items: baseline;
+  }
 }
 
 .navbar__title {
@@ -323,34 +370,47 @@ html[data-theme='dark'] {
   background-color: var(--role-canvas);
 }
 
-.announcement-tag {
-  display: inline-block;
-  margin-right: var(--dfe-space-2);
+/* The release label beside the version picker. Latest is a quiet outline, a warning is filled. */
+.release-label {
+  display: inline-flex;
+  align-items: center;
   padding: 0 var(--dfe-space-2);
-  border-radius: var(--dfe-radius-pill);
-  background: var(--dfe-navy);
-  color: var(--dfe-accent);
+  border-radius: var(--dfe-radius-sm);
+  border: var(--dfe-stroke-hairline) solid var(--dfe-accent);
+  color: var(--role-body);
   font-size: var(--dfe-text-xs);
-  font-weight: 700;
-  letter-spacing: var(--dfe-tracking-eyebrow);
-  line-height: var(--dfe-space-6);
-  text-transform: uppercase;
-}
-
-div[class*='announcementBar'] {
-  font-size: var(--dfe-text-sm);
-}
-
-div[class*='announcementBar'] a {
-  color: inherit;
   font-weight: 600;
-  text-decoration: underline;
-  text-underline-offset: 0.15em;
+  line-height: var(--dfe-space-6);
+  white-space: nowrap;
 }
 
-div[class*='announcementBar'] svg {
-  margin-left: var(--dfe-space-1);
-  vertical-align: -0.125em;
+.release-label:hover {
+  color: var(--role-body);
+  text-decoration: none;
+}
+
+.release-label--warn,
+.release-label--warn:hover {
+  border-color: var(--dfe-warn);
+  background: var(--dfe-warn);
+  color: var(--dfe-on-warn);
+}
+
+/* On a phone a warning stays in the bar, where the site name gives way to it. */
+@media (max-width: 996px) {
+  .navbar__items--right:has(.release-item--warn) {
+    flex: 1;
+    justify-content: flex-end;
+  }
+
+  .navbar__items--right .release-item--warn {
+    display: flex;
+    margin-right: auto;
+  }
+
+  .navbar__inner:has(.release-item--warn) .navbar__title {
+    display: none;
+  }
 }
 
 /* The footer is a navy band in both modes. */
@@ -359,9 +419,25 @@ div[class*='announcementBar'] svg {
   --ifm-footer-color: var(--role-muted);
   --ifm-footer-link-color: var(--role-body);
   --ifm-footer-link-hover-color: var(--dfe-accent);
-  --ifm-footer-title-color: var(--role-ink);
-  padding-block: var(--dfe-space-12);
+  padding-block: var(--dfe-space-4);
   border-top: var(--dfe-stroke-hairline) solid var(--role-border);
+}
+
+/* Two short rows: the links, then the mark and the copyright side by side. */
+.footer__links {
+  margin-bottom: var(--dfe-space-3);
+  font-size: var(--dfe-text-sm);
+}
+
+.footer__bottom {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: var(--dfe-space-4);
+}
+
+.footer__bottom > div {
+  margin-bottom: 0;
 }
 
 .footer > .container {
@@ -371,35 +447,34 @@ div[class*='announcementBar'] svg {
 
 /* The theme dims the footer logo to half, and a mark is never shown recoloured. */
 .footer a[class*='footerLogoLink'] {
+  display: flex;
   opacity: 1;
 }
 
 .footer__logo {
-  height: var(--dfe-space-8);
-}
-
-.footer__title {
-  font-family: var(--dfe-font-sans);
-  font-size: var(--dfe-text-sm);
-  font-weight: 600;
-}
-
-.footer__item {
-  font-size: var(--dfe-text-sm);
+  height: var(--dfe-space-6);
+  margin-top: 0;
 }
 
 .footer__copyright {
   font-size: var(--dfe-text-xs);
 }
 
-/* Mermaid's dark theme puts a grey plate behind edge labels, so labels sit on the page canvas instead. */
-.docusaurus-mermaid-container .edgeLabel,
-.docusaurus-mermaid-container .edgeLabel p,
-.docusaurus-mermaid-container .labelBkg {
-  background-color: var(--role-canvas) !important;
+.footer__copyright {
+  font-size: var(--dfe-text-xs);
 }
 
-.docusaurus-mermaid-container .edgeLabel rect {
+/* Mermaid's dark theme puts a grey plate behind edge labels, so labels sit on the page canvas
+   instead, in the page's ink: mid-render a label is black, which vanishes on the dark canvas.
+   A house-style diagram (neo look) draws its own white label pills, so it is left alone. */
+.docusaurus-mermaid-container svg:not(:has(.node[data-look='neo'])) .edgeLabel,
+.docusaurus-mermaid-container svg:not(:has(.node[data-look='neo'])) .edgeLabel p,
+.docusaurus-mermaid-container svg:not(:has(.node[data-look='neo'])) .labelBkg {
+  background-color: var(--role-canvas) !important;
+  color: var(--role-body) !important;
+}
+
+.docusaurus-mermaid-container svg:not(:has(.node[data-look='neo'])) .edgeLabel rect {
   fill: var(--role-canvas) !important;
   opacity: 1 !important;
 }
@@ -414,4 +489,16 @@ div[class*='announcementBar'] svg {
 
 .markdown table thead tr {
   background: var(--role-tint);
+}
+
+/* A display formula wider than the column scrolls inside its own box, not under the TOC. */
+.markdown .katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+/* GitHub's theme fragments: a page pairs a light and a dark image, and each theme hides the other. */
+[data-theme='light'] img[src$='#gh-dark-mode-only'],
+[data-theme='dark'] img[src$='#gh-light-mode-only'] {
+  display: none;
 }

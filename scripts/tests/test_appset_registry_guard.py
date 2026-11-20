@@ -63,7 +63,9 @@ data:
 def registry_params(appset: str) -> list[str]:
     """Every global.registry parameter value one appset file sets."""
     found: list[str] = []
-    pending: list[object] = list(yaml.safe_load_all((APPSETS / appset).read_text(encoding="utf-8")))
+    pending: list[object] = list(
+        yaml.safe_load_all((APPSETS / appset).read_text(encoding="utf-8"))
+    )
     while pending:
         node = pending.pop()
         if isinstance(node, dict):

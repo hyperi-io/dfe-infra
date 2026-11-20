@@ -50,7 +50,7 @@ def _get(url: str, timeout: int = 10) -> tuple[int, str]:
             return resp.status, body
     except urllib.error.HTTPError as exc:
         return exc.code, ""
-    except (urllib.error.URLError, OSError):
+    except urllib.error.URLError, OSError:
         return 0, ""
 
 
@@ -82,7 +82,10 @@ def check_runtime_env(app_url: str, expect_theme: str) -> tuple[bool, str]:
     ):
         return True, ""
     if "NEXT_PUBLIC_THEME" not in body:
-        return True, "note: __ENV.js has no NEXT_PUBLIC_THEME (theme may be a build default)"
+        return (
+            True,
+            "note: __ENV.js has no NEXT_PUBLIC_THEME (theme may be a build default)",
+        )
     return False, f"__ENV.js theme is not {expect_theme!r}"
 
 
@@ -106,8 +109,12 @@ def main() -> int:
     p = argparse.ArgumentParser(description="Validate a running DFE app stack (HTTP).")
     p.add_argument("--app-url", default="http://localhost:8080")
     p.add_argument("--api-url", default="http://localhost:8000")
-    p.add_argument("--expect-theme", default="dfe", help="required NEXT_PUBLIC_THEME ('' to skip)")
-    p.add_argument("--fonts", default="Inter", help="comma-separated font names to look for")
+    p.add_argument(
+        "--expect-theme", default="dfe", help="required NEXT_PUBLIC_THEME ('' to skip)"
+    )
+    p.add_argument(
+        "--fonts", default="Inter", help="comma-separated font names to look for"
+    )
     p.add_argument("--timeout", type=int, default=120, help="readiness budget seconds")
     args = p.parse_args()
 

@@ -37,15 +37,27 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 VALUES = REPO_ROOT / "argocd" / "values"
 CHART = chart_dir("clickhouse-cluster")
 
-CLUSTER_CASCADE = [VALUES / "common.yaml", VALUES / "local.yaml", VALUES / "profile-scale.yaml"]
-SINGLE_CASCADE = [VALUES / "common.yaml", VALUES / "local.yaml", VALUES / "profile-single.yaml"]
+CLUSTER_CASCADE = [
+    VALUES / "common.yaml",
+    VALUES / "local.yaml",
+    VALUES / "profile-scale.yaml",
+]
+SINGLE_CASCADE = [
+    VALUES / "common.yaml",
+    VALUES / "local.yaml",
+    VALUES / "profile-single.yaml",
+]
 
 # "A few hundred MB" per server, for the log and the err.log together.
 CEILING_BYTES = 512 * 1024**2
 SHIPPED_LEVEL = "information"
 # What an unset logger means, per server, for the failure message.
-OPERATOR_DEFAULT = "the operator's applies: information, 10 files of 100M, on the data PVC"
-IMAGE_DEFAULT = "the image's config.xml applies: trace, 10 files of 1000M, on the node's disk"
+OPERATOR_DEFAULT = (
+    "the operator's applies: information, 10 files of 100M, on the data PVC"
+)
+IMAGE_DEFAULT = (
+    "the image's config.xml applies: trace, 10 files of 1000M, on the node's disk"
+)
 SINGLE_LOGGER_PATH = "/etc/clickhouse-server/config.d/dfe-logger.yaml"
 SINGLE_SYSTEM_LOGS_PATH = "/etc/clickhouse-server/config.d/dfe-system-logs.yaml"
 # The system log tables the pinned operator (0.0.8) switches on, from its
@@ -60,13 +72,20 @@ SHIPPED_TTL_DAYS = {
 # Switched off outright: nothing in DFE reads it, and only single mode's image turns it on.
 SHIPPED_OFF = ("trace_log",)
 REMOVED = {"@remove": "remove"}
-_TTL =re.compile(r"^event_date \+ INTERVAL (\d+) DAY DELETE$")
+_TTL = re.compile(r"^event_date \+ INTERVAL (\d+) DAY DELETE$")
 _SIZE = re.compile(r"^\s*(\d+)\s*([KM]?)\s*$")
 _UNIT = {"": 1, "K": 1024, "M": 1024**2}
 
 
 def _cmd(cascade: list[Path], sets: tuple[str, ...]) -> list[str]:
-    cmd = ["helm", "template", "clickhouse-cluster", str(CHART), "--set", "appNamespace=dfe-local"]
+    cmd = [
+        "helm",
+        "template",
+        "clickhouse-cluster",
+        str(CHART),
+        "--set",
+        "appNamespace=dfe-local",
+    ]
     for v in cascade:
         cmd += ["-f", str(v)]
     for s in sets:
@@ -126,7 +145,9 @@ def disk_bound(logger: dict) -> int | None:
 
 
 def check_logger(where: str, logger: dict | None, unset: str) -> None:
-    expect(f"{where} sets its own logger", isinstance(logger, dict), f"absent, so {unset}")
+    expect(
+        f"{where} sets its own logger", isinstance(logger, dict), f"absent, so {unset}"
+    )
     if not isinstance(logger, dict):
         return
     expect(
@@ -162,14 +183,18 @@ def test_cluster_mode_bounds_the_server_log() -> None:
 
 def test_keeper_bounds_its_log() -> None:
     check_logger(
-        "the KeeperCluster", cr_logger(render(CLUSTER_CASCADE), "KeeperCluster"), OPERATOR_DEFAULT
+        "the KeeperCluster",
+        cr_logger(render(CLUSTER_CASCADE), "KeeperCluster"),
+        OPERATOR_DEFAULT,
     )
 
 
 def test_single_mode_bounds_the_server_log() -> None:
     docs = render(SINGLE_CASCADE)
     check_logger("the single-mode server", single_logger(docs), IMAGE_DEFAULT)
-    mounts = one(docs, "StatefulSet")["spec"]["template"]["spec"]["containers"][0]["volumeMounts"]
+    mounts = one(docs, "StatefulSet")["spec"]["template"]["spec"]["containers"][0][
+        "volumeMounts"
+    ]
     expect(
         "the single-mode server reads the logger from config.d",
         any(m.get("mountPath") == SINGLE_LOGGER_PATH for m in mounts),
@@ -205,12 +230,20 @@ def test_one_value_reaches_every_server_it_names() -> None:
 def test_a_setting_the_server_would_reject_fails_the_render() -> None:
     for value in ("verbose", "Information", ""):
         err = render_error(f"clickhouse.serverLog.level={value}")
-        expect(f"serverLog.level={value!r} is refused", "must be one of" in err, err[:200])
+        expect(
+            f"serverLog.level={value!r} is refused", "must be one of" in err, err[:200]
+        )
     err = render_error("clickhouse.keeper.log.level=verbose")
-    expect("keeper.log.level=verbose is refused", "clickhouse.keeper.log.level" in err, err[:200])
+    expect(
+        "keeper.log.level=verbose is refused",
+        "clickhouse.keeper.log.level" in err,
+        err[:200],
+    )
     for value in ("0", "-1"):
         err = render_error(f"clickhouse.serverLog.count={value}")
-        expect(f"serverLog.count={value} is refused", "must be 1 or more" in err, err[:200])
+        expect(
+            f"serverLog.count={value} is refused", "must be 1 or more" in err, err[:200]
+        )
     expect("the shipped values pass", render_error() == "")
 
 
@@ -252,7 +285,9 @@ def test_every_system_log_table_carries_a_ttl() -> None:
                 found[table] == days,
                 f"got {found[table]!r}; with no ttl the table grows for the life of the server",
             )
-    mounts = one(single, "StatefulSet")["spec"]["template"]["spec"]["containers"][0]["volumeMounts"]
+    mounts = one(single, "StatefulSet")["spec"]["template"]["spec"]["containers"][0][
+        "volumeMounts"
+    ]
     expect(
         "the single-mode server reads the system log TTLs from config.d",
         any(m.get("mountPath") == SINGLE_SYSTEM_LOGS_PATH for m in mounts),
@@ -261,19 +296,32 @@ def test_every_system_log_table_carries_a_ttl() -> None:
 
 
 def test_a_system_log_ttl_can_be_moved_or_dropped() -> None:
-    sets = ("clickhouse.systemLogTTLDays.query_log=90", "clickhouse.systemLogTTLDays.part_log=0")
+    sets = (
+        "clickhouse.systemLogTTLDays.query_log=90",
+        "clickhouse.systemLogTTLDays.part_log=0",
+    )
     for where, found in (
         ("the ClickHouseCluster", cr_system_logs(render(CLUSTER_CASCADE, *sets))),
         ("single mode", single_system_logs(render(SINGLE_CASCADE, *sets))),
     ):
         expect(f"a moved query_log TTL reaches {where}", found["query_log"] == 90)
-        expect(f"part_log=0 leaves {where} with no part_log TTL", found["part_log"] is None)
-        expect(f"the others stay put on {where}", found["metric_log"] == SHIPPED_TTL_DAYS["metric_log"])
+        expect(
+            f"part_log=0 leaves {where} with no part_log TTL", found["part_log"] is None
+        )
+        expect(
+            f"the others stay put on {where}",
+            found["metric_log"] == SHIPPED_TTL_DAYS["metric_log"],
+        )
     added = render(CLUSTER_CASCADE, "clickhouse.systemLogTTLDays.error_log=3")
-    expect("a table added to the map gets its TTL", ttl_days(cr_sections(added).get("error_log")) == 3)
+    expect(
+        "a table added to the map gets its TTL",
+        ttl_days(cr_sections(added).get("error_log")) == 3,
+    )
     all_zero = [f"clickhouse.systemLogTTLDays.{table}=0" for table in SHIPPED_TTL_DAYS]
     none_at_all = render(SINGLE_CASCADE, *all_zero, "clickhouse.systemLogsOff=null")
-    container = one(none_at_all, "StatefulSet")["spec"]["template"]["spec"]["containers"][0]
+    container = one(none_at_all, "StatefulSet")["spec"]["template"]["spec"][
+        "containers"
+    ][0]
     mounts = container["volumeMounts"]
     expect(
         "no TTL and nothing off renders no config.d file and no mount",
@@ -305,7 +353,11 @@ def test_trace_log_is_switched_off() -> None:
                 f"got {sections.get(table)!r}",
             )
     err = render_error("clickhouse.systemLogTTLDays.trace_log=7")
-    expect("a TTL on a table that is also switched off is refused", "drop one" in err, err[:200])
+    expect(
+        "a TTL on a table that is also switched off is refused",
+        "drop one" in err,
+        err[:200],
+    )
 
 
 def test_keeper_liveness_probe_asks_ruok_instead_of_a_bare_connect() -> None:
@@ -317,7 +369,9 @@ def test_keeper_liveness_probe_asks_ruok_instead_of_a_bare_connect() -> None:
         "ruok" in command and "2181" in command and "imok" in command,
         f"got {probe!r}; the operator's TCP probe logs a Warning every 5 seconds",
     )
-    emptied = one(render(CLUSTER_CASCADE, "clickhouse.keeper.livenessProbe=null"), "KeeperCluster")
+    emptied = one(
+        render(CLUSTER_CASCADE, "clickhouse.keeper.livenessProbe=null"), "KeeperCluster"
+    )
     expect(
         "an emptied livenessProbe leaves the operator's own",
         "livenessProbe" not in emptied["spec"]["containerTemplate"],
@@ -327,7 +381,11 @@ def test_keeper_liveness_probe_asks_ruok_instead_of_a_bare_connect() -> None:
 def test_a_ttl_that_is_not_whole_days_fails_the_render() -> None:
     for value in ("7.5", "-1", "week", '""'):
         err = render_error(f"clickhouse.systemLogTTLDays.query_log={value}")
-        expect(f"systemLogTTLDays.query_log={value} is refused", "whole days" in err, err[:200])
+        expect(
+            f"systemLogTTLDays.query_log={value} is refused",
+            "whole days" in err,
+            err[:200],
+        )
 
 
 def main() -> int:

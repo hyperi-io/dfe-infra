@@ -20,7 +20,7 @@ Three files at the root of this repo, one question each:
 
 `suite.yaml` carries no version literal, so it can never become a second place to look a pin up. Membership is declared there and nowhere else, so a repo absent from the file isn't a member, whatever its name. The test is release authority: if we don't cut its releases, it's not in.
 
-The diagrams on this page are generated from `suite.yaml` by `scripts/dfe-stack suite --render-docs` and compared against it by `scripts/check_suite_drift.py`. Edit the file, not the diagrams.
+The diagrams on this page are generated from `suite.yaml` by `scripts/dfe-stack suite --render-docs` and compared against it by `scripts/check_suite_drift.py`. Edit the file, not the diagrams. The two overview blocks deviate from the diagram standard's generated-diagram rule 5, which asks for a membership table at this size, until the standard says otherwise.
 
 That drift check has two halves. The in-repo half (structure, the charts, the pins, these diagrams) is binding wherever it runs. The cross-repo half reads each member's own cited file and its `Cargo.lock` and `uv.lock`. On a bare checkout with no member clones beside it, which is what CI has, that half is SKIPPED and says so. Run it on a box with the clones on disk and it gets checked, and `--strict` there turns a skip into a failure.
 
@@ -37,52 +37,222 @@ Each node is one repo we own and release. It declares what it is (`role`), who i
 
 It's kept apart from whether the artefact is public, because those come apart: dfe-schemas publishes to PyPI for anyone to install and is useless outside DFE.
 
-The same `audience` tag colours a node: green for `general`, blue for `suite`. Navy is the producer of the diagram you're reading, and there's one per picture. A faded fill is an optional member, and its label says `(optional)` too, so colour is never the only signal.
+## The members
 
-<!-- suite-graph:begin overview -->
+Colour says what a box is, the same as on every other DFE diagram. Receiver and fetcher are teal, transforms purple, loader and archiver blue, UIs orange, and the engine, deploy repos and infra slate. Schemas are green, and libraries and other services are grey. Audience is in the list above, not the colour. A box that is optional says `optional` under its name.
+
+The services are mostly Rust, with dfe-engine and the optional culvert the two in Python.
+
+<!-- suite-graph:begin overview:services -->
 ```mermaid
+---
+config:
+  theme: base
+  look: neo
+  fontFamily: Inter, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif
+  flowchart:
+    curve: linear
+    nodeSpacing: 40
+    rankSpacing: 64
+    padding: 18
+    wrappingWidth: 280
+    htmlLabels: true
+  elk:
+    preset: modelOrder
+  themeVariables:
+    fontSize: 15px
+    lineColor: "#64748B"
+    primaryTextColor: "#0F172A"
+    nodeBorder: "#334155"
+    clusterBorder: "#0072B2"
+    edgeLabelBackground: "#FFFFFF"
+  themeCSS: >-
+    p{margin:0}
+    .node[data-look] rect,.node[data-look] path,.node[data-look] polygon,.node[data-look] .outer-path{filter:drop-shadow(0 1px 2px rgba(15,23,42,.10)) drop-shadow(0 6px 14px rgba(15,23,42,.10))}
+    .node rect{rx:10px;ry:10px}
+    .cluster rect{rx:16px;ry:16px}
+    .node .label div{min-width:150px}
+    .node.decision .label div{min-width:0}
+    .cluster[data-look] rect{filter:none}
+    .nodeLabel{line-height:1.35}
+    .nodeLabel b{font-weight:600;font-size:15px;letter-spacing:-0.01em}
+    .nodeLabel span{font-size:12.5px;font-weight:400;color:#334155}
+    .cluster-label span.nodeLabel{display:inline-block;background:#FFFFFF;color:#0B2A3F;border:1.5px solid #0072B2;border-radius:999px;padding:2px 12px;font-size:11.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase}
+    .flowchart-link{stroke-width:1.75px}
+    .labelBkg{background:transparent!important}
+    span.edgeLabel{display:inline-block;background:#FFFFFF!important;color:#1E293B;border:1px solid #94A3B8;border-radius:999px;padding:2px 10px;font-size:12px;font-weight:500}
+    span.edgeLabel p{background:transparent!important}
+    .label-icon{width:20px;height:20px;vertical-align:-4px;margin-right:6px}
+    .icon-shape path[stroke-width="0"][fill="none"]{fill:#FFFFFF;stroke:#FFFFFF;stroke-width:12px;stroke-linejoin:round}
+    .icon-shape p{background:transparent!important;color:#0F172A}
+    .ingest .label-icon{color:#0E8A7D}
+    .xform .label-icon{color:#7B4FB0}
+    .load .label-icon{color:#0072B2}
+    .bus .label-icon{color:#A8517F}
+    .store .label-icon{color:#00785A}
+    .ui .label-icon{color:#D9480F}
+    .ext .label-icon{color:#64748B}
+---
 flowchart TB
-  subgraph content["content"]
-    direction LR
-    dfe_deploy["dfe-deploy"]:::suite
-    dfe_schemas["dfe-schemas"]:::suite
-  end
-  subgraph infra["infra"]
-    direction LR
-    dfe_docker["dfe-docker"]:::suite
-    dfe_infra["dfe-infra"]:::suite
-  end
-  subgraph library["library"]
-    direction LR
-    dfe_clickhouse_rs["dfe-clickhouse-rs"]:::general
-    factbook_rs["factbook-rs"]:::general
-    logreducer["logreducer"]:::general
-    scalo_py["scalo-py"]:::general
-    scalo_rs["scalo-rs"]:::general
-    vector_vrl["vector-vrl"]:::general
-  end
-  subgraph service["service"]
-    direction LR
-    culvert["culvert (optional)"]:::general-optional
-    dfe_archiver["dfe-archiver"]:::suite
-    dfe_engine["dfe-engine"]:::suite
-    dfe_fetcher["dfe-fetcher"]:::suite
-    dfe_loader["dfe-loader"]:::suite
-    dfe_receiver["dfe-receiver"]:::suite
-    dfe_transform_elastic["dfe-transform-elastic"]:::suite
-    dfe_transform_vector["dfe-transform-vector"]:::suite
-    dfe_transform_vrl["dfe-transform-vrl"]:::suite
-  end
-  subgraph ui["ui"]
-    direction LR
-    dfe_hyperdx["dfe-hyperdx"]:::suite
-    dfe_ui["dfe-ui"]:::suite
-  end
-  classDef general fill:#2DED88,stroke:#2EA4F6,stroke-width:2px,color:#000647
-  classDef suite fill:#2EA4F6,stroke:#2EA4F6,stroke-width:2px,color:#000647
-  classDef general-optional fill:#8CF5BE,stroke:#2EA4F6,stroke-width:2px,color:#000647
+    accTitle: L4 Detail -- Suite overview, services
+    accDescr: The suite has 9 services, in 2 boxes. dfe-archiver, dfe-fetcher, dfe-loader, dfe-receiver, dfe-transform-elastic, dfe-transform-vector and dfe-transform-vrl sit in Rust services. culvert (optional) and dfe-engine sit in Python services.
+
+    subgraph rust_services["Rust services"]
+        direction LR
+        dfe_archiver("<b>dfe-archiver</b>")
+        dfe_fetcher("<b>dfe-fetcher</b>")
+        dfe_loader("<b>dfe-loader</b>")
+        dfe_receiver("<b>dfe-receiver</b>")
+        dfe_transform_elastic("<b>dfe-transform-elastic</b>")
+        dfe_transform_vector("<b>dfe-transform-vector</b>")
+        dfe_transform_vrl("<b>dfe-transform-vrl</b>")
+        dfe_archiver ~~~ dfe_fetcher ~~~ dfe_loader
+        dfe_receiver ~~~ dfe_transform_elastic
+        dfe_transform_vector ~~~ dfe_transform_vrl
+    end
+    subgraph python_services["Python services"]
+        direction LR
+        culvert("<b>culvert</b><br/><span>optional</span>")
+        dfe_engine("<b>dfe-engine</b>")
+    end
+    rust_services ~~~ python_services
+
+    class culvert,dfe_engine control
+    class dfe_fetcher,dfe_receiver ingest
+    class dfe_archiver,dfe_loader load
+    class dfe_transform_elastic,dfe_transform_vector,dfe_transform_vrl xform
+    %% merrow:begin
+    classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A
+    classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A
+    classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A
+    classDef bus fill:#FFFFFF,stroke:#A8517F,stroke-width:3px,color:#0F172A
+    classDef store fill:#FFFFFF,stroke:#00785A,stroke-width:3px,color:#0F172A
+    classDef ui fill:#FFFFFF,stroke:#D9480F,stroke-width:3px,color:#0F172A
+    classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
+    classDef decision fill:#FFFFFF,stroke:#9A6700,stroke-width:3px,color:#0F172A
+    classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
+    classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
+    classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+    style rust_services fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
+    style python_services fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
+    %% merrow:end
 ```
-<!-- suite-graph:end overview -->
+<!-- suite-graph:end overview:services -->
+
+*Figure 1. L4 Detail -- Suite overview, services. Boxes group the services by language.* Up: top of dfe-infra.
+
+Everything that is not a service is a library, a piece of infra, content or a UI.
+
+<!-- suite-graph:begin overview:platform -->
+```mermaid
+---
+config:
+  theme: base
+  look: neo
+  fontFamily: Inter, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif
+  flowchart:
+    curve: linear
+    nodeSpacing: 40
+    rankSpacing: 64
+    padding: 18
+    wrappingWidth: 280
+    htmlLabels: true
+  elk:
+    preset: modelOrder
+  themeVariables:
+    fontSize: 15px
+    lineColor: "#64748B"
+    primaryTextColor: "#0F172A"
+    nodeBorder: "#334155"
+    clusterBorder: "#0072B2"
+    edgeLabelBackground: "#FFFFFF"
+  themeCSS: >-
+    p{margin:0}
+    .node[data-look] rect,.node[data-look] path,.node[data-look] polygon,.node[data-look] .outer-path{filter:drop-shadow(0 1px 2px rgba(15,23,42,.10)) drop-shadow(0 6px 14px rgba(15,23,42,.10))}
+    .node rect{rx:10px;ry:10px}
+    .cluster rect{rx:16px;ry:16px}
+    .node .label div{min-width:150px}
+    .node.decision .label div{min-width:0}
+    .cluster[data-look] rect{filter:none}
+    .nodeLabel{line-height:1.35}
+    .nodeLabel b{font-weight:600;font-size:15px;letter-spacing:-0.01em}
+    .nodeLabel span{font-size:12.5px;font-weight:400;color:#334155}
+    .cluster-label span.nodeLabel{display:inline-block;background:#FFFFFF;color:#0B2A3F;border:1.5px solid #0072B2;border-radius:999px;padding:2px 12px;font-size:11.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase}
+    .flowchart-link{stroke-width:1.75px}
+    .labelBkg{background:transparent!important}
+    span.edgeLabel{display:inline-block;background:#FFFFFF!important;color:#1E293B;border:1px solid #94A3B8;border-radius:999px;padding:2px 10px;font-size:12px;font-weight:500}
+    span.edgeLabel p{background:transparent!important}
+    .label-icon{width:20px;height:20px;vertical-align:-4px;margin-right:6px}
+    .icon-shape path[stroke-width="0"][fill="none"]{fill:#FFFFFF;stroke:#FFFFFF;stroke-width:12px;stroke-linejoin:round}
+    .icon-shape p{background:transparent!important;color:#0F172A}
+    .ingest .label-icon{color:#0E8A7D}
+    .xform .label-icon{color:#7B4FB0}
+    .load .label-icon{color:#0072B2}
+    .bus .label-icon{color:#A8517F}
+    .store .label-icon{color:#00785A}
+    .ui .label-icon{color:#D9480F}
+    .ext .label-icon{color:#64748B}
+---
+flowchart TB
+    accTitle: L4 Detail -- Suite overview, platform
+    accDescr: The suite has 12 members that are not services, in 4 boxes. dfe-clickhouse-rs, factbook-rs, logreducer, scalo-py, scalo-rs and vector-vrl sit in Libraries. dfe-deploy and dfe-schemas sit in Content. dfe-docker and dfe-infra sit in Infra. dfe-hyperdx and dfe-ui sit in UI.
+
+    subgraph libraries["Libraries"]
+        direction LR
+        dfe_clickhouse_rs("<b>dfe-clickhouse-rs</b>")
+        factbook_rs("<b>factbook-rs</b>")
+        logreducer("<b>logreducer</b>")
+        scalo_py("<b>scalo-py</b>")
+        scalo_rs("<b>scalo-rs</b>")
+        vector_vrl("<b>vector-vrl</b>")
+        dfe_clickhouse_rs ~~~ factbook_rs
+        logreducer ~~~ scalo_py
+        scalo_rs ~~~ vector_vrl
+    end
+    subgraph content["Content"]
+        direction LR
+        dfe_deploy("<b>dfe-deploy</b>")
+        dfe_schemas("<b>dfe-schemas</b>")
+    end
+    subgraph infra["Infra"]
+        direction LR
+        dfe_docker("<b>dfe-docker</b>")
+        dfe_infra("<b>dfe-infra</b>")
+    end
+    subgraph ui["UI"]
+        direction LR
+        dfe_hyperdx("<b>dfe-hyperdx</b>")
+        dfe_ui("<b>dfe-ui</b>")
+    end
+    libraries ~~~ content
+    libraries ~~~ infra
+    libraries ~~~ ui
+
+    class dfe_deploy,dfe_docker,dfe_infra control
+    class dfe_clickhouse_rs,factbook_rs,logreducer,scalo_py,scalo_rs,vector_vrl part
+    class dfe_schemas store
+    class dfe_hyperdx,dfe_ui ui
+    %% merrow:begin
+    classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A
+    classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A
+    classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A
+    classDef bus fill:#FFFFFF,stroke:#A8517F,stroke-width:3px,color:#0F172A
+    classDef store fill:#FFFFFF,stroke:#00785A,stroke-width:3px,color:#0F172A
+    classDef ui fill:#FFFFFF,stroke:#D9480F,stroke-width:3px,color:#0F172A
+    classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
+    classDef decision fill:#FFFFFF,stroke:#9A6700,stroke-width:3px,color:#0F172A
+    classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
+    classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
+    classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+    style libraries fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
+    style content fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
+    style infra fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
+    style ui fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
+    %% merrow:end
+```
+<!-- suite-graph:end overview:platform -->
+
+*Figure 2. L4 Detail -- Suite overview, platform. Boxes group the members by role.* Up: top of dfe-infra.
 
 ## Reading an edge
 
@@ -96,41 +266,105 @@ The `kind` says HOW the two are tied, and `edge_kinds` in the file carries the c
 
 ## The build cycles
 
-One diagram per producer whose release puts something in motion. Every producer in the file has one, so a new producer with no block is an advisory the drift check raises, not a gap nobody sees. Thick arrows are lockstep, plain arrows are potential, dotted arrows are derived.
+One diagram per producer whose release puts something in motion. Every producer in the file has one, so a new producer with no block is an advisory the drift check raises, not a gap nobody sees. Solid arrows are lockstep or potential and dotted arrows are derived. Each caption says which kind is which.
 
 ### scalo-rs
 
-Two edges run from scalo-rs to each Rust member. One is the crate range. The other is that scalo GENERATES each Rust member's Dockerfile and supplies the runtime base image inside it, so a scalo-rs release can change a consumer's image with no Cargo range moving. The tooling walks both.
+Two edges run from scalo-rs to each Rust service. One is the crate range. The other is that scalo GENERATES each Rust service's Dockerfile and supplies the runtime base image inside it, so a scalo-rs release can change a consumer's image with no Cargo range moving. The tooling walks both.
 
 <!-- suite-graph:begin producer:scalo-rs -->
 ```mermaid
-flowchart LR
-  scalo_rs["scalo-rs"]:::producer
-  dfe_archiver["dfe-archiver"]:::suite
-  scalo_rs -->|cargo-dep, potential| dfe_archiver
-  scalo_rs ==>|generated-file, lockstep| dfe_archiver
-  dfe_fetcher["dfe-fetcher"]:::suite
-  scalo_rs -->|cargo-dep, potential| dfe_fetcher
-  scalo_rs ==>|generated-file, lockstep| dfe_fetcher
-  dfe_loader["dfe-loader"]:::suite
-  scalo_rs -->|cargo-dep, potential| dfe_loader
-  scalo_rs ==>|generated-file, lockstep| dfe_loader
-  dfe_receiver["dfe-receiver"]:::suite
-  scalo_rs -->|cargo-dep, potential| dfe_receiver
-  scalo_rs ==>|generated-file, lockstep| dfe_receiver
-  dfe_transform_elastic["dfe-transform-elastic"]:::suite
-  scalo_rs -->|cargo-dep, potential| dfe_transform_elastic
-  scalo_rs ==>|generated-file, lockstep| dfe_transform_elastic
-  dfe_transform_vector["dfe-transform-vector"]:::suite
-  scalo_rs -->|cargo-dep, potential| dfe_transform_vector
-  scalo_rs ==>|generated-file, lockstep| dfe_transform_vector
-  dfe_transform_vrl["dfe-transform-vrl"]:::suite
-  scalo_rs -->|cargo-dep, potential| dfe_transform_vrl
-  scalo_rs ==>|generated-file, lockstep| dfe_transform_vrl
-  classDef suite fill:#2EA4F6,stroke:#2EA4F6,stroke-width:2px,color:#000647
-  classDef producer fill:#000647,stroke:#2EA4F6,stroke-width:3px,color:#FFFFFF
+---
+config:
+  theme: base
+  look: neo
+  fontFamily: Inter, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif
+  flowchart:
+    curve: linear
+    nodeSpacing: 40
+    rankSpacing: 64
+    padding: 18
+    wrappingWidth: 280
+    htmlLabels: true
+  elk:
+    preset: modelOrder
+  themeVariables:
+    fontSize: 15px
+    lineColor: "#64748B"
+    primaryTextColor: "#0F172A"
+    nodeBorder: "#334155"
+    clusterBorder: "#0072B2"
+    edgeLabelBackground: "#FFFFFF"
+  themeCSS: >-
+    p{margin:0}
+    .node[data-look] rect,.node[data-look] path,.node[data-look] polygon,.node[data-look] .outer-path{filter:drop-shadow(0 1px 2px rgba(15,23,42,.10)) drop-shadow(0 6px 14px rgba(15,23,42,.10))}
+    .node rect{rx:10px;ry:10px}
+    .cluster rect{rx:16px;ry:16px}
+    .node .label div{min-width:150px}
+    .node.decision .label div{min-width:0}
+    .cluster[data-look] rect{filter:none}
+    .nodeLabel{line-height:1.35}
+    .nodeLabel b{font-weight:600;font-size:15px;letter-spacing:-0.01em}
+    .nodeLabel span{font-size:12.5px;font-weight:400;color:#334155}
+    .cluster-label span.nodeLabel{display:inline-block;background:#FFFFFF;color:#0B2A3F;border:1.5px solid #0072B2;border-radius:999px;padding:2px 12px;font-size:11.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase}
+    .flowchart-link{stroke-width:1.75px}
+    .labelBkg{background:transparent!important}
+    span.edgeLabel{display:inline-block;background:#FFFFFF!important;color:#1E293B;border:1px solid #94A3B8;border-radius:999px;padding:2px 10px;font-size:12px;font-weight:500}
+    span.edgeLabel p{background:transparent!important}
+    .label-icon{width:20px;height:20px;vertical-align:-4px;margin-right:6px}
+    .icon-shape path[stroke-width="0"][fill="none"]{fill:#FFFFFF;stroke:#FFFFFF;stroke-width:12px;stroke-linejoin:round}
+    .icon-shape p{background:transparent!important;color:#0F172A}
+    .ingest .label-icon{color:#0E8A7D}
+    .xform .label-icon{color:#7B4FB0}
+    .load .label-icon{color:#0072B2}
+    .bus .label-icon{color:#A8517F}
+    .store .label-icon{color:#00785A}
+    .ui .label-icon{color:#D9480F}
+    .ext .label-icon{color:#64748B}
+---
+flowchart TB
+    accTitle: L4 Detail -- scalo-rs build cycle
+    accDescr: A scalo-rs release puts 7 consumers in motion. dfe-archiver, dfe-fetcher, dfe-loader, dfe-receiver, dfe-transform-elastic, dfe-transform-vector and dfe-transform-vrl take cargo-dep and generated-file.
+
+    scalo_rs("<b>scalo-rs</b>")
+    subgraph rust_services["Rust services"]
+        direction LR
+        dfe_archiver("<b>dfe-archiver</b>")
+        dfe_fetcher("<b>dfe-fetcher</b>")
+        dfe_loader("<b>dfe-loader</b>")
+        dfe_receiver("<b>dfe-receiver</b>")
+        dfe_transform_elastic("<b>dfe-transform-elastic</b>")
+        dfe_transform_vector("<b>dfe-transform-vector</b>")
+        dfe_transform_vrl("<b>dfe-transform-vrl</b>")
+        dfe_archiver ~~~ dfe_fetcher ~~~ dfe_loader
+        dfe_receiver ~~~ dfe_transform_elastic
+        dfe_transform_vector ~~~ dfe_transform_vrl
+    end
+
+    scalo_rs -->|cargo-dep, generated-file| rust_services
+
+    class dfe_fetcher,dfe_receiver ingest
+    class dfe_archiver,dfe_loader load
+    class scalo_rs part
+    class dfe_transform_elastic,dfe_transform_vector,dfe_transform_vrl xform
+    %% merrow:begin
+    classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A
+    classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A
+    classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A
+    classDef bus fill:#FFFFFF,stroke:#A8517F,stroke-width:3px,color:#0F172A
+    classDef store fill:#FFFFFF,stroke:#00785A,stroke-width:3px,color:#0F172A
+    classDef ui fill:#FFFFFF,stroke:#D9480F,stroke-width:3px,color:#0F172A
+    classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
+    classDef decision fill:#FFFFFF,stroke:#9A6700,stroke-width:3px,color:#0F172A
+    classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
+    classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
+    classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+    style rust_services fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
+    %% merrow:end
 ```
 <!-- suite-graph:end producer:scalo-rs -->
+
+*Figure 3. L4 Detail -- scalo-rs build cycle. The crate range is potential and the generated file is lockstep.* Up: [L4 Detail -- Suite overview](#the-members).
 
 ### scalo-py
 
@@ -138,21 +372,89 @@ dfe-engine, culvert and vector-vrl each declare it by range. vector-vrl does it 
 
 <!-- suite-graph:begin producer:scalo-py -->
 ```mermaid
-flowchart LR
-  scalo_py["scalo-py"]:::producer
-  culvert["culvert (optional)"]:::general-optional
-  scalo_py -->|python-dep, potential| culvert
-  dfe_engine["dfe-engine"]:::suite
-  scalo_py ==>|contract-guard, lockstep| dfe_engine
-  scalo_py -->|python-dep, potential| dfe_engine
-  vector_vrl["vector-vrl"]:::general
-  scalo_py -->|python-dep, potential| vector_vrl
-  classDef general fill:#2DED88,stroke:#2EA4F6,stroke-width:2px,color:#000647
-  classDef suite fill:#2EA4F6,stroke:#2EA4F6,stroke-width:2px,color:#000647
-  classDef producer fill:#000647,stroke:#2EA4F6,stroke-width:3px,color:#FFFFFF
-  classDef general-optional fill:#8CF5BE,stroke:#2EA4F6,stroke-width:2px,color:#000647
+---
+config:
+  theme: base
+  look: neo
+  fontFamily: Inter, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif
+  flowchart:
+    curve: linear
+    nodeSpacing: 40
+    rankSpacing: 64
+    padding: 18
+    wrappingWidth: 280
+    htmlLabels: true
+  elk:
+    preset: modelOrder
+  themeVariables:
+    fontSize: 15px
+    lineColor: "#64748B"
+    primaryTextColor: "#0F172A"
+    nodeBorder: "#334155"
+    clusterBorder: "#0072B2"
+    edgeLabelBackground: "#FFFFFF"
+  themeCSS: >-
+    p{margin:0}
+    .node[data-look] rect,.node[data-look] path,.node[data-look] polygon,.node[data-look] .outer-path{filter:drop-shadow(0 1px 2px rgba(15,23,42,.10)) drop-shadow(0 6px 14px rgba(15,23,42,.10))}
+    .node rect{rx:10px;ry:10px}
+    .cluster rect{rx:16px;ry:16px}
+    .node .label div{min-width:150px}
+    .node.decision .label div{min-width:0}
+    .cluster[data-look] rect{filter:none}
+    .nodeLabel{line-height:1.35}
+    .nodeLabel b{font-weight:600;font-size:15px;letter-spacing:-0.01em}
+    .nodeLabel span{font-size:12.5px;font-weight:400;color:#334155}
+    .cluster-label span.nodeLabel{display:inline-block;background:#FFFFFF;color:#0B2A3F;border:1.5px solid #0072B2;border-radius:999px;padding:2px 12px;font-size:11.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase}
+    .flowchart-link{stroke-width:1.75px}
+    .labelBkg{background:transparent!important}
+    span.edgeLabel{display:inline-block;background:#FFFFFF!important;color:#1E293B;border:1px solid #94A3B8;border-radius:999px;padding:2px 10px;font-size:12px;font-weight:500}
+    span.edgeLabel p{background:transparent!important}
+    .label-icon{width:20px;height:20px;vertical-align:-4px;margin-right:6px}
+    .icon-shape path[stroke-width="0"][fill="none"]{fill:#FFFFFF;stroke:#FFFFFF;stroke-width:12px;stroke-linejoin:round}
+    .icon-shape p{background:transparent!important;color:#0F172A}
+    .ingest .label-icon{color:#0E8A7D}
+    .xform .label-icon{color:#7B4FB0}
+    .load .label-icon{color:#0072B2}
+    .bus .label-icon{color:#A8517F}
+    .store .label-icon{color:#00785A}
+    .ui .label-icon{color:#D9480F}
+    .ext .label-icon{color:#64748B}
+---
+flowchart TB
+    accTitle: L4 Detail -- scalo-py build cycle
+    accDescr: A scalo-py release puts 3 consumers in motion. culvert (optional) and vector-vrl take python-dep. dfe-engine takes contract-guard and python-dep.
+
+    scalo_py("<b>scalo-py</b>")
+    subgraph python_members["Python members"]
+        direction LR
+        culvert("<b>culvert</b><br/><span>optional</span>")
+        vector_vrl("<b>vector-vrl</b>")
+    end
+    dfe_engine("<b>dfe-engine</b>")
+
+    scalo_py -->|python-dep| python_members
+    scalo_py -->|contract-guard, python-dep| dfe_engine
+
+    class culvert,dfe_engine control
+    class scalo_py,vector_vrl part
+    %% merrow:begin
+    classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A
+    classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A
+    classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A
+    classDef bus fill:#FFFFFF,stroke:#A8517F,stroke-width:3px,color:#0F172A
+    classDef store fill:#FFFFFF,stroke:#00785A,stroke-width:3px,color:#0F172A
+    classDef ui fill:#FFFFFF,stroke:#D9480F,stroke-width:3px,color:#0F172A
+    classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
+    classDef decision fill:#FFFFFF,stroke:#9A6700,stroke-width:3px,color:#0F172A
+    classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
+    classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
+    classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+    style python_members fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
+    %% merrow:end
 ```
 <!-- suite-graph:end producer:scalo-py -->
+
+*Figure 4. L4 Detail -- scalo-py build cycle. The range declarations are potential and the contract guard is lockstep.* Up: [L4 Detail -- Suite overview](#the-members).
 
 ### dfe-engine
 
@@ -160,17 +462,84 @@ Its image tag sits in two places in this repo (its own chart and the hyperdx cha
 
 <!-- suite-graph:begin producer:dfe-engine -->
 ```mermaid
+---
+config:
+  theme: base
+  look: neo
+  fontFamily: Inter, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif
+  flowchart:
+    curve: linear
+    nodeSpacing: 40
+    rankSpacing: 64
+    padding: 18
+    wrappingWidth: 280
+    htmlLabels: true
+  elk:
+    preset: modelOrder
+  themeVariables:
+    fontSize: 15px
+    lineColor: "#64748B"
+    primaryTextColor: "#0F172A"
+    nodeBorder: "#334155"
+    clusterBorder: "#0072B2"
+    edgeLabelBackground: "#FFFFFF"
+  themeCSS: >-
+    p{margin:0}
+    .node[data-look] rect,.node[data-look] path,.node[data-look] polygon,.node[data-look] .outer-path{filter:drop-shadow(0 1px 2px rgba(15,23,42,.10)) drop-shadow(0 6px 14px rgba(15,23,42,.10))}
+    .node rect{rx:10px;ry:10px}
+    .cluster rect{rx:16px;ry:16px}
+    .node .label div{min-width:150px}
+    .node.decision .label div{min-width:0}
+    .cluster[data-look] rect{filter:none}
+    .nodeLabel{line-height:1.35}
+    .nodeLabel b{font-weight:600;font-size:15px;letter-spacing:-0.01em}
+    .nodeLabel span{font-size:12.5px;font-weight:400;color:#334155}
+    .cluster-label span.nodeLabel{display:inline-block;background:#FFFFFF;color:#0B2A3F;border:1.5px solid #0072B2;border-radius:999px;padding:2px 12px;font-size:11.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase}
+    .flowchart-link{stroke-width:1.75px}
+    .labelBkg{background:transparent!important}
+    span.edgeLabel{display:inline-block;background:#FFFFFF!important;color:#1E293B;border:1px solid #94A3B8;border-radius:999px;padding:2px 10px;font-size:12px;font-weight:500}
+    span.edgeLabel p{background:transparent!important}
+    .label-icon{width:20px;height:20px;vertical-align:-4px;margin-right:6px}
+    .icon-shape path[stroke-width="0"][fill="none"]{fill:#FFFFFF;stroke:#FFFFFF;stroke-width:12px;stroke-linejoin:round}
+    .icon-shape p{background:transparent!important;color:#0F172A}
+    .ingest .label-icon{color:#0E8A7D}
+    .xform .label-icon{color:#7B4FB0}
+    .load .label-icon{color:#0072B2}
+    .bus .label-icon{color:#A8517F}
+    .store .label-icon{color:#00785A}
+    .ui .label-icon{color:#D9480F}
+    .ext .label-icon{color:#64748B}
+---
 flowchart LR
-  dfe_engine["dfe-engine"]:::producer
-  dfe_infra["dfe-infra"]:::suite
-  dfe_engine ==>|image-pin, lockstep x2| dfe_infra
-  dfe_ui["dfe-ui"]:::suite
-  dfe_engine -->|generated-file, potential| dfe_ui
-  dfe_engine -->|vendored-file, potential| dfe_ui
-  classDef suite fill:#2EA4F6,stroke:#2EA4F6,stroke-width:2px,color:#000647
-  classDef producer fill:#000647,stroke:#2EA4F6,stroke-width:3px,color:#FFFFFF
+    accTitle: L4 Detail -- dfe-engine build cycle
+    accDescr: A dfe-engine release puts 2 consumers in motion. dfe-infra takes image-pin x2. dfe-ui takes generated-file and vendored-file.
+
+    dfe_engine("<b>dfe-engine</b>")
+    dfe_infra("<b>dfe-infra</b>")
+    dfe_ui("<b>dfe-ui</b>")
+
+    dfe_engine -->|image-pin x2| dfe_infra
+    dfe_engine -->|generated-file, vendored-file| dfe_ui
+
+    class dfe_engine,dfe_infra control
+    class dfe_ui ui
+    %% merrow:begin
+    classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A
+    classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A
+    classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A
+    classDef bus fill:#FFFFFF,stroke:#A8517F,stroke-width:3px,color:#0F172A
+    classDef store fill:#FFFFFF,stroke:#00785A,stroke-width:3px,color:#0F172A
+    classDef ui fill:#FFFFFF,stroke:#D9480F,stroke-width:3px,color:#0F172A
+    classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
+    classDef decision fill:#FFFFFF,stroke:#9A6700,stroke-width:3px,color:#0F172A
+    classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
+    classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
+    classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+    %% merrow:end
 ```
 <!-- suite-graph:end producer:dfe-engine -->
+
+*Figure 5. L4 Detail -- dfe-engine build cycle. The image pin is lockstep, and the generated and vendored files are potential.* Up: [L4 Detail -- Suite overview](#the-members).
 
 ### dfe-infra
 
@@ -178,18 +547,85 @@ The app catalogue goes OUT to dfe-engine before any library moves, which is why 
 
 <!-- suite-graph:begin producer:dfe-infra -->
 ```mermaid
+---
+config:
+  theme: base
+  look: neo
+  fontFamily: Inter, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif
+  flowchart:
+    curve: linear
+    nodeSpacing: 40
+    rankSpacing: 64
+    padding: 18
+    wrappingWidth: 280
+    htmlLabels: true
+  elk:
+    preset: modelOrder
+  themeVariables:
+    fontSize: 15px
+    lineColor: "#64748B"
+    primaryTextColor: "#0F172A"
+    nodeBorder: "#334155"
+    clusterBorder: "#0072B2"
+    edgeLabelBackground: "#FFFFFF"
+  themeCSS: >-
+    p{margin:0}
+    .node[data-look] rect,.node[data-look] path,.node[data-look] polygon,.node[data-look] .outer-path{filter:drop-shadow(0 1px 2px rgba(15,23,42,.10)) drop-shadow(0 6px 14px rgba(15,23,42,.10))}
+    .node rect{rx:10px;ry:10px}
+    .cluster rect{rx:16px;ry:16px}
+    .node .label div{min-width:150px}
+    .node.decision .label div{min-width:0}
+    .cluster[data-look] rect{filter:none}
+    .nodeLabel{line-height:1.35}
+    .nodeLabel b{font-weight:600;font-size:15px;letter-spacing:-0.01em}
+    .nodeLabel span{font-size:12.5px;font-weight:400;color:#334155}
+    .cluster-label span.nodeLabel{display:inline-block;background:#FFFFFF;color:#0B2A3F;border:1.5px solid #0072B2;border-radius:999px;padding:2px 12px;font-size:11.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase}
+    .flowchart-link{stroke-width:1.75px}
+    .labelBkg{background:transparent!important}
+    span.edgeLabel{display:inline-block;background:#FFFFFF!important;color:#1E293B;border:1px solid #94A3B8;border-radius:999px;padding:2px 10px;font-size:12px;font-weight:500}
+    span.edgeLabel p{background:transparent!important}
+    .label-icon{width:20px;height:20px;vertical-align:-4px;margin-right:6px}
+    .icon-shape path[stroke-width="0"][fill="none"]{fill:#FFFFFF;stroke:#FFFFFF;stroke-width:12px;stroke-linejoin:round}
+    .icon-shape p{background:transparent!important;color:#0F172A}
+    .ingest .label-icon{color:#0E8A7D}
+    .xform .label-icon{color:#7B4FB0}
+    .load .label-icon{color:#0072B2}
+    .bus .label-icon{color:#A8517F}
+    .store .label-icon{color:#00785A}
+    .ui .label-icon{color:#D9480F}
+    .ext .label-icon{color:#64748B}
+---
 flowchart LR
-  dfe_infra["dfe-infra"]:::producer
-  dfe_deploy["dfe-deploy"]:::suite
-  dfe_infra -->|version-pin, potential| dfe_deploy
-  dfe_docker["dfe-docker"]:::suite
-  dfe_infra -.->|derived-pins, derived| dfe_docker
-  dfe_engine["dfe-engine"]:::suite
-  dfe_infra ==>|vendored-file, lockstep| dfe_engine
-  classDef suite fill:#2EA4F6,stroke:#2EA4F6,stroke-width:2px,color:#000647
-  classDef producer fill:#000647,stroke:#2EA4F6,stroke-width:3px,color:#FFFFFF
+    accTitle: L4 Detail -- dfe-infra build cycle
+    accDescr: A dfe-infra release puts 3 consumers in motion. dfe-deploy takes version-pin. dfe-docker takes derived-pins. dfe-engine takes vendored-file.
+
+    dfe_infra("<b>dfe-infra</b>")
+    dfe_deploy("<b>dfe-deploy</b>")
+    dfe_docker("<b>dfe-docker</b>")
+    dfe_engine("<b>dfe-engine</b>")
+
+    dfe_infra -->|version-pin| dfe_deploy
+    dfe_infra -.->|derived-pins| dfe_docker
+    dfe_infra -->|vendored-file| dfe_engine
+
+    class dfe_infra,dfe_deploy,dfe_docker,dfe_engine control
+    %% merrow:begin
+    classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A
+    classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A
+    classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A
+    classDef bus fill:#FFFFFF,stroke:#A8517F,stroke-width:3px,color:#0F172A
+    classDef store fill:#FFFFFF,stroke:#00785A,stroke-width:3px,color:#0F172A
+    classDef ui fill:#FFFFFF,stroke:#D9480F,stroke-width:3px,color:#0F172A
+    classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
+    classDef decision fill:#FFFFFF,stroke:#9A6700,stroke-width:3px,color:#0F172A
+    classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
+    classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
+    classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+    %% merrow:end
 ```
 <!-- suite-graph:end producer:dfe-infra -->
+
+*Figure 6. L4 Detail -- dfe-infra build cycle. dfe-docker's `derived-pins` edge holds no copy, the `vendored-file` edge is lockstep and the `version-pin` edge is potential.* Up: [L4 Detail -- Suite overview](#the-members).
 
 ### dfe-schemas
 
@@ -197,16 +633,84 @@ dfe-engine takes it as a package dependency by range. The one version pin is loc
 
 <!-- suite-graph:begin producer:dfe-schemas -->
 ```mermaid
+---
+config:
+  theme: base
+  look: neo
+  fontFamily: Inter, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif
+  flowchart:
+    curve: linear
+    nodeSpacing: 40
+    rankSpacing: 64
+    padding: 18
+    wrappingWidth: 280
+    htmlLabels: true
+  elk:
+    preset: modelOrder
+  themeVariables:
+    fontSize: 15px
+    lineColor: "#64748B"
+    primaryTextColor: "#0F172A"
+    nodeBorder: "#334155"
+    clusterBorder: "#0072B2"
+    edgeLabelBackground: "#FFFFFF"
+  themeCSS: >-
+    p{margin:0}
+    .node[data-look] rect,.node[data-look] path,.node[data-look] polygon,.node[data-look] .outer-path{filter:drop-shadow(0 1px 2px rgba(15,23,42,.10)) drop-shadow(0 6px 14px rgba(15,23,42,.10))}
+    .node rect{rx:10px;ry:10px}
+    .cluster rect{rx:16px;ry:16px}
+    .node .label div{min-width:150px}
+    .node.decision .label div{min-width:0}
+    .cluster[data-look] rect{filter:none}
+    .nodeLabel{line-height:1.35}
+    .nodeLabel b{font-weight:600;font-size:15px;letter-spacing:-0.01em}
+    .nodeLabel span{font-size:12.5px;font-weight:400;color:#334155}
+    .cluster-label span.nodeLabel{display:inline-block;background:#FFFFFF;color:#0B2A3F;border:1.5px solid #0072B2;border-radius:999px;padding:2px 12px;font-size:11.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase}
+    .flowchart-link{stroke-width:1.75px}
+    .labelBkg{background:transparent!important}
+    span.edgeLabel{display:inline-block;background:#FFFFFF!important;color:#1E293B;border:1px solid #94A3B8;border-radius:999px;padding:2px 10px;font-size:12px;font-weight:500}
+    span.edgeLabel p{background:transparent!important}
+    .label-icon{width:20px;height:20px;vertical-align:-4px;margin-right:6px}
+    .icon-shape path[stroke-width="0"][fill="none"]{fill:#FFFFFF;stroke:#FFFFFF;stroke-width:12px;stroke-linejoin:round}
+    .icon-shape p{background:transparent!important;color:#0F172A}
+    .ingest .label-icon{color:#0E8A7D}
+    .xform .label-icon{color:#7B4FB0}
+    .load .label-icon{color:#0072B2}
+    .bus .label-icon{color:#A8517F}
+    .store .label-icon{color:#00785A}
+    .ui .label-icon{color:#D9480F}
+    .ext .label-icon{color:#64748B}
+---
 flowchart LR
-  dfe_schemas["dfe-schemas"]:::producer
-  dfe_engine["dfe-engine"]:::suite
-  dfe_schemas -->|python-dep, potential| dfe_engine
-  dfe_infra["dfe-infra"]:::suite
-  dfe_schemas ==>|version-pin, lockstep| dfe_infra
-  classDef suite fill:#2EA4F6,stroke:#2EA4F6,stroke-width:2px,color:#000647
-  classDef producer fill:#000647,stroke:#2EA4F6,stroke-width:3px,color:#FFFFFF
+    accTitle: L4 Detail -- dfe-schemas build cycle
+    accDescr: A dfe-schemas release puts 2 consumers in motion. dfe-engine takes python-dep. dfe-infra takes version-pin.
+
+    dfe_schemas("<b>dfe-schemas</b>")
+    dfe_engine("<b>dfe-engine</b>")
+    dfe_infra("<b>dfe-infra</b>")
+
+    dfe_schemas -->|python-dep| dfe_engine
+    dfe_schemas -->|version-pin| dfe_infra
+
+    class dfe_engine,dfe_infra control
+    class dfe_schemas store
+    %% merrow:begin
+    classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A
+    classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A
+    classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A
+    classDef bus fill:#FFFFFF,stroke:#A8517F,stroke-width:3px,color:#0F172A
+    classDef store fill:#FFFFFF,stroke:#00785A,stroke-width:3px,color:#0F172A
+    classDef ui fill:#FFFFFF,stroke:#D9480F,stroke-width:3px,color:#0F172A
+    classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
+    classDef decision fill:#FFFFFF,stroke:#9A6700,stroke-width:3px,color:#0F172A
+    classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
+    classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
+    classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+    %% merrow:end
 ```
 <!-- suite-graph:end producer:dfe-schemas -->
+
+*Figure 7. L4 Detail -- dfe-schemas build cycle. The package range is potential and the version pin is lockstep.* Up: [L4 Detail -- Suite overview](#the-members).
 
 ### logreducer
 
@@ -214,14 +718,82 @@ dfe-engine takes it as a package dependency by range, with the `enhanced` extra,
 
 <!-- suite-graph:begin producer:logreducer -->
 ```mermaid
+---
+config:
+  theme: base
+  look: neo
+  fontFamily: Inter, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif
+  flowchart:
+    curve: linear
+    nodeSpacing: 40
+    rankSpacing: 64
+    padding: 18
+    wrappingWidth: 280
+    htmlLabels: true
+  elk:
+    preset: modelOrder
+  themeVariables:
+    fontSize: 15px
+    lineColor: "#64748B"
+    primaryTextColor: "#0F172A"
+    nodeBorder: "#334155"
+    clusterBorder: "#0072B2"
+    edgeLabelBackground: "#FFFFFF"
+  themeCSS: >-
+    p{margin:0}
+    .node[data-look] rect,.node[data-look] path,.node[data-look] polygon,.node[data-look] .outer-path{filter:drop-shadow(0 1px 2px rgba(15,23,42,.10)) drop-shadow(0 6px 14px rgba(15,23,42,.10))}
+    .node rect{rx:10px;ry:10px}
+    .cluster rect{rx:16px;ry:16px}
+    .node .label div{min-width:150px}
+    .node.decision .label div{min-width:0}
+    .cluster[data-look] rect{filter:none}
+    .nodeLabel{line-height:1.35}
+    .nodeLabel b{font-weight:600;font-size:15px;letter-spacing:-0.01em}
+    .nodeLabel span{font-size:12.5px;font-weight:400;color:#334155}
+    .cluster-label span.nodeLabel{display:inline-block;background:#FFFFFF;color:#0B2A3F;border:1.5px solid #0072B2;border-radius:999px;padding:2px 12px;font-size:11.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase}
+    .flowchart-link{stroke-width:1.75px}
+    .labelBkg{background:transparent!important}
+    span.edgeLabel{display:inline-block;background:#FFFFFF!important;color:#1E293B;border:1px solid #94A3B8;border-radius:999px;padding:2px 10px;font-size:12px;font-weight:500}
+    span.edgeLabel p{background:transparent!important}
+    .label-icon{width:20px;height:20px;vertical-align:-4px;margin-right:6px}
+    .icon-shape path[stroke-width="0"][fill="none"]{fill:#FFFFFF;stroke:#FFFFFF;stroke-width:12px;stroke-linejoin:round}
+    .icon-shape p{background:transparent!important;color:#0F172A}
+    .ingest .label-icon{color:#0E8A7D}
+    .xform .label-icon{color:#7B4FB0}
+    .load .label-icon{color:#0072B2}
+    .bus .label-icon{color:#A8517F}
+    .store .label-icon{color:#00785A}
+    .ui .label-icon{color:#D9480F}
+    .ext .label-icon{color:#64748B}
+---
 flowchart LR
-  logreducer["logreducer"]:::producer
-  dfe_engine["dfe-engine"]:::suite
-  logreducer -->|python-dep, potential| dfe_engine
-  classDef suite fill:#2EA4F6,stroke:#2EA4F6,stroke-width:2px,color:#000647
-  classDef producer fill:#000647,stroke:#2EA4F6,stroke-width:3px,color:#FFFFFF
+    accTitle: L4 Detail -- logreducer build cycle
+    accDescr: A logreducer release puts 1 consumer in motion. dfe-engine takes python-dep.
+
+    logreducer("<b>logreducer</b>")
+    dfe_engine("<b>dfe-engine</b>")
+
+    logreducer -->|python-dep| dfe_engine
+
+    class dfe_engine control
+    class logreducer part
+    %% merrow:begin
+    classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A
+    classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A
+    classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A
+    classDef bus fill:#FFFFFF,stroke:#A8517F,stroke-width:3px,color:#0F172A
+    classDef store fill:#FFFFFF,stroke:#00785A,stroke-width:3px,color:#0F172A
+    classDef ui fill:#FFFFFF,stroke:#D9480F,stroke-width:3px,color:#0F172A
+    classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
+    classDef decision fill:#FFFFFF,stroke:#9A6700,stroke-width:3px,color:#0F172A
+    classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
+    classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
+    classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+    %% merrow:end
 ```
 <!-- suite-graph:end producer:logreducer -->
+
+*Figure 8. L4 Detail -- logreducer build cycle. The package range is potential.* Up: [L4 Detail -- Suite overview](#the-members).
 
 ### dfe-clickhouse-rs
 
@@ -229,14 +801,88 @@ The crate is `dfe-clickhouse`. dfe-fetcher takes it as an optional dependency, b
 
 <!-- suite-graph:begin producer:dfe-clickhouse-rs -->
 ```mermaid
-flowchart LR
-  dfe_clickhouse_rs["dfe-clickhouse-rs"]:::producer
-  dfe_fetcher["dfe-fetcher"]:::suite
-  dfe_clickhouse_rs -->|cargo-dep, potential| dfe_fetcher
-  classDef suite fill:#2EA4F6,stroke:#2EA4F6,stroke-width:2px,color:#000647
-  classDef producer fill:#000647,stroke:#2EA4F6,stroke-width:3px,color:#FFFFFF
+---
+config:
+  theme: base
+  look: neo
+  fontFamily: Inter, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif
+  flowchart:
+    curve: linear
+    nodeSpacing: 40
+    rankSpacing: 64
+    padding: 18
+    wrappingWidth: 280
+    htmlLabels: true
+  elk:
+    preset: modelOrder
+  themeVariables:
+    fontSize: 15px
+    lineColor: "#64748B"
+    primaryTextColor: "#0F172A"
+    nodeBorder: "#334155"
+    clusterBorder: "#0072B2"
+    edgeLabelBackground: "#FFFFFF"
+  themeCSS: >-
+    p{margin:0}
+    .node[data-look] rect,.node[data-look] path,.node[data-look] polygon,.node[data-look] .outer-path{filter:drop-shadow(0 1px 2px rgba(15,23,42,.10)) drop-shadow(0 6px 14px rgba(15,23,42,.10))}
+    .node rect{rx:10px;ry:10px}
+    .cluster rect{rx:16px;ry:16px}
+    .node .label div{min-width:150px}
+    .node.decision .label div{min-width:0}
+    .cluster[data-look] rect{filter:none}
+    .nodeLabel{line-height:1.35}
+    .nodeLabel b{font-weight:600;font-size:15px;letter-spacing:-0.01em}
+    .nodeLabel span{font-size:12.5px;font-weight:400;color:#334155}
+    .cluster-label span.nodeLabel{display:inline-block;background:#FFFFFF;color:#0B2A3F;border:1.5px solid #0072B2;border-radius:999px;padding:2px 12px;font-size:11.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase}
+    .flowchart-link{stroke-width:1.75px}
+    .labelBkg{background:transparent!important}
+    span.edgeLabel{display:inline-block;background:#FFFFFF!important;color:#1E293B;border:1px solid #94A3B8;border-radius:999px;padding:2px 10px;font-size:12px;font-weight:500}
+    span.edgeLabel p{background:transparent!important}
+    .label-icon{width:20px;height:20px;vertical-align:-4px;margin-right:6px}
+    .icon-shape path[stroke-width="0"][fill="none"]{fill:#FFFFFF;stroke:#FFFFFF;stroke-width:12px;stroke-linejoin:round}
+    .icon-shape p{background:transparent!important;color:#0F172A}
+    .ingest .label-icon{color:#0E8A7D}
+    .xform .label-icon{color:#7B4FB0}
+    .load .label-icon{color:#0072B2}
+    .bus .label-icon{color:#A8517F}
+    .store .label-icon{color:#00785A}
+    .ui .label-icon{color:#D9480F}
+    .ext .label-icon{color:#64748B}
+---
+flowchart TB
+    accTitle: L4 Detail -- dfe-clickhouse-rs build cycle
+    accDescr: A dfe-clickhouse-rs release puts 2 consumers in motion. dfe-fetcher and dfe-loader take cargo-dep.
+
+    dfe_clickhouse_rs("<b>dfe-clickhouse-rs</b>")
+    subgraph rust_services["Rust services"]
+        direction LR
+        dfe_fetcher("<b>dfe-fetcher</b>")
+        dfe_loader("<b>dfe-loader</b>")
+    end
+
+    dfe_clickhouse_rs -->|cargo-dep| rust_services
+
+    class dfe_fetcher ingest
+    class dfe_loader load
+    class dfe_clickhouse_rs part
+    %% merrow:begin
+    classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A
+    classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A
+    classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A
+    classDef bus fill:#FFFFFF,stroke:#A8517F,stroke-width:3px,color:#0F172A
+    classDef store fill:#FFFFFF,stroke:#00785A,stroke-width:3px,color:#0F172A
+    classDef ui fill:#FFFFFF,stroke:#D9480F,stroke-width:3px,color:#0F172A
+    classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
+    classDef decision fill:#FFFFFF,stroke:#9A6700,stroke-width:3px,color:#0F172A
+    classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
+    classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
+    classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+    style rust_services fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
+    %% merrow:end
 ```
 <!-- suite-graph:end producer:dfe-clickhouse-rs -->
+
+*Figure 9. L4 Detail -- dfe-clickhouse-rs build cycle. The crate range is potential.* Up: [L4 Detail -- Suite overview](#the-members).
 
 ## The build cycles: the deployed members
 
@@ -246,27 +892,167 @@ The other direction. Every deployed member is a producer too, and what its relea
 
 Each moves one image pin in this repo when it releases. dfe-hyperdx also has its release tag pinned in the content block.
 
+A dfe-ui release moves one image pin in dfe-infra.
+
 <!-- suite-graph:begin producer:dfe-ui -->
 ```mermaid
+---
+config:
+  theme: base
+  look: neo
+  fontFamily: Inter, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif
+  flowchart:
+    curve: linear
+    nodeSpacing: 40
+    rankSpacing: 64
+    padding: 18
+    wrappingWidth: 280
+    htmlLabels: true
+  elk:
+    preset: modelOrder
+  themeVariables:
+    fontSize: 15px
+    lineColor: "#64748B"
+    primaryTextColor: "#0F172A"
+    nodeBorder: "#334155"
+    clusterBorder: "#0072B2"
+    edgeLabelBackground: "#FFFFFF"
+  themeCSS: >-
+    p{margin:0}
+    .node[data-look] rect,.node[data-look] path,.node[data-look] polygon,.node[data-look] .outer-path{filter:drop-shadow(0 1px 2px rgba(15,23,42,.10)) drop-shadow(0 6px 14px rgba(15,23,42,.10))}
+    .node rect{rx:10px;ry:10px}
+    .cluster rect{rx:16px;ry:16px}
+    .node .label div{min-width:150px}
+    .node.decision .label div{min-width:0}
+    .cluster[data-look] rect{filter:none}
+    .nodeLabel{line-height:1.35}
+    .nodeLabel b{font-weight:600;font-size:15px;letter-spacing:-0.01em}
+    .nodeLabel span{font-size:12.5px;font-weight:400;color:#334155}
+    .cluster-label span.nodeLabel{display:inline-block;background:#FFFFFF;color:#0B2A3F;border:1.5px solid #0072B2;border-radius:999px;padding:2px 12px;font-size:11.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase}
+    .flowchart-link{stroke-width:1.75px}
+    .labelBkg{background:transparent!important}
+    span.edgeLabel{display:inline-block;background:#FFFFFF!important;color:#1E293B;border:1px solid #94A3B8;border-radius:999px;padding:2px 10px;font-size:12px;font-weight:500}
+    span.edgeLabel p{background:transparent!important}
+    .label-icon{width:20px;height:20px;vertical-align:-4px;margin-right:6px}
+    .icon-shape path[stroke-width="0"][fill="none"]{fill:#FFFFFF;stroke:#FFFFFF;stroke-width:12px;stroke-linejoin:round}
+    .icon-shape p{background:transparent!important;color:#0F172A}
+    .ingest .label-icon{color:#0E8A7D}
+    .xform .label-icon{color:#7B4FB0}
+    .load .label-icon{color:#0072B2}
+    .bus .label-icon{color:#A8517F}
+    .store .label-icon{color:#00785A}
+    .ui .label-icon{color:#D9480F}
+    .ext .label-icon{color:#64748B}
+---
 flowchart LR
-  dfe_ui["dfe-ui"]:::producer
-  dfe_infra["dfe-infra"]:::suite
-  dfe_ui ==>|image-pin, lockstep| dfe_infra
-  classDef suite fill:#2EA4F6,stroke:#2EA4F6,stroke-width:2px,color:#000647
-  classDef producer fill:#000647,stroke:#2EA4F6,stroke-width:3px,color:#FFFFFF
+    accTitle: L4 Detail -- dfe-ui build cycle
+    accDescr: A dfe-ui release puts 1 consumer in motion. dfe-infra takes image-pin.
+
+    dfe_ui("<b>dfe-ui</b>")
+    dfe_infra("<b>dfe-infra</b>")
+
+    dfe_ui -->|image-pin| dfe_infra
+
+    class dfe_infra control
+    class dfe_ui ui
+    %% merrow:begin
+    classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A
+    classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A
+    classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A
+    classDef bus fill:#FFFFFF,stroke:#A8517F,stroke-width:3px,color:#0F172A
+    classDef store fill:#FFFFFF,stroke:#00785A,stroke-width:3px,color:#0F172A
+    classDef ui fill:#FFFFFF,stroke:#D9480F,stroke-width:3px,color:#0F172A
+    classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
+    classDef decision fill:#FFFFFF,stroke:#9A6700,stroke-width:3px,color:#0F172A
+    classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
+    classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
+    classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+    %% merrow:end
 ```
 <!-- suite-graph:end producer:dfe-ui -->
 
+*Figure 10. L4 Detail -- dfe-ui build cycle. The image pin is lockstep.* Up: [L4 Detail -- Suite overview](#the-members).
+
+A dfe-hyperdx release moves one image pin in dfe-infra.
+
 <!-- suite-graph:begin producer:dfe-hyperdx -->
 ```mermaid
+---
+config:
+  theme: base
+  look: neo
+  fontFamily: Inter, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif
+  flowchart:
+    curve: linear
+    nodeSpacing: 40
+    rankSpacing: 64
+    padding: 18
+    wrappingWidth: 280
+    htmlLabels: true
+  elk:
+    preset: modelOrder
+  themeVariables:
+    fontSize: 15px
+    lineColor: "#64748B"
+    primaryTextColor: "#0F172A"
+    nodeBorder: "#334155"
+    clusterBorder: "#0072B2"
+    edgeLabelBackground: "#FFFFFF"
+  themeCSS: >-
+    p{margin:0}
+    .node[data-look] rect,.node[data-look] path,.node[data-look] polygon,.node[data-look] .outer-path{filter:drop-shadow(0 1px 2px rgba(15,23,42,.10)) drop-shadow(0 6px 14px rgba(15,23,42,.10))}
+    .node rect{rx:10px;ry:10px}
+    .cluster rect{rx:16px;ry:16px}
+    .node .label div{min-width:150px}
+    .node.decision .label div{min-width:0}
+    .cluster[data-look] rect{filter:none}
+    .nodeLabel{line-height:1.35}
+    .nodeLabel b{font-weight:600;font-size:15px;letter-spacing:-0.01em}
+    .nodeLabel span{font-size:12.5px;font-weight:400;color:#334155}
+    .cluster-label span.nodeLabel{display:inline-block;background:#FFFFFF;color:#0B2A3F;border:1.5px solid #0072B2;border-radius:999px;padding:2px 12px;font-size:11.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase}
+    .flowchart-link{stroke-width:1.75px}
+    .labelBkg{background:transparent!important}
+    span.edgeLabel{display:inline-block;background:#FFFFFF!important;color:#1E293B;border:1px solid #94A3B8;border-radius:999px;padding:2px 10px;font-size:12px;font-weight:500}
+    span.edgeLabel p{background:transparent!important}
+    .label-icon{width:20px;height:20px;vertical-align:-4px;margin-right:6px}
+    .icon-shape path[stroke-width="0"][fill="none"]{fill:#FFFFFF;stroke:#FFFFFF;stroke-width:12px;stroke-linejoin:round}
+    .icon-shape p{background:transparent!important;color:#0F172A}
+    .ingest .label-icon{color:#0E8A7D}
+    .xform .label-icon{color:#7B4FB0}
+    .load .label-icon{color:#0072B2}
+    .bus .label-icon{color:#A8517F}
+    .store .label-icon{color:#00785A}
+    .ui .label-icon{color:#D9480F}
+    .ext .label-icon{color:#64748B}
+---
 flowchart LR
-  dfe_hyperdx["dfe-hyperdx"]:::producer
-  dfe_infra["dfe-infra"]:::suite
-  dfe_hyperdx ==>|image-pin, lockstep| dfe_infra
-  classDef suite fill:#2EA4F6,stroke:#2EA4F6,stroke-width:2px,color:#000647
-  classDef producer fill:#000647,stroke:#2EA4F6,stroke-width:3px,color:#FFFFFF
+    accTitle: L4 Detail -- dfe-hyperdx build cycle
+    accDescr: A dfe-hyperdx release puts 1 consumer in motion. dfe-infra takes image-pin.
+
+    dfe_hyperdx("<b>dfe-hyperdx</b>")
+    dfe_infra("<b>dfe-infra</b>")
+
+    dfe_hyperdx -->|image-pin| dfe_infra
+
+    class dfe_infra control
+    class dfe_hyperdx ui
+    %% merrow:begin
+    classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A
+    classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A
+    classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A
+    classDef bus fill:#FFFFFF,stroke:#A8517F,stroke-width:3px,color:#0F172A
+    classDef store fill:#FFFFFF,stroke:#00785A,stroke-width:3px,color:#0F172A
+    classDef ui fill:#FFFFFF,stroke:#D9480F,stroke-width:3px,color:#0F172A
+    classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
+    classDef decision fill:#FFFFFF,stroke:#9A6700,stroke-width:3px,color:#0F172A
+    classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
+    classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
+    classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+    %% merrow:end
 ```
 <!-- suite-graph:end producer:dfe-hyperdx -->
+
+*Figure 11. L4 Detail -- dfe-hyperdx build cycle. The image pin is lockstep.* Up: [L4 Detail -- Suite overview](#the-members).
 
 ### dfe-deploy
 
@@ -274,99 +1060,656 @@ The certified stack's own tag comes back the other way. dfe-deploy is pinned in 
 
 <!-- suite-graph:begin producer:dfe-deploy -->
 ```mermaid
+---
+config:
+  theme: base
+  look: neo
+  fontFamily: Inter, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif
+  flowchart:
+    curve: linear
+    nodeSpacing: 40
+    rankSpacing: 64
+    padding: 18
+    wrappingWidth: 280
+    htmlLabels: true
+  elk:
+    preset: modelOrder
+  themeVariables:
+    fontSize: 15px
+    lineColor: "#64748B"
+    primaryTextColor: "#0F172A"
+    nodeBorder: "#334155"
+    clusterBorder: "#0072B2"
+    edgeLabelBackground: "#FFFFFF"
+  themeCSS: >-
+    p{margin:0}
+    .node[data-look] rect,.node[data-look] path,.node[data-look] polygon,.node[data-look] .outer-path{filter:drop-shadow(0 1px 2px rgba(15,23,42,.10)) drop-shadow(0 6px 14px rgba(15,23,42,.10))}
+    .node rect{rx:10px;ry:10px}
+    .cluster rect{rx:16px;ry:16px}
+    .node .label div{min-width:150px}
+    .node.decision .label div{min-width:0}
+    .cluster[data-look] rect{filter:none}
+    .nodeLabel{line-height:1.35}
+    .nodeLabel b{font-weight:600;font-size:15px;letter-spacing:-0.01em}
+    .nodeLabel span{font-size:12.5px;font-weight:400;color:#334155}
+    .cluster-label span.nodeLabel{display:inline-block;background:#FFFFFF;color:#0B2A3F;border:1.5px solid #0072B2;border-radius:999px;padding:2px 12px;font-size:11.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase}
+    .flowchart-link{stroke-width:1.75px}
+    .labelBkg{background:transparent!important}
+    span.edgeLabel{display:inline-block;background:#FFFFFF!important;color:#1E293B;border:1px solid #94A3B8;border-radius:999px;padding:2px 10px;font-size:12px;font-weight:500}
+    span.edgeLabel p{background:transparent!important}
+    .label-icon{width:20px;height:20px;vertical-align:-4px;margin-right:6px}
+    .icon-shape path[stroke-width="0"][fill="none"]{fill:#FFFFFF;stroke:#FFFFFF;stroke-width:12px;stroke-linejoin:round}
+    .icon-shape p{background:transparent!important;color:#0F172A}
+    .ingest .label-icon{color:#0E8A7D}
+    .xform .label-icon{color:#7B4FB0}
+    .load .label-icon{color:#0072B2}
+    .bus .label-icon{color:#A8517F}
+    .store .label-icon{color:#00785A}
+    .ui .label-icon{color:#D9480F}
+    .ext .label-icon{color:#64748B}
+---
 flowchart LR
-  dfe_deploy["dfe-deploy"]:::producer
-  dfe_infra["dfe-infra"]:::suite
-  dfe_deploy ==>|version-pin, lockstep| dfe_infra
-  classDef suite fill:#2EA4F6,stroke:#2EA4F6,stroke-width:2px,color:#000647
-  classDef producer fill:#000647,stroke:#2EA4F6,stroke-width:3px,color:#FFFFFF
+    accTitle: L4 Detail -- dfe-deploy build cycle
+    accDescr: A dfe-deploy release puts 1 consumer in motion. dfe-infra takes version-pin.
+
+    dfe_deploy("<b>dfe-deploy</b>")
+    dfe_infra("<b>dfe-infra</b>")
+
+    dfe_deploy -->|version-pin| dfe_infra
+
+    class dfe_deploy,dfe_infra control
+    %% merrow:begin
+    classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A
+    classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A
+    classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A
+    classDef bus fill:#FFFFFF,stroke:#A8517F,stroke-width:3px,color:#0F172A
+    classDef store fill:#FFFFFF,stroke:#00785A,stroke-width:3px,color:#0F172A
+    classDef ui fill:#FFFFFF,stroke:#D9480F,stroke-width:3px,color:#0F172A
+    classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
+    classDef decision fill:#FFFFFF,stroke:#9A6700,stroke-width:3px,color:#0F172A
+    classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
+    classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
+    classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+    %% merrow:end
 ```
 <!-- suite-graph:end producer:dfe-deploy -->
+
+*Figure 12. L4 Detail -- dfe-deploy build cycle. The version pin is lockstep.* Up: [L4 Detail -- Suite overview](#the-members).
 
 ### The components
 
 Every deployed component is a producer too. A component release moves its image pin here (the tag, the image digest and the thin chart's digest, every copy held by the drift check) and nothing else, with two exceptions. dfe-engine authors the loader's and the receiver's configs, so it carries a hand-written copy of each one's validation rules that no script can compare.
 
+A dfe-loader release moves its image pin in dfe-infra, and dfe-engine carries a hand-written copy of its validation rules.
+
 <!-- suite-graph:begin producer:dfe-loader -->
 ```mermaid
+---
+config:
+  theme: base
+  look: neo
+  fontFamily: Inter, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif
+  flowchart:
+    curve: linear
+    nodeSpacing: 40
+    rankSpacing: 64
+    padding: 18
+    wrappingWidth: 280
+    htmlLabels: true
+  elk:
+    preset: modelOrder
+  themeVariables:
+    fontSize: 15px
+    lineColor: "#64748B"
+    primaryTextColor: "#0F172A"
+    nodeBorder: "#334155"
+    clusterBorder: "#0072B2"
+    edgeLabelBackground: "#FFFFFF"
+  themeCSS: >-
+    p{margin:0}
+    .node[data-look] rect,.node[data-look] path,.node[data-look] polygon,.node[data-look] .outer-path{filter:drop-shadow(0 1px 2px rgba(15,23,42,.10)) drop-shadow(0 6px 14px rgba(15,23,42,.10))}
+    .node rect{rx:10px;ry:10px}
+    .cluster rect{rx:16px;ry:16px}
+    .node .label div{min-width:150px}
+    .node.decision .label div{min-width:0}
+    .cluster[data-look] rect{filter:none}
+    .nodeLabel{line-height:1.35}
+    .nodeLabel b{font-weight:600;font-size:15px;letter-spacing:-0.01em}
+    .nodeLabel span{font-size:12.5px;font-weight:400;color:#334155}
+    .cluster-label span.nodeLabel{display:inline-block;background:#FFFFFF;color:#0B2A3F;border:1.5px solid #0072B2;border-radius:999px;padding:2px 12px;font-size:11.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase}
+    .flowchart-link{stroke-width:1.75px}
+    .labelBkg{background:transparent!important}
+    span.edgeLabel{display:inline-block;background:#FFFFFF!important;color:#1E293B;border:1px solid #94A3B8;border-radius:999px;padding:2px 10px;font-size:12px;font-weight:500}
+    span.edgeLabel p{background:transparent!important}
+    .label-icon{width:20px;height:20px;vertical-align:-4px;margin-right:6px}
+    .icon-shape path[stroke-width="0"][fill="none"]{fill:#FFFFFF;stroke:#FFFFFF;stroke-width:12px;stroke-linejoin:round}
+    .icon-shape p{background:transparent!important;color:#0F172A}
+    .ingest .label-icon{color:#0E8A7D}
+    .xform .label-icon{color:#7B4FB0}
+    .load .label-icon{color:#0072B2}
+    .bus .label-icon{color:#A8517F}
+    .store .label-icon{color:#00785A}
+    .ui .label-icon{color:#D9480F}
+    .ext .label-icon{color:#64748B}
+---
 flowchart LR
-  dfe_loader["dfe-loader"]:::producer
-  dfe_engine["dfe-engine"]:::suite
-  dfe_loader -->|mirrored-logic, potential| dfe_engine
-  dfe_infra["dfe-infra"]:::suite
-  dfe_loader ==>|image-pin, lockstep| dfe_infra
-  classDef suite fill:#2EA4F6,stroke:#2EA4F6,stroke-width:2px,color:#000647
-  classDef producer fill:#000647,stroke:#2EA4F6,stroke-width:3px,color:#FFFFFF
+    accTitle: L4 Detail -- dfe-loader build cycle
+    accDescr: A dfe-loader release puts 2 consumers in motion. dfe-engine takes mirrored-logic. dfe-infra takes image-pin.
+
+    dfe_loader("<b>dfe-loader</b>")
+    dfe_engine("<b>dfe-engine</b>")
+    dfe_infra("<b>dfe-infra</b>")
+
+    dfe_loader -->|mirrored-logic| dfe_engine
+    dfe_loader -->|image-pin| dfe_infra
+
+    class dfe_engine,dfe_infra control
+    class dfe_loader load
+    %% merrow:begin
+    classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A
+    classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A
+    classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A
+    classDef bus fill:#FFFFFF,stroke:#A8517F,stroke-width:3px,color:#0F172A
+    classDef store fill:#FFFFFF,stroke:#00785A,stroke-width:3px,color:#0F172A
+    classDef ui fill:#FFFFFF,stroke:#D9480F,stroke-width:3px,color:#0F172A
+    classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
+    classDef decision fill:#FFFFFF,stroke:#9A6700,stroke-width:3px,color:#0F172A
+    classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
+    classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
+    classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+    %% merrow:end
 ```
 <!-- suite-graph:end producer:dfe-loader -->
 
+*Figure 13. L4 Detail -- dfe-loader build cycle. The image pin is lockstep and the mirrored logic is potential.* Up: [L4 Detail -- Suite overview](#the-members).
+
+A dfe-receiver release moves its image pin in dfe-infra, and dfe-engine carries a hand-written copy of its validation rules.
+
 <!-- suite-graph:begin producer:dfe-receiver -->
 ```mermaid
+---
+config:
+  theme: base
+  look: neo
+  fontFamily: Inter, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif
+  flowchart:
+    curve: linear
+    nodeSpacing: 40
+    rankSpacing: 64
+    padding: 18
+    wrappingWidth: 280
+    htmlLabels: true
+  elk:
+    preset: modelOrder
+  themeVariables:
+    fontSize: 15px
+    lineColor: "#64748B"
+    primaryTextColor: "#0F172A"
+    nodeBorder: "#334155"
+    clusterBorder: "#0072B2"
+    edgeLabelBackground: "#FFFFFF"
+  themeCSS: >-
+    p{margin:0}
+    .node[data-look] rect,.node[data-look] path,.node[data-look] polygon,.node[data-look] .outer-path{filter:drop-shadow(0 1px 2px rgba(15,23,42,.10)) drop-shadow(0 6px 14px rgba(15,23,42,.10))}
+    .node rect{rx:10px;ry:10px}
+    .cluster rect{rx:16px;ry:16px}
+    .node .label div{min-width:150px}
+    .node.decision .label div{min-width:0}
+    .cluster[data-look] rect{filter:none}
+    .nodeLabel{line-height:1.35}
+    .nodeLabel b{font-weight:600;font-size:15px;letter-spacing:-0.01em}
+    .nodeLabel span{font-size:12.5px;font-weight:400;color:#334155}
+    .cluster-label span.nodeLabel{display:inline-block;background:#FFFFFF;color:#0B2A3F;border:1.5px solid #0072B2;border-radius:999px;padding:2px 12px;font-size:11.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase}
+    .flowchart-link{stroke-width:1.75px}
+    .labelBkg{background:transparent!important}
+    span.edgeLabel{display:inline-block;background:#FFFFFF!important;color:#1E293B;border:1px solid #94A3B8;border-radius:999px;padding:2px 10px;font-size:12px;font-weight:500}
+    span.edgeLabel p{background:transparent!important}
+    .label-icon{width:20px;height:20px;vertical-align:-4px;margin-right:6px}
+    .icon-shape path[stroke-width="0"][fill="none"]{fill:#FFFFFF;stroke:#FFFFFF;stroke-width:12px;stroke-linejoin:round}
+    .icon-shape p{background:transparent!important;color:#0F172A}
+    .ingest .label-icon{color:#0E8A7D}
+    .xform .label-icon{color:#7B4FB0}
+    .load .label-icon{color:#0072B2}
+    .bus .label-icon{color:#A8517F}
+    .store .label-icon{color:#00785A}
+    .ui .label-icon{color:#D9480F}
+    .ext .label-icon{color:#64748B}
+---
 flowchart LR
-  dfe_receiver["dfe-receiver"]:::producer
-  dfe_engine["dfe-engine"]:::suite
-  dfe_receiver -->|mirrored-logic, potential| dfe_engine
-  dfe_infra["dfe-infra"]:::suite
-  dfe_receiver ==>|image-pin, lockstep| dfe_infra
-  classDef suite fill:#2EA4F6,stroke:#2EA4F6,stroke-width:2px,color:#000647
-  classDef producer fill:#000647,stroke:#2EA4F6,stroke-width:3px,color:#FFFFFF
+    accTitle: L4 Detail -- dfe-receiver build cycle
+    accDescr: A dfe-receiver release puts 2 consumers in motion. dfe-engine takes mirrored-logic. dfe-infra takes image-pin.
+
+    dfe_receiver("<b>dfe-receiver</b>")
+    dfe_engine("<b>dfe-engine</b>")
+    dfe_infra("<b>dfe-infra</b>")
+
+    dfe_receiver -->|mirrored-logic| dfe_engine
+    dfe_receiver -->|image-pin| dfe_infra
+
+    class dfe_engine,dfe_infra control
+    class dfe_receiver ingest
+    %% merrow:begin
+    classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A
+    classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A
+    classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A
+    classDef bus fill:#FFFFFF,stroke:#A8517F,stroke-width:3px,color:#0F172A
+    classDef store fill:#FFFFFF,stroke:#00785A,stroke-width:3px,color:#0F172A
+    classDef ui fill:#FFFFFF,stroke:#D9480F,stroke-width:3px,color:#0F172A
+    classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
+    classDef decision fill:#FFFFFF,stroke:#9A6700,stroke-width:3px,color:#0F172A
+    classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
+    classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
+    classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+    %% merrow:end
 ```
 <!-- suite-graph:end producer:dfe-receiver -->
 
+*Figure 14. L4 Detail -- dfe-receiver build cycle. The image pin is lockstep and the mirrored logic is potential.* Up: [L4 Detail -- Suite overview](#the-members).
+
+A dfe-fetcher release moves one image pin in dfe-infra and nothing else.
+
 <!-- suite-graph:begin producer:dfe-fetcher -->
 ```mermaid
+---
+config:
+  theme: base
+  look: neo
+  fontFamily: Inter, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif
+  flowchart:
+    curve: linear
+    nodeSpacing: 40
+    rankSpacing: 64
+    padding: 18
+    wrappingWidth: 280
+    htmlLabels: true
+  elk:
+    preset: modelOrder
+  themeVariables:
+    fontSize: 15px
+    lineColor: "#64748B"
+    primaryTextColor: "#0F172A"
+    nodeBorder: "#334155"
+    clusterBorder: "#0072B2"
+    edgeLabelBackground: "#FFFFFF"
+  themeCSS: >-
+    p{margin:0}
+    .node[data-look] rect,.node[data-look] path,.node[data-look] polygon,.node[data-look] .outer-path{filter:drop-shadow(0 1px 2px rgba(15,23,42,.10)) drop-shadow(0 6px 14px rgba(15,23,42,.10))}
+    .node rect{rx:10px;ry:10px}
+    .cluster rect{rx:16px;ry:16px}
+    .node .label div{min-width:150px}
+    .node.decision .label div{min-width:0}
+    .cluster[data-look] rect{filter:none}
+    .nodeLabel{line-height:1.35}
+    .nodeLabel b{font-weight:600;font-size:15px;letter-spacing:-0.01em}
+    .nodeLabel span{font-size:12.5px;font-weight:400;color:#334155}
+    .cluster-label span.nodeLabel{display:inline-block;background:#FFFFFF;color:#0B2A3F;border:1.5px solid #0072B2;border-radius:999px;padding:2px 12px;font-size:11.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase}
+    .flowchart-link{stroke-width:1.75px}
+    .labelBkg{background:transparent!important}
+    span.edgeLabel{display:inline-block;background:#FFFFFF!important;color:#1E293B;border:1px solid #94A3B8;border-radius:999px;padding:2px 10px;font-size:12px;font-weight:500}
+    span.edgeLabel p{background:transparent!important}
+    .label-icon{width:20px;height:20px;vertical-align:-4px;margin-right:6px}
+    .icon-shape path[stroke-width="0"][fill="none"]{fill:#FFFFFF;stroke:#FFFFFF;stroke-width:12px;stroke-linejoin:round}
+    .icon-shape p{background:transparent!important;color:#0F172A}
+    .ingest .label-icon{color:#0E8A7D}
+    .xform .label-icon{color:#7B4FB0}
+    .load .label-icon{color:#0072B2}
+    .bus .label-icon{color:#A8517F}
+    .store .label-icon{color:#00785A}
+    .ui .label-icon{color:#D9480F}
+    .ext .label-icon{color:#64748B}
+---
 flowchart LR
-  dfe_fetcher["dfe-fetcher"]:::producer
-  dfe_infra["dfe-infra"]:::suite
-  dfe_fetcher ==>|image-pin, lockstep| dfe_infra
-  classDef suite fill:#2EA4F6,stroke:#2EA4F6,stroke-width:2px,color:#000647
-  classDef producer fill:#000647,stroke:#2EA4F6,stroke-width:3px,color:#FFFFFF
+    accTitle: L4 Detail -- dfe-fetcher build cycle
+    accDescr: A dfe-fetcher release puts 1 consumer in motion. dfe-infra takes image-pin.
+
+    dfe_fetcher("<b>dfe-fetcher</b>")
+    dfe_infra("<b>dfe-infra</b>")
+
+    dfe_fetcher -->|image-pin| dfe_infra
+
+    class dfe_infra control
+    class dfe_fetcher ingest
+    %% merrow:begin
+    classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A
+    classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A
+    classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A
+    classDef bus fill:#FFFFFF,stroke:#A8517F,stroke-width:3px,color:#0F172A
+    classDef store fill:#FFFFFF,stroke:#00785A,stroke-width:3px,color:#0F172A
+    classDef ui fill:#FFFFFF,stroke:#D9480F,stroke-width:3px,color:#0F172A
+    classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
+    classDef decision fill:#FFFFFF,stroke:#9A6700,stroke-width:3px,color:#0F172A
+    classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
+    classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
+    classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+    %% merrow:end
 ```
 <!-- suite-graph:end producer:dfe-fetcher -->
 
+*Figure 15. L4 Detail -- dfe-fetcher build cycle. The image pin is lockstep.* Up: [L4 Detail -- Suite overview](#the-members).
+
+A dfe-archiver release moves one image pin in dfe-infra and nothing else.
+
 <!-- suite-graph:begin producer:dfe-archiver -->
 ```mermaid
+---
+config:
+  theme: base
+  look: neo
+  fontFamily: Inter, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif
+  flowchart:
+    curve: linear
+    nodeSpacing: 40
+    rankSpacing: 64
+    padding: 18
+    wrappingWidth: 280
+    htmlLabels: true
+  elk:
+    preset: modelOrder
+  themeVariables:
+    fontSize: 15px
+    lineColor: "#64748B"
+    primaryTextColor: "#0F172A"
+    nodeBorder: "#334155"
+    clusterBorder: "#0072B2"
+    edgeLabelBackground: "#FFFFFF"
+  themeCSS: >-
+    p{margin:0}
+    .node[data-look] rect,.node[data-look] path,.node[data-look] polygon,.node[data-look] .outer-path{filter:drop-shadow(0 1px 2px rgba(15,23,42,.10)) drop-shadow(0 6px 14px rgba(15,23,42,.10))}
+    .node rect{rx:10px;ry:10px}
+    .cluster rect{rx:16px;ry:16px}
+    .node .label div{min-width:150px}
+    .node.decision .label div{min-width:0}
+    .cluster[data-look] rect{filter:none}
+    .nodeLabel{line-height:1.35}
+    .nodeLabel b{font-weight:600;font-size:15px;letter-spacing:-0.01em}
+    .nodeLabel span{font-size:12.5px;font-weight:400;color:#334155}
+    .cluster-label span.nodeLabel{display:inline-block;background:#FFFFFF;color:#0B2A3F;border:1.5px solid #0072B2;border-radius:999px;padding:2px 12px;font-size:11.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase}
+    .flowchart-link{stroke-width:1.75px}
+    .labelBkg{background:transparent!important}
+    span.edgeLabel{display:inline-block;background:#FFFFFF!important;color:#1E293B;border:1px solid #94A3B8;border-radius:999px;padding:2px 10px;font-size:12px;font-weight:500}
+    span.edgeLabel p{background:transparent!important}
+    .label-icon{width:20px;height:20px;vertical-align:-4px;margin-right:6px}
+    .icon-shape path[stroke-width="0"][fill="none"]{fill:#FFFFFF;stroke:#FFFFFF;stroke-width:12px;stroke-linejoin:round}
+    .icon-shape p{background:transparent!important;color:#0F172A}
+    .ingest .label-icon{color:#0E8A7D}
+    .xform .label-icon{color:#7B4FB0}
+    .load .label-icon{color:#0072B2}
+    .bus .label-icon{color:#A8517F}
+    .store .label-icon{color:#00785A}
+    .ui .label-icon{color:#D9480F}
+    .ext .label-icon{color:#64748B}
+---
 flowchart LR
-  dfe_archiver["dfe-archiver"]:::producer
-  dfe_infra["dfe-infra"]:::suite
-  dfe_archiver ==>|image-pin, lockstep| dfe_infra
-  classDef suite fill:#2EA4F6,stroke:#2EA4F6,stroke-width:2px,color:#000647
-  classDef producer fill:#000647,stroke:#2EA4F6,stroke-width:3px,color:#FFFFFF
+    accTitle: L4 Detail -- dfe-archiver build cycle
+    accDescr: A dfe-archiver release puts 1 consumer in motion. dfe-infra takes image-pin.
+
+    dfe_archiver("<b>dfe-archiver</b>")
+    dfe_infra("<b>dfe-infra</b>")
+
+    dfe_archiver -->|image-pin| dfe_infra
+
+    class dfe_infra control
+    class dfe_archiver load
+    %% merrow:begin
+    classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A
+    classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A
+    classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A
+    classDef bus fill:#FFFFFF,stroke:#A8517F,stroke-width:3px,color:#0F172A
+    classDef store fill:#FFFFFF,stroke:#00785A,stroke-width:3px,color:#0F172A
+    classDef ui fill:#FFFFFF,stroke:#D9480F,stroke-width:3px,color:#0F172A
+    classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
+    classDef decision fill:#FFFFFF,stroke:#9A6700,stroke-width:3px,color:#0F172A
+    classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
+    classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
+    classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+    %% merrow:end
 ```
 <!-- suite-graph:end producer:dfe-archiver -->
 
+*Figure 16. L4 Detail -- dfe-archiver build cycle. The image pin is lockstep.* Up: [L4 Detail -- Suite overview](#the-members).
+
+A dfe-transform-vrl release moves one image pin in dfe-infra and nothing else.
+
 <!-- suite-graph:begin producer:dfe-transform-vrl -->
 ```mermaid
+---
+config:
+  theme: base
+  look: neo
+  fontFamily: Inter, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif
+  flowchart:
+    curve: linear
+    nodeSpacing: 40
+    rankSpacing: 64
+    padding: 18
+    wrappingWidth: 280
+    htmlLabels: true
+  elk:
+    preset: modelOrder
+  themeVariables:
+    fontSize: 15px
+    lineColor: "#64748B"
+    primaryTextColor: "#0F172A"
+    nodeBorder: "#334155"
+    clusterBorder: "#0072B2"
+    edgeLabelBackground: "#FFFFFF"
+  themeCSS: >-
+    p{margin:0}
+    .node[data-look] rect,.node[data-look] path,.node[data-look] polygon,.node[data-look] .outer-path{filter:drop-shadow(0 1px 2px rgba(15,23,42,.10)) drop-shadow(0 6px 14px rgba(15,23,42,.10))}
+    .node rect{rx:10px;ry:10px}
+    .cluster rect{rx:16px;ry:16px}
+    .node .label div{min-width:150px}
+    .node.decision .label div{min-width:0}
+    .cluster[data-look] rect{filter:none}
+    .nodeLabel{line-height:1.35}
+    .nodeLabel b{font-weight:600;font-size:15px;letter-spacing:-0.01em}
+    .nodeLabel span{font-size:12.5px;font-weight:400;color:#334155}
+    .cluster-label span.nodeLabel{display:inline-block;background:#FFFFFF;color:#0B2A3F;border:1.5px solid #0072B2;border-radius:999px;padding:2px 12px;font-size:11.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase}
+    .flowchart-link{stroke-width:1.75px}
+    .labelBkg{background:transparent!important}
+    span.edgeLabel{display:inline-block;background:#FFFFFF!important;color:#1E293B;border:1px solid #94A3B8;border-radius:999px;padding:2px 10px;font-size:12px;font-weight:500}
+    span.edgeLabel p{background:transparent!important}
+    .label-icon{width:20px;height:20px;vertical-align:-4px;margin-right:6px}
+    .icon-shape path[stroke-width="0"][fill="none"]{fill:#FFFFFF;stroke:#FFFFFF;stroke-width:12px;stroke-linejoin:round}
+    .icon-shape p{background:transparent!important;color:#0F172A}
+    .ingest .label-icon{color:#0E8A7D}
+    .xform .label-icon{color:#7B4FB0}
+    .load .label-icon{color:#0072B2}
+    .bus .label-icon{color:#A8517F}
+    .store .label-icon{color:#00785A}
+    .ui .label-icon{color:#D9480F}
+    .ext .label-icon{color:#64748B}
+---
 flowchart LR
-  dfe_transform_vrl["dfe-transform-vrl"]:::producer
-  dfe_infra["dfe-infra"]:::suite
-  dfe_transform_vrl ==>|image-pin, lockstep| dfe_infra
-  classDef suite fill:#2EA4F6,stroke:#2EA4F6,stroke-width:2px,color:#000647
-  classDef producer fill:#000647,stroke:#2EA4F6,stroke-width:3px,color:#FFFFFF
+    accTitle: L4 Detail -- dfe-transform-vrl build cycle
+    accDescr: A dfe-transform-vrl release puts 1 consumer in motion. dfe-infra takes image-pin.
+
+    dfe_transform_vrl("<b>dfe-transform-vrl</b>")
+    dfe_infra("<b>dfe-infra</b>")
+
+    dfe_transform_vrl -->|image-pin| dfe_infra
+
+    class dfe_infra control
+    class dfe_transform_vrl xform
+    %% merrow:begin
+    classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A
+    classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A
+    classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A
+    classDef bus fill:#FFFFFF,stroke:#A8517F,stroke-width:3px,color:#0F172A
+    classDef store fill:#FFFFFF,stroke:#00785A,stroke-width:3px,color:#0F172A
+    classDef ui fill:#FFFFFF,stroke:#D9480F,stroke-width:3px,color:#0F172A
+    classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
+    classDef decision fill:#FFFFFF,stroke:#9A6700,stroke-width:3px,color:#0F172A
+    classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
+    classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
+    classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+    %% merrow:end
 ```
 <!-- suite-graph:end producer:dfe-transform-vrl -->
 
+*Figure 17. L4 Detail -- dfe-transform-vrl build cycle. The image pin is lockstep.* Up: [L4 Detail -- Suite overview](#the-members).
+
+A dfe-transform-vector release moves one image pin in dfe-infra and nothing else.
+
 <!-- suite-graph:begin producer:dfe-transform-vector -->
 ```mermaid
+---
+config:
+  theme: base
+  look: neo
+  fontFamily: Inter, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif
+  flowchart:
+    curve: linear
+    nodeSpacing: 40
+    rankSpacing: 64
+    padding: 18
+    wrappingWidth: 280
+    htmlLabels: true
+  elk:
+    preset: modelOrder
+  themeVariables:
+    fontSize: 15px
+    lineColor: "#64748B"
+    primaryTextColor: "#0F172A"
+    nodeBorder: "#334155"
+    clusterBorder: "#0072B2"
+    edgeLabelBackground: "#FFFFFF"
+  themeCSS: >-
+    p{margin:0}
+    .node[data-look] rect,.node[data-look] path,.node[data-look] polygon,.node[data-look] .outer-path{filter:drop-shadow(0 1px 2px rgba(15,23,42,.10)) drop-shadow(0 6px 14px rgba(15,23,42,.10))}
+    .node rect{rx:10px;ry:10px}
+    .cluster rect{rx:16px;ry:16px}
+    .node .label div{min-width:150px}
+    .node.decision .label div{min-width:0}
+    .cluster[data-look] rect{filter:none}
+    .nodeLabel{line-height:1.35}
+    .nodeLabel b{font-weight:600;font-size:15px;letter-spacing:-0.01em}
+    .nodeLabel span{font-size:12.5px;font-weight:400;color:#334155}
+    .cluster-label span.nodeLabel{display:inline-block;background:#FFFFFF;color:#0B2A3F;border:1.5px solid #0072B2;border-radius:999px;padding:2px 12px;font-size:11.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase}
+    .flowchart-link{stroke-width:1.75px}
+    .labelBkg{background:transparent!important}
+    span.edgeLabel{display:inline-block;background:#FFFFFF!important;color:#1E293B;border:1px solid #94A3B8;border-radius:999px;padding:2px 10px;font-size:12px;font-weight:500}
+    span.edgeLabel p{background:transparent!important}
+    .label-icon{width:20px;height:20px;vertical-align:-4px;margin-right:6px}
+    .icon-shape path[stroke-width="0"][fill="none"]{fill:#FFFFFF;stroke:#FFFFFF;stroke-width:12px;stroke-linejoin:round}
+    .icon-shape p{background:transparent!important;color:#0F172A}
+    .ingest .label-icon{color:#0E8A7D}
+    .xform .label-icon{color:#7B4FB0}
+    .load .label-icon{color:#0072B2}
+    .bus .label-icon{color:#A8517F}
+    .store .label-icon{color:#00785A}
+    .ui .label-icon{color:#D9480F}
+    .ext .label-icon{color:#64748B}
+---
 flowchart LR
-  dfe_transform_vector["dfe-transform-vector"]:::producer
-  dfe_infra["dfe-infra"]:::suite
-  dfe_transform_vector ==>|image-pin, lockstep| dfe_infra
-  classDef suite fill:#2EA4F6,stroke:#2EA4F6,stroke-width:2px,color:#000647
-  classDef producer fill:#000647,stroke:#2EA4F6,stroke-width:3px,color:#FFFFFF
+    accTitle: L4 Detail -- dfe-transform-vector build cycle
+    accDescr: A dfe-transform-vector release puts 1 consumer in motion. dfe-infra takes image-pin.
+
+    dfe_transform_vector("<b>dfe-transform-vector</b>")
+    dfe_infra("<b>dfe-infra</b>")
+
+    dfe_transform_vector -->|image-pin| dfe_infra
+
+    class dfe_infra control
+    class dfe_transform_vector xform
+    %% merrow:begin
+    classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A
+    classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A
+    classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A
+    classDef bus fill:#FFFFFF,stroke:#A8517F,stroke-width:3px,color:#0F172A
+    classDef store fill:#FFFFFF,stroke:#00785A,stroke-width:3px,color:#0F172A
+    classDef ui fill:#FFFFFF,stroke:#D9480F,stroke-width:3px,color:#0F172A
+    classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
+    classDef decision fill:#FFFFFF,stroke:#9A6700,stroke-width:3px,color:#0F172A
+    classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
+    classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
+    classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+    %% merrow:end
 ```
 <!-- suite-graph:end producer:dfe-transform-vector -->
 
+*Figure 18. L4 Detail -- dfe-transform-vector build cycle. The image pin is lockstep.* Up: [L4 Detail -- Suite overview](#the-members).
+
+A dfe-transform-elastic release moves one image pin in dfe-infra and nothing else.
+
 <!-- suite-graph:begin producer:dfe-transform-elastic -->
 ```mermaid
+---
+config:
+  theme: base
+  look: neo
+  fontFamily: Inter, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif
+  flowchart:
+    curve: linear
+    nodeSpacing: 40
+    rankSpacing: 64
+    padding: 18
+    wrappingWidth: 280
+    htmlLabels: true
+  elk:
+    preset: modelOrder
+  themeVariables:
+    fontSize: 15px
+    lineColor: "#64748B"
+    primaryTextColor: "#0F172A"
+    nodeBorder: "#334155"
+    clusterBorder: "#0072B2"
+    edgeLabelBackground: "#FFFFFF"
+  themeCSS: >-
+    p{margin:0}
+    .node[data-look] rect,.node[data-look] path,.node[data-look] polygon,.node[data-look] .outer-path{filter:drop-shadow(0 1px 2px rgba(15,23,42,.10)) drop-shadow(0 6px 14px rgba(15,23,42,.10))}
+    .node rect{rx:10px;ry:10px}
+    .cluster rect{rx:16px;ry:16px}
+    .node .label div{min-width:150px}
+    .node.decision .label div{min-width:0}
+    .cluster[data-look] rect{filter:none}
+    .nodeLabel{line-height:1.35}
+    .nodeLabel b{font-weight:600;font-size:15px;letter-spacing:-0.01em}
+    .nodeLabel span{font-size:12.5px;font-weight:400;color:#334155}
+    .cluster-label span.nodeLabel{display:inline-block;background:#FFFFFF;color:#0B2A3F;border:1.5px solid #0072B2;border-radius:999px;padding:2px 12px;font-size:11.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase}
+    .flowchart-link{stroke-width:1.75px}
+    .labelBkg{background:transparent!important}
+    span.edgeLabel{display:inline-block;background:#FFFFFF!important;color:#1E293B;border:1px solid #94A3B8;border-radius:999px;padding:2px 10px;font-size:12px;font-weight:500}
+    span.edgeLabel p{background:transparent!important}
+    .label-icon{width:20px;height:20px;vertical-align:-4px;margin-right:6px}
+    .icon-shape path[stroke-width="0"][fill="none"]{fill:#FFFFFF;stroke:#FFFFFF;stroke-width:12px;stroke-linejoin:round}
+    .icon-shape p{background:transparent!important;color:#0F172A}
+    .ingest .label-icon{color:#0E8A7D}
+    .xform .label-icon{color:#7B4FB0}
+    .load .label-icon{color:#0072B2}
+    .bus .label-icon{color:#A8517F}
+    .store .label-icon{color:#00785A}
+    .ui .label-icon{color:#D9480F}
+    .ext .label-icon{color:#64748B}
+---
 flowchart LR
-  dfe_transform_elastic["dfe-transform-elastic"]:::producer
-  dfe_infra["dfe-infra"]:::suite
-  dfe_transform_elastic ==>|image-pin, lockstep| dfe_infra
-  classDef suite fill:#2EA4F6,stroke:#2EA4F6,stroke-width:2px,color:#000647
-  classDef producer fill:#000647,stroke:#2EA4F6,stroke-width:3px,color:#FFFFFF
+    accTitle: L4 Detail -- dfe-transform-elastic build cycle
+    accDescr: A dfe-transform-elastic release puts 1 consumer in motion. dfe-infra takes image-pin.
+
+    dfe_transform_elastic("<b>dfe-transform-elastic</b>")
+    dfe_infra("<b>dfe-infra</b>")
+
+    dfe_transform_elastic -->|image-pin| dfe_infra
+
+    class dfe_infra control
+    class dfe_transform_elastic xform
+    %% merrow:begin
+    classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A
+    classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A
+    classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A
+    classDef bus fill:#FFFFFF,stroke:#A8517F,stroke-width:3px,color:#0F172A
+    classDef store fill:#FFFFFF,stroke:#00785A,stroke-width:3px,color:#0F172A
+    classDef ui fill:#FFFFFF,stroke:#D9480F,stroke-width:3px,color:#0F172A
+    classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
+    classDef decision fill:#FFFFFF,stroke:#9A6700,stroke-width:3px,color:#0F172A
+    classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
+    classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
+    classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+    %% merrow:end
 ```
 <!-- suite-graph:end producer:dfe-transform-elastic -->
+
+*Figure 19. L4 Detail -- dfe-transform-elastic build cycle. The image pin is lockstep.* Up: [L4 Detail -- Suite overview](#the-members).
 
 ## The build-cycle table
 
@@ -402,4 +1745,4 @@ dfe-toolbox and dfe-extras are charts this repo builds itself, so neither is a m
 
 ## Swept but not in the graph
 
-`scripts/dfe-sweep` reads every unarchived repo in the org that carries one of its `member_topics` (`dfe-suite`, `hyperi-common`, `hyperi-tools`), whether or not suite.yaml has a node for it. A repo with a topic and no node is swept for open findings and work items, and that's all. It has no edge, no lane and no place in a release pass. macbash, which checks and fixes bash scripts for macOS, is the one as of 2026-10, tagged `hyperi-tools`. The sweep prints every reason a repo is in, so the topic says why.
+`scripts/dfe-sweep` reads every unarchived repo in the org that carries one of its `member_topics` (`dfe-suite`, `hyperi-common`, `hyperi-tools`), whether or not suite.yaml has a node for it. A repo with a topic and no node is swept for open findings and work items, and that's all. It has no edge, no lane and no place in a release pass. macbash, which checks and fixes bash scripts for macOS, is one, tagged `hyperi-tools`. The sweep prints every reason a repo is in, so the topic says why.

@@ -14,11 +14,13 @@ import importlib.util
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
 import threading
 import unittest
+from collections.abc import Sequence
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
 from unittest import mock
@@ -297,7 +299,13 @@ class CheckTests(unittest.TestCase):
         assert self.code == 0
         line = next(ln for ln in output.splitlines() if ln.startswith("suite-consumer"))
         fields = [field.strip() for field in line.split("|")]
-        assert fields[:5] == ["suite-consumer-xyzzy", "cargo-dep", "potential", "needs-change", "rebuild_rust"]
+        assert fields[:5] == [
+            "suite-consumer-xyzzy",
+            "cargo-dep",
+            "potential",
+            "needs-change",
+            "rebuild_rust",
+        ]
 
     def test_a_range_that_does_not_admit_also_reads_needs_change(self) -> None:
         # `moved` read as "the producer moved", which is true of every edge on
@@ -315,7 +323,10 @@ class CheckTests(unittest.TestCase):
         output = self._check('scalo = { version = ">=2.10.14, <3" }', "3.0.0")
         line = next(ln for ln in output.splitlines() if ln.startswith("suite-consumer"))
         assert "widen-range" in line
-        assert "suite-consumer-xyzzy/Cargo.toml [dependencies] declares '>=2.10.14, <3'" in line
+        assert (
+            "suite-consumer-xyzzy/Cargo.toml [dependencies] declares '>=2.10.14, <3'"
+            in line
+        )
 
     def test_a_missing_consumer_checkout_is_one_bad_line_not_a_crash(self) -> None:
         infra = _stub_infra(self.root)
@@ -504,7 +515,9 @@ class WalkConcurrencyTests(unittest.TestCase):
 
     def _run(self, jobs: int, walk_one: object) -> tuple[int, str]:
         payload = {"nodes": {"p": {"package": "scalo"}}}
-        edges = [{"from": "p", "to": name, "kind": "cargo-dep"} for name in self.CONSUMERS]
+        edges = [
+            {"from": "p", "to": name, "kind": "cargo-dep"} for name in self.CONSUMERS
+        ]
         buffer = io.StringIO()
         with (
             mock.patch.object(ds, "load_producer", return_value=payload),
@@ -526,8 +539,59 @@ class WalkConcurrencyTests(unittest.TestCase):
         code, _ = self._run(0, walk_one)
         assert code == 0
 
-    def test_the_default_caps_concurrent_rebuilds(self) -> None:
-        assert ds.build_parser().parse_args(["walk", "p", "1.0.0"]).jobs == ds.WALK_JOBS
+    def test_the_default_puts_no_cap_on_concurrent_rebuilds(self) -> None:
+        args = ds.build_parser().parse_args(["walk", "p", "1.0.0"])
+        assert args.jobs == 0
+        assert args.runner_mode is None
+
+    def test_self_hosted_consumers_take_turns_and_free_ones_do_not(self) -> None:
+        # Six consumers is one more than the self-hosted slots allow at once.
+        consumers = [f"c{n}" for n in range(ds.SELF_HOSTED_JOBS + 1)]
+        for mode, peak_wanted in (
+            ("free", len(consumers)),
+            ("self-hosted", ds.SELF_HOSTED_JOBS),
+        ):
+            with self.subTest(mode=mode):
+                peak = self._peak(consumers, mode)
+                assert peak == peak_wanted
+
+    def _peak(self, consumers: list[str], mode: str) -> int:
+        """Most rebuilds in flight at once when every consumer runs ``mode``."""
+        lock = threading.Lock()
+        live = [0, 0]
+        everyone = threading.Barrier(len(consumers), timeout=1)
+
+        def rebuild(*_: object, **__: object) -> int:
+            with lock:
+                live[0] += 1
+                live[1] = max(live)
+            try:
+                everyone.wait()
+            except threading.BrokenBarrierError:
+                pass
+            with lock:
+                live[0] -= 1
+            return 0
+
+        edges = [{"from": "p", "to": name, "kind": "cargo-dep"} for name in consumers]
+        result = ds.CheckResult(True, "admits", ds.ACTION_REBUILD_RUST)
+        with (
+            mock.patch.object(
+                ds, "load_producer", return_value={"nodes": {"p": {"package": "scalo"}}}
+            ),
+            mock.patch.object(ds, "out_edges", return_value=edges),
+            mock.patch.object(
+                ds, "_consumer_repo", side_effect=lambda name, _: Path(name)
+            ),
+            mock.patch.object(ds, "check_edge", return_value=result),
+            mock.patch.object(ds, "rebuild_rust", side_effect=rebuild),
+            mock.patch.object(
+                ds, "walk_worktree", side_effect=lambda repo, *_, **__: repo
+            ),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            assert ds.main(["walk", "p", "1.0.0", "--runner-mode", mode]) == 0
+        return live[1]
 
     def test_a_failure_stops_new_rebuilds_and_names_them(self) -> None:
         started: list[str] = []
@@ -582,14 +646,43 @@ class WalkActsTests(unittest.TestCase):
         os.environ["PATH"] = f"{bin_dir}{os.pathsep}{saved}"
         self.addCleanup(os.environ.__setitem__, "PATH", saved)
 
-    def _walk(self, *edges: dict) -> tuple[int, str]:
+    def _walk(
+        self, *edges: dict, local_only: str = "", extra: Sequence[str] = ()
+    ) -> tuple[int, str]:
+        """Dry-run the walk on a consumer whose origin/main holds its files.
+
+        ``local_only`` is a ``.hyperi-ci.yaml`` written to the checkout after
+        the push, which origin/main never sees.
+        """
         slice_ = dict(SLICE)
         if edges:
             slice_["edges"] = list(edges)
         infra = _stub_infra(self.root, slice_=slice_)
         repo = _consumer(self.root, 'scalo = { version = ">=2.10.14, <3" }')
-        if not (repo / ".git").exists():
-            subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
+        origin = self.root / "origin.git"
+        if not origin.exists():
+            for argv in (
+                ["git", "init", "-q", "--bare", "-b", "main", str(origin)],
+                ["git", "-C", str(repo), "init", "-q", "-b", "main"],
+                ["git", "-C", str(repo), "add", "-A"],
+                [
+                    "git",
+                    "-C",
+                    str(repo),
+                    "-c",
+                    "user.name=t",
+                    "-c",
+                    "user.email=t@example.com",
+                    "commit",
+                    "-qm",
+                    "seed",
+                ],
+                ["git", "-C", str(repo), "remote", "add", "origin", str(origin)],
+                ["git", "-C", str(repo), "push", "-q", "origin", "main"],
+            ):
+                subprocess.run(argv, check=True)
+        if local_only:
+            (repo / ".hyperi-ci.yaml").write_text(local_only, encoding="utf-8")
         buffer = io.StringIO()
         with contextlib.redirect_stdout(buffer):
             code = ds.main(
@@ -602,9 +695,23 @@ class WalkActsTests(unittest.TestCase):
                     str(infra),
                     "--repos",
                     str(self.root),
+                    *extra,
                 ]
             )
         return code, buffer.getvalue()
+
+    def test_the_gate_reaches_each_rust_rebuild(self) -> None:
+        for extra, gates in (
+            ((), "would gate on fmt, clippy, nextest"),
+            (
+                ("--gate", "pr-ci"),
+                "would gate on fmt here, clippy and tests in the PR's CI",
+            ),
+        ):
+            with self.subTest(extra=extra):
+                code, output = self._walk(extra=extra)
+                assert code == 0, output
+                assert gates in output
 
     def test_an_admitting_range_reaches_the_rebuild_and_exits_clean(self) -> None:
         code, output = self._walk()
@@ -613,6 +720,20 @@ class WalkActsTests(unittest.TestCase):
         assert "DRY RUN -- nothing will be changed or pushed" in output
         assert "would pin scalo to 2.11.0" in output
         assert "dry run complete" in output
+        assert "adding the worktree" in output
+        assert "without the release trailer, and hand back: hyperi-ci release" in output
+        assert "follow the release" not in output
+        repo = self.root / "suite-consumer-xyzzy"
+        tail = output.split("Release each one:", 1)[1].splitlines()
+        assert tail[1:3] == [f"  cd {repo}", "  hyperi-ci release"]
+        assert not (repo / ".worktrees" / "dfe-suite-walk").exists()
+
+    def test_a_setting_only_the_stale_checkout_carries_decides_nothing(self) -> None:
+        # dfe-fetcher's checkout carried a skip_optimize origin/main no longer has.
+        code, output = self._walk(local_only="build:\n  skip_optimize: true\n")
+        assert code == 0, output
+        assert "consented workflow_dispatch" not in output
+        assert "hand back: hyperi-ci release" in output
 
     def test_a_rebuild_does_not_swallow_a_siblings_edge_in_either_order(self) -> None:
         # The regression: a rebuild dispatched by one edge used to discard
@@ -681,27 +802,11 @@ esac
 """
 
 
-def _hyperi_ai_installed() -> bool:
-    """True when hyperi-ai's fixes_scan.py is reachable.
-
-    `signals` and the review pack's signal line read it. Without hyperi-ai
-    there is nothing to gather, so those cases SKIP -- mocking the scanner
-    would assert against our own stub rather than the real gather.
-    """
-    from pathlib import Path as _P
-
-    root = os.environ.get("HYPERI_AI_ROOT")
-    candidates = [_P(root) / "tools" / "fixes_scan.py"] if root else []
-    candidates += [
-        _P.home() / ".local" / "share" / "hyperi-ai" / "tools" / "fixes_scan.py",
-        _P("/usr/local/share/hyperi-ai/tools/fixes_scan.py"),
-    ]
-    return any(path.is_file() for path in candidates)
-
-
+# `signals` and the review pack's signal line read `hyperi-ai scan fixes`.
+# Without hyperi-ai those cases skip, because a stub would test only itself.
 NEEDS_HYPERI_AI = pytest.mark.skipif(
-    not _hyperi_ai_installed(),
-    reason="signal gather needs hyperi-ai's fixes_scan.py",
+    shutil.which("hyperi-ai") is None,
+    reason="signal gather needs `hyperi-ai scan fixes`",
 )
 
 
@@ -834,7 +939,11 @@ class ReviewPlanTests(unittest.TestCase):
     def test_a_group_is_every_node_of_that_language(self) -> None:
         code, output = self._plan("rust")
         assert code == 0, output
-        assert self._members(output) == ["suite-rustlib-xyzzy", "suite-rustapp-xyzzy", "suite-rustalpha-xyzzy"]
+        assert self._members(output) == [
+            "suite-rustlib-xyzzy",
+            "suite-rustapp-xyzzy",
+            "suite-rustalpha-xyzzy",
+        ]
         assert "suite-pyapp-xyzzy" not in output
         assert "suite-tsapp-xyzzy" not in output
 
@@ -844,7 +953,9 @@ class ReviewPlanTests(unittest.TestCase):
         members = self._members(output)
         # The libraries lane comes before the consumers lane, whatever order
         # the nodes happen to be declared in.
-        assert members.index("suite-rustlib-xyzzy") < members.index("suite-rustapp-xyzzy")
+        assert members.index("suite-rustlib-xyzzy") < members.index(
+            "suite-rustapp-xyzzy"
+        )
         assert "lane order: libraries, consumers, deployment" in output
 
     def test_ts_is_an_alias_for_typescript(self) -> None:
@@ -878,13 +989,19 @@ class ReviewPlanTests(unittest.TestCase):
     def test_every_pack_says_what_is_not_on_this_model(self) -> None:
         code, output = self._plan("rust")
         assert code == 0, output
-        assert output.count("NOT ON THIS MODEL: the security pass -- it runs separately on " "the standard tier") == len(self._members(output))
+        assert output.count(
+            "NOT ON THIS MODEL: the security pass -- it runs separately on "
+            "the standard tier"
+        ) == len(self._members(output))
 
     def test_the_header_leaves_the_model_to_the_caller(self) -> None:
         code, output = self._plan("rust")
         assert code == 0, output
         assert "fable is gated and needs the user's opt-in" in output
-        assert "rule: one subagent per member, serial, the security pass to the " "standard tier" in output
+        assert (
+            "rule: one subagent per member, serial, the security pass to the "
+            "standard tier" in output
+        )
 
     def test_a_pack_carries_the_edges_both_ways_and_the_rules_file(self) -> None:
         code, output = self._plan("rust")
@@ -892,7 +1009,10 @@ class ReviewPlanTests(unittest.TestCase):
         pack = output.split("## suite-rustapp-xyzzy")[1]
         assert "suite-rustlib-xyzzy | cargo-dep | potential" in pack
         assert "suite-infra-xyzzy | image-pin | lockstep" in pack
-        assert "language rules: ~/.local/share/hyperi-ai/standards/languages/rust.md" in pack
+        assert (
+            "language rules: ~/.local/share/hyperi-ai/standards/languages/rust.md"
+            in pack
+        )
 
     @NEEDS_HYPERI_AI
     def test_a_member_that_is_not_checked_out_is_said_so_not_guessed(self) -> None:
@@ -920,7 +1040,11 @@ class ReviewPlanTests(unittest.TestCase):
         code, output = self._plan("rust", "--json")
         assert code == 0, output
         packs = json.loads(output)
-        assert [pack["member"] for pack in packs] == ["suite-rustlib-xyzzy", "suite-rustapp-xyzzy", "suite-rustalpha-xyzzy"]
+        assert [pack["member"] for pack in packs] == [
+            "suite-rustlib-xyzzy",
+            "suite-rustapp-xyzzy",
+            "suite-rustalpha-xyzzy",
+        ]
         first = packs[0]
         assert first["repo"] == "hyperi-io/suite-rustlib-xyzzy"
         assert first["language"] == "rust"
@@ -948,6 +1072,11 @@ class CliTests(unittest.TestCase):
             ]
         )
         assert (args.subject, args.no_tests, args.repos) == ("fix: x", "", "/y")
+        assert args.gate == "local"
+        args = ds.build_parser().parse_args(["walk", "p", "1.0.0", "--gate", "pr-ci"])
+        assert args.gate == "pr-ci"
+        with contextlib.redirect_stderr(io.StringIO()), pytest.raises(SystemExit):
+            ds.build_parser().parse_args(["walk", "p", "1.0.0", "--gate", "remote"])
         args = ds.build_parser().parse_args(["signals", "dfe-loader"])
         assert args.member == "dfe-loader"
 

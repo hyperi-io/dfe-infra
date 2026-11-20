@@ -25,11 +25,6 @@ data:
 
     receivers:
       {{- if eq $pl.flavour "aws" }}
-      {{- /*
-        A group the role cannot read, or a missing one, is logged by the receiver
-        on every poll and nothing more. What it does NOT survive is a failed STS
-        identity call, which is why this runs in its own process.
-      */}}
       {{- range $source, $group := dict "eks_audit" $pl.aws.eksAuditLogGroup "cloudtrail" $pl.aws.cloudTrailLogGroup }}
       {{- if $group }}
       aws_cloudwatch/{{ $source }}:
@@ -79,7 +74,6 @@ data:
         check_interval: 5s
         limit_mib: {{ include "otel-collector.limitMib" (include "otel-collector.providerLogsMemory" .) }}
         spike_limit_mib: {{ include "otel-collector.spikeMib" (include "otel-collector.providerLogsMemory" .) }}
-      {{- /* cloud.provider and the source name every row, so HyperDX can filter on them. */}}
       {{- if eq $pl.flavour "aws" }}
       resource/eks_audit:
         attributes:

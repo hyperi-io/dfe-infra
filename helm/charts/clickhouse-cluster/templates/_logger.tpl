@@ -1,10 +1,5 @@
 {{/*
-dfe-clickhouse.logger -- the logger fragment for one server, from a values map
-carrying level, size and count (clickhouse.serverLog or clickhouse.keeper.log).
-
-The operator CRs' settings.logger and ClickHouse's own <logger> section use the
-same three keys, so one fragment serves the ClickHouseCluster, the KeeperCluster
-and the single-mode config.d file, and the three cannot drift apart.
+dfe-clickhouse.logger -- the logger fragment from a map of level, size and count (clickhouse.serverLog or clickhouse.keeper.log). The operator CRs and the single-mode config.d file share these keys.
 */}}
 {{- define "dfe-clickhouse.logger" -}}
 level: {{ .level | toString | quote }}
@@ -13,15 +8,9 @@ count: {{ .count | int }}
 {{- end }}
 
 {{/*
-dfe-clickhouse.validateLogger -- refuse a log setting the server would reject at
-start, or one that drops the bound.
+dfe-clickhouse.validateLogger -- refuse a log setting the server would reject at start, or one that drops the disk bound.
 
-Called from validate.yaml so it fires in every mode. The level list is the
-operator CRD's enum, which ClickHouse itself also accepts; a level outside it is
-a CR the API server refuses in cluster mode and a crashloop in single mode. A
-count below 1 is refused because the archive count is what bounds the disk. A
-systemLogTTLDays value that is not whole days is refused because `int` would
-read it as 0, which is no TTL at all.
+The level list is the operator CRD's enum. A count below 1 drops the bound, and a systemLogTTLDays value that is not whole days would read as 0, which is no TTL. Called from validate.yaml so it fires in every mode.
 */}}
 {{- define "dfe-clickhouse.validateLogger" -}}
 {{- $levels := list "test" "trace" "debug" "information" "notice" "warning" "error" "critical" "fatal" -}}
@@ -45,15 +34,8 @@ read it as 0, which is no TTL at all.
 {{- end }}
 
 {{/*
-dfe-clickhouse.systemLogs -- the system log sections the chart sets, as server
-config, both modes: a TTL for each table in clickhouse.systemLogTTLDays, and a
-removal for each table in clickhouse.systemLogsOff.
-
-The server appends a table's `ttl` key to the engine it creates that table with,
-and creates no table whose section is missing (ClickHouse server settings, "system
-log tables": https://clickhouse.com/docs/operations/server-configuration-parameters/settings).
-`"@remove": remove` deletes the section from the merged config. A table set to 0
-days renders nothing and keeps what its base config gives it.
+dfe-clickhouse.systemLogs -- the system log sections, both modes: a TTL for each table in clickhouse.systemLogTTLDays and a removal for each in clickhouse.systemLogsOff. A table at 0 days renders nothing.
+https://clickhouse.com/docs/operations/server-configuration-parameters/settings
 */}}
 {{- define "dfe-clickhouse.systemLogs" -}}
 {{- range $table, $days := .Values.clickhouse.systemLogTTLDays }}

@@ -1,12 +1,5 @@
-# dfe-engine's integration values over its thin chart, layered after
-# apps/_common.yaml: the engine's wiring, under the keys the scalo-service
-# library reads. The keys below them are the engine's own dials, read here
-# through tpl and by dfe-extras, which renders the hunt runner, the keda shim,
-# the minted Secrets, the app catalogue and the dfe-engine-env ConfigMap.
+# dfe-engine's wiring over its thin chart. See docs/deployment/values-tiers-apps.md#per-app-notes.
 
-# The env dfe-extras renders under conditionals, so a variable stays absent
-# where its condition is off. Reloader restarts the pod when either ConfigMap
-# changes.
 extraEnvFrom:
   - configMapRef:
       name: '{{ include "scalo-service.fullname" . }}-env'
@@ -15,13 +8,10 @@ reload:
     - dfe-engine-env
     - dfe-engine-app-catalogue
 
-# The engine's pod token is mounted: a deployment may log the engine in to
-# OpenBao with Kubernetes auth. The data-plane apps keep the library's
-# default of no token.
+# The pod token is mounted so a deployment can log the engine in to OpenBao with Kubernetes auth.
 serviceAccount:
   mountToken: true
 
-# The contract's secret groups, on the Secrets these values name.
 secrets:
   clickhouse:
     existingSecret: '{{ .Values.clickhouse.passwordSecretName }}'
@@ -33,7 +23,6 @@ secrets:
     existingSecret: '{{ .Values.auth.breakglassSecretName }}'
   hunt-runner:
     existingSecret: '{{ .Values.huntRunner.clickhouse.passwordSecretName }}'
-  # Each app's own ClickHouse password, which the engine creates that app's user on.
   loader:
     existingSecret: '{{ .Values.clickhouse.serviceUsers.loader.passwordSecretName }}'
   query-reader:
@@ -48,24 +37,19 @@ secrets:
     existingSecret: '{{ .Values.seedAuth.secretName }}'
 
 extraEnv:
-  # Rendered by the gateway chart beside the engine, and optional, so an engine
-  # with no gateway starts with no admin links rather than not at all.
+  # Optional: an engine with no gateway starts with no admin links.
   DFE_ENGINE_ADMIN_LINKS:
     valueFrom:
       configMapKeyRef:
         name: dfe-admin-links
         key: admin_links.json
         optional: true
-  # The engine composes the login page's credential-fetch command from it.
   DFE_ENGINE_DEPLOYMENT_NAMESPACE:
     valueFrom:
       fieldRef:
         fieldPath: metadata.namespace
 
-# One init container per content pin in content.entries, each reading its pin by
-# name, so the ref has one copy. One whose entry is dropped runs the engine image
-# and materialises nothing. dfe-extras refuses an entry with no container here, so
-# an overlay that adds one restates this list.
+# One init container per content pin. dfe-extras rejects an entry with no container here, so an overlay that adds one restates this list.
 initContainers:
   - name: content-dfe-receiver-contract
     image: '{{ $ref := "" }}{{ range .Values.content.entries }}{{ if eq .name "dfe-receiver-contract" }}{{ $ref = .ref }}{{ end }}{{ end }}{{ $ref | default (include "scalo-service.image" .) }}'
@@ -88,7 +72,7 @@ initContainers:
           exit 0
         fi
         dir="{{ .Values.content.mountPath }}/contract/dfe-receiver"
-        # An image that carries no contract must not wedge the engine's
+        # An image that carries no contract must not block the engine's
         # pod: the app exits non-zero on a write failure.
         if dfe-receiver config-schema --dir "$dir"; then
           # The contract names no image, so the writer records itself --
@@ -119,7 +103,7 @@ initContainers:
           exit 0
         fi
         dir="{{ .Values.content.mountPath }}/contract/dfe-loader"
-        # An image that carries no contract must not wedge the engine's
+        # An image that carries no contract must not block the engine's
         # pod: the app exits non-zero on a write failure.
         if dfe-loader config-schema --dir "$dir"; then
           # The contract names no image, so the writer records itself --
@@ -148,7 +132,7 @@ initContainers:
           exit 0
         fi
         dir="{{ .Values.content.mountPath }}/contract/dfe-archiver"
-        # An image that carries no contract must not wedge the engine's
+        # An image that carries no contract must not block the engine's
         # pod: the app exits non-zero on a write failure.
         if dfe-archiver config-schema --dir "$dir"; then
           # The contract names no image, so the writer records itself --
@@ -177,7 +161,7 @@ initContainers:
           exit 0
         fi
         dir="{{ .Values.content.mountPath }}/contract/dfe-fetcher"
-        # An image that carries no contract must not wedge the engine's
+        # An image that carries no contract must not block the engine's
         # pod: the app exits non-zero on a write failure.
         if dfe-fetcher config-schema --dir "$dir"; then
           # The contract names no image, so the writer records itself --
@@ -206,7 +190,7 @@ initContainers:
           exit 0
         fi
         dir="{{ .Values.content.mountPath }}/contract/dfe-transform-vrl"
-        # An image that carries no contract must not wedge the engine's
+        # An image that carries no contract must not block the engine's
         # pod: the app exits non-zero on a write failure.
         if dfe-transform-vrl config-schema --dir "$dir"; then
           # The contract names no image, so the writer records itself --
@@ -235,7 +219,7 @@ initContainers:
           exit 0
         fi
         dir="{{ .Values.content.mountPath }}/contract/dfe-transform-vector"
-        # An image that carries no contract must not wedge the engine's
+        # An image that carries no contract must not block the engine's
         # pod: the app exits non-zero on a write failure.
         if dfe-transform-vector config-schema --dir "$dir"; then
           # The contract names no image, so the writer records itself --
@@ -264,7 +248,7 @@ initContainers:
           exit 0
         fi
         dir="{{ .Values.content.mountPath }}/contract/dfe-transform-elastic"
-        # An image that carries no contract must not wedge the engine's
+        # An image that carries no contract must not block the engine's
         # pod: the app exits non-zero on a write failure.
         if dfe-transform-elastic config-schema --dir "$dir"; then
           # The contract names no image, so the writer records itself --
@@ -277,9 +261,7 @@ initContainers:
           echo "content: dfe-transform-elastic emitted no contract; the mount stays empty" >&2
         fi
     volumeMounts: *content-mounts
-  # Seeds the auth ConfigMaps authConfig names into the writable config volume.
-  # It runs on every pod because a list item cannot follow authConfig, and it
-  # copies nothing where authConfig names no ConfigMap.
+  # Runs on every pod because a list item cannot follow authConfig.
   - name: auth-config-seed
     image: '{{ include "scalo-service.image" . }}'
     imagePullPolicy: *pull-policy
@@ -335,15 +317,11 @@ extraVolumes:
   - name: app-catalogue
     configMap:
       name: '{{ include "scalo-service.fullname" . }}-app-catalogue'
-  # Pod-local: the content is materialised from the pins on every start.
   - name: content
     emptyDir: {}
   - name: deploy-repo
     emptyDir: {}
-  # Optional: a deployment on plaintext ClickHouse has no CA object, and
-  # DFE_ENGINE_CLICKHOUSE_CA_CERT (dfe-engine-env) is set only where it has one. tpl
-  # mounts the CA from a Secret when clickhouse.tls.ca.secretName is set, else
-  # from a ConfigMap.
+  # Optional: plaintext ClickHouse has no CA object.
   - name: clickhouse-ca
     '{{ if .Values.clickhouse.tls.ca.secretName }}secret{{ else }}configMap{{ end }}':
       '{{ if .Values.clickhouse.tls.ca.secretName }}secretName{{ else }}name{{ end }}': '{{ .Values.clickhouse.tls.ca.secretName | default .Values.clickhouse.tls.ca.configMapName | default "dfe-clickhouse-ca" }}'
@@ -351,8 +329,6 @@ extraVolumes:
       items:
         - key: '{{ .Values.clickhouse.tls.ca.dataKey | default "ca.crt" }}'
           path: '{{ .Values.clickhouse.tls.ca.dataKey | default "ca.crt" }}'
-  # The auth seed's sources: each ConfigMap authConfig names, else a small empty
-  # directory, as a list item cannot be left out.
   - name: oidc-providers
     '{{ if .Values.authConfig.providersConfigMap }}configMap{{ else }}emptyDir{{ end }}':
       '{{ if .Values.authConfig.providersConfigMap }}name{{ else }}sizeLimit{{ end }}': '{{ .Values.authConfig.providersConfigMap | default "1Mi" }}'
@@ -367,7 +343,6 @@ extraVolumeMounts:
   - name: app-catalogue
     mountPath: /etc/dfe-engine/catalogue
     readOnly: true
-  # Read-only here, writable in the init containers that fill it.
   - name: content
     mountPath: '{{ .Values.content.mountPath }}'
     readOnly: true
@@ -377,8 +352,6 @@ extraVolumeMounts:
     mountPath: /etc/dfe/clickhouse-ca
     readOnly: true
 
-# The engine's own keys, read above through tpl and by dfe-extras. Keys
-# common.yaml sets (clickhouse.*) are not restated, as this file layers after it.
 content:
   mountPath: /etc/dfe-engine/content
   entries:
@@ -386,38 +359,38 @@ content:
       kind: emit
       role: contract
       app: dfe-receiver
-      ref: "ghcr.io/hyperi-io/dfe-receiver:v1.15.66@sha256:9cf243808554b8c936c3cdb179acdd33acb9309517ca1425fe9f6790ca3b16d5"
+      ref: "ghcr.io/hyperi-io/dfe-receiver:v1.15.68@sha256:6e92a7633a05fb6f8e4fce93b2f03e0d2a78771bc5b4d317b063ff878a3213e2"
     - name: dfe-loader-contract
       kind: emit
       role: contract
       app: dfe-loader
-      ref: "ghcr.io/hyperi-io/dfe-loader:v1.18.68@sha256:91557733574410df2be3d3b3f29ba768777e4e52f3e6a2dfeb785e6b8b7de00d"
+      ref: "ghcr.io/hyperi-io/dfe-loader:v1.18.73@sha256:46f49778c4bba7abba2f4696e6fa949e6c29a04cbb41a7bae43734eb8408ed1c"
     - name: dfe-archiver-contract
       kind: emit
       role: contract
       app: dfe-archiver
-      ref: "ghcr.io/hyperi-io/dfe-archiver:v1.7.48@sha256:d4ac209106677f4e377ccff31168fdd572985f0456fbe98dd7e91a3d16df206b"
+      ref: "ghcr.io/hyperi-io/dfe-archiver:v1.7.51@sha256:1601fab7bd6f7212f706ca115e0678fe925e0e126d290466c12ebfae323ccc04"
     - name: dfe-fetcher-contract
       kind: emit
       role: contract
       app: dfe-fetcher
-      ref: "ghcr.io/hyperi-io/dfe-fetcher:v1.4.50@sha256:c4ed7f546b411d49b4e19cf2d0d0e8003775e0766eab53c968dac56da06246a0"
+      ref: "ghcr.io/hyperi-io/dfe-fetcher:v1.4.56@sha256:9dd9da062df2eb5ff54f6d0d71f9ab45c56685d95df5c80c6818969ce9d92d8b"
     - name: dfe-transform-vrl-contract
       kind: emit
       role: contract
       app: dfe-transform-vrl
-      ref: "ghcr.io/hyperi-io/dfe-transform-vrl:v1.1.46@sha256:f5f7d474145d0a23b8ea374e2683ae2921cfb54185bcc44eb350e794cd38a491"
+      ref: "ghcr.io/hyperi-io/dfe-transform-vrl:v1.1.48@sha256:da083592e0e87617207d1be01a474462ba4e1e47e80c08cfaf2508a6f78adda6"
     - name: dfe-transform-vector-contract
       kind: emit
       role: contract
       app: dfe-transform-vector
-      ref: "ghcr.io/hyperi-io/dfe-transform-vector:v1.0.63@sha256:7a4ef378394b53a0e862107c3da4cd267826a4ba6b45483076e18de972bf1c45"
+      ref: "ghcr.io/hyperi-io/dfe-transform-vector:v1.0.65@sha256:073f9b5ba88bbef43a86c162bd3ef48f9361ea222f2c097a2148b908b8d2ccfb"
     - name: dfe-transform-elastic-contract
       kind: emit
       role: contract
       app: dfe-transform-elastic
-      ref: "ghcr.io/hyperi-io/dfe-transform-elastic:v1.1.29@sha256:91213b89d1922f64e611092df0b40a497cf3ee8f85229360a42f8a72ee7f3299"
-# The env names this mount; the contract's writable path `config` mounts at /config.
+      ref: "ghcr.io/hyperi-io/dfe-transform-elastic:v1.1.32@sha256:83a5298d6b161aac162b588f9c2d0ea46a243d2f1040759daee6a8d7ae62b507"
+# The contract's config writable path mounts at /config.
 config:
   mountPath: /config
 authConfig:

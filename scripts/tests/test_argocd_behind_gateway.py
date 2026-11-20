@@ -41,7 +41,9 @@ import helm_releases  # noqa: E402
 ARGO_INSTALL = "helm upgrade --install argocd argo/argo-cd"
 INSECURE = ("--set-string", "configs.params.server\\.insecure=true")
 # The install takes its values from helm_releases.py through this call, and nowhere else.
-ARGO_VALUES_CALL = 'dfe_release_values argocd --domain "${DFE_DOMAIN}" --cache-service "${VALKEY_SVC}"'
+ARGO_VALUES_CALL = (
+    'dfe_release_values argocd --domain "${DFE_DOMAIN}" --cache-service "${VALKEY_SVC}"'
+)
 SPLICE = '${DFE_RELEASE_VALUES[@]+"${DFE_RELEASE_VALUES[@]}"}'
 ADOPT_BRANCH = "Using existing ArgoCD"
 
@@ -52,18 +54,27 @@ ARGO_SERVER = "argocd-server"
 ARGO_NAMESPACE = "argocd"
 
 ON_PREM = (
-    "--namespace", "envoy-gateway-system",
-    "-f", str(VALUES / "common.yaml"),
-    "-f", str(VALUES / "local-dfe.yaml"),
-    "--set", "appNamespace=dfe",
-    "--set", "domain=dfe.example.com",
+    "--namespace",
+    "envoy-gateway-system",
+    "-f",
+    str(VALUES / "common.yaml"),
+    "-f",
+    str(VALUES / "local-dfe.yaml"),
+    "--set",
+    "appNamespace=dfe",
+    "--set",
+    "domain=dfe.example.com",
 )
 
 
 def helm_template(release: str, chart: Path, *args: str) -> list[dict]:
     out = subprocess.run(
         ["helm", "template", release, str(chart), *args],
-        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
     )
     assert out.returncode == 0, out.stderr
     return [d for d in yaml.safe_load_all(out.stdout) if d]
@@ -91,14 +102,18 @@ def test_an_adopted_argo_is_not_reconfigured() -> None:
     body = BOOTSTRAP.read_text(encoding="utf-8")
     assert "server\\.insecure" not in body
     assert body.count(ARGO_VALUES_CALL) == 1
-    assert body.find(ARGO_VALUES_CALL) < body.find(ARGO_INSTALL) < body.find(ADOPT_BRANCH)
+    assert (
+        body.find(ARGO_VALUES_CALL) < body.find(ARGO_INSTALL) < body.find(ADOPT_BRANCH)
+    )
 
 
 # --- the route and the probe reach the plain HTTP port -----------------------
 def test_the_argocd_route_targets_the_plain_http_port() -> None:
     docs = helm_template("envoy-gateway-config", GATEWAY, *ON_PREM)
     (route,) = [
-        d for d in docs if d.get("kind") == "HTTPRoute" and d["metadata"]["name"] == "argocd"
+        d
+        for d in docs
+        if d.get("kind") == "HTTPRoute" and d["metadata"]["name"] == "argocd"
     ]
     (backend,) = route["spec"]["rules"][0]["backendRefs"]
     assert backend["name"] == ARGO_SERVER
@@ -109,7 +124,8 @@ def test_the_argocd_route_targets_the_plain_http_port() -> None:
 def test_the_admin_link_probe_speaks_plain_http_to_the_same_port() -> None:
     docs = helm_template("envoy-gateway-config", GATEWAY, *ON_PREM)
     (configmap,) = [
-        d for d in docs
+        d
+        for d in docs
         if d.get("kind") == "ConfigMap" and d["metadata"]["name"] == "dfe-admin-links"
     ]
     (text,) = configmap["data"].values()
@@ -127,7 +143,10 @@ def test_the_admin_link_probe_speaks_plain_http_to_the_same_port() -> None:
 # --- the Forgejo push hook reaches the same port -----------------------------
 def forgejo_setup_env() -> dict[str, str]:
     docs = helm_template(
-        "t", chart_dir("forgejo"), "--show-only", "templates/setup-job.yaml",
+        "t",
+        chart_dir("forgejo"),
+        "--show-only",
+        "templates/setup-job.yaml",
     )
     (job,) = docs
     container = job["spec"]["template"]["spec"]["containers"][0]
@@ -152,17 +171,25 @@ def test_the_hook_it_replaces_is_the_same_endpoint_over_https() -> None:
 def test_the_hook_url_is_a_tracked_field_so_a_change_reruns_the_job() -> None:
     """The Job is a PostSync hook, which Argo runs only on a sync an OutOfSync app starts."""
     (deployment,) = [
-        d for d in helm_template("t", chart_dir("forgejo"))
+        d
+        for d in helm_template("t", chart_dir("forgejo"))
         if d.get("kind") == "Deployment"
     ]
     annotations = deployment["metadata"].get("annotations") or {}
-    assert annotations.get("dfe.hyperi.io/argo-webhook-url") == forgejo_setup_env()["WEBHOOK_URL"]
+    assert (
+        annotations.get("dfe.hyperi.io/argo-webhook-url")
+        == forgejo_setup_env()["WEBHOOK_URL"]
+    )
 
 
 def test_a_disabled_hook_removes_nothing() -> None:
     docs = helm_template(
-        "t", chart_dir("forgejo"), "--show-only", "templates/setup-job.yaml",
-        "--set", "webhook.enabled=false",
+        "t",
+        chart_dir("forgejo"),
+        "--show-only",
+        "templates/setup-job.yaml",
+        "--set",
+        "webhook.enabled=false",
     )
     container = docs[0]["spec"]["template"]["spec"]["containers"][0]
     env = {item["name"]: item.get("value") for item in container["env"]}

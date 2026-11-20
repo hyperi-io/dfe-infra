@@ -1,0 +1,18 @@
+title: L4 Detail -- DFE on AWS, controller identities
+profile: aws
+direction: TB
+description: Three cluster controllers hold an AWS identity through EKS Pod Identity. external-dns and cert-manager write records in the private and public Route 53 zones, Karpenter reads its SQS interruption queue, and the Load Balancer Controller creates the gateway and receiver NLBs.
+groups:
+  - {id: cloud, label: "", object: aws.cloud}
+  - {id: cluster, label: "EKS cluster, Pod Identity", parent: cloud}
+nodes:
+  - {id: dns, label: external-dns, subtitle: and cert-manager, group: cluster}
+  - {id: karp, label: Karpenter, group: cluster}
+  - {id: lbc, label: LB controller, group: cluster}
+  - {id: r53, object: aws.route53, subtitle: both zones, group: cloud}
+  - {id: sqs, object: aws.sqs, subtitle: interruption queue, group: cloud}
+  - {id: nlb, object: aws.nlb, label: NLBs, group: cloud}
+edges:
+  - {source: dns, target: r53, label: records}
+  - {source: karp, target: sqs, label: interruptions}
+  - {source: lbc, target: nlb, label: creates}

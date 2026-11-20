@@ -68,7 +68,10 @@ def deployment(docs: list[dict], app: str) -> dict:
 
 def app_env(docs: list[dict], app: str) -> list[dict]:
     """The app container's env list as the pod template carries it."""
-    return deployment(docs, app)["spec"]["template"]["spec"]["containers"][0].get("env") or []
+    return (
+        deployment(docs, app)["spec"]["template"]["spec"]["containers"][0].get("env")
+        or []
+    )
 
 
 def render(app: str, overlay: dict) -> list[dict]:
@@ -77,8 +80,10 @@ def render(app: str, overlay: dict) -> list[dict]:
 
 def test_a_custom_key_becomes_container_env() -> None:
     """The block is the operator's half of the app's settings, so it has to land."""
-    env = {e["name"]: e.get("value") for e in app_env(render("dfe-transform-vrl", CUSTOM),
-                                                      "dfe-transform-vrl")}
+    env = {
+        e["name"]: e.get("value")
+        for e in app_env(render("dfe-transform-vrl", CUSTOM), "dfe-transform-vrl")
+    }
     expect(
         "a custom string key reaches the container",
         env.get("DFE_HOUSE_KEY") == "kept",
@@ -97,13 +102,17 @@ def test_a_colliding_custom_key_never_reaches_the_container() -> None:
     Two entries of one name fail a server-side apply, so the library drops the
     custom one and the Secret reference it derives is what the pod reads.
     """
-    entries = [e for e in app_env(render("dfe-transform-vrl", COLLIDING), "dfe-transform-vrl")
-               if e["name"] == DERIVED]
+    entries = [
+        e
+        for e in app_env(render("dfe-transform-vrl", COLLIDING), "dfe-transform-vrl")
+        if e["name"] == DERIVED
+    ]
     expect("the name renders once", len(entries) == 1, f"got {len(entries)}")
     kept = entries[0] if entries else {}
     expect(
         "and it is the derived Secret reference, not the custom override",
-        "secretKeyRef" in (kept.get("valueFrom") or {}) and kept.get("value") != "custom",
+        "secretKeyRef" in (kept.get("valueFrom") or {})
+        and kept.get("value") != "custom",
         f"got {kept.get('value')!r}",
     )
 
@@ -115,15 +124,19 @@ def test_a_colliding_custom_key_never_reaches_the_container() -> None:
 def test_a_custom_key_never_replaces_an_integration_value() -> None:
     docs = render("dfe-transform-vrl", {"extraEnv": {INTEGRATION: "custom"}})
     got = effective_env(docs, "Deployment/dfe-transform-vrl").get(INTEGRATION)
-    expect(f"the deployment's {INTEGRATION} survives an overlay key of that name",
-           got != "custom", f"got {got!r}")
+    expect(
+        f"the deployment's {INTEGRATION} survives an overlay key of that name",
+        got != "custom",
+        f"got {got!r}",
+    )
 
 
 def test_every_app_chart_carries_the_key() -> None:
     """Six thin charts, one library: a chart missing it drops the operator's block."""
     for app in APPS:
-        schema = json.loads((assembled_chart(app) / "values.schema.json").read_text(
-            encoding="utf-8"))
+        schema = json.loads(
+            (assembled_chart(app) / "values.schema.json").read_text(encoding="utf-8")
+        )
         declared = schema.get("properties", {}).get("extraEnv", {})
         expect(
             f"{app} declares extraEnv as a map",
@@ -138,7 +151,9 @@ def test_no_custom_keys_renders_the_env_it_always_did() -> None:
     """The block is opt-in: a deployment setting none must be unchanged."""
     for app in APPS:
         default = sorted(effective_env(golden(app, *DIAL_CELL), f"Deployment/{app}"))
-        empty = sorted(effective_env(render(app, {"extraEnv": {}}), f"Deployment/{app}"))
+        empty = sorted(
+            effective_env(render(app, {"extraEnv": {}}), f"Deployment/{app}")
+        )
         expect(
             f"{app}: an empty block adds nothing",
             default == empty and "DFE_HOUSE_KEY" not in default,

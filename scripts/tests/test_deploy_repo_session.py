@@ -35,18 +35,35 @@ USER, PASSWORD = "dfe-admin", "s3cret-value"
 
 def git(cwd: Path, *args: str, env: dict[str, str] | None = None) -> str:
     return subprocess.run(
-        ["git", "-C", str(cwd), *args], capture_output=True, text=True, encoding="utf-8", errors="replace",
-        check=True, env={**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.invalid",
-                         "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.invalid", **(env or {})},
+        ["git", "-C", str(cwd), *args],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=True,
+        env={
+            **os.environ,
+            "GIT_AUTHOR_NAME": "t",
+            "GIT_AUTHOR_EMAIL": "t@example.invalid",
+            "GIT_COMMITTER_NAME": "t",
+            "GIT_COMMITTER_EMAIL": "t@example.invalid",
+            **(env or {}),
+        },
     ).stdout.strip()
 
 
 @pytest.fixture
 def bare(tmp_path: Path) -> Path:
     origin = tmp_path / "deploy.git"
-    subprocess.run(["git", "init", "--quiet", "--bare", "-b", "main", str(origin)], check=True)
+    subprocess.run(
+        ["git", "init", "--quiet", "--bare", "-b", "main", str(origin)], check=True
+    )
     seed = tmp_path / "seed"
-    subprocess.run(["git", "clone", "--quiet", str(origin), str(seed)], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "clone", "--quiet", str(origin), str(seed)],
+        check=True,
+        capture_output=True,
+    )
     (seed / "pins.yaml").write_text("base: {}\n", encoding="utf-8")
     git(seed, "add", "pins.yaml")
     git(seed, "commit", "-q", "-m", "chore: seed")
@@ -63,7 +80,8 @@ def fake_kubectl(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     script.write_text(
         '#!/bin/sh\n[ -n "$SECRET_FAILS" ] && { echo "Error from server (NotFound)" >&2; exit 1; }\n'
         'printf "%s" "$SECRET_JSON"\n',
-        encoding="utf-8", newline="\n",
+        encoding="utf-8",
+        newline="\n",
     )
     script.chmod(0o755)
     monkeypatch.setenv("PATH", f"{bindir}{os.pathsep}{os.environ['PATH']}")
@@ -71,18 +89,25 @@ def fake_kubectl(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 def secret_json(**data: str) -> str:
-    return json.dumps({"data": {k: base64.b64encode(v.encode()).decode() for k, v in data.items()}})
+    return json.dumps(
+        {"data": {k: base64.b64encode(v.encode()).decode() for k, v in data.items()}}
+    )
 
 
 def test_the_credential_rides_the_environment_and_nothing_else() -> None:
     env = drs.git_auth_env(USER, PASSWORD)
     header = env["GIT_CONFIG_VALUE_0"]
     assert env["GIT_CONFIG_KEY_0"] == "http.extraHeader"
-    assert base64.b64decode(header.removeprefix("Authorization: Basic ")).decode() == f"{USER}:{PASSWORD}"
+    assert (
+        base64.b64decode(header.removeprefix("Authorization: Basic ")).decode()
+        == f"{USER}:{PASSWORD}"
+    )
     assert env["GIT_TERMINAL_PROMPT"] == "0"
 
 
-def test_the_admin_secret_is_read_in_process(fake_kubectl: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_admin_secret_is_read_in_process(
+    fake_kubectl: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv("SECRET_JSON", secret_json(username=USER, password=PASSWORD))
     assert drs.read_admin(None, "forgejo", "dfe-forgejo-admin") == (USER, PASSWORD)
 
@@ -104,7 +129,9 @@ def test_an_unreadable_or_incomplete_secret_is_refused(
         drs.read_admin(None, "forgejo", "dfe-forgejo-admin")
 
 
-def test_an_absent_checkout_is_cloned_and_a_present_one_is_retargeted(bare: Path, tmp_path: Path) -> None:
+def test_an_absent_checkout_is_cloned_and_a_present_one_is_retargeted(
+    bare: Path, tmp_path: Path
+) -> None:
     checkout = tmp_path / "work" / "deploy"
     with drs.BundledRepo(url_override=str(bare)).open(checkout):
         assert (checkout / "pins.yaml").exists()
@@ -117,12 +144,15 @@ def test_an_absent_checkout_is_cloned_and_a_present_one_is_retargeted(bare: Path
 
 def test_a_checkout_that_cannot_be_attached_says_why(tmp_path: Path) -> None:
     with pytest.raises(drs.SessionError, match="cannot attach"):
-        with drs.BundledRepo(url_override=str(tmp_path / "missing.git")).open(tmp_path / "work"):
+        with drs.BundledRepo(url_override=str(tmp_path / "missing.git")).open(
+            tmp_path / "work"
+        ):
             pass
 
 
-def test_the_credential_never_reaches_the_checkouts_config(bare: Path, tmp_path: Path, fake_kubectl: Path,
-                                                           monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_credential_never_reaches_the_checkouts_config(
+    bare: Path, tmp_path: Path, fake_kubectl: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv("SECRET_JSON", secret_json(username=USER, password=PASSWORD))
     checkout = tmp_path / "deploy"
     repo = drs.BundledRepo(url_override=str(bare))
@@ -133,7 +163,9 @@ def test_the_credential_never_reaches_the_checkouts_config(bare: Path, tmp_path:
     assert base64.b64encode(f"{USER}:{PASSWORD}".encode()).decode() not in config
 
 
-def test_git_calls_carry_the_session_environment_only_while_it_is_open(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_git_calls_carry_the_session_environment_only_while_it_is_open(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     seen: list[dict[str, str] | None] = []
 
     def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess:
@@ -151,7 +183,13 @@ def test_git_calls_carry_the_session_environment_only_while_it_is_open(monkeypat
 
 
 def _args(**over: object) -> argparse.Namespace:
-    base = {"bundled_forgejo": True, "deploy": "deploy", "kubeconfig": None, "forgejo_repo": "deploy", "forgejo_owner": None}
+    base = {
+        "bundled_forgejo": True,
+        "deploy": "deploy",
+        "kubeconfig": None,
+        "forgejo_repo": "deploy",
+        "forgejo_owner": None,
+    }
     return argparse.Namespace(**{**base, **over})
 
 
@@ -168,7 +206,9 @@ def test_the_verb_runs_inside_the_session_and_leaves_no_credential_behind(
 
             @contextlib.contextmanager
             def cm():
-                yield drs.Session("http://127.0.0.1:1/x/deploy.git", {"GIT_CONFIG_COUNT": "1"})
+                yield drs.Session(
+                    "http://127.0.0.1:1/x/deploy.git", {"GIT_CONFIG_COUNT": "1"}
+                )
 
             return cm()
 
@@ -184,8 +224,9 @@ def test_the_verb_runs_inside_the_session_and_leaves_no_credential_behind(
     assert u._GIT_ENV == {}
 
 
-def test_a_session_that_cannot_open_fails_the_verb_before_it_runs(monkeypatch: pytest.MonkeyPatch,
-                                                                 capsys: pytest.CaptureFixture[str]) -> None:
+def test_a_session_that_cannot_open_fails_the_verb_before_it_runs(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     class FailingRepo:
         def __init__(self, **_: object) -> None: ...
 

@@ -68,7 +68,7 @@ def test_every_field_reads_through_flag() -> None:
 
 def test_an_absent_dial_takes_the_charts_own_defaults() -> None:
     """No ui: block and no edge: block -- every field takes its chart default."""
-    flags = render_dial._edge_flags(parse_dial("substrate: k8s\n", source="test-dial"))
+    flags = render_dial._edge_flags(parse_dial("platform: k8s\n", source="test-dial"))
     assert flags["edge.product.public"] is True
     assert flags["edge.admin_uis.public.kafbat"] is False
     assert flags["edge.admin_uis.public.cruise_control"] is False
@@ -102,7 +102,7 @@ def test_the_old_block_is_reported_as_deprecated_by_name() -> None:
 def test_the_new_block_silences_the_deprecation_for_that_key_alone() -> None:
     dial = parse_dial(
         DIAL_ALL_SET.replace('dfe_ui: "true"', 'dfe_ui: ""')
-        + "edge:\n  product:\n    public: \"true\"\n",
+        + 'edge:\n  product:\n    public: "true"\n',
         source="test-dial",
     )
     lines = " ".join(render_dial._edge_deprecations(dial))
@@ -119,7 +119,7 @@ def test_the_new_block_silences_the_deprecation_for_that_key_alone() -> None:
 
 
 def test_the_engine_api_switches_default_to_the_browsers_families_alone() -> None:
-    flags = render_dial._edge_flags(parse_dial("substrate: k8s\n", source="test-dial"))
+    flags = render_dial._edge_flags(parse_dial("platform: k8s\n", source="test-dial"))
     assert flags["edge.engine_api.with_product"] is True
     assert flags["edge.engine_api.cli_families_public"] is False
     assert flags["edge.engine_api.scim_public"] is False
@@ -139,7 +139,9 @@ def test_the_engine_api_switches_read_through_quoted_or_not() -> None:
 
 
 @pytest.mark.parametrize("key", ["with_product", "cli_families_public", "scim_public"])
-def test_an_engine_api_switch_that_is_not_a_boolean_is_refused_by_name(key: str) -> None:
+def test_an_engine_api_switch_that_is_not_a_boolean_is_refused_by_name(
+    key: str,
+) -> None:
     dial = parse_dial(
         f"edge:\n  engine_api:\n    {key}: sometimes\n", source="test-dial"
     )
@@ -165,7 +167,11 @@ def test_the_retired_families_key_is_refused_and_names_both_switches() -> None:
         (False, False, "browser families only"),
         (True, False, "browser families, plus the CLI families and /openapi.json"),
         (False, True, "browser families only, plus SCIM"),
-        (True, True, "browser families, plus the CLI families and /openapi.json, plus SCIM"),
+        (
+            True,
+            True,
+            "browser families, plus the CLI families and /openapi.json, plus SCIM",
+        ),
     ],
 )
 def test_the_summary_line_says_which_families_answer(

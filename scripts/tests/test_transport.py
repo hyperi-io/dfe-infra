@@ -105,13 +105,19 @@ def harness(*args: str) -> dict:
     build_harness_deps()
     text = render(LIBRARY_HARNESS, "lt", *args)
     for doc in docs(text):
-        if doc.get("kind") == "ConfigMap" and doc["metadata"]["name"].endswith("-transport"):
+        if doc.get("kind") == "ConfigMap" and doc["metadata"]["name"].endswith(
+            "-transport"
+        ):
             return doc["data"]
     raise SystemExit("the library harness rendered no transport ConfigMap")
 
 
 def test_the_helper_reads_the_deployment_wide_mode() -> None:
-    expect("an unset mode is the bus", harness()["transport"] == "bus", harness()["transport"])
+    expect(
+        "an unset mode is the bus",
+        harness()["transport"] == "bus",
+        harness()["transport"],
+    )
     direct = harness("--set", "kafka.mode=disabled")
     expect("disabled is direct", direct["transport"] == "direct", direct["transport"])
     for mode in ("single", "cluster", "external"):
@@ -138,18 +144,31 @@ def test_a_chart_with_no_kafka_values_still_renders() -> None:
     A brokerless profile is built for direct, so dfe-extras refuses an unset mode
     there rather than handing the engine the bus.
     """
-    env = engine_env(render_extras(ENGINE, "single", "local", overlay={"kafka": {"mode": None}}))
-    expect("the engine is told the transport", env.get("DFE_ENGINE_TRANSPORT_DEFAULT") == "bus",
-           f"got {env.get('DFE_ENGINE_TRANSPORT_DEFAULT')!r}")
-    expect("and whether a bus is present", env.get("DFE_ENGINE_TRANSPORT_BUS_PRESENT") == "true",
-           f"got {env.get('DFE_ENGINE_TRANSPORT_BUS_PRESENT')!r}")
+    env = engine_env(
+        render_extras(ENGINE, "single", "local", overlay={"kafka": {"mode": None}})
+    )
+    expect(
+        "the engine is told the transport",
+        env.get("DFE_ENGINE_TRANSPORT_DEFAULT") == "bus",
+        f"got {env.get('DFE_ENGINE_TRANSPORT_DEFAULT')!r}",
+    )
+    expect(
+        "and whether a bus is present",
+        env.get("DFE_ENGINE_TRANSPORT_BUS_PRESENT") == "true",
+        f"got {env.get('DFE_ENGINE_TRANSPORT_BUS_PRESENT')!r}",
+    )
     try:
         render_extras(ENGINE, "slim", "local", overlay={"kafka": {"mode": None}})
     except weave().WeaveError as refused:
-        expect("a brokerless profile refuses the bus", "built for direct" in str(refused),
-               str(refused)[-300:])
+        expect(
+            "a brokerless profile refuses the bus",
+            "built for direct" in str(refused),
+            str(refused)[-300:],
+        )
     else:
-        expect("a brokerless profile refuses the bus", False, "slim rendered with no mode")
+        expect(
+            "a brokerless profile refuses the bus", False, "slim rendered with no mode"
+        )
 
 
 def test_the_engine_follows_the_profile() -> None:
@@ -157,11 +176,17 @@ def test_the_engine_follows_the_profile() -> None:
         for cloud in CLOUDS:
             env = engine_env(golden(ENGINE, profile, cloud))
             at = f"{profile}/{cloud}"
-            expect(f"{at} tells the engine {want}", env.get("DFE_ENGINE_TRANSPORT_DEFAULT") == want,
-                   f"got {env.get('DFE_ENGINE_TRANSPORT_DEFAULT')!r}")
-            expect(f"{at} bus_present agrees",
-                   env.get("DFE_ENGINE_TRANSPORT_BUS_PRESENT") == str(want == "bus").lower(),
-                   f"got {env.get('DFE_ENGINE_TRANSPORT_BUS_PRESENT')!r}")
+            expect(
+                f"{at} tells the engine {want}",
+                env.get("DFE_ENGINE_TRANSPORT_DEFAULT") == want,
+                f"got {env.get('DFE_ENGINE_TRANSPORT_DEFAULT')!r}",
+            )
+            expect(
+                f"{at} bus_present agrees",
+                env.get("DFE_ENGINE_TRANSPORT_BUS_PRESENT")
+                == str(want == "bus").lower(),
+                f"got {env.get('DFE_ENGINE_TRANSPORT_BUS_PRESENT')!r}",
+            )
 
 
 def service_ports(docs_: list[dict], stage: str) -> list[tuple[str, int]]:
@@ -175,7 +200,8 @@ def push_anywhere(docs_: list[dict]) -> list[str]:
     return [
         object_id(d)
         for d in docs_
-        if d.get("kind") == "Service" and any(p["name"] == "push" for p in d["spec"]["ports"])
+        if d.get("kind") == "Service"
+        and any(p["name"] == "push" for p in d["spec"]["ports"])
     ]
 
 
@@ -186,14 +212,22 @@ def test_the_push_service_renders_on_direct_only() -> None:
                 docs_ = golden(stage, profile, cloud)
                 at = f"{stage} on {profile}/{cloud}"
                 if transport == "bus":
-                    expect(f"{at} serves no push", push_anywhere(docs_) == [],
-                           f"got {push_anywhere(docs_)}")
-                    expect(f"{at} keeps its metrics Service", service_ports(docs_, stage)
-                           == [METRICS], f"got {service_ports(docs_, stage)!r}")
+                    expect(
+                        f"{at} serves no push",
+                        push_anywhere(docs_) == [],
+                        f"got {push_anywhere(docs_)}",
+                    )
+                    expect(
+                        f"{at} keeps its metrics Service",
+                        service_ports(docs_, stage) == [METRICS],
+                        f"got {service_ports(docs_, stage)!r}",
+                    )
                 else:
-                    expect(f"{at} serves push on 6000 beside its metrics",
-                           service_ports(docs_, stage) == [METRICS, PUSH],
-                           f"got {service_ports(docs_, stage)!r}")
+                    expect(
+                        f"{at} serves push on 6000 beside its metrics",
+                        service_ports(docs_, stage) == [METRICS, PUSH],
+                        f"got {service_ports(docs_, stage)!r}",
+                    )
 
 
 def transform_config(docs_: list[dict], stage: str) -> dict:
@@ -225,16 +259,28 @@ def test_the_transform_config_names_the_transport() -> None:
                 config = transform_config(golden(stage, profile, cloud), stage)
                 at = f"{stage} on {profile}/{cloud}"
                 source, sink = config.get("source") or {}, config.get("sink") or {}
-                expect(f"{at} says {transport}", source.get("transport") == transport,
-                       f"got {source!r}")
-                expect(f"{at}: the sink says {transport}", sink.get("transport") == transport,
-                       f"got {sink!r}")
+                expect(
+                    f"{at} says {transport}",
+                    source.get("transport") == transport,
+                    f"got {source!r}",
+                )
+                expect(
+                    f"{at}: the sink says {transport}",
+                    sink.get("transport") == transport,
+                    f"got {sink!r}",
+                )
                 if transport == "bus":
                     continue
-                expect(f"{at} binds the push port", source.get("listen") == "0.0.0.0:6000",
-                       f"got {source!r}")
-                expect(f"{at} dials the loader", sink.get("endpoint") == loader[profile],
-                       f"got {sink!r}")
+                expect(
+                    f"{at} binds the push port",
+                    source.get("listen") == "0.0.0.0:6000",
+                    f"got {source!r}",
+                )
+                expect(
+                    f"{at} dials the loader",
+                    sink.get("endpoint") == loader[profile],
+                    f"got {sink!r}",
+                )
 
 
 def test_the_fetcher_dlq_follows_the_instance_output() -> None:
@@ -250,27 +296,38 @@ def test_the_fetcher_dlq_follows_the_instance_output() -> None:
 
     for cloud in CLOUDS:
         bus = env(golden("dfe-fetcher", "single", cloud))
-        expect(f"a bus instance dead-letters to kafka [{cloud}]",
-               bus.get("DFE_FETCHER_DLQ_MODE") == "kafka_only",
-               f"got {bus.get('DFE_FETCHER_DLQ_MODE')!r}")
-        expect(f"and is not switched off [{cloud}]",
-               bus.get("DFE_FETCHER_DLQ_ENABLED") in (None, ""),
-               repr(bus.get("DFE_FETCHER_DLQ_ENABLED")))
+        expect(
+            f"a bus instance dead-letters to kafka [{cloud}]",
+            bus.get("DFE_FETCHER_DLQ_MODE") == "kafka_only",
+            f"got {bus.get('DFE_FETCHER_DLQ_MODE')!r}",
+        )
+        expect(
+            f"and is not switched off [{cloud}]",
+            bus.get("DFE_FETCHER_DLQ_ENABLED") in (None, ""),
+            repr(bus.get("DFE_FETCHER_DLQ_ENABLED")),
+        )
 
     overlay = {"config": {"output": {"type": "grpc"}}}
     direct_on_bus = env(render_app("dfe-fetcher", "single", "local", overlay=overlay))
-    expect("a direct instance on a bus deploy switches the DLQ off",
-           direct_on_bus.get("DFE_FETCHER_DLQ_ENABLED") == "false",
-           f"got {direct_on_bus.get('DFE_FETCHER_DLQ_ENABLED')!r}")
-    expect("and names no kafka mode", direct_on_bus.get("DFE_FETCHER_DLQ_MODE") in (None, ""),
-           repr(direct_on_bus.get("DFE_FETCHER_DLQ_MODE")))
+    expect(
+        "a direct instance on a bus deploy switches the DLQ off",
+        direct_on_bus.get("DFE_FETCHER_DLQ_ENABLED") == "false",
+        f"got {direct_on_bus.get('DFE_FETCHER_DLQ_ENABLED')!r}",
+    )
+    expect(
+        "and names no kafka mode",
+        direct_on_bus.get("DFE_FETCHER_DLQ_MODE") in (None, ""),
+        repr(direct_on_bus.get("DFE_FETCHER_DLQ_MODE")),
+    )
 
     for profile in ("slim", "mesh"):
         for cloud in CLOUDS:
             direct = env(golden("dfe-fetcher", profile, cloud))
-            expect(f"a direct deploy switches the DLQ off [{profile}/{cloud}]",
-                   direct.get("DFE_FETCHER_DLQ_ENABLED") == "false",
-                   f"got {direct.get('DFE_FETCHER_DLQ_ENABLED')!r}")
+            expect(
+                f"a direct deploy switches the DLQ off [{profile}/{cloud}]",
+                direct.get("DFE_FETCHER_DLQ_ENABLED") == "false",
+                f"got {direct.get('DFE_FETCHER_DLQ_ENABLED')!r}",
+            )
 
 
 def test_no_chart_derives_the_transport_itself() -> None:

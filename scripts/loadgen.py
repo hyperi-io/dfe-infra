@@ -43,12 +43,16 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         default="http://127.0.0.1:18081/ingest",
         help="receiver ingest endpoint (port-forward, Service, or local process)",
     )
-    ap.add_argument("--seconds", type=int, default=600, help="how long to hold the rate")
+    ap.add_argument(
+        "--seconds", type=int, default=600, help="how long to hold the rate"
+    )
     ap.add_argument("--rate", type=int, default=40, help="target events per second")
     ap.add_argument("--workers", type=int, default=8, help="concurrent sender threads")
     ap.add_argument("--source", default="default", help="_source value on each event")
     ap.add_argument("--timeout", type=int, default=30, help="per-request timeout (s)")
-    ap.add_argument("--seed", type=int, default=20260821, help="base RNG seed (per-worker offset)")
+    ap.add_argument(
+        "--seed", type=int, default=20260821, help="base RNG seed (per-worker offset)"
+    )
     return ap.parse_args(argv)
 
 

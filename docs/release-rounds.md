@@ -1,29 +1,27 @@
 # Release rounds
 
-How a release candidate is proven, and how long each proof takes. The loop each proof runs is [testing-cycle.md](testing-cycle.md).
+How a release candidate is tested, and how long each test takes. The loop each test runs is [testing-cycle.md](testing-cycle.md).
 
-## Release rounds
-
-We prove a release candidate in ROUNDS. A round is one candidate plus every proof run against it in parallel: the cloud-cycle legs ([backends](cloud-cycle.md#choosing-the-backend-for-one-run)), the k8s deploy, the dfe-docker VM, the dfe-ui deployed e2e and the `dfe-sweep` gating check. Nothing is fixed mid-round.
+We test a release candidate in ROUNDS. A round is one candidate plus every proof run against it in parallel: the cloud-cycle legs ([backends](cloud-cycle.md#choosing-the-backend-for-one-run)), the k8s deploy, the dfe-docker VM, the dfe-ui deployed e2e and the `dfe-sweep` gating check. Nothing is fixed mid-round.
 
 Each find is recorded as it lands. A find that blocks a proof doesn't stop the round when a workaround for that cycle alone lets the other proofs continue, such as a manual reload or a hand-applied config. The workaround goes into the round's findings and is never shipped.
 
 After the round we fix the WHOLE accumulated set, blocking and non-blocking alike, as one batch. The fixes run in parallel and merge without release trailers. Then each touched repo cuts ONE release and the stack cuts ONE new candidate. A find too big or risky for that batch becomes an issue labelled `next-patch`, which `dfe-sweep` schedules without gating, and never re-opens the candidate.
 
-The next round re-runs only the proofs the batch can affect. A batch touching several components re-runs the union of their rows.
+The next round re-runs the proofs the batch can affect, and no others. A batch touching several components re-runs the union of their rows.
 
 | Changed | Re-run |
 |---|---|
-| dfe-ui only | dfe-ui deployed e2e, the k8s deploy |
+| dfe-ui alone | dfe-ui deployed e2e, the k8s deploy |
 | dfe-engine | the k8s deploy, the VM, the source-suite cloud legs |
 | dfe-hyperdx | the k8s deploy, the VM, the source-suite cloud legs (the `observe` step reads it) |
 | dfe-receiver, dfe-loader, the transforms | every cloud leg, the VM, the k8s deploy |
 | dfe-infra charts or tofu | the cloud legs on the touched backend, the k8s deploy |
-| pin bumps in versions.yaml only | `dfe-sweep`, the k8s deploy |
+| pin bumps in versions.yaml alone | `dfe-sweep`, the k8s deploy |
 
 `msk` is in no row unless its re-test is explicitly approved ([MSK runs last, and rarely](cloud-cycle.md#msk-runs-last-and-rarely)).
 
-A round ends early only for a find that blocks a proof and has no workaround, such as the deploy itself broken or an AWS deny on the account. That find may cut a candidate early, because nothing else in the round can run until it's fixed.
+A round ends early for a find that blocks a proof and has no workaround, and for nothing else, such as the deploy itself broken or an AWS deny on the account. That find may cut a candidate early, because nothing else in the round can run until it's fixed.
 
 ## How long each proof takes
 
@@ -33,11 +31,11 @@ A full cycle, build to test to tear down, takes a while:
 |---|---|
 | AWS, default backends | about 2 hours |
 | AWS with Amazon MSK | a lot longer |
-| On-premises Rancher | not measured yet |
+| On-premises Rancher | no figure yet |
 
 Your mileage will vary. The region, how busy the cloud is that day, CI queues and which backends you turn on all move it. Plan on the rough figure, not to the minute.
 
-These are measured durations from the reference runs in October 2026, not estimates. Cloud times move with the region and the backend, so read them as a guide. Figures are minutes, medians with the range across runs, and `n` is the number of runs behind the figure.
+These are durations from the reference runs in October 2026, not estimates. Cloud times move with the region and the backend, so read them as a guide. Figures are minutes, medians with the range across runs, and `n` is the number of runs behind the figure.
 
 Teardown is the long pole. Destroying the workloads, `tofu destroy` and the sweep of leftovers add up to a median 35 min, about a third of every cloud cycle. The KEDA scale proof is 13.6 of the 19.5 min smoke stage. The two Confluent Cloud runs took about 4 min longer to sweep than the Redpanda Cloud and ClickHouse Cloud runs. The k8s deploy figure is a fresh install, and the VM figures are the scenarios that passed.
 

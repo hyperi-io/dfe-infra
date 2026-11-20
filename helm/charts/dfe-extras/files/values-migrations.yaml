@@ -1,40 +1,6 @@
-# values-migrations.yaml -- the keys a deploy repo written for the 2.2.0 charts
-# carries, and the keys the thin charts read in their place.
-#
-# The 2.2.0 charts named each object {project}-{component} and read their own
-# keys. From `since` the thin charts name it fullnameOverride, else the chart's
-# own name, and read the keys below. A deploy repo nothing rewrites renames every
-# per-config workload, prunes the fetcher's cursor claim, moves the transforms'
-# consumer groups and empties their file sets.
-#
-# Every reader takes the rules from this one file:
-#   - dfe-ops upgrade plan lists each hit, and reports BLOCKED on a refuse rule.
-#   - dfe-ops upgrade apply writes each new key BESIDE its old one before the
-#     retarget, and drops a `move` rule's old key at --finalise.
-#   - dfe-ops upgrade migrate-values [--check] does the same write on its own.
-#   - dfe-extras' valuesMigrationGuard fails the render of an overlay carrying an
-#     old key with no new key beside it, for each rule with a `guard`.
-#
-# Maps and scalars only, so the stdlib reader dfe-ops uses (scripts/yaml_subset.py)
-# reads it as Helm does. A list is a comma-separated scalar.
-#
-# Each rule:
-#   kind    move: the new key takes the old one's value, and --finalise drops the old.
-#           copy: the same, and the old key stays, because something still reads it.
-#           derive-identity: the new key is `prefix` + the old value, and the old stays.
-#           derive-entries: an enrichment_tables entry for each table file, at `dir`.
-#           refuse: the plan is BLOCKED until a person takes the key out.
-#           report-dropped: the thin charts read nothing in its place.
-#   apps    the deploy.service names it applies to, or * for every one.
-#   files   overlays (values/*-values.yaml), and common (infra/common.yaml) where
-#           named. Default overlays.
-#   unless  pinned-override, on a refuse rule: an image.tag or image.digest equal to
-#           the half of pins.yaml's overrides.apps entry for the file's service that
-#           `dfe-stack resolve --emit-values` writes is a deliberate pin, so it is
-#           not refused.
-#   guard   empty: the render fails while the old key holds a value and the new
-#           key none. equal: while the old key holds a value the new key differs
-#           from, for a new key an integration layer always sets.
+# The keys a deploy repo written for the 2.2.0 charts carries, and the thin-chart keys that replace them.
+# Rule format and readers: docs/deployment/upgrades.md (migrate-values).
+# Maps and scalars only, so scripts/yaml_subset.py reads it as Helm does. A list is a comma-separated scalar.
 
 since: "2.2.1-rc.1"
 

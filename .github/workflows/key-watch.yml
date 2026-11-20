@@ -1,8 +1,5 @@
-# Weekly check of the signing keys the toolbox pins and the upstream fix the
-# gen-8 instance hold waits on. It fails inside 60 days of a key's expiry, when
-# pkgs.k8s.io serves a key other than the pinned fingerprint, when the AWS CLI
-# install docs publish a key aws-cli.asc lacks, and when
-# aws/aws-network-policy-agent#686 closes. A failed run is the notice.
+# Weekly check of the toolbox's pinned signing keys and the upstream fix the gen-8 instance hold waits on
+# (scripts/check_signing_keys.py). A failed run is the notice.
 name: Key Watch
 
 on:

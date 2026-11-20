@@ -45,7 +45,9 @@ _OPS = {
 _COMPARATOR = re.compile(r"(>=|<=|==|>|<)\s*(.+)")
 
 
-_PRERELEASE = re.compile(r"^(?P<core>.+?)-(?P<pre>(?:alpha|beta|rc)(?:\.[0-9A-Za-z]+)*)$")
+_PRERELEASE = re.compile(
+    r"^(?P<core>.+?)-(?P<pre>(?:alpha|beta|rc)(?:\.[0-9A-Za-z]+)*)$"
+)
 
 
 def _split(value: str) -> tuple[str, str | None]:

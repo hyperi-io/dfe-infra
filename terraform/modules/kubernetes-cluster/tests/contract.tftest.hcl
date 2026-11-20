@@ -1,35 +1,27 @@
-// The contract, executable. Every body under this module is asserted HERE, in
-// this one file -- a gcp/ or azure/ body adds its own mock provider and a run
-// block per section below, with the SAME assertions against the same variables.
-// A body that cannot satisfy an assertion has changed the contract rather than
-// implemented it, and CONTRACT.md is what changes first.
+// The contract, executable. Every body under this module is asserted here: a gcp/ or azure/ body
+// adds its own mock provider and a run block per section, with the same assertions. A body that
+// cannot satisfy one has changed the contract, and CONTRACT.md is what changes first.
 //
-// A module source cannot be a variable, which is why each run block names its
-// body rather than the file being parameterised over them.
+// A module source cannot be a variable, so each run block names its body.
 //
-// Provider-free by construction: mock_provider means no credentials, no API
-// call and no cost, so it runs in CI and on a laptop with no cloud account.
+// mock_provider needs no credentials, API call or cost, so this runs in CI and on a laptop.
 
 mock_provider "aws" {
-  // Two mocked values the configuration reasons over rather than passes
-  // through. The module slices three zones out of this list, and the generated
-  // default is an empty one.
+  // The module slices three zones out of this list, and the generated default is an empty one.
   mock_data "aws_availability_zones" {
     defaults = {
       names = ["mock-1a", "mock-1b", "mock-1c"]
     }
   }
 
-  // A policy document's generated default is a random string, and the provider
-  // rejects an assume_role_policy that is not a JSON object.
+  // The provider rejects an assume_role_policy that is not a JSON object, and the generated default is a random string.
   mock_data "aws_iam_policy_document" {
     defaults = {
       json = "{\"Version\":\"2012-10-17\",\"Statement\":[]}"
     }
   }
 
-  // The partition is half of every ARN the module builds, and the provider
-  // validates the shape of an ARN before it ever calls AWS.
+  // The partition is half of every ARN the module builds, and the provider validates an ARN's shape before any call.
   mock_data "aws_partition" {
     defaults = {
       partition = "aws"
@@ -54,8 +46,7 @@ mock_provider "aws" {
     }
   }
 
-  // An EventBridge target validates the shape of the ARN it delivers to, so a
-  // generated random string is rejected before the plan finishes.
+  // An EventBridge target validates the shape of the ARN it delivers to, so a random string is rejected.
   mock_resource "aws_sqs_queue" {
     defaults = {
       arn = "arn:aws:sqs:us-west-2:000000000000:mock"
@@ -68,8 +59,7 @@ mock_provider "aws" {
     }
   }
 
-  // A node group validates that its launch template id starts with lt-, so a
-  // generated random string fails the plan.
+  // A node group validates that its launch template id starts with lt-.
   mock_resource "aws_launch_template" {
     defaults = {
       id             = "lt-0123456789abcdef0"
@@ -77,9 +67,7 @@ mock_provider "aws" {
     }
   }
 
-  // A computed nested block generates as an EMPTY list, and two contract
-  // outputs read into one. Supplying them here is what makes those outputs
-  // testable at all.
+  // A computed nested block generates as an empty list, and two contract outputs read into one.
   mock_resource "aws_eks_cluster" {
     defaults = {
       arn                   = "arn:aws:eks:us-west-2:000000000000:cluster/dfe-contract"
@@ -88,12 +76,8 @@ mock_provider "aws" {
     }
   }
 
-  // The deploying principal aws_eks_access_entry.creator names, so the
-  // implicit bootstrap_cluster_creator_admin_permissions grant it replaces is
-  // made explicit rather than left to whoever ran apply. Shaped as the STS
-  // session ARN every assumed role returns -- SSO permission set, cross-
-  // account AssumeRole, instance profile, Lambda -- which is what
-  // aws_iam_session_context below has to resolve back to an IAM role ARN.
+  // The deploying principal aws_eks_access_entry.creator names, shaped as the STS session ARN
+  // every assumed role returns, which aws_iam_session_context below resolves back to an IAM role ARN.
   mock_data "aws_caller_identity" {
     defaults = {
       account_id = "000000000000"
@@ -102,8 +86,7 @@ mock_provider "aws" {
     }
   }
 
-  // The IAM role ARN, path included, that issued the assumed-role session
-  // above -- what EKS's CreateAccessEntry actually accepts.
+  // The IAM role ARN, path included, that issued the session above: what CreateAccessEntry accepts.
   mock_data "aws_iam_session_context" {
     defaults = {
       issuer_arn = "arn:aws:iam::000000000000:role/aws-reserved/sso.amazonaws.com/us-west-2/mock-deployer"
@@ -205,9 +188,7 @@ run "aws_cluster_handles" {
     error_message = "cluster_version must report the version the cluster runs"
   }
 
-  // What dates a deployment: the control plane's own creation stamp, read
-  // from the resource rather than kept anywhere this repo would have to
-  // maintain.
+  // What dates a deployment: the control plane's own creation stamp.
   assert {
     condition     = output.cluster_created_at == aws_eks_cluster.this.created_at
     error_message = "cluster_created_at must be the control plane's own creation stamp"
@@ -258,8 +239,7 @@ run "aws_cluster_creator_is_named_not_implied" {
     error_message = "the access entry must never be the raw STS assumed-role session ARN, which EKS's CreateAccessEntry rejects"
   }
 
-  // The SHAPE, not the mock's literal: the two asserts above are satisfied by
-  // any value the mock happens to differ on, including a bare role name.
+  // The shape, not the mock's literal: the two asserts above pass for any value that differs, a bare role name included.
   assert {
     condition     = startswith(aws_eks_access_entry.creator.principal_arn, "arn:${data.aws_partition.current.partition}:iam::") && strcontains(aws_eks_access_entry.creator.principal_arn, ":role/")
     error_message = "the access entry must be an IAM role ARN -- the only shape CreateAccessEntry accepts"
@@ -288,10 +268,8 @@ run "aws_cluster_creator_is_named_not_implied" {
   }
 }
 
-// aws_kms_key_policy REPLACES the key's whole policy: the account-root
-// delegation to IAM has to survive alongside whatever key_policy_grants adds,
-// or every existing IAM-side grant on this key (the cluster role above, ESO's
-// role) stops working the moment a caller supplies one.
+// aws_kms_key_policy replaces the whole policy: the account-root delegation to IAM has to
+// survive key_policy_grants, or every IAM-side grant on this key stops working.
 run "aws_kms_key_policy_keeps_root_and_adds_caller_grants" {
   command = plan
 
@@ -328,9 +306,7 @@ run "aws_kms_key_policy_keeps_root_and_adds_caller_grants" {
   }
 }
 
-// No grants supplied: the policy is exactly the root delegation, so a body
-// that needs no extra principal (confluent-cloud, redpanda-cloud) leaves the
-// key exactly as AWS's own default would have.
+// No grants supplied: the policy is exactly the root delegation, AWS's own default.
 run "aws_kms_key_policy_with_no_grants_is_root_only" {
   command = plan
 
@@ -583,14 +559,9 @@ run "aws_private_zone_stands_alone_whatever_the_deployment_publishes" {
   }
 }
 
-// The destroy-time cleanup that empties the private zone of everything but
-// its own apex NS/SOA pair before `tofu destroy` reaches the zone itself.
-// Its provisioner block cannot be asserted here directly -- a destroy-time
-// command may reference only self (dns.tf), so the fact that matters is
-// what gets captured into that self in the first place. The provisioner's
-// own shape (when = destroy, the zone id flowing from self.output) is
-// proven instead by scripts/tests/test_external_dns_teardown.py, which
-// reads dns.tf as text.
+// The destroy-time cleanup that empties the private zone of all but its apex NS/SOA pair. Its
+// provisioner cannot be asserted here, so this checks what is captured into self.
+// scripts/tests/test_external_dns_teardown.py reads dns.tf as text for the provisioner's shape.
 run "aws_private_zone_teardown_captures_the_zone_to_empty" {
   command = plan
 
@@ -614,11 +585,9 @@ run "aws_private_zone_teardown_captures_the_zone_to_empty" {
   }
 }
 
-// The destroy-time sweep of the CNI's leaked network interfaces, which would
-// otherwise hold the cluster security group and fail the VPC delete. As with the
-// zone above, only what it captures into self is assertable here; its command
-// and its place in the destroy order are read as text by
-// scripts/tests/test_cni_eni_teardown.py.
+// The destroy-time sweep of the CNI's leaked network interfaces. As with the zone above, only
+// what it captures into self is assertable here. scripts/tests/test_cni_eni_teardown.py reads
+// its command and destroy order as text.
 run "aws_cni_eni_teardown_captures_this_vpc" {
   command = plan
 
@@ -790,9 +759,7 @@ run "aws_karpenter_handles" {
   }
 }
 
-// dfe-core created this queue, encrypted it, granted it and alerted on it, and
-// then wrote nothing to it -- there was no EventBridge rule anywhere. These
-// assertions are what stops that shipping twice.
+// A queue with no EventBridge rule writing to it never sees an event.
 run "aws_karpenter_interruption_is_wired" {
   command = plan
 
@@ -816,9 +783,7 @@ run "aws_karpenter_interruption_is_wired" {
   }
 }
 
-// A Karpenter node is self-managed, and authentication_mode is API, so the
-// aws-auth ConfigMap is read by nobody and this entry is the only thing that
-// lets one register.
+// With authentication_mode API the aws-auth ConfigMap is unread, so this entry is what lets a Karpenter node register.
 run "aws_karpenter_nodes_can_join" {
   command = plan
 
@@ -837,9 +802,8 @@ run "aws_karpenter_nodes_can_join" {
   }
 }
 
-// EC2 checks the launching principal's own KMS permissions before honouring an
-// EC2NodeClass's encrypted blockDeviceMappings -- the controller role that
-// calls RunInstances/CreateFleet, never the node role the instance assumes.
+// EC2 checks the launching principal's KMS permissions for an encrypted blockDeviceMappings:
+// the controller role that calls RunInstances/CreateFleet, not the node role.
 run "aws_karpenter_controller_can_use_the_deployment_key_for_ebs_encryption" {
   command = plan
 
@@ -1200,10 +1164,8 @@ run "aws_vpc_cni_enables_network_policy" {
     error_message = "the vpc-cni add-on must set enableNetworkPolicy: \"true\" in its configuration_values, or every NetworkPolicy in the cluster is unenforced"
   }
 
-  // Not asserted here: that the other add-ons' configuration_values stays
-  // null. A mocked plan synthesises a placeholder for any optional attribute
-  // the config sets to null, so a null-equality check on a mocked resource
-  // proves nothing either way -- only a real plan/apply shows the true value.
+  // The other add-ons' configuration_values staying null is not asserted: a mocked plan
+  // synthesises a placeholder for a null optional attribute, so only a real plan shows it.
 }
 
 // No operator_role_arn means no toolbox access entry -- the default for every
@@ -1226,9 +1188,8 @@ run "aws_toolbox_operator_defaults_to_no_access_entry" {
   }
 }
 
-// A named operator role gets a SECOND, read-only access entry -- never the
-// cluster-admin scope the creator's own entry carries, and never one for the
-// toolbox instance itself (which is a different module and creates none).
+// A named operator role gets a SECOND, read-only access entry, never the creator's cluster-admin
+// scope, and the toolbox instance gets none.
 run "aws_toolbox_operator_gets_read_only_access_entry" {
   command = plan
 
@@ -1261,9 +1222,7 @@ run "aws_toolbox_operator_gets_read_only_access_entry" {
   }
 
   assert {
-    // The creator's entry is the only cluster-admin grant; the operator's is
-    // read-only. Two entries total, never a third for the toolbox instance,
-    // which this module has no input for at all.
+    // The creator's entry is the only cluster-admin grant, and the operator's is read-only.
     condition     = aws_eks_access_policy_association.creator_admin.policy_arn != aws_eks_access_policy_association.toolbox_operator_view[0].policy_arn
     error_message = "the toolbox operator must never share the creator's cluster-admin policy"
   }
@@ -1306,9 +1265,7 @@ run "aws_clickhouse_object_store_bucket_is_retained_when_persistent" {
   }
 }
 
-// An ephemeral (tyre-kick) deployment gets the fast, no-confirmation teardown
-// on this bucket too -- the same dial the KMS key and the root's
-// CloudTrail/toolbox buckets follow.
+// An ephemeral deployment's bucket is destroyed with it, on the same dial as the KMS key.
 run "aws_clickhouse_object_store_goes_with_an_ephemeral_deployment" {
   command = plan
 
@@ -1334,9 +1291,8 @@ run "aws_clickhouse_object_store_goes_with_an_ephemeral_deployment" {
   }
 }
 
-// The Pod Identity role's policy must name only this bucket (and the
-// deployment key it is encrypted with) -- never a wildcard, never another
-// bucket, or a compromised pod could read or overwrite something else.
+// The Pod Identity role's policy names only this bucket and the deployment key, never a wildcard
+// or another bucket, or a compromised pod could read or overwrite something else.
 run "aws_clickhouse_object_store_role_is_scoped_to_its_own_bucket" {
   command = plan
 
@@ -1371,9 +1327,7 @@ run "aws_clickhouse_object_store_role_is_scoped_to_its_own_bucket" {
   }
 
   assert {
-    // No fourth statement, and no statement's Resource is anything but this
-    // bucket, its objects, or the deployment key -- the policy names only
-    // what this role needs and nothing else in the account.
+    // No fourth statement, and no Resource but this bucket, its objects or the deployment key.
     condition = alltrue([
       for s in jsondecode(aws_iam_role_policy.clickhouse_object_store.policy).Statement :
       contains(
@@ -1388,9 +1342,8 @@ run "aws_clickhouse_object_store_role_is_scoped_to_its_own_bucket" {
     error_message = "the policy must name only this bucket, its objects and the deployment key -- nothing else"
   }
 
-  // Scoping the Resource is half the job: "s3:*" on this bucket alone would
-  // still hand a compromised pod the bucket policy and its own KMS grants, and
-  // every Resource assertion above would stay green.
+  // Scoping the Resource is half the job: "s3:*" on this bucket would still hand a compromised
+  // pod the bucket policy and KMS grants.
   assert {
     condition     = [for s in jsondecode(aws_iam_role_policy.clickhouse_object_store.policy).Statement : s.Action if s.Sid == "ListBucket"][0] == "s3:ListBucket"
     error_message = "ListBucket must be that one action, never a wildcard"

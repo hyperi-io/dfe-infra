@@ -1,24 +1,8 @@
-# Azure AKS overrides — populated in Plan 07 (azure).
+# Azure overrides. See docs/deployment/values-clouds-edge.md#cloud-files.
 global:
   cloud: azure
 
-# AKS ships managed-csi, managed-csi-premium and managed-csi-premium-v2;
-# managed-premium is the retired in-tree name and binds nothing (#294).
-# managed-csi-premium is the like-for-like replacement, because the retired
-# name was Premium SSD and managed-csi is Standard SSD -- Keeper's continuous
-# fsync is the workload that notices.
+# managed-premium is retired and binds nothing (#294).
 storageClass: managed-csi-premium
 
-# THE EDGE MODULE'S OWN AZURE KEYS LIVE IN argocd/values/edge-azure.yaml,
-# layered after this file by argocd/appsets/layer2-edge.yaml: the gateway
-# Service and culvert's PKI mode. That file carries the Azure tier table in one
-# place; what stays here is what a chart OUTSIDE the edge module reads as well.
-
-# THE RECEIVER'S FRONT DOOR is exposure.groups.ingest (common.yaml), as on AWS:
-# its own load balancer, which renders only once the deploy repo names the
-# senders in exposure.groups.ingest.allow. Its values are
-# argocd/values/apps/dfe-receiver/azure.yaml.
-
-# The engine's runtime store is a PVC against the cluster's default
-# StorageClass (the engine contract's persistent `config` writable path) -- no per-cloud
-# storage seam needed.
+# The edge module's Azure keys are in edge-azure.yaml.

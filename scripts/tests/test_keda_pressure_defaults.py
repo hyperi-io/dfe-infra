@@ -42,20 +42,17 @@ CHARTS = REPO_ROOT / "helm" / "charts"
 VALUES = REPO_ROOT / "argocd" / "values"
 
 # Every app whose ScaledObject carries the pressure trigger. dfe-fetcher is absent
-# on purpose: it renders no ScaledObject. dfe-transform-vector is CPU_ONLY_APPS.
+# on purpose: it renders no ScaledObject.
 PRESSURE_APPS = [
     "dfe-archiver",
     "dfe-loader",
     "dfe-receiver",
     "dfe-transform-elastic",
+    "dfe-transform-vector",
     "dfe-transform-vrl",
 ]
 
 # Apps that ship the cpu trigger alone, because the app sets no scaling_pressure
-# gauge for the pressure trigger to read.
-CPU_ONLY_APPS = [
-    "dfe-transform-vector",
-]
 
 # The brokerless minimum tier, which runs on cpu alone.
 CPU_ONLY_TIER = "slim"
@@ -63,7 +60,15 @@ PRESSURE_PROFILES = [p for p in PROFILES if p != CPU_ONLY_TIER]
 
 
 def render(chart: str, *args: str, namespace: str = "dfe") -> list[dict]:
-    cmd = ["helm", "template", "kt", str(CHARTS / chart), "--namespace", namespace, *args]
+    cmd = [
+        "helm",
+        "template",
+        "kt",
+        str(CHARTS / chart),
+        "--namespace",
+        namespace,
+        *args,
+    ]
     out = subprocess.run(cmd, capture_output=True, text=True, check=False)
     if out.returncode != 0:
         raise SystemExit(f"helm template failed for {chart} {args}:\n{out.stderr}")
@@ -100,15 +105,6 @@ def test_every_app_chart_ships_the_pressure_trigger() -> None:
                 )
 
 
-def test_a_chart_whose_app_sets_no_gauge_ships_cpu_alone() -> None:
-    for app in CPU_ONLY_APPS:
-        for profile in PROFILES:
-            for cloud in CLOUDS:
-                got = kinds(golden(app, profile, cloud), f"{app}-scaler")
-                expect(f"{app} {profile}/{cloud} renders the cpu trigger alone", got == ["cpu"],
-                       f"got {got}")
-
-
 def test_the_shim_address_follows_the_release_namespace() -> None:
     for app in PRESSURE_APPS:
         docs = render_app(app, "single", "local", namespace="dfe-local")
@@ -122,8 +118,12 @@ def test_the_shim_address_follows_the_release_namespace() -> None:
 
 def test_an_explicit_shim_address_still_wins() -> None:
     """A shim outside the release namespace stays reachable through the override."""
-    elsewhere = {"keda": {"pressure": {"shimAddress": "shim.elsewhere.svc.cluster.local:9090"}}}
-    docs = render_app("dfe-loader", "single", "local", namespace="dfe-local", overlay=elsewhere)
+    elsewhere = {
+        "keda": {"pressure": {"shimAddress": "shim.elsewhere.svc.cluster.local:9090"}}
+    }
+    docs = render_app(
+        "dfe-loader", "single", "local", namespace="dfe-local", overlay=elsewhere
+    )
     url = metrics_api_url(docs, "dfe-loader-scaler")
     expect(
         "keda.pressure.shimAddress overrides the derived address",
@@ -135,9 +135,15 @@ def test_an_explicit_shim_address_still_wins() -> None:
 def test_pressure_can_still_be_turned_off() -> None:
     """The slim tier turns it off by clearing keda.extraTriggers in each app's
     profile-slim.yaml, so a deployment's own instance values reach the same dial."""
-    docs = render_app("dfe-loader", "single", "local", overlay={"keda": {"extraTriggers": []}})
+    docs = render_app(
+        "dfe-loader", "single", "local", overlay={"keda": {"extraTriggers": []}}
+    )
     got = kinds(docs, "dfe-loader-scaler")
-    expect("keda.extraTriggers=[] leaves the cpu trigger alone", got == ["cpu"], f"got {got}")
+    expect(
+        "keda.extraTriggers=[] leaves the cpu trigger alone",
+        got == ["cpu"],
+        f"got {got}",
+    )
 
 
 def test_no_values_file_sets_a_pressure_switch() -> None:
@@ -155,7 +161,9 @@ def test_no_values_file_sets_a_pressure_switch() -> None:
 
 def test_the_hunt_runner_shim_address_follows_the_namespace_too() -> None:
     scaled = {"huntRunner": {"autoscaling": {"enabled": True}}}
-    docs = render_extras("dfe-engine", "slim", "local", namespace="dfe-local", overlay=scaled)
+    docs = render_extras(
+        "dfe-engine", "slim", "local", namespace="dfe-local", overlay=scaled
+    )
     url = metrics_api_url(docs, "dfe-hunt-runner-scaler")
     expect(
         "the hunt-runner backlog trigger names the release namespace",
@@ -205,7 +213,6 @@ def test_the_scale_ceiling_divides_the_partition_count() -> None:
 def main() -> int:
     with standalone():
         test_every_app_chart_ships_the_pressure_trigger()
-        test_a_chart_whose_app_sets_no_gauge_ships_cpu_alone()
         test_the_shim_address_follows_the_release_namespace()
         test_an_explicit_shim_address_still_wins()
         test_pressure_can_still_be_turned_off()

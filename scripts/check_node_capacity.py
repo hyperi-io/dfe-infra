@@ -53,8 +53,22 @@ import kubectl_cli
 # https://kubernetes.io/docs/reference/kubernetes-api/common-definitions/quantity/
 QUANTITY = re.compile(r"^(?P<number>[0-9.eE+-]+)(?P<suffix>[A-Za-z]*)$")
 
-BINARY_SUFFIXES = {"Ki": 2**10, "Mi": 2**20, "Gi": 2**30, "Ti": 2**40, "Pi": 2**50, "Ei": 2**60}
-DECIMAL_SUFFIXES = {"k": 10**3, "M": 10**6, "G": 10**9, "T": 10**12, "P": 10**15, "E": 10**18}
+BINARY_SUFFIXES = {
+    "Ki": 2**10,
+    "Mi": 2**20,
+    "Gi": 2**30,
+    "Ti": 2**40,
+    "Pi": 2**50,
+    "Ei": 2**60,
+}
+DECIMAL_SUFFIXES = {
+    "k": 10**3,
+    "M": 10**6,
+    "G": 10**9,
+    "T": 10**12,
+    "P": 10**15,
+    "E": 10**18,
+}
 
 BYTES_PER_GIB = 1024**3
 
@@ -144,7 +158,9 @@ def read_demand(path: Path) -> dict[str, dict[str, float]]:
 def total_demand(demand: dict[str, dict[str, float]]) -> tuple[float, float]:
     """Total demanded vCPU and memory (GiB) -- count times per-node, summed."""
     cpu = sum(float(body["count"]) * float(body["cpu"]) for body in demand.values())
-    mem = sum(float(body["count"]) * float(body["memory_gib"]) for body in demand.values())
+    mem = sum(
+        float(body["count"]) * float(body["memory_gib"]) for body in demand.values()
+    )
     return cpu, mem
 
 
@@ -152,18 +168,28 @@ def render_table(
     demand: dict[str, dict[str, float]], cpu_allocatable: float, mem_allocatable: float
 ) -> str:
     """The demanded-vs-allocatable table -- one line per use case, plus the total."""
-    lines = [f"{'use case':<20} {'count':>6} {'cpu':>8} {'memory_gib':>12} {'disk_gb':>10}"]
+    lines = [
+        f"{'use case':<20} {'count':>6} {'cpu':>8} {'memory_gib':>12} {'disk_gb':>10}"
+    ]
     cpu_total = mem_total = 0.0
     for use_case, body in sorted(demand.items()):
-        count, cpu, mem = float(body["count"]), float(body["cpu"]), float(body["memory_gib"])
+        count, cpu, mem = (
+            float(body["count"]),
+            float(body["cpu"]),
+            float(body["memory_gib"]),
+        )
         cpu_total += count * cpu
         mem_total += count * mem
-        lines.append(f"{use_case:<20} {count:>6.0f} {cpu:>8.1f} {mem:>12.1f} {body['disk_gb']!s:>10}")
+        lines.append(
+            f"{use_case:<20} {count:>6.0f} {cpu:>8.1f} {mem:>12.1f} {body['disk_gb']!s:>10}"
+        )
     lines.append("-" * 60)
     # Disk is shown per use case above but never summed or enforced here -- see
     # the module docstring.
     lines.append(f"{'TOTAL demanded':<20} {'':>6} {cpu_total:>8.1f} {mem_total:>12.1f}")
-    lines.append(f"{'cluster allocatable':<20} {'':>6} {cpu_allocatable:>8.1f} {mem_allocatable:>12.1f}")
+    lines.append(
+        f"{'cluster allocatable':<20} {'':>6} {cpu_allocatable:>8.1f} {mem_allocatable:>12.1f}"
+    )
     return "\n".join(lines)
 
 
@@ -173,8 +199,12 @@ def build_parser() -> argparse.ArgumentParser:
         prog="check_node_capacity.py",
         description="Refuse an on-prem bootstrap when the real nodes fall short of the sizing demand.",
     )
-    parser.add_argument("--nodes-file", type=Path, required=True, help="sizing/<tier>.nodes.json")
-    parser.add_argument("--kubeconfig", default=None, help="passed to kubectl --kubeconfig")
+    parser.add_argument(
+        "--nodes-file", type=Path, required=True, help="sizing/<tier>.nodes.json"
+    )
+    parser.add_argument(
+        "--kubeconfig", default=None, help="passed to kubectl --kubeconfig"
+    )
     parser.add_argument(
         "--override",
         action="store_true",
@@ -194,7 +224,9 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
     if not args.nodes_file.is_file():
-        print(f"check_node_capacity: no {args.nodes_file} -- nothing to check, skipping")
+        print(
+            f"check_node_capacity: no {args.nodes_file} -- nothing to check, skipping"
+        )
         return 0
 
     override = args.override or os.environ.get("DFE_SIZING_OVERRIDE") == "1"
@@ -219,7 +251,9 @@ def main(argv: list[str] | None = None) -> int:
         print(table, file=sys.stderr)
         return 1
     if short:
-        print("check_node_capacity: WARNING -- undersized, but DFE_SIZING_OVERRIDE accepted it")
+        print(
+            "check_node_capacity: WARNING -- undersized, but DFE_SIZING_OVERRIDE accepted it"
+        )
         print(table)
         return 0
     print("check_node_capacity: the cluster carries the sized demand")

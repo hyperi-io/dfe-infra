@@ -128,8 +128,18 @@ def render(*sets: str) -> list[dict]:
     with no hostname to publish it on, and this test's own concern (the
     internal-CA persistence pair) is unrelated to which routes exist.
     """
-    cmd = ["helm", "template", "gw", str(CHART), "-f", str(COMMON_VALUES),
-           "--set", "domain=dfe.example.com", "--set", "env=local"]
+    cmd = [
+        "helm",
+        "template",
+        "gw",
+        str(CHART),
+        "-f",
+        str(COMMON_VALUES),
+        "--set",
+        "domain=dfe.example.com",
+        "--set",
+        "env=local",
+    ]
     for item in sets:
         cmd += ["--set", item]
     out = subprocess.run(cmd, capture_output=True, text=True, check=False)
@@ -200,7 +210,8 @@ def persist_pair(*sets: str) -> tuple[dict, dict]:
     docs = render(PERSIST_ON, *sets)
     push = by_kind(docs, "PushSecret")[0]
     restore = next(
-        d for d in by_kind(docs, "ExternalSecret")
+        d
+        for d in by_kind(docs, "ExternalSecret")
         if d["metadata"]["name"] == "dfe-internal-ca-restore"
     )
     return push, restore
@@ -211,11 +222,18 @@ def test_self_signed_mode_renders_both_halves_against_the_same_entries() -> None
     docs = render(PERSIST_ON)
     pushes = by_kind(docs, "PushSecret")
     restores = [
-        d for d in by_kind(docs, "ExternalSecret")
+        d
+        for d in by_kind(docs, "ExternalSecret")
         if d["metadata"]["name"] == "dfe-internal-ca-restore"
     ]
-    expect("the PushSecret that saves the root renders", len(pushes) == 1, f"{len(pushes)}")
-    expect("the ExternalSecret that restores it renders", len(restores) == 1, f"{len(restores)}")
+    expect(
+        "the PushSecret that saves the root renders", len(pushes) == 1, f"{len(pushes)}"
+    )
+    expect(
+        "the ExternalSecret that restores it renders",
+        len(restores) == 1,
+        f"{len(restores)}",
+    )
     if not (pushes and restores):
         return
     push, restore = pushes[0], restores[0]
@@ -223,7 +241,10 @@ def test_self_signed_mode_renders_both_halves_against_the_same_entries() -> None
         (d["match"]["remoteRef"]["remoteKey"], d["match"]["remoteRef"]["property"])
         for d in push["spec"]["data"]
     }
-    restore_refs = {(d["remoteRef"]["key"], d["remoteRef"]["property"]) for d in restore["spec"]["data"]}
+    restore_refs = {
+        (d["remoteRef"]["key"], d["remoteRef"]["property"])
+        for d in restore["spec"]["data"]
+    }
     expect(
         "both name the two entries derived from {project}/{env}/pki/internal-ca",
         push_refs == restore_refs == {(CERT_ENTRY, "tls_crt"), (KEY_ENTRY, "tls_key")},
@@ -231,7 +252,8 @@ def test_self_signed_mode_renders_both_halves_against_the_same_entries() -> None
     )
     expect(
         "and the restore still reads the single entry an older release wrote",
-        [d.get("extract", {}).get("key") for d in restore["spec"].get("dataFrom", [])] == [STORE_PATH],
+        [d.get("extract", {}).get("key") for d in restore["spec"].get("dataFrom", [])]
+        == [STORE_PATH],
         f"{restore['spec'].get('dataFrom')}",
     )
     expect(
@@ -274,14 +296,18 @@ def vault_exists(store: dict[str, dict[str, str]], key: str, prop: str) -> bool:
     return prop in store.get(key, {})
 
 
-def push_if_not_exists(entries: list[dict], exists, source: dict[str, str]) -> dict[str, dict[str, str]]:
+def push_if_not_exists(
+    entries: list[dict], exists, source: dict[str, str]
+) -> dict[str, dict[str, str]]:
     """What an empty store holds after one IfNotExists reconcile of these entries."""
     store: dict[str, dict[str, str]] = {}
     for entry in entries:
         ref = entry["match"]["remoteRef"]
         if exists(store, ref["remoteKey"], ref["property"]):
             continue
-        store.setdefault(ref["remoteKey"], {})[ref["property"]] = source[entry["match"]["secretKey"]]
+        store.setdefault(ref["remoteKey"], {})[ref["property"]] = source[
+            entry["match"]["secretKey"]
+        ]
     return store
 
 
@@ -289,8 +315,18 @@ SOURCE = {"tls.crt": "MINTED-CRT", "tls.key": "MINTED-KEY"}
 
 # The PushSecret data the single-entry layout rendered: both properties on one key.
 SHARED_ENTRY_PUSH = [
-    {"match": {"secretKey": "tls.crt", "remoteRef": {"remoteKey": STORE_PATH, "property": "tls_crt"}}},
-    {"match": {"secretKey": "tls.key", "remoteRef": {"remoteKey": STORE_PATH, "property": "tls_key"}}},
+    {
+        "match": {
+            "secretKey": "tls.crt",
+            "remoteRef": {"remoteKey": STORE_PATH, "property": "tls_crt"},
+        }
+    },
+    {
+        "match": {
+            "secretKey": "tls.key",
+            "remoteRef": {"remoteKey": STORE_PATH, "property": "tls_key"},
+        }
+    },
 ]
 
 
@@ -298,7 +334,11 @@ def test_each_half_of_the_root_gets_its_own_store_entry() -> None:
     """Two data entries on one key let the first one's create answer the second's existence check."""
     push, _restore = persist_pair()
     keys = [d["match"]["remoteRef"]["remoteKey"] for d in push["spec"]["data"]]
-    expect("two entries, one per half", sorted(keys) == sorted({CERT_ENTRY, KEY_ENTRY}), f"{keys}")
+    expect(
+        "two entries, one per half",
+        sorted(keys) == sorted({CERT_ENTRY, KEY_ENTRY}),
+        f"{keys}",
+    )
 
 
 def test_both_providers_store_both_halves() -> None:
@@ -314,7 +354,11 @@ def test_expected_fail_one_shared_entry_loses_the_key_on_aws() -> None:
     """The control: the single-entry layout this replaces, run through the same model."""
     aws = push_if_not_exists(SHARED_ENTRY_PUSH, aws_exists, SOURCE)
     vault = push_if_not_exists(SHARED_ENTRY_PUSH, vault_exists, SOURCE)
-    expect("aws stores only the cert", aws == {STORE_PATH: {"tls_crt": "MINTED-CRT"}}, f"{aws}")
+    expect(
+        "aws stores only the cert",
+        aws == {STORE_PATH: {"tls_crt": "MINTED-CRT"}},
+        f"{aws}",
+    )
     expect(
         "while vault stores both, which is why only aws lost the root",
         vault == {STORE_PATH: {"tls_crt": "MINTED-CRT", "tls_key": "MINTED-KEY"}},
@@ -333,7 +377,9 @@ def read_store(restore: dict, store: dict[str, dict[str, str]]) -> dict[str, str
             continue
         if ref["property"] not in store[ref["key"]]:
             # The AWS provider's plain error, which fails the whole read rather than skipping.
-            raise LookupError(f"key {ref['property']} does not exist in secret {ref['key']}")
+            raise LookupError(
+                f"key {ref['property']} does not exist in secret {ref['key']}"
+            )
         data[entry["secretKey"]] = store[ref["key"]][ref["property"]]
     return data
 
@@ -350,16 +396,32 @@ def run_restore_template(restore: dict, data: dict[str, str]) -> tuple[bool, obj
         chart = Path(tmp) / "restore"
         (chart / "templates").mkdir(parents=True)
         (chart / "Chart.yaml").write_text(
-            "apiVersion: v2\nname: restore\nversion: 0.1.0\n", encoding="utf-8", newline="\n"
+            "apiVersion: v2\nname: restore\nversion: 0.1.0\n",
+            encoding="utf-8",
+            newline="\n",
         )
-        body = "".join(f'{{{{- define "{k}" -}}}}{v}{{{{- end -}}}}\n' for k, v in templates.items())
-        body += "".join(f'{k}: {{{{ include "{k}" (.Values.data | default dict) | quote }}}}\n' for k in templates)
-        (chart / "templates" / "out.yaml").write_text(body, encoding="utf-8", newline="\n")
+        body = "".join(
+            f'{{{{- define "{k}" -}}}}{v}{{{{- end -}}}}\n'
+            for k, v in templates.items()
+        )
+        body += "".join(
+            f'{k}: {{{{ include "{k}" (.Values.data | default dict) | quote }}}}\n'
+            for k in templates
+        )
+        (chart / "templates" / "out.yaml").write_text(
+            body, encoding="utf-8", newline="\n"
+        )
         values = Path(tmp) / "data.yaml"
-        values.write_text(yaml.safe_dump({"data": data}), encoding="utf-8", newline="\n")
+        values.write_text(
+            yaml.safe_dump({"data": data}), encoding="utf-8", newline="\n"
+        )
         out = subprocess.run(
             ["helm", "template", "restore", str(chart), "-f", str(values)],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
         )
     if out.returncode != 0:
         return False, out.stderr
@@ -390,14 +452,24 @@ def test_the_restore_picks_a_complete_pair_and_never_mixes_layouts() -> None:
     cases = (
         ("the two-entry layout", NEW_PAIR, ("NEW-CRT", "NEW-KEY")),
         ("a Vault store an older release wrote", OLD_PAIR, ("OLD-CRT", "OLD-KEY")),
-        ("an AWS store holding the old half-written entry too", {**NEW_PAIR, **OLD_CERT_ONLY},
-         ("NEW-CRT", "NEW-KEY")),
-        ("a new cert alone beside a complete old pair", {CERT_ENTRY: {"tls_crt": "NEW-CRT"}, **OLD_PAIR},
-         ("OLD-CRT", "OLD-KEY")),
+        (
+            "an AWS store holding the old half-written entry too",
+            {**NEW_PAIR, **OLD_CERT_ONLY},
+            ("NEW-CRT", "NEW-KEY"),
+        ),
+        (
+            "a new cert alone beside a complete old pair",
+            {CERT_ENTRY: {"tls_crt": "NEW-CRT"}, **OLD_PAIR},
+            ("OLD-CRT", "OLD-KEY"),
+        ),
     )
     for name, store, (crt, key) in cases:
         ok, got = run_restore_template(restore, read_store(restore, store))
-        expect(f"{name}: restores {crt}/{key}", ok and got == {"tls.crt": crt, "tls.key": key}, f"{got}")
+        expect(
+            f"{name}: restores {crt}/{key}",
+            ok and got == {"tls.crt": crt, "tls.key": key},
+            f"{got}",
+        )
 
 
 def test_expected_fail_no_complete_pair_writes_nothing() -> None:
@@ -408,8 +480,11 @@ def test_expected_fail_no_complete_pair_writes_nothing() -> None:
         restore["spec"]["target"].get("deletionPolicy") == "Merge",
         f"{restore['spec']['target'].get('deletionPolicy')}",
     )
-    for name, store in (("an empty store", {}), ("the old half-written AWS entry alone", OLD_CERT_ONLY),
-                        ("a new key alone", {KEY_ENTRY: {"tls_key": "NEW-KEY"}})):
+    for name, store in (
+        ("an empty store", {}),
+        ("the old half-written AWS entry alone", OLD_CERT_ONLY),
+        ("a new key alone", {KEY_ENTRY: {"tls_key": "NEW-KEY"}}),
+    ):
         ok, got = run_restore_template(restore, read_store(restore, store))
         expect(
             f"{name}: the template refuses, so nothing is written",
@@ -422,11 +497,16 @@ def test_a_custom_remote_key_moves_every_entry_with_it() -> None:
     """The two entries and the old one all hang off remoteKey, so an override moves all three."""
     push, restore = persist_pair("tls.internalCA.persist.remoteKey=acme/prod/pki/root")
     push_keys = {d["match"]["remoteRef"]["remoteKey"] for d in push["spec"]["data"]}
-    expect("the push names both entries under it",
-           push_keys == {"acme/prod/pki/root-crt", "acme/prod/pki/root-key"}, f"{push_keys}")
-    expect("and the restore reads the old entry at it",
-           restore["spec"]["dataFrom"] == [{"extract": {"key": "acme/prod/pki/root"}}],
-           f"{restore['spec']['dataFrom']}")
+    expect(
+        "the push names both entries under it",
+        push_keys == {"acme/prod/pki/root-crt", "acme/prod/pki/root-key"},
+        f"{push_keys}",
+    )
+    expect(
+        "and the restore reads the old entry at it",
+        restore["spec"]["dataFrom"] == [{"extract": {"key": "acme/prod/pki/root"}}],
+        f"{restore['spec']['dataFrom']}",
+    )
 
 
 def test_the_store_properties_carry_no_dot() -> None:
@@ -452,21 +532,45 @@ def test_vault_mode_renders_neither_half() -> None:
     expect("no PushSecret in vault mode", not by_kind(docs, "PushSecret"), "")
     expect(
         "no restore ExternalSecret in vault mode",
-        not [d for d in by_kind(docs, "ExternalSecret")
-             if d["metadata"]["name"] == "dfe-internal-ca-restore"],
+        not [
+            d
+            for d in by_kind(docs, "ExternalSecret")
+            if d["metadata"]["name"] == "dfe-internal-ca-restore"
+        ],
         "",
     )
-    issuers = [d for d in by_kind(docs, "ClusterIssuer") if "vault" in (d.get("spec") or {})]
-    expect("and the edge issuer is the Vault-backed one", len(issuers) == 1, f"{len(issuers)}")
+    issuers = [
+        d for d in by_kind(docs, "ClusterIssuer") if "vault" in (d.get("spec") or {})
+    ]
+    expect(
+        "and the edge issuer is the Vault-backed one",
+        len(issuers) == 1,
+        f"{len(issuers)}",
+    )
 
 
 def test_vault_mode_is_refused_on_aws() -> None:
     """An aws deployment runs no OpenBao, so its private CA is the in-cluster one."""
-    cmd = ["helm", "template", "gw", str(CHART), "-f", str(COMMON_VALUES),
-           "--set", "domain=dfe.example.com", "--set", "env=local", "--set", "cloud=aws",
-           "--set", "tls.vault.server=https://bao.example.com:8200",
-           "--set", "tls.vault.path=pki_tls/sign/example-service",
-           "--set", "tls.vault.appRole.roleId=00000000-0000-0000-0000-000000000000"]
+    cmd = [
+        "helm",
+        "template",
+        "gw",
+        str(CHART),
+        "-f",
+        str(COMMON_VALUES),
+        "--set",
+        "domain=dfe.example.com",
+        "--set",
+        "env=local",
+        "--set",
+        "cloud=aws",
+        "--set",
+        "tls.vault.server=https://bao.example.com:8200",
+        "--set",
+        "tls.vault.path=pki_tls/sign/example-service",
+        "--set",
+        "tls.vault.appRole.roleId=00000000-0000-0000-0000-000000000000",
+    ]
     out = subprocess.run(cmd, capture_output=True, text=True, check=False)
     expect("the render refuses tls.vault on aws", out.returncode != 0, "it rendered")
     expect("and says why", "runs no OpenBao" in out.stderr, out.stderr[-300:])
@@ -482,8 +586,11 @@ def test_persistence_is_off_by_default_so_a_storeless_deploy_stays_healthy() -> 
     expect("no PushSecret by default", not by_kind(docs, "PushSecret"), "")
     expect(
         "no restore ExternalSecret by default",
-        not [d for d in by_kind(docs, "ExternalSecret")
-             if d["metadata"]["name"] == "dfe-internal-ca-restore"],
+        not [
+            d
+            for d in by_kind(docs, "ExternalSecret")
+            if d["metadata"]["name"] == "dfe-internal-ca-restore"
+        ],
         "",
     )
     expect(
@@ -513,14 +620,19 @@ def test_ca_prints_the_public_half_and_the_install_lines() -> None:
     )
     expect(
         "the macOS keychain line is printed",
-        "security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain" in text,
+        "security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain"
+        in text,
         text,
     )
 
 
 def test_ca_never_prints_the_private_key() -> None:
     """The public half is safe in a log; the key is the whole trust anchor."""
-    expect("the key material is absent from the export", PRIVATE_KEY_MARKER not in run_ca(), "")
+    expect(
+        "the key material is absent from the export",
+        PRIVATE_KEY_MARKER not in run_ca(),
+        "",
+    )
     expect(
         "and absent from the status report",
         PRIVATE_KEY_MARKER not in run_ca("--status"),
@@ -532,7 +644,9 @@ def test_status_says_newly_minted_without_a_restore() -> None:
     """A root nothing saved is one every client re-trusts after the next rebuild."""
     text = run_ca("--status")
     expect("the mode is reported", "issuer mode: self-signed" in text, text)
-    expect("the root reads newly minted", "newly minted, and NOT persisted" in text, text)
+    expect(
+        "the root reads newly minted", "newly minted, and NOT persisted" in text, text
+    )
     expect(
         "and names the value that turns persistence on",
         "tls.internalCA.persist.enabled" in text,
@@ -574,7 +688,11 @@ def test_vault_mode_has_nothing_for_a_developer_box_to_install() -> None:
         wildcard_certificate={"spec": {"issuerRef": {"name": "dfe-openbao"}}},
         clusterissuer={"spec": {"vault": {"server": "https://bao.example.com:8200"}}},
     )
-    expect("the export refuses and says why", "there is no deployment-specific root" in text, text)
+    expect(
+        "the export refuses and says why",
+        "there is no deployment-specific root" in text,
+        text,
+    )
     expect("and prints no certificate", "BEGIN CERTIFICATE" not in text, text)
 
 
@@ -596,8 +714,12 @@ def test_status_names_the_issuing_ca_in_vault_mode() -> None:
 
 def test_the_root_install_lines_branch_on_the_operating_system() -> None:
     """A Mac has no NSS store and no update-ca-certificates; Linux has no keychain."""
-    darwin = "\n".join(dfe_ops._ca_install_lines("/x/ca.crt", "dfe-internal-ca", "Darwin"))
-    linux = "\n".join(dfe_ops._ca_install_lines("/x/ca.crt", "dfe-internal-ca", "Linux"))
+    darwin = "\n".join(
+        dfe_ops._ca_install_lines("/x/ca.crt", "dfe-internal-ca", "Darwin")
+    )
+    linux = "\n".join(
+        dfe_ops._ca_install_lines("/x/ca.crt", "dfe-internal-ca", "Linux")
+    )
     both = "\n".join(dfe_ops._ca_install_lines("/x/ca.crt", "dfe-internal-ca"))
     expect(
         "Darwin gets the keychain line and neither Linux step",
@@ -662,7 +784,8 @@ def test_install_reads_the_platform_rather_than_assuming_linux() -> None:
         dfe_ops.platform.system = original
     expect(
         "a Darwin platform.system selects the keychain branch",
-        "security add-trusted-cert" in chosen and "update-ca-certificates" not in chosen,
+        "security add-trusted-cert" in chosen
+        and "update-ca-certificates" not in chosen,
         chosen,
     )
 

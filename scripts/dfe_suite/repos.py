@@ -12,8 +12,7 @@ different places, so a repo is resolved through an explicit env var first
 and a short list of roots after that.
 """
 
-from __future__ import annotations
-
+import contextlib
 import os
 from pathlib import Path
 
@@ -99,7 +98,13 @@ def has_staged_changes(repo: Path) -> bool:
 def _origin_name(repo: Path) -> str | None:
     """The repo name in the origin remote's URL, which every worktree of a repo shares."""
     proc = run(["git", "remote", "get-url", "origin"], cwd=repo, check=False)
-    tail = proc.stdout.strip().rstrip("/").removesuffix(".git").replace(":", "/").rsplit("/", 1)[-1]
+    tail = (
+        proc.stdout.strip()
+        .rstrip("/")
+        .removesuffix(".git")
+        .replace(":", "/")
+        .rsplit("/", 1)[-1]
+    )
     return tail if proc.returncode == 0 and tail else None
 
 
@@ -123,7 +128,9 @@ def repo_slug(repo: Path, org: str) -> str:
 def is_linked_worktree(repo: Path) -> bool:
     """True when ``repo`` is a linked worktree rather than the repo's main checkout."""
     git_dir = Path(git("rev-parse", "--absolute-git-dir", cwd=repo)).resolve()
-    common = Path(git("rev-parse", "--path-format=absolute", "--git-common-dir", cwd=repo)).resolve()
+    common = Path(
+        git("rev-parse", "--path-format=absolute", "--git-common-dir", cwd=repo)
+    ).resolve()
     return git_dir != common
 
 
@@ -195,6 +202,53 @@ def sync_main(repo: Path, *, dry_run: bool) -> None:
         git("switch", "main", cwd=repo)
     # --autostash so uncommitted work survives the rebase and comes back.
     git("pull", "--rebase", "--autostash", "origin", "main", cwd=repo)
+
+
+def walk_worktree(repo: Path, name: str) -> Path:
+    """A linked worktree of ``repo`` at ``.worktrees/<name>/<repo dir>``, detached at ``origin/main``.
+
+    The last path part stays the repo's directory name, which edge evidence
+    matches a consumer by.
+
+    Every read a walk makes goes through it, a dry run's included, so a stale
+    local checkout cannot decide a rebuild or fail a preflight. The repo's own
+    checkout is never switched, so a ``main`` another worktree holds and
+    uncommitted work in the checkout both stay as they are. A worktree of that
+    name left by an interrupted run is ours, and is reset.
+
+    Returns:
+        The worktree, or ``repo`` itself when it has no ``origin`` remote to
+        read ``main`` from, which is then read as it stands.
+
+    Raises:
+        FleetError: If the fetch or the worktree fails.
+    """
+    if not repo.is_dir():
+        return repo
+    if run(["git", "remote", "get-url", "origin"], cwd=repo, check=False).returncode:
+        say(f"{repo} has no origin remote -- reading it as it stands")
+        return repo
+    path = repo / ".worktrees" / name / repo.name
+    git("fetch", "origin", "main", "--tags", "--quiet", cwd=repo)
+    if path.exists():
+        say(f"resetting the worktree at {path} to origin/main")
+        git("switch", "--detach", "--discard-changes", "origin/main", cwd=path)
+    else:
+        say(f"adding the worktree {path} at origin/main")
+        git("worktree", "add", "--detach", str(path), "origin/main", cwd=repo)
+    return path
+
+
+def remove_worktree(repo: Path, path: Path) -> None:
+    """Remove a worktree :func:`walk_worktree` added, keeping and naming one with changes in it."""
+    if path == repo:
+        return
+    gone = run(["git", "worktree", "remove", str(path)], cwd=repo, check=False)
+    if gone.returncode != 0:
+        say(f"kept the worktree at {path}: {gone.stderr.strip()}")
+        return
+    with contextlib.suppress(OSError):
+        path.parent.rmdir()
 
 
 def return_to_main(repo: Path) -> None:

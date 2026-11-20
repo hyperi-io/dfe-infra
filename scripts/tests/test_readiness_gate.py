@@ -177,7 +177,8 @@ def test_an_application_holding_a_comparison_error_is_hard_refreshed() -> None:
         annotations=annotations,
     )
     refreshed = sorted(
-        next(word for word in line.split() if word.startswith("dfe-")) for line in annotations
+        next(word for word in line.split() if word.startswith("dfe-"))
+        for line in annotations
     )
     expect(
         "only the two apps holding a ComparisonError are refreshed, and hard",
@@ -189,7 +190,9 @@ def test_an_application_holding_a_comparison_error_is_hard_refreshed() -> None:
 
 def test_no_application_means_no_refresh() -> None:
     annotations: list[str] = []
-    run_gate({"pods": ["dfe-local dfe-engine-0 1/1 Running 0 6d"]}, annotations=annotations)
+    run_gate(
+        {"pods": ["dfe-local dfe-engine-0 1/1 Running 0 6d"]}, annotations=annotations
+    )
     expect(
         "nothing is annotated on a cluster with no Applications",
         annotations == [],
@@ -200,7 +203,9 @@ def test_no_application_means_no_refresh() -> None:
 def test_a_file_matching_the_namespace_glob_does_not_blind_the_gate() -> None:
     """The dfe-* pattern must stay a pattern whatever the working directory holds."""
     with tempfile.TemporaryDirectory() as cwd:
-        (Path(cwd) / "dfe-access.md").write_text("stray\n", encoding="utf-8", newline="\n")
+        (Path(cwd) / "dfe-access.md").write_text(
+            "stray\n", encoding="utf-8", newline="\n"
+        )
         out = run_gate(
             {
                 "pods": ["dfe-local dfe-engine-0 1/1 Running 0 6d"],
@@ -308,7 +313,9 @@ def test_a_namespace_the_deploy_does_not_own_is_not_judged() -> None:
 
 def test_a_namespace_the_deploy_does_own_is_judged() -> None:
     """The allowlist is not a way of ignoring everything."""
-    out = run_gate({"pods": ["clickhouse dfe-clickhouse-0 0/1 CrashLoopBackOff 9 (30s ago) 5d"]})
+    out = run_gate(
+        {"pods": ["clickhouse dfe-clickhouse-0 0/1 CrashLoopBackOff 9 (30s ago) 5d"]}
+    )
     expect(
         "a crashlooping pod in an owned namespace fails",
         out.returncode != 0 and "clickhouse/dfe-clickhouse-0" in out.stdout,
@@ -339,20 +346,32 @@ def test_an_empty_dfe_ns_says_what_the_gate_stopped_judging() -> None:
     unset = run_gate(HEALTHY)
     expect(
         "the narrowing is printed, naming the presence check",
-        "[narrow] no DFE_NS" in unset.stdout and "workload-presence check does not run" in unset.stdout,
+        "[narrow] no DFE_NS" in unset.stdout
+        and "workload-presence check does not run" in unset.stdout,
         f"rc={unset.returncode} {unset.stdout}",
     )
     named = run_gate(HEALTHY, DFE_NS="dfe-local")
-    expect("a named namespace prints no narrowing", "[narrow]" not in named.stdout, named.stdout)
+    expect(
+        "a named namespace prints no narrowing",
+        "[narrow]" not in named.stdout,
+        named.stdout,
+    )
 
 
 UNSCHEDULABLE_POD = {
     "metadata": {"name": "dfe-receiver-6fb4bff97-2pcvr", "namespace": "dfe-local"},
     "spec": {"containers": [{"name": "receiver"}]},
-    "status": {"phase": "Pending", "conditions": [{
-        "type": "PodScheduled", "status": "False", "reason": "Unschedulable",
-        "message": "0/11 nodes are available: 2 Insufficient cpu, 9 node(s) had untolerated taint",
-    }]},
+    "status": {
+        "phase": "Pending",
+        "conditions": [
+            {
+                "type": "PodScheduled",
+                "status": "False",
+                "reason": "Unschedulable",
+                "message": "0/11 nodes are available: 2 Insufficient cpu, 9 node(s) had untolerated taint",
+            }
+        ],
+    },
 }
 
 
@@ -367,11 +386,15 @@ def test_a_failed_gate_says_why_each_pod_is_not_ready() -> None:
         },
         DFE_NS="dfe-local",
     )
-    expect("the gate still fails", out.returncode != 0, f"rc={out.returncode} {out.stdout}")
+    expect(
+        "the gate still fails", out.returncode != 0, f"rc={out.returncode} {out.stdout}"
+    )
     expect(
         "the report follows the failures, with the scheduler's own verdict",
-        out.stdout.index("[FAIL] pod dfe-local/dfe-receiver") < out.stdout.index("=== readiness report")
-        and "PodScheduled=False Unschedulable: 0/11 nodes are available: 2 Insufficient cpu" in out.stdout,
+        out.stdout.index("[FAIL] pod dfe-local/dfe-receiver")
+        < out.stdout.index("=== readiness report")
+        and "PodScheduled=False Unschedulable: 0/11 nodes are available: 2 Insufficient cpu"
+        in out.stdout,
         out.stdout,
     )
 
@@ -387,7 +410,9 @@ def test_a_passing_gate_prints_no_report() -> None:
 
 def test_the_presence_check_still_fires() -> None:
     """A deploy that produced nothing passes every check that judges what exists."""
-    out = run_gate({"pods": ["dfe-local dfe-engine-0 1/1 Running 0 6d"]}, DFE_NS="dfe-local")
+    out = run_gate(
+        {"pods": ["dfe-local dfe-engine-0 1/1 Running 0 6d"]}, DFE_NS="dfe-local"
+    )
     expect(
         "an app namespace with no workloads fails",
         out.returncode != 0 and "NO app workloads" in out.stdout,
@@ -417,7 +442,10 @@ def test_a_workload_scaled_to_zero_is_at_desired() -> None:
     out = run_gate(
         {
             "pods": ["dfe-local dfe-engine-0 1/1 Running 0 6d"],
-            "deployments": ["dfe-local dfe-engine 1 1", "dfe-local dfe-fetcher-s3pypi 0 <none>"],
+            "deployments": [
+                "dfe-local dfe-engine 1 1",
+                "dfe-local dfe-fetcher-s3pypi 0 <none>",
+            ],
             "statefulsets": ["dfe-local dfe-paused 0 <none>"],
             "ns_workloads": ["dfe-engine 1/1 1 1 6d", "dfe-fetcher-s3pypi 0/0 0 0 6d"],
         },
@@ -461,7 +489,9 @@ def test_default_credentials_fail_a_non_dev_deploy() -> None:
     The engine only reaches this state in a dev posture, so a deploy declaring
     any other posture and still reporting it has not taken the minted password.
     """
-    out = run_gate({**HEALTHY, "setup_status": "True"}, DFE_NS="dfe-local", DFE_ENV="production")
+    out = run_gate(
+        {**HEALTHY, "setup_status": "True"}, DFE_NS="dfe-local", DFE_ENV="production"
+    )
     expect(
         "default_credentials in a production posture fails the gate",
         out.returncode != 0 and "default_credentials" in out.stdout,
@@ -471,7 +501,9 @@ def test_default_credentials_fail_a_non_dev_deploy() -> None:
 
 def test_a_dev_posture_may_run_the_default() -> None:
     """Tyre-kicking a dev deploy on a known password is the point of the exception."""
-    out = run_gate({**HEALTHY, "setup_status": "True"}, DFE_NS="dfe-local", DFE_ENV="local")
+    out = run_gate(
+        {**HEALTHY, "setup_status": "True"}, DFE_NS="dfe-local", DFE_ENV="local"
+    )
     expect(
         "a dev posture on the default passes, and says why",
         out.returncode == 0 and "dev posture" in out.stdout,
@@ -482,7 +514,9 @@ def test_a_dev_posture_may_run_the_default() -> None:
 def test_an_answer_with_surrounding_whitespace_is_still_read() -> None:
     """The engine strips before comparing; an exact compare here would not match."""
     out = run_gate(
-        {**HEALTHY, "setup_status": "  True  "}, DFE_NS="dfe-local", DFE_ENV="production"
+        {**HEALTHY, "setup_status": "  True  "},
+        DFE_NS="dfe-local",
+        DFE_ENV="production",
     )
     expect(
         "a padded True still fails a production posture",
@@ -493,7 +527,9 @@ def test_an_answer_with_surrounding_whitespace_is_still_read() -> None:
 
 def test_a_minted_password_passes_in_any_posture() -> None:
     """The check judges the credential, not the posture."""
-    out = run_gate({**HEALTHY, "setup_status": "False"}, DFE_NS="dfe-local", DFE_ENV="production")
+    out = run_gate(
+        {**HEALTHY, "setup_status": "False"}, DFE_NS="dfe-local", DFE_ENV="production"
+    )
     expect(
         "default_credentials false passes",
         out.returncode == 0 and "minted admin password" in out.stdout,
@@ -507,7 +543,9 @@ def test_an_engine_that_serves_no_such_field_warns_rather_than_fails() -> None:
     The probe RAN, so the gate knows the engine is reachable and only the
     contract is missing; blocking every deploy on that would be worse.
     """
-    out = run_gate({**HEALTHY, "setup_status": "unknown"}, DFE_NS="dfe-local", DFE_ENV="production")
+    out = run_gate(
+        {**HEALTHY, "setup_status": "unknown"}, DFE_NS="dfe-local", DFE_ENV="production"
+    )
     expect(
         "a missing field warns and passes",
         out.returncode == 0 and "did not answer" in out.stdout,
@@ -639,10 +677,13 @@ def test_an_admin_ui_that_loads_passes_the_gate() -> None:
 
 def test_a_gateway_listing_no_admin_ui_skips_the_check() -> None:
     """dfe-docker, or a gateway that predates dfe-admin-links, has nothing to probe."""
-    out = run_gate({**HEALTHY, "setup_status": "False"}, DFE_NS="dfe-local", DFE_ENV="local")
+    out = run_gate(
+        {**HEALTHY, "setup_status": "False"}, DFE_NS="dfe-local", DFE_ENV="local"
+    )
     expect(
         "no dfe-admin-links is a named skip, not a failure",
-        out.returncode == 0 and "no dfe-admin-links ConfigMap in dfe-local" in out.stdout,
+        out.returncode == 0
+        and "no dfe-admin-links ConfigMap in dfe-local" in out.stdout,
         f"rc={out.returncode} {out.stdout}",
     )
 
@@ -651,16 +692,28 @@ def test_a_gateway_listing_no_admin_ui_skips_the_check() -> None:
 # on, with the status a gateway that programmed it writes.
 OTEL_ROUTE = {
     "spec": {"hostnames": ["otel.dfe.test"]},
-    "status": {"parents": [{"conditions": [
-        {"type": "Accepted", "status": "True", "reason": "Accepted"},
-        {"type": "ResolvedRefs", "status": "True", "reason": "ResolvedRefs"},
-    ]}]},
+    "status": {
+        "parents": [
+            {
+                "conditions": [
+                    {"type": "Accepted", "status": "True", "reason": "Accepted"},
+                    {
+                        "type": "ResolvedRefs",
+                        "status": "True",
+                        "reason": "ResolvedRefs",
+                    },
+                ]
+            }
+        ]
+    },
 }
 
 
 def test_the_gate_says_otel_ingress_is_not_exposed_by_default() -> None:
     """A deploy that never turned it on carries no otel route, and the gate says so."""
-    out = run_gate({**HEALTHY, "setup_status": "False"}, DFE_NS="dfe-local", DFE_ENV="local")
+    out = run_gate(
+        {**HEALTHY, "setup_status": "False"}, DFE_NS="dfe-local", DFE_ENV="local"
+    )
     expect(
         "no otel route reads not exposed",
         out.returncode == 0 and "[info] OTLP ingress: not exposed" in out.stdout,
@@ -670,9 +723,14 @@ def test_the_gate_says_otel_ingress_is_not_exposed_by_default() -> None:
 
 def test_the_gate_says_where_otel_ingress_answers_and_that_it_needs_the_token() -> None:
     out = run_gate(
-        {**HEALTHY, "setup_status": "False", "otel_route": OTEL_ROUTE,
-         "secrets": ["dfe-otel-ingress-token"]},
-        DFE_NS="dfe-local", DFE_ENV="local",
+        {
+            **HEALTHY,
+            "setup_status": "False",
+            "otel_route": OTEL_ROUTE,
+            "secrets": ["dfe-otel-ingress-token"],
+        },
+        DFE_NS="dfe-local",
+        DFE_ENV="local",
     )
     expect(
         "the exposed hostname and the bearer requirement are printed",
@@ -687,7 +745,8 @@ def test_the_gate_says_where_otel_ingress_answers_and_that_it_needs_the_token() 
 def test_the_gate_says_when_the_ingress_token_is_missing() -> None:
     out = run_gate(
         {**HEALTHY, "setup_status": "False", "otel_route": OTEL_ROUTE},
-        DFE_NS="dfe-local", DFE_ENV="local",
+        DFE_NS="dfe-local",
+        DFE_ENV="local",
     )
     expect(
         "an absent token Secret is named",
@@ -701,7 +760,8 @@ def destroyed_namespaces() -> set[str]:
     text = DESTROY.read_text(encoding="utf-8", errors="replace")
     # A loop over "${NAME[@]}" reads the one-line NAME=(...) array assigned at the top.
     arrays = {
-        name: words.split() for name, words in re.findall(r"^([A-Z_]+)=\(([^)]*)\)$", text, re.M)
+        name: words.split()
+        for name, words in re.findall(r"^([A-Z_]+)=\(([^)]*)\)$", text, re.M)
     }
     names: set[str] = set()
     for line in text.splitlines():
@@ -735,7 +795,11 @@ def test_the_gate_watches_exactly_what_the_teardown_removes() -> None:
     never judged, so the gate passes a deploy whose workloads are crashlooping.
     """
     destroyed, watched = destroyed_namespaces(), watched_namespaces()
-    expect("both lists parse", bool(destroyed) and bool(watched), f"{destroyed} / {watched}")
+    expect(
+        "both lists parse",
+        bool(destroyed) and bool(watched),
+        f"{destroyed} / {watched}",
+    )
     expect(
         "every namespace the teardown removes is judged",
         destroyed - watched == set(),

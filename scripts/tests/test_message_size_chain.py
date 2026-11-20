@@ -136,8 +136,13 @@ def limits(app: str, size: str) -> dict[str, str]:
 @pytest.mark.parametrize("app", PRODUCERS)
 def test_a_managed_size_bounds_every_limit_the_app_reads(app: str) -> None:
     found = limits(app, str(BASIC))
-    wanted = {*ENV_LIMITS.get(app, ()), *(".".join(p) for p in CONFIG_LIMITS.get(app, ()))}
-    assert set(found) == wanted, f"{app} is handed {sorted(found)}, not {sorted(wanted)}"
+    wanted = {
+        *ENV_LIMITS.get(app, ()),
+        *(".".join(p) for p in CONFIG_LIMITS.get(app, ())),
+    }
+    assert set(found) == wanted, (
+        f"{app} is handed {sorted(found)}, not {sorted(wanted)}"
+    )
     over = {where: value for where, value in found.items() if int(value) > BASIC}
     assert over == {}, f"{app} is handed limits above the {BASIC}-byte topic ceiling"
 
@@ -156,10 +161,16 @@ def test_the_producer_ceiling_is_the_topic_ceiling(app: str) -> None:
         # The record cap, the same whatever the broker, under its smallest ceiling.
         ("dfe-receiver", "DFE_RECEIVER_MAX_BODY_SIZE", CAP),
         # The 1 MiB in 16 the app keeps for framing, headers and zstd growth.
-        ("dfe-transform-elastic", "DFE_TRANSFORM_ELASTIC_SINK_MAX_MESSAGE_BYTES", BASIC * 15 // 16),
+        (
+            "dfe-transform-elastic",
+            "DFE_TRANSFORM_ELASTIC_SINK_MAX_MESSAGE_BYTES",
+            BASIC * 15 // 16,
+        ),
     ],
 )
-def test_a_payload_limit_leaves_room_under_the_ceiling(app: str, name: str, wanted: int) -> None:
+def test_a_payload_limit_leaves_room_under_the_ceiling(
+    app: str, name: str, wanted: int
+) -> None:
     got = limits(app, str(BASIC)).get(name)
     assert got == str(wanted), f"{name} is {got!r}"
     assert int(got) < BASIC
@@ -171,7 +182,11 @@ def test_a_payload_limit_leaves_room_under_the_ceiling(app: str, name: str, want
         # The record cap, which the chart sets on every deployment.
         ("dfe-receiver", "DFE_RECEIVER_MAX_BODY_SIZE", CAP),
         # dfe-transform-elastic v1.1.12 src/config.rs:291.
-        ("dfe-transform-elastic", "DFE_TRANSFORM_ELASTIC_SINK_MAX_MESSAGE_BYTES", 15 * 1024 * 1024),
+        (
+            "dfe-transform-elastic",
+            "DFE_TRANSFORM_ELASTIC_SINK_MAX_MESSAGE_BYTES",
+            15 * 1024 * 1024,
+        ),
     ],
 )
 def test_at_the_stacks_own_size_a_payload_limit_is_the_apps_default(
@@ -205,7 +220,9 @@ def test_a_merged_overrides_map_carries_the_size_alone(app: str) -> None:
     here replaces the app's own, and a "0" interval would stop the archiver's lag signal."""
     config = config_file(_render(app, str(BASIC)), app)
     got = _dig(config, ("kafka", "librdkafka_overrides"))
-    assert got == {"message.max.bytes": str(BASIC)}, f"{app} librdkafka_overrides is {got!r}"
+    assert got == {"message.max.bytes": str(BASIC)}, (
+        f"{app} librdkafka_overrides is {got!r}"
+    )
 
 
 @pytest.mark.parametrize("app", PRODUCERS)
@@ -220,19 +237,35 @@ def test_an_in_cluster_broker_moves_nothing(app: str) -> None:
 @pytest.mark.parametrize(
     ("annotation", "overlay", "message"),
     [
-        pytest.param("4194304", {}, "below the 8388608 every DFE broker must accept",
-                     id="a-broker-under-8-mib"),
-        pytest.param(str(BASIC), {"maxBodySize": BASIC}, f"not above the {BASIC}-byte record cap",
-                     id="a-cap-the-broker-cannot-carry"),
-        pytest.param("", {"maxBodySize": 0}, "maxBodySize must be a positive whole number",
-                     id="no-cap"),
+        pytest.param(
+            "4194304",
+            {},
+            "below the 8388608 every DFE broker must accept",
+            id="a-broker-under-8-mib",
+        ),
+        pytest.param(
+            str(BASIC),
+            {"maxBodySize": BASIC},
+            f"not above the {BASIC}-byte record cap",
+            id="a-cap-the-broker-cannot-carry",
+        ),
+        pytest.param(
+            "",
+            {"maxBodySize": 0},
+            "maxBodySize must be a positive whole number",
+            id="no-cap",
+        ),
     ],
 )
 def test_expected_fail_a_cap_the_broker_cannot_land_is_refused(
     annotation: str, overlay: dict, message: str
 ) -> None:
     with pytest.raises(RenderError) as refused:
-        render_app("dfe-receiver", *CELL, annotations={**MANAGED, SIZE_ANNOTATION: annotation},
-                   overlay=overlay)
+        render_app(
+            "dfe-receiver",
+            *CELL,
+            annotations={**MANAGED, SIZE_ANNOTATION: annotation},
+            overlay=overlay,
+        )
     said = " ".join(str(refused.value).split())
     assert message in said, said

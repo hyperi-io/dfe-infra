@@ -91,9 +91,18 @@ def step_script() -> str:
 
 def pinned(key: str) -> str:
     out = subprocess.run(
-        [sys.executable, str(BOOTSTRAP_DIR / "read_versions.py"),
-         "--file", str(REPO_ROOT / "versions.yaml"), key],
-        capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
+        [
+            sys.executable,
+            str(BOOTSTRAP_DIR / "read_versions.py"),
+            "--file",
+            str(REPO_ROOT / "versions.yaml"),
+            key,
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=True,
     )
     return out.stdout.strip()
 
@@ -122,8 +131,13 @@ def run_steps(
         **(extra_env or {}),
     }
     out = subprocess.run(
-        ["bash", "-c", step_script()], env=env,
-        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
+        ["bash", "-c", step_script()],
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
     )
     calls = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
     return out, calls
@@ -131,11 +145,18 @@ def run_steps(
 
 def first_call(calls: list[dict], *prefix: str) -> int | None:
     """Index of the first call whose argv starts with `prefix`, or None."""
-    return next((i for i, c in enumerate(calls) if c["argv"][: len(prefix)] == list(prefix)), None)
+    return next(
+        (i for i, c in enumerate(calls) if c["argv"][: len(prefix)] == list(prefix)),
+        None,
+    )
 
 
 def crd_applies(calls: list[dict]) -> list[dict]:
-    return [c for c in calls if c["argv"][:2] == ["kubectl", "apply"] and "crds_on_stdin" in c]
+    return [
+        c
+        for c in calls
+        if c["argv"][:2] == ["kubectl", "apply"] and "crds_on_stdin" in c
+    ]
 
 
 def operator_source() -> dict:
@@ -145,7 +166,9 @@ def operator_source() -> dict:
 BARE = {"crds": []}
 
 
-def test_the_gateway_api_crds_are_established_before_cert_manager_installs(tmp_path: Path) -> None:
+def test_the_gateway_api_crds_are_established_before_cert_manager_installs(
+    tmp_path: Path,
+) -> None:
     out, calls = run_steps(tmp_path, BARE)
     assert out.returncode == 0, out.stderr
     cert_manager = first_call(calls, "helm", "upgrade", "--install", "cert-manager")
@@ -160,7 +183,9 @@ def test_the_gateway_api_crds_are_established_before_cert_manager_installs(tmp_p
     assert f"crd/{GATEWAYS_CRD}" in calls[wait]["argv"]
 
 
-def test_the_crds_come_from_the_chart_and_release_the_operator_app_installs(tmp_path: Path) -> None:
+def test_the_crds_come_from_the_chart_and_release_the_operator_app_installs(
+    tmp_path: Path,
+) -> None:
     source = operator_source()["source"]
     _, calls = run_steps(tmp_path, BARE)
     pull = first_call(calls, "helm", "show", "crds")
@@ -171,7 +196,9 @@ def test_the_crds_come_from_the_chart_and_release_the_operator_app_installs(tmp_
     assert source["targetRevision"] == pinned("operators.envoy-gateway")
 
 
-def test_argo_takes_the_crds_over_as_the_field_manager_that_laid_them(tmp_path: Path) -> None:
+def test_argo_takes_the_crds_over_as_the_field_manager_that_laid_them(
+    tmp_path: Path,
+) -> None:
     """A second field manager would keep any field a later chart drops alive in the CRD."""
     _, calls = run_steps(tmp_path, BARE)
     (apply,) = crd_applies(calls)
@@ -185,20 +212,28 @@ def test_argo_takes_the_crds_over_as_the_field_manager_that_laid_them(tmp_path: 
 def test_a_cluster_that_already_has_them_is_adopted(tmp_path: Path) -> None:
     out, calls = run_steps(tmp_path, {"crds": [GATEWAYS_CRD]})
     assert out.returncode == 0, out.stderr
-    assert f"[gateway-api] CRD {GATEWAYS_CRD} present -> ADOPT" in out.stdout, out.stdout
+    assert f"[gateway-api] CRD {GATEWAYS_CRD} present -> ADOPT" in out.stdout, (
+        out.stdout
+    )
     assert first_call(calls, "helm", "show", "crds") is None, calls
     assert crd_applies(calls) == [], calls
     assert first_call(calls, "helm", "upgrade", "--install", "cert-manager") is not None
 
 
 def test_force_install_lays_them_over_ones_already_present(tmp_path: Path) -> None:
-    out, calls = run_steps(tmp_path, {"crds": [GATEWAYS_CRD]}, {"DFE_FORCE_INSTALL": "true"})
+    out, calls = run_steps(
+        tmp_path, {"crds": [GATEWAYS_CRD]}, {"DFE_FORCE_INSTALL": "true"}
+    )
     assert out.returncode == 0, out.stderr
     assert first_call(calls, "helm", "show", "crds") is not None, calls
     assert len(crd_applies(calls)) == 1, calls
 
 
-def test_a_chart_that_cannot_be_pulled_stops_bootstrap_before_cert_manager(tmp_path: Path) -> None:
+def test_a_chart_that_cannot_be_pulled_stops_bootstrap_before_cert_manager(
+    tmp_path: Path,
+) -> None:
     out, calls = run_steps(tmp_path, {"crds": [], "pull_fails": True})
     assert out.returncode != 0, out.stdout
-    assert first_call(calls, "helm", "upgrade", "--install", "cert-manager") is None, calls
+    assert first_call(calls, "helm", "upgrade", "--install", "cert-manager") is None, (
+        calls
+    )

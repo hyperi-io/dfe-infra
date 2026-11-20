@@ -59,7 +59,9 @@ DEFAULT_EXPIRY_FORMAT = "iso8601"
 EXPIRY_FORMAT_ENV = "DFE_RUN_EXPIRY_FORMAT"
 _ISO_WRITE = "%Y-%m-%dT%H:%M:%SZ"
 # An explicit zone is required: a naive timestamp names no instant.
-_ISO_READ = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?(Z|[+-]\d{2}:\d{2})$")
+_ISO_READ = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?(Z|[+-]\d{2}:\d{2})$"
+)
 
 # Where per-run state and run records live inside the state bucket.
 DEFAULT_STATE_PREFIX = "dfe-e2e-runs"
@@ -157,10 +159,14 @@ def format_expiry(expires_at: int, expiry_format: str = DEFAULT_EXPIRY_FORMAT) -
         return str(int(expires_at))
     if expiry_format == "iso8601":
         return datetime.fromtimestamp(int(expires_at), UTC).strftime(_ISO_WRITE)
-    raise RunTagError(f"expiry format {expiry_format!r} is not one of {', '.join(EXPIRY_FORMATS)}")
+    raise RunTagError(
+        f"expiry format {expiry_format!r} is not one of {', '.join(EXPIRY_FORMATS)}"
+    )
 
 
-def run_tags(run_id: str, expires_at: int, keys: RunTagKeys | None = None) -> dict[str, str]:
+def run_tags(
+    run_id: str, expires_at: int, keys: RunTagKeys | None = None
+) -> dict[str, str]:
     """The two tags a run's resources carry.
 
     Args:
@@ -229,10 +235,16 @@ def classify(
     return ExpiryState.EXPIRED if now > expires_at + grace else ExpiryState.LIVE
 
 
-def run_tfvar(run_id: str, expires_at: int, keys: RunTagKeys | None = None) -> dict[str, object]:
+def run_tfvar(
+    run_id: str, expires_at: int, keys: RunTagKeys | None = None
+) -> dict[str, object]:
     """The OpenTofu `run` variable that renders these same tags (terraform/modules/tf-run-tags)."""
     keys = keys or RunTagKeys()
-    return {"id": validate_run_id(run_id), "expires_at": int(expires_at), "keys": keys.as_tfvar()}
+    return {
+        "id": validate_run_id(run_id),
+        "expires_at": int(expires_at),
+        "keys": keys.as_tfvar(),
+    }
 
 
 def parse_duration(raw: str) -> int:
@@ -303,7 +315,9 @@ def build_record(
     }
 
 
-def record_problems(record: Mapping[str, object], *, bucket: str, prefix: str) -> list[str]:
+def record_problems(
+    record: Mapping[str, object], *, bucket: str, prefix: str
+) -> list[str]:
     """Every reason a reaper must not act on this run record; empty means trust it.
 
     A record names the state a `tofu destroy` runs against, so one that points
@@ -324,14 +338,18 @@ def record_problems(record: Mapping[str, object], *, bucket: str, prefix: str) -
     run_id = record.get("run_id")
     if not isinstance(run_id, str) or not _RUN_ID.match(run_id):
         return [*problems, f"run_id {run_id!r} is not a portable run id"]
-    if not isinstance(record.get("expires_at"), int) or isinstance(record.get("expires_at"), bool):
+    if not isinstance(record.get("expires_at"), int) or isinstance(
+        record.get("expires_at"), bool
+    ):
         problems.append("expires_at is not an integer")
     tf_root = record.get("tf_root")
     if not isinstance(tf_root, str) or not _TF_ROOT.match(tf_root):
         problems.append(f"tf_root {tf_root!r} is not terraform/environments/<root>")
     expected_state = {"bucket": bucket, "key": state_key(prefix, run_id)}
     state = record.get("state")
-    if not isinstance(state, Mapping) or any(state.get(k) != v for k, v in expected_state.items()):
+    if not isinstance(state, Mapping) or any(
+        state.get(k) != v for k, v in expected_state.items()
+    ):
         problems.append(f"state {state!r} is not this run's own key {expected_state}")
     tfvars = record.get("tfvars")
     if not isinstance(tfvars, Mapping):
@@ -361,17 +379,29 @@ def _mint(args: argparse.Namespace) -> int:
     elif args.format == "tfvars":
         print(json.dumps({"run": run_tfvar(run_id, expires_at, keys)}, indent=2))
     else:
-        print(json.dumps({"run_id": run_id, "expires_at": expires_at, "tags": tags}, indent=2))
+        print(
+            json.dumps(
+                {"run_id": run_id, "expires_at": expires_at, "tags": tags}, indent=2
+            )
+        )
     return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
     """The cloud_run CLI: mint a run id and its expiry."""
-    parser = argparse.ArgumentParser(description="The run identity and expiry tags a cloud test run carries.")
+    parser = argparse.ArgumentParser(
+        description="The run identity and expiry tags a cloud test run carries."
+    )
     sub = parser.add_subparsers(dest="command", required=True)
     mint = sub.add_parser("mint", help="mint a run id and the tags its resources carry")
-    mint.add_argument("--ttl", required=True, help="how long until the run's resources are stale: 90, 15m, 3h, 1d")
-    mint.add_argument("--run-id", default=None, help="use this run id instead of minting one")
+    mint.add_argument(
+        "--ttl",
+        required=True,
+        help="how long until the run's resources are stale: 90, 15m, 3h, 1d",
+    )
+    mint.add_argument(
+        "--run-id", default=None, help="use this run id instead of minting one"
+    )
     mint.add_argument(
         "--format",
         choices=["json", "env", "tfvars"],

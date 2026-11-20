@@ -11,59 +11,46 @@ spec:
   template:
     metadata:
       annotations:
-        # The collector reads its config once, at start. Without this the pods
-        # keep running the config they were born with and every later edit is
-        # silently inert -- the same annotation every DFE app chart carries.
+        # The collector reads its config once, at start, so a config change rolls the pods.
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
       labels:
         app.kubernetes.io/name: {{ include "dfe-common.fullname" . }}-daemonset
         # Not in the selector, which a live DaemonSet cannot change.
         app.kubernetes.io/part-of: {{ .Values.project | quote }}
     spec:
-      # Root, unlike every other DFE pod (see daemonset.podSecurityContext).
-      # The shared helper reads .Values.podSecurityContext, so the daemonset's
-      # own ids are handed to it as a synthesised context -- one hardening
-      # definition for both workloads in this chart.
+      # Root, see daemonset.podSecurityContext. The shared helper reads .Values.podSecurityContext,
+      # so the daemonset's ids go in as a synthesised context.
       {{- include "dfe-common.podSecurityContext" (dict "Values" (dict "podSecurityContext" .Values.daemonset.podSecurityContext)) | nindent 6 }}
       serviceAccountName: {{ include "dfe-common.fullname" . }}
       {{- with .Values.daemonset.priorityClass.name }}
-      # Outranks the app pods, so a full node evicts one for it (values.yaml, daemonset.priorityClass).
+      # See daemonset.priorityClass in values.yaml.
       priorityClassName: {{ . }}
       {{- end }}
       {{- include "dfe-common.imagePullSecrets" . | nindent 6 }}
       {{- include "dfe-common.nodeSelector" . | nindent 6 }}
-      # Every taint, rather than the deployment's own toleration list: this is a
-      # node agent, and a node it cannot run on reports no kubelet or host
-      # metrics at all. The dedicated pools scripts/resolve_sizing.py taints are
-      # the nodes whose telemetry matters most.
+      # Every taint: a node the agent cannot run on reports no host metrics.
       tolerations:
         - operator: Exists
       containers:
         - name: {{ include "otel-collector.daemonsetContainerName" . }}
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}{{ with .Values.image.digest }}@{{ . }}{{ end }}"
-          # Keeps kubeletstats CPU usage read off the kubelet's UsageNanoCores; the gate, on by default
-          # since collector 0.161, derives it from cpu.time instead and drops the first scrape after a start.
+          # Keeps kubeletstats CPU usage on the kubelet's UsageNanoCores. See docs/observability/otel-collector.md.
           args:
             - --config=/etc/otel/daemonset-config.yaml
             - --feature-gates=-receiver.kubeletstats.cpuUsageScrapeBased
           {{- include "dfe-common.containerSecurityContext" . | nindent 10 }}
           env:
-            # Consumed by the resource/node processor and, when enabled, by the
-            # kubeletstats endpoint -- each pod must reach its OWN node's kubelet.
+            # Read by the resource/node processor and the kubeletstats endpoint.
             - name: K8S_NODE_NAME
               valueFrom:
                 fieldRef:
                   fieldPath: spec.nodeName
-            # The Go runtime otherwise sizes its heap against the NODE, not this
-            # container's limit, and collects too late to stay under it.
             - name: GOMEMLIMIT
               value: {{ include "otel-collector.goMemLimit" (include "otel-collector.daemonsetMemory" .) | quote }}
           ports:
             - name: health
               containerPort: {{ .Values.healthCheckPort }}
-          # Backed by the health_check extension enabled in daemonset-config.yaml
-          # (service.extensions) -- the probe is only safe because the extension
-          # serves this port.
+          # Served by the health_check extension in daemonset-config.yaml.
           livenessProbe:
             httpGet:
               path: /
@@ -84,10 +71,7 @@ spec:
             - name: varlogpods
               mountPath: /var/log/pods
               readOnly: true
-            # Read-only, for host_metrics root_path: the filesystem scraper
-            # statfs()es each node mount through it and the disk scraper reads
-            # the node's /proc. HostToContainer so a volume mounted on the node
-            # after the pod started is seen too.
+            # host_metrics reads the node through this. HostToContainer shows volumes mounted after the pod started.
             - name: hostfs
               mountPath: /hostfs
               readOnly: true
@@ -107,8 +91,7 @@ spec:
           hostPath:
             path: /
             type: Directory
-        # A node directory, not an emptyDir: the offsets have to survive the pod
-        # being replaced, which is exactly when the replay would happen.
+        # A node directory, so the offsets survive the pod.
         - name: checkpoint
           hostPath:
             path: {{ .Values.daemonset.checkpoint.hostPath }}

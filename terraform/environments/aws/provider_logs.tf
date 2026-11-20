@@ -1,22 +1,16 @@
-// The Pod Identity role the collector's provider-logs workload reads CloudWatch
-// Logs through (helm/charts/otel-collector, clusterTelemetry.providerLogs). It
-// reads the EKS control-plane log group and CloudTrail's, and nothing else.
-// Under sink = cloudwatch DFE reads neither into its own database, so nothing is
-// built.
+// The Pod Identity role the otel collector's provider-logs workload reads the EKS control-plane and CloudTrail log groups through. Built under sink = otel only.
 
 locals {
   provider_logs_enabled = var.telemetry.sink == "otel"
 
-  // Empty when a source is off: no stream enabled on the cluster, or CloudTrail disabled.
+  // A source that is off (no stream enabled, or CloudTrail disabled) contributes none.
   provider_logs_group_names = compact([
     module.cluster.audit_log_group,
     join("", aws_cloudwatch_log_group.cloudtrail[*].name),
   ])
   provider_logs_count = local.provider_logs_enabled && length(local.provider_logs_group_names) > 0 ? 1 : 0
 
-  // Where the chart puts the workload: argocd/appsets/layer2-data.yaml pins the
-  // otel-collector's namespace, and the chart names the account
-  // <project>-<component>-provider-logs. Both are contract names, not tunables.
+  // Contract names set by argocd/appsets/layer2-data.yaml and the otel-collector chart, not tunables.
   provider_logs_namespace       = "otel"
   provider_logs_service_account = "dfe-otel-collector-provider-logs"
 
@@ -34,7 +28,6 @@ resource "aws_iam_role" "provider_logs" {
   name = "${var.name}-provider-logs"
   path = var.iam_path
 
-  // The EKS Pod Identity service principal. Fixed by AWS.
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
@@ -46,7 +39,7 @@ resource "aws_iam_role" "provider_logs" {
   permissions_boundary = var.permissions_boundary
 }
 
-// Read only, and only those groups. The log groups carry no KMS key, so no key grant is needed.
+// The log groups carry no KMS key, so no key grant is needed.
 resource "aws_iam_role_policy" "provider_logs" {
   count = local.provider_logs_count
 

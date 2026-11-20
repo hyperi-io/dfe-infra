@@ -123,8 +123,13 @@ def _host(address: str) -> str:
 def kubectl(kube: list[str], *argv: str, stdin: str = "") -> tuple[int, str, str]:
     """Run kubectl and return (exit code, stdout, stderr); never raises on a non-zero exit."""
     done = subprocess.run(
-        [*kube, *argv], input=stdin or None, capture_output=True, text=True,
-        encoding="utf-8", errors="replace", check=False,
+        [*kube, *argv],
+        input=stdin or None,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
     )
     return done.returncode, done.stdout, done.stderr
 
@@ -177,12 +182,20 @@ def public_endpoint(services: Mapping) -> Endpoint | None:
         spec = item.get("spec") or {}
         if spec.get("type") != "LoadBalancer" or not name.endswith(PUBLIC_SUFFIX):
             continue
-        ingress = ((item.get("status") or {}).get("loadBalancer") or {}).get("ingress") or []
-        addresses = [str(entry.get("hostname") or entry.get("ip") or "") for entry in ingress]
+        ingress = ((item.get("status") or {}).get("loadBalancer") or {}).get(
+            "ingress"
+        ) or []
+        addresses = [
+            str(entry.get("hostname") or entry.get("ip") or "") for entry in ingress
+        ]
         address = next((one for one in addresses if one), "")
-        http = next((p for p in spec.get("ports") or [] if p.get("name") == "http"), None)
+        http = next(
+            (p for p in spec.get("ports") or [] if p.get("name") == "http"), None
+        )
         if address and http:
-            ranges = tuple(str(cidr) for cidr in spec.get("loadBalancerSourceRanges") or [])
+            ranges = tuple(
+                str(cidr) for cidr in spec.get("loadBalancerSourceRanges") or []
+            )
             return Endpoint(name, address, int(http["port"]), ranges)
     return None
 
@@ -212,8 +225,14 @@ def endpoint_problem(endpoint: Endpoint, allow: list[str], resolve) -> str:
     return ""
 
 
-def wait_endpoint(kube: list[str], namespace: str, allow: list[str], deadline: float,
-                  *, interval: float = ENDPOINT_INTERVAL) -> tuple[Endpoint | None, str]:
+def wait_endpoint(
+    kube: list[str],
+    namespace: str,
+    allow: list[str],
+    deadline: float,
+    *,
+    interval: float = ENDPOINT_INTERVAL,
+) -> tuple[Endpoint | None, str]:
     """Poll the receiver's Services until the public door carries *allow* and resolves.
 
     Returns:
@@ -222,7 +241,9 @@ def wait_endpoint(kube: list[str], namespace: str, allow: list[str], deadline: f
     until = time.monotonic() + deadline
     last = "nothing listed yet"
     while True:
-        rc, doc, err = kubectl_json(kube, "-n", namespace, "get", "service", "-l", EXPOSURE_SELECTOR)
+        rc, doc, err = kubectl_json(
+            kube, "-n", namespace, "get", "service", "-l", EXPOSURE_SELECTOR
+        )
         endpoint = public_endpoint(doc) if rc == 0 else None
         if rc != 0:
             last = f"could not list the receiver's Services: {err}"
@@ -246,7 +267,9 @@ def wait_endpoint(kube: list[str], namespace: str, allow: list[str], deadline: f
 # --- the allow-listed send ------------------------------------------------------------
 
 
-def post_marker(url: str, body: dict, deadline: float, *, interval: float = POLL_INTERVAL) -> tuple[bool, str]:
+def post_marker(
+    url: str, body: dict, deadline: float, *, interval: float = POLL_INTERVAL
+) -> tuple[bool, str]:
     """POST *body* to the public door until it answers 2xx, a 4xx rejects it, or *deadline* passes.
 
     A new load balancer drops connections until its targets are healthy, so no
@@ -267,10 +290,16 @@ def post_marker(url: str, body: dict, deadline: float, *, interval: float = POLL
             with urllib.request.urlopen(request, timeout=SEND_TIMEOUT) as response:
                 status = response.status
             elapsed = time.monotonic() - started
-            return True, f"POST {url} answered {status} after {attempts} attempt(s), {elapsed:.0f}s"
+            return (
+                True,
+                f"POST {url} answered {status} after {attempts} attempt(s), {elapsed:.0f}s",
+            )
         except urllib.error.HTTPError as exc:
             if exc.code < 500:
-                return False, f"POST {url} was rejected: {exc.code} {exc.read()[:200]!r}"
+                return (
+                    False,
+                    f"POST {url} was rejected: {exc.code} {exc.read()[:200]!r}",
+                )
             last = f"answered {exc.code}"
         except (urllib.error.URLError, OSError) as exc:
             last = str(getattr(exc, "reason", exc))
@@ -284,18 +313,35 @@ def post_marker(url: str, body: dict, deadline: float, *, interval: float = POLL
 # --- the row in main ------------------------------------------------------------------
 
 
-def record_landed(results: list[wizard.StepResult], store: Datastore, run_id: str, deadline: float) -> bool:
+def record_landed(
+    results: list[wizard.StepResult], store: Datastore, run_id: str, deadline: float
+) -> bool:
     """The marker's row in main, read straight off the datastore; True when it is there."""
     if not store.host:
-        row(results, "landed", "failed", "no datastore access in this run, so the row in main cannot be read")
+        row(
+            results,
+            "landed",
+            "failed",
+            "no datastore access in this run, so the row in main cannot be read",
+        )
         return False
     found = source_steps.wait_rows(
         store, MAIN_TABLE, 1, deadline, where=source_steps.marked(run_id, MARKER_KIND)
     )
     if found:
-        row(results, "landed", "done", f"{found} row(s) carrying {run_id} in {store.database}.{MAIN_TABLE}")
+        row(
+            results,
+            "landed",
+            "done",
+            f"{found} row(s) carrying {run_id} in {store.database}.{MAIN_TABLE}",
+        )
         return True
-    row(results, "landed", "failed", f"{run_id} is not in {store.database}.{MAIN_TABLE} after {deadline:.0f}s")
+    row(
+        results,
+        "landed",
+        "failed",
+        f"{run_id} is not in {store.database}.{MAIN_TABLE} after {deadline:.0f}s",
+    )
     return False
 
 
@@ -324,8 +370,13 @@ def probe_readings(logs: str) -> dict[str, tuple[int, str]]:
     return readings
 
 
-def refused_outcome(readings: Mapping[str, tuple[int, str]], endpoint: Endpoint, gateway: str,
-                    egress: list[str], allow: list[str]) -> tuple[str, str]:
+def refused_outcome(
+    readings: Mapping[str, tuple[int, str]],
+    endpoint: Endpoint,
+    gateway: str,
+    egress: list[str],
+    allow: list[str],
+) -> tuple[str, str]:
     """The step result for the send from inside the cluster.
 
     A refusal proves the list only beside a control the same pod reached: a pod
@@ -345,7 +396,10 @@ def refused_outcome(readings: Mapping[str, tuple[int, str]], endpoint: Endpoint,
     door = f"{endpoint.address}:{endpoint.port}"
     if control is None or target is None:
         missing = "control" if control is None else "target"
-        return "failed", f"the probe printed no {missing} reading, so nothing was measured"
+        return (
+            "failed",
+            f"the probe printed no {missing} reading, so nothing was measured",
+        )
     if target[1] != "000":
         return "failed", (
             f"the receiver at {door} answered {target[1]} from inside the cluster, whose NAT egress "
@@ -390,10 +444,15 @@ def gateway_control(console_url: str, gateway: str) -> Control | None:
     if not host or not gateway:
         return None
     port = parts.port or 443
-    return Control(f"https://{_host(host)}:{port}/", f"{_host(host)}:{port}:{_host(gateway)}:{port}")
+    return Control(
+        f"https://{_host(host)}:{port}/",
+        f"{_host(host)}:{port}:{_host(gateway)}:{port}",
+    )
 
 
-def probe_pod(namespace: str, receiver: Mapping, control: Control, target_url: str) -> dict:
+def probe_pod(
+    namespace: str, receiver: Mapping, control: Control, target_url: str
+) -> dict:
     """The probe Pod: the receiver's own image, placement and security context, running two curls.
 
     The image is one the cluster already pulls and carries curl, which the
@@ -410,8 +469,10 @@ def probe_pod(namespace: str, receiver: Mapping, control: Control, target_url: s
             {"name": "PROBE_CONTROL_CONNECT", "value": control.connect},
             {"name": "PROBE_TARGET_URL", "value": target_url},
         ],
-        "resources": {"requests": {"cpu": "10m", "memory": "32Mi"},
-                      "limits": {"cpu": "100m", "memory": "64Mi"}},
+        "resources": {
+            "requests": {"cpu": "10m", "memory": "32Mi"},
+            "limits": {"cpu": "100m", "memory": "64Mi"},
+        },
     }
     if source.get("securityContext"):
         container["securityContext"] = source["securityContext"]
@@ -427,8 +488,11 @@ def probe_pod(namespace: str, receiver: Mapping, control: Control, target_url: s
     return {
         "apiVersion": "v1",
         "kind": "Pod",
-        "metadata": {"name": PROBE_POD, "namespace": namespace,
-                     "labels": {"app.kubernetes.io/name": "dfe-edge-probe"}},
+        "metadata": {
+            "name": PROBE_POD,
+            "namespace": namespace,
+            "labels": {"app.kubernetes.io/name": "dfe-edge-probe"},
+        },
         "spec": spec,
     }
 
@@ -466,8 +530,13 @@ def wait_pod(kube: list[str], namespace: str, deadline: float) -> tuple[str, str
         if rc == 0:
             status = doc.get("status") or {}
             phase = str(status.get("phase") or phase)
-            states = [(c.get("state") or {}).get("waiting") or {} for c in status.get("containerStatuses") or []]
-            reasons = [str(state.get("reason")) for state in states if state.get("reason")]
+            states = [
+                (c.get("state") or {}).get("waiting") or {}
+                for c in status.get("containerStatuses") or []
+            ]
+            reasons = [
+                str(state.get("reason")) for state in states if state.get("reason")
+            ]
             waiting = f" ({', '.join(reasons)})" if reasons else ""
             if phase in ("Succeeded", "Failed"):
                 return phase, waiting
@@ -476,10 +545,25 @@ def wait_pod(kube: list[str], namespace: str, deadline: float) -> tuple[str, str
         time.sleep(POLL_INTERVAL)
 
 
-def _probe(kube: list[str], app_ns: str, probe_ns: str, receiver: Mapping, endpoint: Endpoint,
-           gateway: str, control: Control, allow: list[str], egress: list[str]) -> tuple[str, str]:
-    namespace = {"apiVersion": "v1", "kind": "Namespace",
-                 "metadata": {"name": probe_ns, "labels": {"app.kubernetes.io/managed-by": "dfe-acceptance"}}}
+def _probe(
+    kube: list[str],
+    app_ns: str,
+    probe_ns: str,
+    receiver: Mapping,
+    endpoint: Endpoint,
+    gateway: str,
+    control: Control,
+    allow: list[str],
+    egress: list[str],
+) -> tuple[str, str]:
+    namespace = {
+        "apiVersion": "v1",
+        "kind": "Namespace",
+        "metadata": {
+            "name": probe_ns,
+            "labels": {"app.kubernetes.io/managed-by": "dfe-acceptance"},
+        },
+    }
     rc, _, err = kubectl(kube, "create", "-f", "-", stdin=json.dumps(namespace))
     if rc != 0:
         return "failed", f"could not create namespace {probe_ns}: {_first_line(err)}"
@@ -487,23 +571,42 @@ def _probe(kube: list[str], app_ns: str, probe_ns: str, receiver: Mapping, endpo
     for ref in template.get("imagePullSecrets") or []:
         name = str(ref.get("name") or "")
         if name and not copy_secret(kube, app_ns, probe_ns, name):
-            return "failed", f"could not copy the receiver's pull secret {name} into {probe_ns}"
+            return (
+                "failed",
+                f"could not copy the receiver's pull secret {name} into {probe_ns}",
+            )
     pod = probe_pod(probe_ns, receiver, control, endpoint.liveness_url)
     rc, _, err = kubectl(kube, "create", "-f", "-", stdin=json.dumps(pod))
     if rc != 0:
-        return "failed", f"could not create the probe pod in {probe_ns}: {_first_line(err)}"
+        return (
+            "failed",
+            f"could not create the probe pod in {probe_ns}: {_first_line(err)}",
+        )
     phase, waiting = wait_pod(kube, probe_ns, PROBE_DEADLINE)
     if phase != "Succeeded":
-        return "failed", f"the probe pod in {probe_ns} ended {phase}{waiting}, so nothing was measured"
+        return (
+            "failed",
+            f"the probe pod in {probe_ns} ended {phase}{waiting}, so nothing was measured",
+        )
     rc, logs, err = kubectl(kube, "-n", probe_ns, "logs", f"pod/{PROBE_POD}")
     if rc != 0:
         return "failed", f"could not read the probe pod's log: {_first_line(err)}"
     return refused_outcome(probe_readings(logs), endpoint, gateway, egress, allow)
 
 
-def record_refused(results: list[wizard.StepResult], kube: list[str], namespace: str, endpoint: Endpoint,
-                   gateway: str, allow: list[str], egress: list[str], run_id: str, *,
-                   console_url: str, receiver_deployment: str = "dfe-receiver") -> None:
+def record_refused(
+    results: list[wizard.StepResult],
+    kube: list[str],
+    namespace: str,
+    endpoint: Endpoint,
+    gateway: str,
+    allow: list[str],
+    egress: list[str],
+    run_id: str,
+    *,
+    console_url: str,
+    receiver_deployment: str = "dfe-receiver",
+) -> None:
     """Send to the public door from inside the cluster, and expect no answer.
 
     The probe runs in a namespace of its own: every DFE namespace carries a
@@ -513,35 +616,74 @@ def record_refused(results: list[wizard.StepResult], kube: list[str], namespace:
     """
     inside = egress_inside_allow(egress, allow)
     if not egress:
-        row(results, "refused", "failed", "no NAT egress was named, so nothing says the send came from off the list")
+        row(
+            results,
+            "refused",
+            "failed",
+            "no NAT egress was named, so nothing says the send came from off the list",
+        )
         return
     if inside:
-        row(results, "refused", "failed", (
-            f"the allow list already admits the cluster's NAT egress ({'; '.join(inside)}), so a refusal could "
-            "not prove it"
-        ))
+        row(
+            results,
+            "refused",
+            "failed",
+            (
+                f"the allow list already admits the cluster's NAT egress ({'; '.join(inside)}), so a refusal could "
+                "not prove it"
+            ),
+        )
         return
     if not gateway:
-        row(results, "refused", "failed", (
-            "no gateway address to reach as the control, so a refusal could not be told from a pod with no way out"
-        ))
+        row(
+            results,
+            "refused",
+            "failed",
+            (
+                "no gateway address to reach as the control, so a refusal could not be told from a pod with no way out"
+            ),
+        )
         return
     control = gateway_control(console_url, gateway)
     if control is None:
-        row(results, "refused", "failed", (
-            f"no console host in {console_url!r} for the control to ask the gateway for, so a refusal could not "
-            "be told from a pod with no way out"
-        ))
+        row(
+            results,
+            "refused",
+            "failed",
+            (
+                f"no console host in {console_url!r} for the control to ask the gateway for, so a refusal could not "
+                "be told from a pod with no way out"
+            ),
+        )
         return
-    rc, receiver, err = kubectl_json(kube, "-n", namespace, "get", "deployment", receiver_deployment)
+    rc, receiver, err = kubectl_json(
+        kube, "-n", namespace, "get", "deployment", receiver_deployment
+    )
     if rc != 0:
-        row(results, "refused", "failed", f"could not read deployment/{receiver_deployment} for the probe's image: {err}")
+        row(
+            results,
+            "refused",
+            "failed",
+            f"could not read deployment/{receiver_deployment} for the probe's image: {err}",
+        )
         return
     probe_ns = f"{run_id}-probe"
     try:
-        status, detail = _probe(kube, namespace, probe_ns, receiver, endpoint, gateway, control, allow, egress)
+        status, detail = _probe(
+            kube,
+            namespace,
+            probe_ns,
+            receiver,
+            endpoint,
+            gateway,
+            control,
+            allow,
+            egress,
+        )
     finally:
-        kubectl(kube, "delete", "namespace", probe_ns, "--wait=false", "--ignore-not-found")
+        kubectl(
+            kube, "delete", "namespace", probe_ns, "--wait=false", "--ignore-not-found"
+        )
     row(results, "refused", status, detail)
 
 
@@ -559,17 +701,24 @@ def main_source(sources: object) -> dict | None:
     """The team's `main` source out of HyperDX's source listing, or None."""
     if not isinstance(sources, list):
         return None
-    return next((s for s in sources if isinstance(s, dict) and s.get("name") == MAIN_SOURCE), None)
+    return next(
+        (s for s in sources if isinstance(s, dict) and s.get("name") == MAIN_SOURCE),
+        None,
+    )
 
 
 def _plain(value: object, what: str) -> str:
     text = str(value or "")
     if not _PLAIN.match(text):
-        raise ValueError(f"{what} {text!r} is not a plain name, so it is not put in a query")
+        raise ValueError(
+            f"{what} {text!r} is not a plain name, so it is not put in a query"
+        )
     return text
 
 
-def hyperdx_count_sql(source: Mapping, run_id: str, window_minutes: int = HYPERDX_WINDOW_MINUTES) -> str:
+def hyperdx_count_sql(
+    source: Mapping, run_id: str, window_minutes: int = HYPERDX_WINDOW_MINUTES
+) -> str:
     """The count HyperDX's search runs for a bare term over *source*, as its proxy takes it.
 
     A bare Lucene term on a JSON implicit column renders as toString(column)
@@ -581,8 +730,12 @@ def hyperdx_count_sql(source: Mapping, run_id: str, window_minutes: int = HYPERD
     origin = source.get("from") or {}
     database = _plain(origin.get("databaseName"), "the source's database")
     table = _plain(origin.get("tableName"), "the source's table")
-    timestamp = _plain(source.get("timestampValueExpression"), "the source's timestamp column")
-    implicit = _plain(source.get("implicitColumnExpression"), "the source's implicit column")
+    timestamp = _plain(
+        source.get("timestampValueExpression"), "the source's timestamp column"
+    )
+    implicit = _plain(
+        source.get("implicitColumnExpression"), "the source's implicit column"
+    )
     term = _plain(run_id, "the run id")
     return (
         f"SELECT count() FROM `{database}`.`{table}` "
@@ -591,8 +744,15 @@ def hyperdx_count_sql(source: Mapping, run_id: str, window_minutes: int = HYPERD
     )
 
 
-def hyperdx_call(base: str, path: str, token: str, verify: bool, *, body: str | None = None,
-                 headers: Mapping[str, str] | None = None) -> tuple[int, object]:
+def hyperdx_call(
+    base: str,
+    path: str,
+    token: str,
+    verify: bool,
+    *,
+    body: str | None = None,
+    headers: Mapping[str, str] | None = None,
+) -> tuple[int, object]:
     """One call to HyperDX's API through its frontend, as the embedded app makes it.
 
     The token rides in the ``dfe_token`` cookie, as it does from the console's
@@ -602,12 +762,18 @@ def hyperdx_call(base: str, path: str, token: str, verify: bool, *, body: str | 
         The status and the decoded body, or the body's first 200 characters
         when it is not JSON.
     """
-    opener = urllib.request.build_opener(_NoRedirect, urllib.request.HTTPSHandler(context=tls_context(verify)))
+    opener = urllib.request.build_opener(
+        _NoRedirect, urllib.request.HTTPSHandler(context=tls_context(verify))
+    )
     request = urllib.request.Request(
         f"{base.rstrip('/')}{path}",
         data=body.encode() if body is not None else None,
         method="POST" if body is not None else "GET",
-        headers={"Cookie": f"{TOKEN_COOKIE}={token}", "Accept": "application/json", **(headers or {})},
+        headers={
+            "Cookie": f"{TOKEN_COOKIE}={token}",
+            "Accept": "application/json",
+            **(headers or {}),
+        },
     )
     try:
         with opener.open(request, timeout=60) as response:
@@ -624,11 +790,19 @@ def _count(answer: object) -> int:
     try:
         return int(answer["data"][0][0])  # type: ignore[index]
     except (KeyError, IndexError, TypeError, ValueError) as exc:
-        raise ValueError(f"the search answered {str(answer)[:120]!r}, which carries no count") from exc
+        raise ValueError(
+            f"the search answered {str(answer)[:120]!r}, which carries no count"
+        ) from exc
 
 
-def record_hyperdx(results: list[wizard.StepResult], base: str, engine, run_id: str, verify: bool,
-                   deadline: float) -> None:
+def record_hyperdx(
+    results: list[wizard.StepResult],
+    base: str,
+    engine,
+    run_id: str,
+    verify: bool,
+    deadline: float,
+) -> None:
     """Find the marker through HyperDX's own API, under an engine-minted token.
 
     The two calls the search page makes, with its credential: the team's
@@ -636,9 +810,14 @@ def record_hyperdx(results: list[wizard.StepResult], base: str, engine, run_id: 
     HyperDX's ClickHouse proxy, which runs it as the team's own ClickHouse user.
     """
     if not base:
-        row(results, "hyperdx", "failed", (
-            "no HyperDX URL: no HTTPRoute under the console's domain sends to dfe-hyperdx; pass --hyperdx-url"
-        ))
+        row(
+            results,
+            "hyperdx",
+            "failed",
+            (
+                "no HyperDX URL: no HTTPRoute under the console's domain sends to dfe-hyperdx; pass --hyperdx-url"
+            ),
+        )
         return
     try:
         issued = engine.password
@@ -647,50 +826,89 @@ def record_hyperdx(results: list[wizard.StepResult], base: str, engine, run_id: 
             # That login made the forced change, which ends the session its token belongs to.
             engine.login()
     except (OSError, RuntimeError) as exc:
-        row(results, "hyperdx", "failed", f"the engine would not mint a token for HyperDX: {exc}")
+        row(
+            results,
+            "hyperdx",
+            "failed",
+            f"the engine would not mint a token for HyperDX: {exc}",
+        )
         return
     until = time.monotonic() + deadline
     try:
         while True:
             status, sources = hyperdx_call(base, "/api/sources", engine.token, verify)
             if status != 200:
-                row(results, "hyperdx", "failed", f"GET {base}/api/sources answered {status}: {sources}")
+                row(
+                    results,
+                    "hyperdx",
+                    "failed",
+                    f"GET {base}/api/sources answered {status}: {sources}",
+                )
                 return
             source = main_source(sources)
             if source is not None:
                 break
             if time.monotonic() >= until:
-                row(results, "hyperdx", "failed", (
-                    f"HyperDX lists no main source for this token's team after {deadline:.0f}s; the fork seeds "
-                    "main on a team's first engine-token request (dfe/controllers/org-connection.ts)"
-                ))
+                row(
+                    results,
+                    "hyperdx",
+                    "failed",
+                    (
+                        f"HyperDX lists no main source for this token's team after {deadline:.0f}s; the fork seeds "
+                        "main on a team's first engine-token request (dfe/controllers/org-connection.ts)"
+                    ),
+                )
                 return
             time.sleep(POLL_INTERVAL)
         sql = hyperdx_count_sql(source, run_id)
-        proxy = {"x-hyperdx-connection-id": str(source.get("connection") or ""), "Content-Type": "text/plain"}
+        proxy = {
+            "x-hyperdx-connection-id": str(source.get("connection") or ""),
+            "Content-Type": "text/plain",
+        }
         while True:
-            status, answer = hyperdx_call(base, CLICKHOUSE_PROXY, engine.token, verify, body=sql,
-                                          headers=proxy)
+            status, answer = hyperdx_call(
+                base, CLICKHOUSE_PROXY, engine.token, verify, body=sql, headers=proxy
+            )
             if status != 200:
-                row(results, "hyperdx", "failed", (
-                    f"the search through {base}{CLICKHOUSE_PROXY} answered {status}: {answer}"
-                ))
+                row(
+                    results,
+                    "hyperdx",
+                    "failed",
+                    (
+                        f"the search through {base}{CLICKHOUSE_PROXY} answered {status}: {answer}"
+                    ),
+                )
                 return
             found = _count(answer)
             if found:
-                row(results, "hyperdx", "done", (
-                    f"HyperDX's search over its {MAIN_SOURCE} source found {found} row(s) carrying {run_id}"
-                ))
+                row(
+                    results,
+                    "hyperdx",
+                    "done",
+                    (
+                        f"HyperDX's search over its {MAIN_SOURCE} source found {found} row(s) carrying {run_id}"
+                    ),
+                )
                 return
             if time.monotonic() >= until:
-                row(results, "hyperdx", "failed", (
-                    f"HyperDX's search over its {MAIN_SOURCE} source found 0 rows carrying {run_id} in the "
-                    f"last {HYPERDX_WINDOW_MINUTES} minutes"
-                ))
+                row(
+                    results,
+                    "hyperdx",
+                    "failed",
+                    (
+                        f"HyperDX's search over its {MAIN_SOURCE} source found 0 rows carrying {run_id} in the "
+                        f"last {HYPERDX_WINDOW_MINUTES} minutes"
+                    ),
+                )
                 return
             time.sleep(POLL_INTERVAL)
     except (urllib.error.URLError, OSError, ValueError) as exc:
-        row(results, "hyperdx", "failed", f"HyperDX at {base} could not be searched: {exc}")
+        row(
+            results,
+            "hyperdx",
+            "failed",
+            f"HyperDX at {base} could not be searched: {exc}",
+        )
 
 
 # --- dfe-engine's minted secrets ---------------------------------------------------------
@@ -699,11 +917,20 @@ def record_hyperdx(results: list[wizard.StepResult], base: str, engine, run_id: 
 def cluster_facts(kube: list[str]) -> tuple[dict[str, str] | None, str]:
     """The cluster secret's annotations, read without its data; None and why when unreadable."""
     rc, out, err = kubectl(
-        kube, "-n", CLUSTER_SECRET_NAMESPACE, "get", "secret", CLUSTER_SECRET,
-        "-o", "jsonpath={.metadata.annotations}",
+        kube,
+        "-n",
+        CLUSTER_SECRET_NAMESPACE,
+        "get",
+        "secret",
+        CLUSTER_SECRET,
+        "-o",
+        "jsonpath={.metadata.annotations}",
     )
     if rc != 0:
-        return None, f"could not read secret/{CLUSTER_SECRET} in {CLUSTER_SECRET_NAMESPACE}: {_first_line(err)}"
+        return (
+            None,
+            f"could not read secret/{CLUSTER_SECRET} in {CLUSTER_SECRET_NAMESPACE}: {_first_line(err)}",
+        )
     try:
         found = json.loads(out or "{}")
     except json.JSONDecodeError as exc:
@@ -717,23 +944,40 @@ def list_engine_secrets(prefix: str, region: str) -> tuple[list[dict] | None, st
     The name filter is a case-insensitive prefix match, so each entry is checked again here.
     """
     cmd = [
-        "aws", "secretsmanager", "list-secrets", "--region", region,
-        "--filters", f"Key=name,Values={prefix}/", "--output", "json",
+        "aws",
+        "secretsmanager",
+        "list-secrets",
+        "--region",
+        region,
+        "--filters",
+        f"Key=name,Values={prefix}/",
+        "--output",
+        "json",
     ]
     try:
         done = subprocess.run(
-            cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
-            check=False, timeout=AWS_TIMEOUT,
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+            timeout=AWS_TIMEOUT,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         return None, f"aws secretsmanager list-secrets did not run: {exc}"
     if done.returncode != 0:
-        return None, f"aws secretsmanager list-secrets failed: {_first_line(done.stderr)}"
+        return (
+            None,
+            f"aws secretsmanager list-secrets failed: {_first_line(done.stderr)}",
+        )
     try:
         listed = json.loads(done.stdout or "{}").get("SecretList") or []
     except json.JSONDecodeError as exc:
         return None, f"aws secretsmanager list-secrets printed no JSON: {exc}"
-    return [entry for entry in listed if str(entry.get("Name", "")).startswith(f"{prefix}/")], ""
+    return [
+        entry for entry in listed if str(entry.get("Name", "")).startswith(f"{prefix}/")
+    ], ""
 
 
 def _key_id(key: str) -> str:
@@ -741,7 +985,9 @@ def _key_id(key: str) -> str:
     return key.rsplit("/", 1)[-1]
 
 
-def minted_outcome(listed: list[dict], prefix: str, kms_key: str, tags: Mapping[str, str]) -> tuple[str, str]:
+def minted_outcome(
+    listed: list[dict], prefix: str, kms_key: str, tags: Mapping[str, str]
+) -> tuple[str, str]:
     """The step result for where the engine keeps what it mints.
 
     Args:
@@ -755,7 +1001,9 @@ def minted_outcome(listed: list[dict], prefix: str, kms_key: str, tags: Mapping[
     """
     by_name = {str(entry.get("Name")): entry for entry in listed}
     wanted = [f"{prefix}/{path}" for path in MINTED]
-    orgs = sorted(name for name in by_name if name.startswith(f"{prefix}/{ORG_PASSWORDS}"))
+    orgs = sorted(
+        name for name in by_name if name.startswith(f"{prefix}/{ORG_PASSWORDS}")
+    )
     absent = [name for name in wanted if name not in by_name]
     if not orgs:
         absent.append(f"{prefix}/{ORG_PASSWORDS}<org>")
@@ -766,8 +1014,13 @@ def minted_outcome(listed: list[dict], prefix: str, kms_key: str, tags: Mapping[
         entry = by_name[name]
         key = str(entry.get("KmsKeyId") or "")
         if not key or _key_id(key) != _key_id(kms_key):
-            problems.append(f"{name} is encrypted with {key or 'the AWS managed key'}, not {kms_key}")
-        carried = {str(tag.get("Key")): str(tag.get("Value")) for tag in entry.get("Tags") or []}
+            problems.append(
+                f"{name} is encrypted with {key or 'the AWS managed key'}, not {kms_key}"
+            )
+        carried = {
+            str(tag.get("Key")): str(tag.get("Value"))
+            for tag in entry.get("Tags") or []
+        }
         lacking = sorted(k for k, v in tags.items() if carried.get(k) != v)
         if lacking:
             problems.append(f"{name} does not carry {', '.join(lacking)}")
@@ -793,14 +1046,21 @@ def record_minted_secrets(results: list[wizard.StepResult], kube: list[str]) -> 
         return
     prefix = facts.get(f"{FACT}engine_secrets_prefix", "")
     if not prefix:
-        row(results, slug, "skipped", (
-            "the cluster secret names no engine_secrets_prefix, so the engine keeps its secrets on its "
-            "own volume (every cloud but AWS)"
-        ))
+        row(
+            results,
+            slug,
+            "skipped",
+            (
+                "the cluster secret names no engine_secrets_prefix, so the engine keeps its secrets on its "
+                "own volume (every cloud but AWS)"
+            ),
+        )
         return
     # A run's own tags tell its secrets from another run's; off a run, the deployment's.
     try:
-        tags = json.loads(facts.get(f"{FACT}run_tags") or facts.get(f"{FACT}resource_tags") or "{}")
+        tags = json.loads(
+            facts.get(f"{FACT}run_tags") or facts.get(f"{FACT}resource_tags") or "{}"
+        )
     except json.JSONDecodeError as exc:
         row(results, slug, "failed", f"the cluster secret's tags are not JSON: {exc}")
         return
@@ -809,6 +1069,9 @@ def record_minted_secrets(results: list[wizard.StepResult], kube: list[str]) -> 
         row(results, slug, "failed", why)
         return
     status, detail = minted_outcome(
-        listed, prefix, facts.get(f"{FACT}kms_key_arn", ""), {str(key): str(value) for key, value in tags.items()},
+        listed,
+        prefix,
+        facts.get(f"{FACT}kms_key_arn", ""),
+        {str(key): str(value) for key, value in tags.items()},
     )
     row(results, slug, status, detail)

@@ -56,8 +56,27 @@
 
 /* The minifier merges rules that share declarations and can reorder them, so a variant outranks its base by specificity, never by order. */
 
-/* Hero: the mode's brand band, a dot field fading out from the top right, and a slanted lower edge. */
+/* Hero: hyperi.io's navy band in both modes, a dot field fading out from the top right, and a slanted lower edge. */
 .hero {
+  --role-canvas: var(--hyperi-dark-canvas, #000324);
+  --role-raised: var(--hyperi-dark-raised, #000647);
+  --role-border: var(--hyperi-dark-border, #17559f);
+  --role-ink: var(--hyperi-dark-ink, #ffffff);
+  --role-body: var(--hyperi-dark-body, #d9dae3);
+  --role-muted: var(--hyperi-dark-muted, #999bb5);
+  --role-link: var(--hyperi-dark-link, #2ea4f6);
+  --role-plate: var(--hyperi-dark-plate, #2ea4f6);
+  --role-on-plate: var(--hyperi-dark-on-plate, #000647);
+  --role-plate-hover: var(--hyperi-dark-plate-hover, #6dbff9);
+  --role-accent-ink: var(--hyperi-dark-accent-ink, #2ded88);
+  --role-card: color-mix(in srgb, var(--dfe-navy) 70%, transparent);
+  --role-tint: color-mix(in srgb, var(--dfe-blue) 14%, transparent);
+  --role-card-border: color-mix(in srgb, var(--dfe-blue) 40%, transparent);
+  --role-glow: color-mix(in srgb, var(--dfe-blue) 40%, transparent);
+  --role-band: radial-gradient(56rem 28rem at 88% -12%, color-mix(in srgb, var(--dfe-blue) 32%, transparent), transparent 70%),
+    radial-gradient(40rem 22rem at -4% 112%, color-mix(in srgb, var(--dfe-accent) 12%, transparent), transparent 70%),
+    linear-gradient(180deg, var(--dfe-navy), var(--hyperi-dark-canvas, #000324));
+  color-scheme: dark;
   position: relative;
   padding-block: var(--dfe-space-16) calc(var(--dfe-space-16) + var(--dfe-space-12));
   background: var(--role-band);

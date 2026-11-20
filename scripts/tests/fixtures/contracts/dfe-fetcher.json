@@ -121,7 +121,11 @@
   "native_deps": {
     "apt_repos": [],
     "apt_packages": [
-      "curl"
+      "curl",
+      "libodbc2",
+      "odbc-postgresql",
+      "odbc-mariadb",
+      "libsqliteodbc"
     ],
     "distro": "trixie"
   },
@@ -137,7 +141,7 @@
   "config_schema": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "title": "Config",
-    "description": "Main configuration struct.\n\n## Hot-reload behaviour\n\nThe config file is watched for changes. When reloaded, values are\navailable via `SharedConfig::get()`. However, not all settings take\neffect without a restart.\n\n**Hot-reloaded (takes effect on next fetch cycle):**\n- `scheduler.default_interval_secs` -- fetch interval re-computed each cycle\n- `scheduler.jitter_percent` -- jitter re-computed each cycle\n- `sources.*.filter` -- CEL filter re-evaluated on each record\n- `org_id`, `default_org_id` -- the `_org_id` stamped on each record, re-read\n  each fetch cycle and for each extractor record\n- `cursor.default_window_hours` -- the cap on one tick's window, re-read each cycle\n- `cursor.on_missing_cursor` -- what a tick with no cursor does, re-read each cycle\n- dropping a source, or `sources.*.enabled: false` -- its fetch task is cancelled on reload\n\n**Requires pod restart:**\n- `output.*` -- transport connections established at startup\n- `kafka.*` -- transport config bound at startup\n- `kafka.topic_suffix` -- the Vector extractor builds its topics once at start\n- `ingest.*` -- HTTP server binds at startup, auth token resolved once\n- `extractors.*` -- containers and Vector instances spawned at startup\n- `metrics.*` -- metrics server binds at startup\n- `instance_id` -- cursor key prefix set at startup\n- `cursor.directory` -- cursor store created at startup\n- adding a source, or `sources.*.enabled: true` -- source registration at startup\n- `sources.*.credential_secret`, `tenant_id`, `subscription_id`, `project_id` -- resolved once at startup\n- `scheduler.max_concurrent_fetches` -- semaphore created at startup\n- `dlq.*` -- DLQ created at startup\n- `buffer.*` -- buffer manager created at startup",
+    "description": "Main configuration struct.\n\n## Hot-reload behaviour\n\nThe config file is re-read on SIGHUP, when the file changes, and every\n`config_reload_secs` when that is set. A reload that does not validate is\nrefused and the running config kept. Not every setting takes effect without\na restart.\n\n**Hot-reloaded:**\n- `scheduler.default_interval_secs`, `scheduler.jitter_percent`,\n  `cursor.default_window_hours`, `cursor.on_missing_cursor` -- the scheduler\n  re-reads them on each tick\n- `sources.*.filter`, `output.routes`, `output.topic_suffix`, `org_id`,\n  `default_org_id`, `unwrap_nested_json`, `accumulate`, `oversize`,\n  `self_regulation` -- each source re-reads them on each tick, and `org_id`\n  and `default_org_id` are also re-read for each extractor record\n- adding, removing or changing a source, `enabled` and credentials\n  included -- its fetch task is started, stopped or rebuilt, its `env:` and\n  `vault:` specs resolved first\n\n**Requires pod restart:**\n- `output.*` other than the two above -- transports and destinations are\n  built at startup\n- `kafka.*` -- transport config bound at startup\n- the topic suffix, for the Vector extractor -- its topics are built once at\n  start\n- `ingest.*` -- HTTP server binds at startup, auth token resolved once\n- `extractors.*` -- containers and Vector instances spawned at startup\n- `metrics.*` -- metrics server binds at startup\n- `instance_id` -- cursor key prefix set at startup\n- `cursor.directory` -- cursor store created at startup\n- `scheduler.max_concurrent_fetches` -- semaphore created at startup\n- `dlq.*` -- DLQ created at startup\n- `buffer.*` -- memory guard created at startup",
     "type": "object",
     "properties": {
       "scheduler": {
@@ -306,6 +310,7 @@
           "vector": {
             "enabled": false,
             "grpc_bind_address": "0.0.0.0:6000",
+            "image": null,
             "instances": [],
             "acknowledgements": {
               "enabled": true
@@ -482,6 +487,15 @@
           "pause_above": 0.8,
           "resume_below": 0.65,
           "max_hold_secs": 30
+        }
+      },
+      "odbc": {
+        "description": "ODBC driver settings that apply to every `sources.db` instance.",
+        "$ref": "#/$defs/OdbcConfig",
+        "default": {
+          "mssql": {
+            "accept_eula": false
+          }
         }
       }
     },
@@ -3771,6 +3785,11 @@
             "type": "string",
             "default": ""
           },
+          "topic_per_dump_unit": {
+            "description": "Off lands dump units on `<topic>` instead of `<topic>-<unit>`.",
+            "type": "boolean",
+            "default": true
+          },
           "filter": {
             "description": "CEL keep-filter over each row, hot-reloaded.",
             "type": [
@@ -6331,6 +6350,11 @@
             "type": "string",
             "default": ""
           },
+          "topic_per_dump_unit": {
+            "description": "Off lands dump units on `<topic>` instead of `<topic>-<unit>`.",
+            "type": "boolean",
+            "default": true
+          },
           "filter": {
             "description": "CEL keep-filter over each row, hot-reloaded.",
             "type": [
@@ -6633,6 +6657,11 @@
             "type": "string",
             "default": ""
           },
+          "topic_per_dump_unit": {
+            "description": "Off lands dump units on `<topic>` instead of `<topic>-<unit>`.",
+            "type": "boolean",
+            "default": true
+          },
           "filter": {
             "description": "CEL keep-filter over each row, hot-reloaded.",
             "type": [
@@ -6836,7 +6865,7 @@
             }
           },
           "data_dir": {
-            "description": "Directory the checkpoint file lives in; must be on durable storage.",
+            "description": "Directory the checkpoint file lives in; must be on durable storage.\nLeft empty, dfe-fetcher uses a directory of its own for this unit under\n`cursor.directory`.",
             "type": "string",
             "default": ""
           }
@@ -6946,6 +6975,7 @@
             "default": {
               "enabled": false,
               "grpc_bind_address": "0.0.0.0:6000",
+              "image": null,
               "instances": [],
               "acknowledgements": {
                 "enabled": true
@@ -7115,6 +7145,14 @@
             "type": "string",
             "default": "0.0.0.0:6000"
           },
+          "image": {
+            "description": "The image a container-mode instance runs when it names none, pinned by\ndigest (`timberio/vector:<tag>@sha256:<digest>`). Unset, a container\ninstance without its own `image` is refused at load. A deployment sets\nit from the stack's pinned Vector, `DFE_FETCHER_EXTRACTORS__VECTOR__IMAGE`.",
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
           "instances": {
             "description": "Vector instances. A Vector push names no instance, so the listener a\npush arrives on is what says which instance sent it: at most one\ninstance shares `grpc_bind_address`, and each other one gives its own.",
             "type": "array",
@@ -7146,12 +7184,12 @@
             "default": "container"
           },
           "image": {
-            "description": "Container image for container mode, pinned by digest.",
+            "description": "Container image for container mode, pinned by digest. Unset, the\ninstance runs `extractors.vector.image`.",
             "type": [
               "string",
               "null"
             ],
-            "default": "timberio/vector:0.58.0-alpine@sha256:5dcf67db0ee378caa87f3395cb9484ebe3e97bb0334d119f2ac33116e00c5773"
+            "default": null
           },
           "vector_config": {
             "description": "Inline Vector configuration, TOML or YAML, for container mode. It is\nwritten to a file in a private temporary directory (`.yaml` when it\nparses as a YAML mapping, else `.toml`), mounted read-only, passed to\nVector with `--config`, and removed when the fetcher stops.",
@@ -7437,7 +7475,7 @@
         "type": "object",
         "properties": {
           "memory_limit": {
-            "description": "Maximum memory for buffers in bytes (0 = auto-detect 67% of available).",
+            "description": "Memory guard limit in bytes. 0 auto-detects 85% of the cgroup limit (of\nsystem memory outside a cgroup), or cgroup v2 `memory.high` when that is lower.",
             "type": "integer",
             "format": "uint",
             "minimum": 0,
@@ -7540,7 +7578,7 @@
         "description": "How backends are used when multiple are enabled.",
         "oneOf": [
           {
-            "description": "Try backends in order; stop on first success.\nDefault order: Kafka first, file fallback.",
+            "description": "Try backends in order. Stop on first success.\nDefault order: Kafka first, file fallback.",
             "type": "string",
             "const": "cascade"
           },
@@ -7770,7 +7808,7 @@
             "default": "classic"
           },
           "consumer_protocol_probe_ms": {
-            "description": "No longer read: nothing waits on a KIP-848 join, because librdkafka\nreports no join for a member that holds no partitions.\n\nKept so configs that set it still parse; it has no effect.",
+            "description": "No longer read: nothing waits on a KIP-848 join, because librdkafka\nreports no join for a member that holds no partitions.\n\nKept so configs that set it still parse. It has no effect.",
             "type": "integer",
             "format": "uint64",
             "minimum": 0,
@@ -7798,13 +7836,18 @@
             "default": []
           },
           "topic_exclude": {
-            "description": "Regex patterns for topic exclude filtering.\nTopics matching any pattern are excluded. Exclude wins over include.\nDefault: `[\"^__\", \"_dlq$\"]` -- Kafka internal topics and a downstream\ndead-letter-topic convention (a DLQ consumer sets its own include).",
+            "description": "Regex patterns for topic exclude filtering.\nTopics matching any pattern are excluded. Exclude wins over include.\nDefault: Kafka internal topics (`^__`), the internal topics of Strimzi,\nConfluent, Redpanda, Schema Registry and Kafka Connect, and a downstream\ndead-letter-topic convention (`_dlq$`, a DLQ consumer sets its own include).",
             "type": "array",
             "items": {
               "type": "string"
             },
             "default": [
               "^__",
+              "^strimzi\\.",
+              "^_confluent",
+              "^_redpanda",
+              "^_schemas$",
+              "^connect-(configs|offsets|status)$",
               "_dlq$"
             ]
           },
@@ -7868,7 +7911,7 @@
             "default": null
           },
           "ssl_ca_location": {
-            "description": "SSL CA certificate file path (private-CA bundle; maps to\n`TlsTrust.extra_roots` -- a single combined root+intermediate PEM is\naccepted).",
+            "description": "SSL CA certificate file path (private-CA bundle -- maps to\n`TlsTrust.extra_roots` -- a single combined root+intermediate PEM is\naccepted).",
             "type": [
               "string",
               "null"
@@ -8226,7 +8269,7 @@
             "default": null
           },
           "buffer_memory_bytes": {
-            "description": "Total byte budget for the producer's in-memory queue.\n\nlibrdkafka: `queue.buffering.max.kbytes` (in KiB, default 1 GiB).\nThis is the TOTAL queue, not per-batch. Set lower to bound memory\nusage in containers. Stored as bytes in this struct; divided by 1024\nwhen applied to librdkafka.",
+            "description": "Total byte budget for the producer's in-memory queue.\n\nlibrdkafka: `queue.buffering.max.kbytes` (in KiB, default 1 GiB).\nThis is the TOTAL queue, not per-batch. Set lower to bound memory\nusage in containers. Stored as bytes in this struct. Divided by 1024\nwhen applied to librdkafka.",
             "type": [
               "integer",
               "null"
@@ -8608,6 +8651,32 @@
             "format": "uint64",
             "minimum": 0,
             "default": 30
+          }
+        },
+        "additionalProperties": false
+      },
+      "OdbcConfig": {
+        "description": "ODBC driver settings, `odbc` in the cascade.",
+        "type": "object",
+        "properties": {
+          "mssql": {
+            "description": "Microsoft ODBC Driver for SQL Server.",
+            "$ref": "#/$defs/MssqlOdbcConfig",
+            "default": {
+              "accept_eula": false
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "MssqlOdbcConfig": {
+        "description": "Microsoft ODBC Driver for SQL Server, `odbc.mssql` in the cascade.",
+        "type": "object",
+        "properties": {
+          "accept_eula": {
+            "description": "Accept Microsoft's licence for its SQL Server ODBC driver\n(<https://aka.ms/odbc18eula>). Until it is true, a `sources.db`\ninstance with dialect `mssql` is refused at load.",
+            "type": "boolean",
+            "default": false
           }
         },
         "additionalProperties": false
@@ -9073,7 +9142,7 @@
       "kind": "source",
       "name": "github",
       "description": "GitHub org / Enterprise Cloud audit-log events. Accepted auth modes: bearer.",
-      "maturity": "alpha",
+      "maturity": "stable",
       "fields": [
         {
           "name": "id",
@@ -9133,7 +9202,7 @@
       "kind": "source",
       "name": "okta",
       "description": "Okta System Log events for one tenant. Accepted auth modes: api_key, bearer, oauth2_client_credentials.",
-      "maturity": "alpha",
+      "maturity": "stable",
       "fields": [
         {
           "name": "id",
@@ -9194,7 +9263,7 @@
       "kind": "source",
       "name": "cloudflare",
       "description": "Cloudflare account audit-log events. Accepted auth modes: bearer.",
-      "maturity": "alpha",
+      "maturity": "stable",
       "fields": [
         {
           "name": "id",
@@ -9254,7 +9323,7 @@
       "kind": "source",
       "name": "onepassword",
       "description": "1Password Events Reporting API (Business/Enterprise). Accepted auth modes: bearer.",
-      "maturity": "alpha",
+      "maturity": "stable",
       "fields": [
         {
           "name": "id",
@@ -9322,7 +9391,7 @@
       "kind": "source",
       "name": "crowdstrike",
       "description": "CrowdStrike Falcon alerts via OAuth2 client-credentials. Accepted auth modes: oauth2_client_credentials.",
-      "maturity": "alpha",
+      "maturity": "stable",
       "fields": [
         {
           "name": "id",
@@ -9382,7 +9451,7 @@
       "kind": "source",
       "name": "slack",
       "description": "Slack Enterprise Grid audit-log events. Accepted auth modes: bearer.",
-      "maturity": "alpha",
+      "maturity": "stable",
       "fields": [
         {
           "name": "id",
@@ -9436,7 +9505,7 @@
       "kind": "source",
       "name": "bitwarden",
       "description": "Bitwarden organisation Events API (OAuth2 client-credentials). Accepted auth modes: oauth2_client_credentials.",
-      "maturity": "alpha",
+      "maturity": "stable",
       "fields": [
         {
           "name": "id",
@@ -9476,7 +9545,7 @@
       "kind": "source",
       "name": "duo",
       "description": "Duo Admin API authentication events (request-signed). Accepted auth modes: signature.",
-      "maturity": "alpha",
+      "maturity": "stable",
       "fields": [
         {
           "name": "id",
@@ -9541,7 +9610,7 @@
       "kind": "source",
       "name": "pypi",
       "description": "PyPI package metadata (supply-chain monitoring; no auth). Single-connection. Accepted auth modes: none.",
-      "maturity": "alpha",
+      "maturity": "stable",
       "fields": [
         {
           "name": "packages",
@@ -9562,7 +9631,7 @@
       "kind": "source",
       "name": "crates_io",
       "description": "crates.io crate metadata (supply-chain monitoring; no auth). Single-connection. Accepted auth modes: none.",
-      "maturity": "alpha",
+      "maturity": "stable",
       "fields": [
         {
           "name": "crates",
@@ -9583,7 +9652,7 @@
       "kind": "source",
       "name": "go_modules",
       "description": "Go module-proxy metadata (supply-chain monitoring; no auth). Single-connection. Accepted auth modes: none.",
-      "maturity": "alpha",
+      "maturity": "stable",
       "fields": [
         {
           "name": "modules",
@@ -9604,7 +9673,7 @@
       "kind": "source",
       "name": "google_workspace",
       "description": "Google Workspace Reports API per-application activity (domain-wide-delegation SA). Accepted auth modes: jwt_bearer.",
-      "maturity": "alpha",
+      "maturity": "stable",
       "fields": [
         {
           "name": "id",
@@ -9659,7 +9728,7 @@
       "kind": "source",
       "name": "gcp_pubsub",
       "description": "GCP Pub/Sub pull source (Log Sink delivery). Single-connection. Accepted auth modes: jwt_bearer, gce_metadata.",
-      "maturity": "alpha",
+      "maturity": "stable",
       "fields": [
         {
           "name": "service_account_key",
@@ -9680,7 +9749,7 @@
           "kind": "service",
           "name": "subscription",
           "description": "One entry per `subscriptions[]`: a subscription to pull from.",
-          "maturity": "alpha",
+          "maturity": "stable",
           "fields": [
             {
               "name": "project_id",
@@ -9715,8 +9784,8 @@
     {
       "kind": "source",
       "name": "object_store",
-      "description": "Object-store tailing (S3 live; GCS / Azure Blob are Phase-2 stubs). Single-connection. Accepted auth modes: sigv4.",
-      "maturity": "alpha",
+      "description": "Object-store tailing from S3 or an S3-compatible endpoint. Single-connection. Accepted auth modes: sigv4.",
+      "maturity": "stable",
       "children": [
         {
           "kind": "service",
@@ -9762,18 +9831,6 @@
               "description": "Seconds an object ages before it is read where ListMultipartUploads is refused (default 300)."
             }
           ]
-        },
-        {
-          "kind": "service",
-          "name": "gcs",
-          "description": "Google Cloud Storage (Phase-2 stub).",
-          "maturity": "alpha"
-        },
-        {
-          "kind": "service",
-          "name": "azure_blob",
-          "description": "Azure Blob Storage (Phase-2 stub).",
-          "maturity": "alpha"
         }
       ]
     },
@@ -9781,7 +9838,7 @@
       "kind": "source",
       "name": "salesforce",
       "description": "Salesforce audit surfaces via REST (JWT-bearer or client-credentials OAuth2). Accepted auth modes: jwt_bearer, oauth2_client_credentials.",
-      "maturity": "alpha",
+      "maturity": "stable",
       "fields": [
         {
           "name": "id",

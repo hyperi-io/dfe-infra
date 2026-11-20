@@ -74,7 +74,9 @@ def run(
     with sync_playwright() as p:
         browser = p.chromium.launch()
         page = browser.new_page(viewport={"width": 1600, "height": 1000})
-        page.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
+        page.on(
+            "console", lambda m: errors.append(m.text) if m.type == "error" else None
+        )
 
         # Pre-authenticate the hyperdx origin in THIS browser context so the iframe
         # (same origin :8080) shares the session cookie -- in prod the shared OIDC
@@ -98,7 +100,9 @@ def run(
         after_login_url = page.evaluate("() => location.pathname")
 
         # Go to the embedded observe view.
-        page.goto(dfeui + f"/observe/{feature}", wait_until="domcontentloaded", timeout=60000)
+        page.goto(
+            dfeui + f"/observe/{feature}", wait_until="domcontentloaded", timeout=60000
+        )
         page.wait_for_timeout(6000)
 
         iframe_el = page.query_selector("iframe")
@@ -149,7 +153,9 @@ def run(
     )
     frame_ok = hframe is not None
     chromeless_ok = frame_has_appnav is False
-    frame_authed = frame_ok and "/login" not in (frame_url or "") and feature in (frame_url or "")
+    frame_authed = (
+        frame_ok and "/login" not in (frame_url or "") and feature in (frame_url or "")
+    )
 
     checks = [
         (
@@ -188,7 +194,9 @@ def run(
     print(f"  screenshot -> {shot}\n")
     failures = 0
     for name, ok, note in checks:
-        print(f"  [{'ok  ' if ok else 'FAIL'}] {name}" + (f" -- {note}" if note else ""))
+        print(
+            f"  [{'ok  ' if ok else 'FAIL'}] {name}" + (f" -- {note}" if note else "")
+        )
         failures += 0 if ok else 1
     if errors:
         print(f"\n  console errors ({len(errors)}):")
@@ -199,7 +207,9 @@ def run(
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Verify the dfe-ui<->hyperdx seamless embed.")
+    ap = argparse.ArgumentParser(
+        description="Verify the dfe-ui<->hyperdx seamless embed."
+    )
     ap.add_argument("--dfeui", default="http://localhost:3000")
     ap.add_argument("--hyperdx", default="http://localhost:8080")
     ap.add_argument("--user", default="dev", help="dfe-ui login (mock-backed)")

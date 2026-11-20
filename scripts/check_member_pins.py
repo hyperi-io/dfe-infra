@@ -145,7 +145,9 @@ class Finding:
     def render(self) -> str:
         where = f"{self.path}:{self.line}"
         waived = f"  (waived: {self.waived_by})" if self.waived_by else ""
-        return f"  {where}  {self.image}  {self.field}: {self.old} -> {self.new}{waived}"
+        return (
+            f"  {where}  {self.image}  {self.field}: {self.old} -> {self.new}{waived}"
+        )
 
 
 @dataclass(slots=True)
@@ -187,7 +189,9 @@ def _digest_for(lines: list[str], name: str) -> tuple[str, int]:
         m = wanted.match(line)
         if not m:
             continue
-        for offset, text in enumerate((m["rest"], lines[index + 1] if index + 1 < len(lines) else "")):
+        for offset, text in enumerate(
+            (m["rest"], lines[index + 1] if index + 1 < len(lines) else "")
+        ):
             hit = _DIGEST.search(text)
             if hit:
                 return hit[0], index + 1 + offset
@@ -204,8 +208,15 @@ def _annotated(path: str, lines: list[str], index: int, ref: str) -> Pin | None:
             continue
         compose = _COMPOSE.match(line)
         if compose:
-            return Pin(path, at + 1, compose["ref"], compose["tag"], compose["digest"] or "",
-                       at + 1 if compose["digest"] else 0, "compose")
+            return Pin(
+                path,
+                at + 1,
+                compose["ref"],
+                compose["tag"],
+                compose["digest"] or "",
+                at + 1 if compose["digest"] else 0,
+                "compose",
+            )
         assign = _ASSIGN.match(line)
         if not assign:
             return None
@@ -241,7 +252,17 @@ def extract_pins(path: str, text: str) -> list[Pin]:
             shape = "shell"
         if m is not None:
             digest = m["digest"] or ""
-            pins.append(Pin(path, index, m["ref"], m["tag"], digest, index if digest else 0, shape))
+            pins.append(
+                Pin(
+                    path,
+                    index,
+                    m["ref"],
+                    m["tag"],
+                    digest,
+                    index if digest else 0,
+                    shape,
+                )
+            )
     return pins
 
 
@@ -257,21 +278,37 @@ def compare(member: str, pins: list[Pin], images: list[StackImage]) -> list[Find
         ref = normalise_ref(pin.ref)
         if ref in rejected:
             image = rejected[ref]
-            findings.append(Finding(
-                member, pin.path, pin.line, pin.ref, "image",
-                f"{pin.ref}:{pin.tag}", f"{image.ref}:{image.tag}@{image.digest}",
-            ))
+            findings.append(
+                Finding(
+                    member,
+                    pin.path,
+                    pin.line,
+                    pin.ref,
+                    "image",
+                    f"{pin.ref}:{pin.tag}",
+                    f"{image.ref}:{image.tag}@{image.digest}",
+                )
+            )
             continue
         image = by_ref.get(ref)
         if image is None or _MANAGED_KAFKA.search(pin.tag):
             continue
         if pin.tag != image.tag:
-            findings.append(Finding(member, pin.path, pin.line, pin.ref, "tag", pin.tag, image.tag))
+            findings.append(
+                Finding(member, pin.path, pin.line, pin.ref, "tag", pin.tag, image.tag)
+            )
         if pin.digest != image.digest:
-            findings.append(Finding(
-                member, pin.path, pin.digest_line or pin.line, pin.ref, "digest",
-                pin.digest or "(none)", image.digest,
-            ))
+            findings.append(
+                Finding(
+                    member,
+                    pin.path,
+                    pin.digest_line or pin.line,
+                    pin.ref,
+                    "digest",
+                    pin.digest or "(none)",
+                    image.digest,
+                )
+            )
     return findings
 
 
@@ -294,16 +331,30 @@ def apply_waivers(reports: list[MemberReport], graph: dict) -> list[Finding]:
     for report in reports:
         for i, finding in enumerate(report.findings):
             for n, waiver in enumerate(entries):
-                if (waiver.get("member") == finding.member and waiver.get("file") == finding.path
-                        and normalise_ref(str(waiver.get("image", ""))) == normalise_ref(finding.image)):
-                    report.findings[i] = replace(finding, waived_by=str(waiver.get("reason")))
+                if (
+                    waiver.get("member") == finding.member
+                    and waiver.get("file") == finding.path
+                    and normalise_ref(str(waiver.get("image", "")))
+                    == normalise_ref(finding.image)
+                ):
+                    report.findings[i] = replace(
+                        finding, waived_by=str(waiver.get("reason"))
+                    )
                     used.add(n)
                     break
     read = {r.member for r in reports if not r.unread and not r.exempt}
     return [
-        Finding(str(w.get("member")), str(w.get("file")), 0, str(w.get("image")), "waiver",
-                "excuses nothing", "remove it from suite.yaml pin_waivers")
-        for n, w in enumerate(entries) if n not in used and w.get("member") in read
+        Finding(
+            str(w.get("member")),
+            str(w.get("file")),
+            0,
+            str(w.get("image")),
+            "waiver",
+            "excuses nothing",
+            "remove it from suite.yaml pin_waivers",
+        )
+        for n, w in enumerate(entries)
+        if n not in used and w.get("member") in read
     ]
 
 
@@ -313,7 +364,11 @@ def apply_waivers(reports: list[MemberReport], graph: dict) -> list[Finding]:
 def _git(repo: Path, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["git", "-C", str(repo), *args],
-        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
     )
 
 
@@ -346,7 +401,11 @@ def read_member(repo: Path, *, fetch: bool) -> tuple[str, dict[str, str]]:
 def _gh(*args: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["gh", "api", *args],
-        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
     )
 
 
@@ -365,7 +424,9 @@ def read_member_api(slug: str) -> tuple[str, dict[str, str]]:
     head = _gh(f"repos/{slug}/commits/main", "--jq", ".sha")
     sha = head.stdout.strip()
     if head.returncode != 0 or not sha:
-        raise FleetError(f"gh api cannot read {slug} main: {head.stderr.strip() or 'no sha'}")
+        raise FleetError(
+            f"gh api cannot read {slug} main: {head.stderr.strip() or 'no sha'}"
+        )
     listed = _gh(f"repos/{slug}/git/trees/{sha}?recursive=1")
     try:
         tree = json.loads(listed.stdout) if listed.returncode == 0 else None
@@ -374,20 +435,29 @@ def read_member_api(slug: str) -> tuple[str, dict[str, str]]:
     if not isinstance(tree, dict):
         raise FleetError(f"gh api cannot list {slug} at {sha}: {listed.stderr.strip()}")
     if tree.get("truncated"):
-        raise FleetError(f"gh api listed {slug} truncated, so some files would go unread")
+        raise FleetError(
+            f"gh api listed {slug} truncated, so some files would go unread"
+        )
     paths = sorted(
-        str(entry.get("path") or "") for entry in tree.get("tree") or []
+        str(entry.get("path") or "")
+        for entry in tree.get("tree") or []
         if entry.get("type") == "blob" and _candidate(str(entry.get("path") or ""))
     )
     with ThreadPoolExecutor(max_workers=API_WORKERS) as pool:
         bodies = pool.map(
-            lambda path: _gh(f"repos/{slug}/contents/{quote(path)}?ref={sha}", "-H", "Accept: application/vnd.github.raw"),
+            lambda path: _gh(
+                f"repos/{slug}/contents/{quote(path)}?ref={sha}",
+                "-H",
+                "Accept: application/vnd.github.raw",
+            ),
             paths,
         )
         files: dict[str, str] = {}
         for path, body in zip(paths, bodies, strict=True):
             if body.returncode != 0:
-                raise FleetError(f"gh api cannot read {slug}:{path}: {body.stderr.strip()}")
+                raise FleetError(
+                    f"gh api cannot read {slug}:{path}: {body.stderr.strip()}"
+                )
             if _CANDIDATE.search(body.stdout):
                 files[path] = body.stdout
     return sha[:9], files
@@ -411,7 +481,9 @@ def read_any(
             local_miss = str(exc)
     slug = node.get("repo")
     if not slug:
-        raise FleetError(f"{local_miss}; and suite.yaml names no repo to read through gh api")
+        raise FleetError(
+            f"{local_miss}; and suite.yaml names no repo to read through gh api"
+        )
     try:
         sha, files = read_member_api(str(slug))
     except FleetError as exc:
@@ -438,13 +510,21 @@ def exemption(member: str, node: dict) -> str:
 
 
 def scan_member(
-    member: str, node: dict, images: list[StackImage], *, repos: str | None, fetch: bool, api: bool = False
+    member: str,
+    node: dict,
+    images: list[StackImage],
+    *,
+    repos: str | None,
+    fetch: bool,
+    api: bool = False,
 ) -> MemberReport:
     report = MemberReport(member, exempt=exemption(member, node))
     if report.exempt:
         return report
     try:
-        report.source, report.sha, files = read_any(member, node, repos=repos, fetch=fetch, api=api)
+        report.source, report.sha, files = read_any(
+            member, node, repos=repos, fetch=fetch, api=api
+        )
     except FleetError as exc:
         report.unread = str(exc)
         return report
@@ -474,7 +554,11 @@ def scan(
     unknown = sorted(set(members or ()) - set(nodes))
     if unknown:
         raise FleetError(f"not a suite member: {', '.join(unknown)} (suite.yaml nodes)")
-    text = versions_text if versions_text is not None else VERSIONS_FILE.read_text(encoding="utf-8")
+    text = (
+        versions_text
+        if versions_text is not None
+        else VERSIONS_FILE.read_text(encoding="utf-8")
+    )
     stack, images = stack_images(text)
     reports = [
         scan_member(name, nodes[name], images, repos=repos, fetch=fetch, api=api)
@@ -483,8 +567,15 @@ def scan(
     return stack, images, reports, apply_waivers(reports, graph)
 
 
-def render(stack: str, images: list[StackImage], reports: list[MemberReport], stale: list[Finding]) -> list[str]:
-    out = [f"member-pins: stack {stack}, {len(images)} digested image(s) in versions.yaml"]
+def render(
+    stack: str,
+    images: list[StackImage],
+    reports: list[MemberReport],
+    stale: list[Finding],
+) -> list[str]:
+    out = [
+        f"member-pins: stack {stack}, {len(images)} digested image(s) in versions.yaml"
+    ]
     for report in reports:
         where = f"{report.member} @ main {report.sha} via {report.source}"
         if report.exempt:
@@ -494,12 +585,17 @@ def render(stack: str, images: list[StackImage], reports: list[MemberReport], st
         elif not report.findings:
             out.append(f"{where}: ok, {report.pins} pin(s) checked")
         else:
-            out.append(f"{where}: {len(report.edits)} edit(s), {report.pins} pin(s) checked")
+            out.append(
+                f"{where}: {len(report.edits)} edit(s), {report.pins} pin(s) checked"
+            )
             out.extend(finding.render() for finding in report.findings)
     if stale:
         out.append("suite.yaml pin_waivers:")
-        out.extend(f"  {_waiver_name({'member': f.member, 'file': f.path, 'image': f.image})}: "
-                   f"{f.old} -- {f.new}" for f in stale)
+        out.extend(
+            f"  {_waiver_name({'member': f.member, 'file': f.path, 'image': f.image})}: "
+            f"{f.old} -- {f.new}"
+            for f in stale
+        )
     return out
 
 
@@ -516,11 +612,19 @@ def build_parser() -> argparse.ArgumentParser:
         prog="check_member_pins.py",
         description="Check every suite member's backing-service pins against versions.yaml.",
     )
-    parser.add_argument("member", nargs="*", help="members to scan (default: every suite.yaml node)")
-    parser.add_argument("--repos", help="directory holding the member checkouts")
-    parser.add_argument("--no-fetch", action="store_true", help="read origin/main as it stands, without a fetch")
     parser.add_argument(
-        "--api", action="store_true", help="read every member's main through gh api, even one checked out here"
+        "member", nargs="*", help="members to scan (default: every suite.yaml node)"
+    )
+    parser.add_argument("--repos", help="directory holding the member checkouts")
+    parser.add_argument(
+        "--no-fetch",
+        action="store_true",
+        help="read origin/main as it stands, without a fetch",
+    )
+    parser.add_argument(
+        "--api",
+        action="store_true",
+        help="read every member's main through gh api, even one checked out here",
     )
     return parser
 
@@ -539,7 +643,10 @@ def main(argv: list[str] | None = None) -> int:
     code = exit_code(reports, stale)
     edits = sum(len(report.edits) for report in reports) + len(stale)
     unread = sum(1 for report in reports if report.unread)
-    print(f"member-pins: {edits} edit(s), {unread} member(s) not read -- exit {code}", flush=True)
+    print(
+        f"member-pins: {edits} edit(s), {unread} member(s) not read -- exit {code}",
+        flush=True,
+    )
     return code
 
 

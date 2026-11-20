@@ -7,7 +7,7 @@
 ## Copyright: (c) 2026 HYPERI PTY LIMITED
 
 ## THE DEPLOYMENT DIAL -- one config file the whole deployment reads. This is the
-## CANONICAL SUPERSET: it spans every substrate (docker-vm + k8s) and every cloud,
+## CANONICAL SUPERSET: it spans every platform (docker-vm + k8s) and every cloud,
 ## and it is the persisted, wizard-populatable form of the DeployContext. The chain is
 ##
 ##     dial  ->  DeployContext  ->  deploy(context)  ->  running stack
@@ -37,12 +37,12 @@
 apiVersion: dfe.hyperi.io/v1
 kind: DeployContext
 
-## Which substrate this deployment targets.
+## Which platform this deployment targets.
 ##   docker-vm -- single-VM docker compose stack (dfe-docker).
 ##   k8s       -- an RKE2/EKS/GKE/AKS cluster via dfe-ops (this repo).
-## The k8s renderer here requires substrate: k8s; the docker renderer requires
-## docker-vm. One file, sliced per substrate.
-substrate: k8s
+## The k8s renderer here requires platform: k8s, and the docker renderer requires
+## docker-vm. One file, sliced per platform.
+platform: k8s
 
 ## WHO + WHAT LIFECYCLE. metadata.name is the deploy id -> namespace / release /
 ## Argo-app prefix. lifecycle drives whether the deployment is torn down with its
@@ -646,12 +646,9 @@ sizing:
 ## last segment of the credential's store key (<project>/<env>/kafka/<provider>),
 ## which is how the kafka chart reads the password back.
 kafka:
-  # strimzi | redpanda | msk | confluent-cloud | redpanda-cloud. DOCUMENTATION
-  # ONLY below, not yet resolved by the sizing overlay: the provider-by-tier
-  # default the resolver's aws overlay (sizing/targets/aws.yaml) is expected to
-  # apply once it picks this up is msk at Small and Medium, confluent-cloud at
-  # Large -- that file is in flight elsewhere, so this stays a comment until it
-  # lands there.
+  # strimzi | redpanda | msk | confluent-cloud | redpanda-cloud. dfe-ops init
+  # defaults it to msk at AWS Medium, confluent-cloud at AWS Large, and strimzi
+  # on-prem and at Small, which runs no broker, so the aws root builds none.
   provider: strimzi
   ## combined | separate -- where the KRaft metadata quorum runs. combined keeps
   ## it on the brokers and is the kafka chart's own default; separate is for a
@@ -660,6 +657,14 @@ kafka:
   ## sizing/sizing.yaml locks the answer as controller_mode and a re-resolve
   ## refuses the move without --migrate.
   controller_pool: combined
+  ## Strimzi only. Lets KEDA remove brokers it added once load falls, after
+  ## Strimzi moves their partitions off. Off by default: the leaving brokers'
+  ## data must fit on the rest under Cruise Control's DiskCapacityGoal (80%),
+  ## and a segment must roll before retention frees its space.
+  ## docs/deployment/kafka/autoscaling.md.
+  broker_scale_in:
+    enabled: false
+    cooldown_seconds: 1800   # the HPA scale-down window once enabled, 1 to 3600
   ## The two SaaS bodies read these six. Leave one out and render_dial.py or the
   ## aws root's own default applies; a value outside its list, or an id in the
   ## wrong vendor's shape, is refused at render (scripts/render_dial.py).
@@ -757,7 +762,7 @@ registry: ghcr.io/hyperi-io
 ## expands into the per-component version set. track-latest is the opt-in daemon
 ## roll to the newest certified stack tag.
 version:
-  pin: 2.2.2-rc.3
+  pin: 2.2.2-fix.1
   # track: latest
   # allow_prerelease: "false"
 
@@ -824,7 +829,7 @@ docker:
 ## ---------------------------------------------------------------------------
 ## k8s SLICE -- consumed by this repo's render_dial. Each field maps to one DFE_*
 ## key in the env file dfe-ops reads (bootstrap/.env). The cloud-swap dials are
-## the DeployContext seam -- change the cloud, change these, everything else is
+## the DeployContext fields -- change the cloud, change these, everything else is
 ## the same orchestrator.
 ## ---------------------------------------------------------------------------
 k8s:

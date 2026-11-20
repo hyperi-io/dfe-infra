@@ -1,6 +1,4 @@
-{{- /* The CA copy for clients outside the app namespace. A store of its own, whose
-Role names the CA-only Secret and nothing else, because the app namespace's store
-(clickhouse-admin-appns.yaml) can also read the admin credential. */}}
+{{- /* The CA copy for clients outside the app namespace, behind a store that cannot read the admin credential. */}}
 {{- if and (ne .Values.clickhouse.mode "external") (include "dfe-clickhouse.tlsEnabled" .) }}
 {{- $ca := .Values.clickhouse.tls.ca | default dict }}
 {{- if and $ca.secretName $ca.extraNamespaces }}

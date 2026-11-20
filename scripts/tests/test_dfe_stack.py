@@ -113,7 +113,9 @@ def test_every_app_digest_has_a_tag_verify_can_resolve() -> None:
     text = (REPO_ROOT / "versions.yaml").read_text(encoding="utf-8")
     _, pins = stack.stack_pins(stack.parse_simple_yaml(text), None)
     missing = stack.untagged_digests(pins)
-    expect("every digests: key has a tag to resolve", not missing, f"missing: {missing}")
+    expect(
+        "every digests: key has a tag to resolve", not missing, f"missing: {missing}"
+    )
 
 
 # A stack with an image versioned under content: (the HyperDX fork's shape), a
@@ -135,7 +137,11 @@ def test_the_image_list_includes_an_image_versioned_under_content() -> None:
         f"{refs}",
     )
     expect("an apps: image is still listed", "an-app" in refs, f"{refs}")
-    expect("a content repo with no digest is not an image", "a-schema-repo" not in refs, f"{refs}")
+    expect(
+        "a content repo with no digest is not an image",
+        "a-schema-repo" not in refs,
+        f"{refs}",
+    )
     expect("an unpublished app stays out", "unshipped" not in refs, f"{refs}")
 
 
@@ -165,14 +171,22 @@ def test_the_docker_render_hands_dfe_docker_its_documentdb_local_pin() -> None:
 def test_the_toolbox_base_image_takes_the_family_tag() -> None:
     """The base image publishes as dfe-toolbox-base under toolbox.dfe-toolbox, a
     family pin with a different name, so neither apps: nor content: holds it."""
-    pins = {"toolbox": {"dfe-toolbox": "v1.0.0"}, "digests": {"dfe-toolbox-base": "sha256:ccc"}}
+    pins = {
+        "toolbox": {"dfe-toolbox": "v1.0.0"},
+        "digests": {"dfe-toolbox-base": "sha256:ccc"},
+    }
     refs = stack.app_images(pins, "registry.example/org")
     expect(
         "the base image is listed with the family tag and its own digest",
-        refs.get("dfe-toolbox-base") == "registry.example/org/dfe-toolbox-base:v1.0.0@sha256:ccc",
+        refs.get("dfe-toolbox-base")
+        == "registry.example/org/dfe-toolbox-base:v1.0.0@sha256:ccc",
         f"{refs}",
     )
-    expect("so it is not reported untagged", stack.untagged_digests(pins) == [], f"{stack.untagged_digests(pins)}")
+    expect(
+        "so it is not reported untagged",
+        stack.untagged_digests(pins) == [],
+        f"{stack.untagged_digests(pins)}",
+    )
 
 
 def test_the_committed_image_list_carries_every_digest() -> None:
@@ -229,10 +243,16 @@ def test_a_single_manifest_image_reads_its_config_platform() -> None:
     original = stack.registry_pins._imagetools
     stack.registry_pins._imagetools = _imagetools
     try:
-        found, err = stack.registry_pins.ref_platforms("registry.example/org/x@sha256:aaa")
+        found, err = stack.registry_pins.ref_platforms(
+            "registry.example/org/x@sha256:aaa"
+        )
     finally:
         stack.registry_pins._imagetools = original
-    expect("the config's platform is returned", found == {"linux/arm64"}, f"{found} {err!r}")
+    expect(
+        "the config's platform is returned",
+        found == {"linux/arm64"},
+        f"{found} {err!r}",
+    )
     expect("after the raw read came back with no index", len(calls) == 2, f"{calls}")
 
 
@@ -242,13 +262,18 @@ def _native_builders(ref: str) -> tuple[dict[str, str], str]:
 
 def _with_platforms(reader, fn, builders=_native_builders):
     """Run fn with the platform read answered by reader and the provenance read by builders."""
-    original = stack.registry_pins.ref_platforms, stack.registry_pins.ref_builder_platforms
+    original = (
+        stack.registry_pins.ref_platforms,
+        stack.registry_pins.ref_builder_platforms,
+    )
     stack.registry_pins.ref_platforms = reader
     stack.registry_pins.ref_builder_platforms = builders
     try:
         return fn()
     finally:
-        stack.registry_pins.ref_platforms, stack.registry_pins.ref_builder_platforms = original
+        stack.registry_pins.ref_platforms, stack.registry_pins.ref_builder_platforms = (
+            original
+        )
 
 
 def _multi_arch_except(single: str):
@@ -286,7 +311,9 @@ def test_platforms_read_the_pinned_digest_not_the_tag() -> None:
         asked.append(ref)
         return {"linux/amd64", "linux/arm64"}, ""
 
-    _with_platforms(reader, lambda: stack.platform_findings(_IMAGES_PINS, "registry.example/org"))
+    _with_platforms(
+        reader, lambda: stack.platform_findings(_IMAGES_PINS, "registry.example/org")
+    )
     by_digest = bool(asked) and all("@sha256:" in r for r in asked)
     expect("every read is by digest", by_digest, f"{asked}")
 
@@ -295,10 +322,18 @@ def test_platforms_read_the_pinned_digest_not_the_tag() -> None:
 # v1.0.6, cut to the field read: its arm64 half was built on an amd64 builder.
 _QEMU_PROVENANCE = {
     "linux/amd64": {
-        "SLSA": {"buildDefinition": {"internalParameters": {"builderPlatform": "linux/amd64"}}}
+        "SLSA": {
+            "buildDefinition": {
+                "internalParameters": {"builderPlatform": "linux/amd64"}
+            }
+        }
     },
     "linux/arm64": {
-        "SLSA": {"buildDefinition": {"internalParameters": {"builderPlatform": "linux/amd64"}}}
+        "SLSA": {
+            "buildDefinition": {
+                "internalParameters": {"builderPlatform": "linux/amd64"}
+            }
+        }
     },
 }
 
@@ -307,9 +342,9 @@ def test_the_provenance_parser_reads_each_platforms_builder() -> None:
     import copy
 
     native = copy.deepcopy(_QEMU_PROVENANCE)
-    native["linux/arm64"]["SLSA"]["buildDefinition"]["internalParameters"]["builderPlatform"] = (
-        "linux/arm64"
-    )
+    native["linux/arm64"]["SLSA"]["buildDefinition"]["internalParameters"][
+        "builderPlatform"
+    ] = "linux/arm64"
     no_builder = {"linux/arm64": {"SLSA": {"buildDefinition": {}}}}
     cases = {
         "an emulated arm64 build names the amd64 builder": (
@@ -332,16 +367,22 @@ def test_the_provenance_parser_reads_each_platforms_builder() -> None:
         expect(name, got == want, f"{got}")
 
 
-def _provenance_from(answer: tuple[str | None, str]) -> tuple[dict[str, str] | None, str]:
+def _provenance_from(
+    answer: tuple[str | None, str],
+) -> tuple[dict[str, str] | None, str]:
     """ref_builder_platforms over an imagetools read that answered with answer."""
 
-    def _imagetools(ref: str, *flags: str, budget: object = None) -> tuple[str | None, str]:
+    def _imagetools(
+        ref: str, *flags: str, budget: object = None
+    ) -> tuple[str | None, str]:
         return answer
 
     original = stack.registry_pins._imagetools
     stack.registry_pins._imagetools = _imagetools
     try:
-        return stack.registry_pins.ref_builder_platforms("registry.example/org/x@sha256:aaa")
+        return stack.registry_pins.ref_builder_platforms(
+            "registry.example/org/x@sha256:aaa"
+        )
     finally:
         stack.registry_pins._imagetools = original
 
@@ -428,7 +469,9 @@ def test_an_unreadable_registry_is_an_error_not_a_pass() -> None:
 
 
 def _no_repo_files(org: str, repo: str, ref: str, path: str) -> str:
-    raise stack.registry_pins.RegistryError(f"unexpected read of {org}/{repo}@{ref}:{path}")
+    raise stack.registry_pins.RegistryError(
+        f"unexpected read of {org}/{repo}@{ref}:{path}"
+    )
 
 
 def _run_release_gate(
@@ -452,17 +495,23 @@ def _run_release_gate(
         try:
             stack.REPO_ROOT, stack.registry_pins.repo_file = Path(td), repo_file
             args = argparse.Namespace(
-                stack=None, registry="registry.example/org", org="hyperi-io",
+                stack=None,
+                registry="registry.example/org",
+                org="hyperi-io",
                 require_ga_gate=require_ga_gate,
             )
             with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
-                rc = _with_platforms(reader, lambda: stack.cmd_release_gate(args), builders)
+                rc = _with_platforms(
+                    reader, lambda: stack.cmd_release_gate(args), builders
+                )
         finally:
             stack.REPO_ROOT, stack.registry_pins.repo_file = original
     return rc, out.getvalue()
 
 
-def _release_gate_over(maturity: str, reader, builders=_native_builders) -> tuple[int, str]:
+def _release_gate_over(
+    maturity: str, reader, builders=_native_builders
+) -> tuple[int, str]:
     """release-gate over a throwaway stack of _IMAGES_PINS's published images."""
     block = (
         f"    maturity: {maturity}\n"
@@ -494,11 +543,17 @@ def test_release_gate_fails_a_release_with_a_single_arch_or_emulated_image() -> 
     for name, (reader, builders, said) in sorted(cases.items()):
         rc, out = _release_gate_over("release", reader, builders)
         expect(f"{name} exits the gate non-zero", rc == 1, f"exit {rc}\n{out}")
-        expect(f"{name} is named with what it lacks", "a-fork:v0.2.7" in out and said in out, out)
+        expect(
+            f"{name} is named with what it lacks",
+            "a-fork:v0.2.7" in out and said in out,
+            out,
+        )
 
 
 def test_release_gate_passes_a_release_that_carries_both() -> None:
-    rc, out = _release_gate_over("release", lambda ref: ({"linux/amd64", "linux/arm64"}, ""))
+    rc, out = _release_gate_over(
+        "release", lambda ref: ({"linux/amd64", "linux/arm64"}, "")
+    )
     expect("the gate passes", rc == 0, f"exit {rc}\n{out}")
     expect("and says how many images it read", "all 2 image(s)" in out, out)
 
@@ -506,7 +561,11 @@ def test_release_gate_passes_a_release_that_carries_both() -> None:
 def test_release_gate_refuses_a_release_that_pins_an_app_rc() -> None:
     """However the stack was produced, a release ships promoted builds only."""
     both = lambda ref: ({"linux/amd64", "linux/arm64"}, "")  # noqa: E731
-    for maturity, tag, want in (("release", "v1.0.0-rc.1", 1), ("release", "v1.0.0", 0), ("rc", "v1.0.0-rc.1", 0)):
+    for maturity, tag, want in (
+        ("release", "v1.0.0-rc.1", 1),
+        ("release", "v1.0.0", 0),
+        ("rc", "v1.0.0-rc.1", 0),
+    ):
         block = (
             f"    maturity: {maturity}\n"
             f'    apps:\n      an-app: "{tag}"\n'
@@ -514,16 +573,31 @@ def test_release_gate_refuses_a_release_that_pins_an_app_rc() -> None:
             '    digests:\n      an-app: "sha256:aaa"\n      a-fork: "sha256:bbb"\n'
         )
         rc, out = _run_release_gate(block, both)
-        expect(f"{maturity} pinning {tag} exits {want}", rc == want, f"exit {rc}\n{out}")
+        expect(
+            f"{maturity} pinning {tag} exits {want}", rc == want, f"exit {rc}\n{out}"
+        )
         if want:
             expect("and names the app and its tag", "an-app v1.0.0-rc.1" in out, out)
 
     for label, content, service, want in (
-        ("a hand-edited prerelease dfe-hyperdx", 'dfe-hyperdx: "v0.3.0-rc.1"', "26.3.17.56", 1),
-        ("a hand-edited prerelease dfe-toolbox",
-         'dfe-hyperdx: "v0.3.0-rc.1"\n    toolbox:\n      dfe-toolbox: "v1.0.7-rc.1"', "26.3.17.56", 1),
-        ("a released dfe-hyperdx, a dfe-docker commit and a four-part upstream tag",
-         'dfe-hyperdx: "v0.3.0"\n      dfe-docker: "2b3d02df4f2a3a4c5e6f708192a3b4c5d6e7f809"', "26.3.17.56", 0),
+        (
+            "a hand-edited prerelease dfe-hyperdx",
+            'dfe-hyperdx: "v0.3.0-rc.1"',
+            "26.3.17.56",
+            1,
+        ),
+        (
+            "a hand-edited prerelease dfe-toolbox",
+            'dfe-hyperdx: "v0.3.0-rc.1"\n    toolbox:\n      dfe-toolbox: "v1.0.7-rc.1"',
+            "26.3.17.56",
+            1,
+        ),
+        (
+            "a released dfe-hyperdx, a dfe-docker commit and a four-part upstream tag",
+            'dfe-hyperdx: "v0.3.0"\n      dfe-docker: "2b3d02df4f2a3a4c5e6f708192a3b4c5d6e7f809"',
+            "26.3.17.56",
+            0,
+        ),
     ):
         block = (
             "    maturity: release\n"
@@ -537,7 +611,11 @@ def test_release_gate_refuses_a_release_that_pins_an_app_rc() -> None:
         if want:
             expect(f"{label}: and names it", "dfe-hyperdx v0.3.0-rc.1" in out, out)
             if "toolbox" in content:
-                expect(f"{label}: and the toolbox pin", "toolbox.dfe-toolbox v1.0.7-rc.1" in out, out)
+                expect(
+                    f"{label}: and the toolbox pin",
+                    "toolbox.dfe-toolbox v1.0.7-rc.1" in out,
+                    out,
+                )
 
 
 def test_every_dfe_owned_versioned_pin_is_release_checked() -> None:
@@ -554,7 +632,11 @@ def test_every_dfe_owned_versioned_pin_is_release_checked() -> None:
             if section in stack.DIGEST_SECTIONS or not isinstance(body, dict):
                 continue
             unchecked |= {f"{section}.{key}" for key in body if key in names} - checked
-    expect("no DFE-owned pin escapes the release check", not unchecked, f"{sorted(unchecked)}")
+    expect(
+        "no DFE-owned pin escapes the release check",
+        not unchecked,
+        f"{sorted(unchecked)}",
+    )
     expect(
         "and the toolbox family is among the checked",
         "toolbox.dfe-toolbox" in stack.dfe_owned_pins(stack.stack_pins(root)[1]),
@@ -587,7 +669,7 @@ def _engine_lock(locked: str | None) -> str:
         'version = 1\nrevision = 3\nrequires-python = ">=3.14"\n\n'
         '[[package]]\nname = "dfe-engine"\nversion = "0.0.0"\nsource = { editable = "." }\n'
         'dependencies = [\n    { name = "dfe-schemas" },\n]\n\n'
-        '[package.metadata]\nrequires-dist = [\n'
+        "[package.metadata]\nrequires-dist = [\n"
         '    { name = "dfe-schemas", specifier = ">=0.2.11,<1" },\n]\n'
     )
     if locked is None:
@@ -599,7 +681,10 @@ def _engine_lock(locked: str | None) -> str:
 
 
 def _schemas_gate(
-    schemas: str | None, lock: str | None, maturity: str = "rc", engine: str = "v1.22.46"
+    schemas: str | None,
+    lock: str | None,
+    maturity: str = "rc",
+    engine: str = "v1.22.46",
 ) -> tuple[int, str, list[tuple[str, str, str, str]]]:
     """release-gate over a stack pinning dfe-engine ``engine``, its lock answered by ``lock``.
 
@@ -635,7 +720,11 @@ def test_release_gate_fails_a_schemas_pin_the_engine_does_not_lock() -> None:
             "v0.2.11" in out and "0.2.13" in out and "dfe-engine v1.22.46" in out,
             out,
         )
-        expect(f"{maturity}: and the fix", 'set content.dfe-schemas to "v0.2.13"' in out, out)
+        expect(
+            f"{maturity}: and the fix",
+            'set content.dfe-schemas to "v0.2.13"' in out,
+            out,
+        )
         expect(
             f"{maturity}: the lock is read at the pinned engine tag",
             asked == [("hyperi-io", "dfe-engine", "v1.22.46", "uv.lock")],
@@ -643,7 +732,9 @@ def test_release_gate_fails_a_schemas_pin_the_engine_does_not_lock() -> None:
         )
 
 
-def _deploy_gate(template: str | None, maturity: str = "rc") -> tuple[int, str, list[tuple[str, str, str, str]]]:
+def _deploy_gate(
+    template: str | None, maturity: str = "rc"
+) -> tuple[int, str, list[tuple[str, str, str, str]]]:
     """release-gate over stack 9.9.9 pinning dfe-deploy v1.0.8, whose pins.yaml is ``template``.
 
     ``template`` None is a repository that will not serve the file.
@@ -667,17 +758,31 @@ def _template(base: str) -> str:
 
 def test_the_deploy_step_names_the_stack_the_pin_and_the_content_entry() -> None:
     step = stack.deploy_step("2.2.2-rc.1")
-    expect("names pins.yaml base.dfe-infra", 'base.dfe-infra` to "2.2.2-rc.1"' in step, step)
-    expect("names the content pin to move", "content.dfe-deploy in stack 2.2.2-rc.1" in step, step)
+    expect(
+        "names pins.yaml base.dfe-infra",
+        'base.dfe-infra` to "2.2.2-rc.1"' in step,
+        step,
+    )
+    expect(
+        "names the content pin to move",
+        "content.dfe-deploy in stack 2.2.2-rc.1" in step,
+        step,
+    )
 
 
 def test_release_gate_holds_a_deploy_template_that_names_another_stack() -> None:
     for maturity in ("rc", "release"):
         rc, out, asked = _deploy_gate(_template("9.9.8"), maturity)
-        expect(f"{maturity}: a template naming 9.9.8 fails stack 9.9.9", rc == 1, f"exit {rc}\n{out}")
+        expect(
+            f"{maturity}: a template naming 9.9.8 fails stack 9.9.9",
+            rc == 1,
+            f"exit {rc}\n{out}",
+        )
         expect(
             f"{maturity}: the error names the pin, both stacks and the fix",
-            "dfe-deploy v1.0.8" in out and "9.9.8" in out and stack.deploy_step("9.9.9") in out,
+            "dfe-deploy v1.0.8" in out
+            and "9.9.8" in out
+            and stack.deploy_step("9.9.9") in out,
             out,
         )
         expect(
@@ -690,10 +795,16 @@ def test_release_gate_holds_a_deploy_template_that_names_another_stack() -> None
 def test_release_gate_passes_a_deploy_template_that_names_the_stack() -> None:
     rc, out, _ = _deploy_gate(_template("9.9.9"))
     expect("the gate passes", rc == 0, f"exit {rc}\n{out}")
-    expect("and says what it compared", "dfe-deploy v1.0.8 pins.yaml names stack 9.9.9" in out, out)
+    expect(
+        "and says what it compared",
+        "dfe-deploy v1.0.8 pins.yaml names stack 9.9.9" in out,
+        out,
+    )
 
 
-def test_release_gate_holds_a_deploy_template_it_cannot_read_or_that_names_nothing() -> None:
+def test_release_gate_holds_a_deploy_template_it_cannot_read_or_that_names_nothing() -> (
+    None
+):
     for label, template in (("unreadable", None), ("no base", "channel: rc\n")):
         rc, out, _ = _deploy_gate(template)
         expect(f"{label}: the gate fails closed", rc == 1, f"exit {rc}\n{out}")
@@ -720,7 +831,11 @@ def test_release_gate_passes_an_engine_that_predates_dfe_schemas() -> None:
         "not applicable" in out and "dfe-engine v1.12.0 locks no dfe-schemas" in out,
         out,
     )
-    expect("after reading that engine's lock", asked == [("hyperi-io", "dfe-engine", "v1.12.0", "uv.lock")], f"{asked}")
+    expect(
+        "after reading that engine's lock",
+        asked == [("hyperi-io", "dfe-engine", "v1.12.0", "uv.lock")],
+        f"{asked}",
+    )
 
 
 def test_release_gate_fails_an_engine_lock_holding_two_schemas_versions() -> None:
@@ -736,7 +851,11 @@ def test_release_gate_fails_an_engine_lock_holding_two_schemas_versions() -> Non
 def test_release_gate_fails_an_engine_with_no_schemas_pin() -> None:
     rc, out, _ = _schemas_gate(None, _engine_lock("0.2.13"))
     expect("the gate fails", rc == 1, f"exit {rc}\n{out}")
-    expect("and the fix names the version to pin", 'set content.dfe-schemas to "v0.2.13"' in out, out)
+    expect(
+        "and the fix names the version to pin",
+        'set content.dfe-schemas to "v0.2.13"' in out,
+        out,
+    )
 
 
 def test_release_gate_reads_no_lock_for_a_stack_with_no_engine() -> None:
@@ -784,7 +903,10 @@ def _serving_files(files: dict[str, bytes], fail: list[int]):
             target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True
         )
         thread.start()
-        pins.RAW_FILES, pins._sleep = f"http://127.0.0.1:{server.server_port}", lambda s: None
+        pins.RAW_FILES, pins._sleep = (
+            f"http://127.0.0.1:{server.server_port}",
+            lambda s: None,
+        )
         try:
             yield seen
         finally:
@@ -801,9 +923,15 @@ _LOCK_PATH = "/hyperi-io/dfe-engine/v1.22.46/uv.lock"
 
 def test_repo_file_reads_a_public_file_with_no_credential() -> None:
     with _serving_files({_LOCK_PATH: b"version = 1\n"}, []) as seen:
-        body = stack.registry_pins.repo_file("hyperi-io", "dfe-engine", "v1.22.46", "uv.lock")
+        body = stack.registry_pins.repo_file(
+            "hyperi-io", "dfe-engine", "v1.22.46", "uv.lock"
+        )
     expect("the file's text comes back", body == "version = 1\n", repr(body))
-    expect("read at org/repo/ref/path", [path for path, _ in seen] == [_LOCK_PATH], f"{seen}")
+    expect(
+        "read at org/repo/ref/path",
+        [path for path, _ in seen] == [_LOCK_PATH],
+        f"{seen}",
+    )
     expect("carrying no credential", all(auth == "" for _, auth in seen), f"{seen}")
 
 
@@ -811,7 +939,9 @@ def test_repo_file_absent_is_an_error_naming_it() -> None:
     raised = ""
     with _serving_files({}, []):
         try:
-            stack.registry_pins.repo_file("hyperi-io", "dfe-engine", "v9.9.9", "uv.lock")
+            stack.registry_pins.repo_file(
+                "hyperi-io", "dfe-engine", "v9.9.9", "uv.lock"
+            )
         except stack.registry_pins.RegistryError as exc:
             raised = str(exc)
     named = "404" in raised and "v9.9.9/uv.lock" in raised
@@ -820,7 +950,9 @@ def test_repo_file_absent_is_an_error_naming_it() -> None:
 
 def test_repo_file_retries_a_busy_host() -> None:
     with _serving_files({_LOCK_PATH: b"version = 1\n"}, [503]) as seen:
-        body = stack.registry_pins.repo_file("hyperi-io", "dfe-engine", "v1.22.46", "uv.lock")
+        body = stack.registry_pins.repo_file(
+            "hyperi-io", "dfe-engine", "v1.22.46", "uv.lock"
+        )
     expect("the second attempt is served", body == "version = 1\n", repr(body))
     expect("after one retry", len(seen) == 2, f"{seen}")
 
@@ -887,7 +1019,10 @@ def _verify_over(
                     ),
                 )
         finally:
-            stack.REPO_ROOT, stack.registry_pins.tag_digest = original_root, original_read
+            stack.REPO_ROOT, stack.registry_pins.tag_digest = (
+                original_root,
+                original_read,
+            )
     return rc, out.getvalue(), asked
 
 
@@ -907,7 +1042,8 @@ def test_verify_reads_each_thin_chart_under_charts_at_its_image_version() -> Non
     expect("each chart reports ok", out.count("ok    chart ") == 2, out)
     expect(
         "an unpublished chart is skipped, not read",
-        "skip  chart dfe-ui" in out and not any(p == "charts/dfe-ui" for _, p, _ in asked),
+        "skip  chart dfe-ui" in out
+        and not any(p == "charts/dfe-ui" for _, p, _ in asked),
         f"{asked}\n{out}",
     )
 
@@ -923,11 +1059,15 @@ def test_verify_fails_a_chart_digest_the_registry_does_not_serve() -> None:
         in out,
         out,
     )
-    expect("and the matching chart still reports ok", "ok    chart dfe-hyperdx" in out, out)
+    expect(
+        "and the matching chart still reports ok", "ok    chart dfe-hyperdx" in out, out
+    )
 
 
 def test_verify_fails_a_chart_tag_the_registry_does_not_have() -> None:
-    missing = {k: v for k, v in _VERIFY_REGISTRY.items() if k[0] != "charts/dfe-hyperdx"}
+    missing = {
+        k: v for k, v in _VERIFY_REGISTRY.items() if k[0] != "charts/dfe-hyperdx"
+    }
     rc, out, _ = _verify_over(missing)
     expect("verify exits 1", rc == 1, f"exit {rc}\n{out}")
     expect("the chart reads as not found", "DRIFT chart dfe-hyperdx" in out, out)
@@ -940,13 +1080,21 @@ def test_verify_fails_closed_when_a_chart_cannot_be_read() -> None:
     unreadable[("charts/dfe-engine", "1.22.16")] = forbidden
     rc, out, _ = _verify_over(unreadable)
     expect("verify exits 1", rc == 1, f"exit {rc}\n{out}")
-    expect("with the registry's own words", "ERROR chart dfe-engine: 403 Forbidden" in out, out)
+    expect(
+        "with the registry's own words",
+        "ERROR chart dfe-engine: 403 Forbidden" in out,
+        out,
+    )
 
 
 def test_verify_skips_the_toolbox_family_when_the_stack_pins_none() -> None:
     rc, out, asked = _verify_over(_VERIFY_REGISTRY)
     expect("a stack with no family tag still passes", rc == 0, f"exit {rc}\n{out}")
-    expect("and says why each family image is skipped", out.count("skip  dfe-toolbox-") == 3, out)
+    expect(
+        "and says why each family image is skipped",
+        out.count("skip  dfe-toolbox-") == 3,
+        out,
+    )
     expect(
         "without reading any of them",
         not any(p.startswith("dfe-toolbox-") for _, p, _ in asked),
@@ -997,7 +1145,11 @@ def test_verify_fails_a_missing_aws_tag() -> None:
     expect("verify exits 1", rc == 1, f"exit {rc}\n{out}")
     named = "DRIFT dfe-toolbox-aws: v1.0.3 (tag not found)" in out
     expect("naming the image and the tag", named, out)
-    expect("and the published siblings still report ok", "ok    dfe-toolbox-gcp" in out, out)
+    expect(
+        "and the published siblings still report ok",
+        "ok    dfe-toolbox-gcp" in out,
+        out,
+    )
 
 
 def test_verify_fails_a_family_image_missing_an_architecture() -> None:
@@ -1013,10 +1165,16 @@ def test_verify_fails_a_family_image_missing_an_architecture() -> None:
 
 def test_verify_fails_closed_when_a_family_image_cannot_be_read() -> None:
     unreadable = dict(_FAMILY_REGISTRY)
-    unreadable[("dfe-toolbox-gcp", "v1.0.3")] = stack.registry_pins.RegistryError("403 Forbidden")
+    unreadable[("dfe-toolbox-gcp", "v1.0.3")] = stack.registry_pins.RegistryError(
+        "403 Forbidden"
+    )
     rc, out, _ = _verify_over(unreadable, _FAMILY_PINS)
     expect("verify exits 1", rc == 1, f"exit {rc}\n{out}")
-    expect("with the registry's own words", "ERROR dfe-toolbox-gcp: 403 Forbidden" in out, out)
+    expect(
+        "with the registry's own words",
+        "ERROR dfe-toolbox-gcp: 403 Forbidden" in out,
+        out,
+    )
 
 
 def test_verify_covers_every_image_toolbox_build_publishes() -> None:
@@ -1032,7 +1190,9 @@ def test_verify_covers_every_image_toolbox_build_publishes() -> None:
 
 def test_the_chart_name_map_matches_the_appset() -> None:
     """verify and the appset must name the same chart, or verify reads a chart Argo never pulls."""
-    text = (REPO_ROOT / "argocd" / "appsets" / "layer2-apps.yaml").read_text(encoding="utf-8")
+    text = (REPO_ROOT / "argocd" / "appsets" / "layer2-apps.yaml").read_text(
+        encoding="utf-8"
+    )
     # The appset names every chart by its service, so no alias is live there. The aliases
     # only read the chart-digests of stacks published before the app id became the chart name.
     for service, chart in stack._CHART_NAMES.items():
@@ -1050,7 +1210,9 @@ def _renovate_manager() -> tuple[dict, str]:
     cfg = json.loads((REPO_ROOT / "renovate.json").read_text(encoding="utf-8"))
     managers = cfg.get("customManagers", [])
     expect("renovate.json declares a custom manager", len(managers) == 1, f"{managers}")
-    return (managers[0] if managers else {}), (REPO_ROOT / "versions.yaml").read_text(encoding="utf-8")
+    return (managers[0] if managers else {}), (REPO_ROOT / "versions.yaml").read_text(
+        encoding="utf-8"
+    )
 
 
 def _as_python(pattern: str) -> str:
@@ -1090,7 +1252,11 @@ def _manager_regions(manager: dict, text: str) -> list[str]:
 def _manager_region(manager: dict, text: str) -> str:
     """The one slice of versions.yaml the manager's scoping selects."""
     regions = _manager_regions(manager, text)
-    expect("the scoping pattern selects exactly one region", len(regions) == 1, f"{len(regions)} regions")
+    expect(
+        "the scoping pattern selects exactly one region",
+        len(regions) == 1,
+        f"{len(regions)} regions",
+    )
     return regions[0] if len(regions) == 1 else ""
 
 
@@ -1100,7 +1266,9 @@ def _manager_matches(manager: dict, text: str) -> dict[str, str]:
 
     inner = _as_python(manager["matchStrings"][-1])
     region = _manager_region(manager, text)
-    return {m.group("depName"): m.group("currentValue") for m in re.finditer(inner, region)}
+    return {
+        m.group("depName"): m.group("currentValue") for m in re.finditer(inner, region)
+    }
 
 
 def test_renovate_custom_manager_matches_the_annotations() -> None:
@@ -1119,7 +1287,9 @@ def test_renovate_custom_manager_matches_the_annotations() -> None:
     matched = _manager_matches(manager, text)
 
     # The current block only: a frozen block may still annotate a pin the current one dropped.
-    annotated = re.findall(r"#\s*renovate:.*?depName=(\S+)", _manager_region(manager, text))
+    annotated = re.findall(
+        r"#\s*renovate:.*?depName=(\S+)", _manager_region(manager, text)
+    )
     expect(
         "the manager matches every `# renovate:` annotated pin",
         set(matched) == set(annotated),
@@ -1150,13 +1320,20 @@ def test_a_tag_at_digest_pin_hands_renovate_both_halves() -> None:
     # A value holding `@` matches only with its digest captured; otherwise the
     # every-annotation test above loses it.
     digest_pinned = [m for m in matches if m.group("currentDigest")]
-    expect("the current stack carries a tag@sha256 pin", digest_pinned != [], "none found")
+    expect(
+        "the current stack carries a tag@sha256 pin", digest_pinned != [], "none found"
+    )
     for m in digest_pinned:
         name = m.group("depName")
-        expect(f"{name}'s tag carries no digest", "@" not in m.group("currentValue"), m.group(0))
+        expect(
+            f"{name}'s tag carries no digest",
+            "@" not in m.group("currentValue"),
+            m.group(0),
+        )
         expect(
             f"{name}'s digest arrives as currentDigest",
-            re.fullmatch(r"sha256:[a-f0-9]{64}", m.group("currentDigest") or "") is not None,
+            re.fullmatch(r"sha256:[a-f0-9]{64}", m.group("currentDigest") or "")
+            is not None,
             m.group(0),
         )
     debian = [m for m in matches if m.group("depName") == "debian"]
@@ -1210,7 +1387,9 @@ def test_the_manager_reaches_one_stack_block_only() -> None:
         reached == annotated_here,
         f"reached {reached} of {annotated_here} annotations in the block",
     )
-    expect("the scoped manager still finds the pins", reached >= 5, f"reached {reached}")
+    expect(
+        "the scoped manager still finds the pins", reached >= 5, f"reached {reached}"
+    )
 
 
 def test_the_current_stack_is_the_last_block_in_the_file() -> None:
@@ -1277,9 +1456,13 @@ def test_the_apps_sub_block_excludes_digests() -> None:
     """Every app name appears twice per stack -- under apps AND under digests."""
     lines = _NESTED_STACKS.splitlines(keepends=True)
     start, end = stack._block_span(lines, "2.0.0")
-    whole_block = [i for i in range(start, end) if lines[i].strip().startswith("an-app:")]
+    whole_block = [
+        i for i in range(start, end) if lines[i].strip().startswith("an-app:")
+    ]
     a_start, a_end = stack._sub_block_span(lines, start, end, "apps")
-    apps_only = [i for i in range(a_start, a_end) if lines[i].strip().startswith("an-app:")]
+    apps_only = [
+        i for i in range(a_start, a_end) if lines[i].strip().startswith("an-app:")
+    ]
 
     expect("the stack block holds both", len(whole_block) == 2, f"{whole_block}")
     expect("the apps sub-block holds one", len(apps_only) == 1, f"{apps_only}")
@@ -1340,7 +1523,10 @@ def _bump_over(
             with contextlib.redirect_stdout(out):
                 rc = stack.cmd_bump_app(
                     argparse.Namespace(
-                        app=app, version=version, stack=None, dry_run=False,
+                        app=app,
+                        version=version,
+                        stack=None,
+                        dry_run=False,
                         registry="ghcr.io/hyperi-io",
                     )
                 )
@@ -1368,7 +1554,11 @@ def test_bump_app_moves_the_tag_and_the_thin_chart_together() -> None:
         asked == [("hyperi-io", "charts/culvert", "1.0.1")],
         f"{asked}",
     )
-    expect("the image digest is left for resolve_pins", 'culvert: "sha256:aaa"' in current, current)
+    expect(
+        "the image digest is left for resolve_pins",
+        'culvert: "sha256:aaa"' in current,
+        current,
+    )
     expect(
         "an older stack keeps the chart it shipped",
         'culvert: "sha256:chart-old"   # 1.0.0' in written.split("  2.0.0:\n", 1)[0],
@@ -1379,7 +1569,11 @@ def test_bump_app_moves_the_tag_and_the_thin_chart_together() -> None:
 def test_bump_app_refuses_a_tag_whose_chart_is_not_published() -> None:
     rc, written, out, _ = _bump_over(_BUMP_PINS, "culvert", "v1.0.1", {})
     expect("it refuses", rc is None, out)
-    expect("naming the chart it could not find", "charts/culvert:1.0.1 is not published" in out, out)
+    expect(
+        "naming the chart it could not find",
+        "charts/culvert:1.0.1 is not published" in out,
+        out,
+    )
     expect("and writes nothing", written == _BUMP_PINS, written)
 
 
@@ -1387,7 +1581,11 @@ def test_bump_app_keeps_an_unpublished_chart_unpublished() -> None:
     rc, written, out, _ = _bump_over(_BUMP_PINS, "dfe-new", "v0.2.0", {})
     expect("bump-app exits 0", rc == 0, out)
     expect("the tag moves", 'dfe-new: "v0.2.0"' in written, written)
-    expect("the chart entry stays unpublished", 'dfe-new: "unpublished"' in written, written)
+    expect(
+        "the chart entry stays unpublished",
+        'dfe-new: "unpublished"' in written,
+        written,
+    )
 
 
 def test_bump_app_refuses_an_app_with_no_chart_entry() -> None:
@@ -1440,7 +1638,9 @@ def test_cut_carries_the_constraints_file_forward() -> None:
             f"{written}",
         )
         text = (tmp / "constraints" / "9.9.0-rc.2.yaml").read_text(encoding="utf-8")
-        expect("the new file declares the NEW stack", 'stack: "9.9.0-rc.2"' in text, text)
+        expect(
+            "the new file declares the NEW stack", 'stack: "9.9.0-rc.2"' in text, text
+        )
         expect("no stale version string survives", "9.9.0-rc.1" not in text, text)
         expect("the rules carry over unchanged", "a-rule:" in text, text)
 
@@ -1482,7 +1682,9 @@ def test_cut_is_silent_when_no_constraints_are_declared() -> None:
             )
         finally:
             stack.REPO_ROOT = original
-        expect("no constraints declared -> nothing written", written is None, f"{written}")
+        expect(
+            "no constraints declared -> nothing written", written is None, f"{written}"
+        )
 
 
 def test_every_stack_constraints_reference_resolves() -> None:
@@ -1566,9 +1768,16 @@ def _cut_into(
     try:
         return stack.cmd_cut(
             argparse.Namespace(
-                version="9.9.0-rc.3", from_stack=None, maturity=None,
-                apps=None, org="test-org", dry_run=False, registry="ghcr.io/test-org",
-                replace_withdrawn=False, hotfix=None, reason=None,
+                version="9.9.0-rc.3",
+                from_stack=None,
+                maturity=None,
+                apps=None,
+                org="test-org",
+                dry_run=False,
+                registry="ghcr.io/test-org",
+                replace_withdrawn=False,
+                hotfix=None,
+                reason=None,
             )
         )
     finally:
@@ -1590,7 +1799,9 @@ def test_a_cut_stamps_the_git_ref_that_ran_it() -> None:
         tmp = Path(td)
         rc = _cut_into(tmp, lambda org, repo, ref="main": _NEW_SHA)
         expect("the cut writes the file", rc == 0, f"exit {rc}")
-        root = stack.parse_simple_yaml((tmp / "versions.yaml").read_text(encoding="utf-8"))
+        root = stack.parse_simple_yaml(
+            (tmp / "versions.yaml").read_text(encoding="utf-8")
+        )
         content = root["stacks"]["9.9.0-rc.3"]["content"]
         expect(
             "the git-ref entry is re-resolved at cut time",
@@ -1637,7 +1848,9 @@ _OLD_PIN_LINES = (
     "      # renovate: datasource=git-refs depName=https://example.test/a-git-repo\n"
     f'      a-git-repo: "{_OLD_SHA}"   # old trailing note\n'
 )
-_EVIDENCE_FIXTURE = _CUT_FIXTURE.replace(f'      a-git-repo: "{_OLD_SHA}"\n', _OLD_PIN_LINES)
+_EVIDENCE_FIXTURE = _CUT_FIXTURE.replace(
+    f'      a-git-repo: "{_OLD_SHA}"\n', _OLD_PIN_LINES
+)
 
 
 def _cut_block(text: str) -> str:
@@ -1749,7 +1962,10 @@ def test_a_cut_refuses_when_it_cannot_read_the_commit_it_cites() -> None:
         tmp = Path(td)
         try:
             _cut_into(
-                tmp, lambda org, repo, ref="main": _NEW_SHA, _unreadable, _EVIDENCE_FIXTURE
+                tmp,
+                lambda org, repo, ref="main": _NEW_SHA,
+                _unreadable,
+                _EVIDENCE_FIXTURE,
             )
         except SystemExit as exc:
             expect(
@@ -1802,7 +2018,12 @@ def test_commit_summary_will_not_return_an_empty_subject() -> None:
     try:
         for name, run in (
             ("a failed gh call", _gh_answers("", 1, "HTTP 404")),
-            ("an empty message", _gh_answers(json.dumps({"message": "", "date": "2026-10-10T00:00:00Z"}))),
+            (
+                "an empty message",
+                _gh_answers(
+                    json.dumps({"message": "", "date": "2026-10-10T00:00:00Z"})
+                ),
+            ),
         ):
             stack.registry_pins.subprocess = run
             try:
@@ -1829,7 +2050,9 @@ def test_cut_repoints_previous_at_the_stack_it_was_cut_from() -> None:
         rc = _cut_into(tmp, lambda org, repo, ref="main": _OLD_SHA)
 
         expect("the cut writes the file", rc == 0, f"exit {rc}")
-        root = stack.parse_simple_yaml((tmp / "versions.yaml").read_text(encoding="utf-8"))
+        root = stack.parse_simple_yaml(
+            (tmp / "versions.yaml").read_text(encoding="utf-8")
+        )
         cut = root["stacks"].get("9.9.0-rc.3", {}).get("stack", {})
         expect(
             "the new stack's previous is the stack it was cut FROM",
@@ -1846,7 +2069,10 @@ def test_cut_repoints_previous_at_the_stack_it_was_cut_from() -> None:
 def test_a_release_title_carries_the_stack_name_only_when_it_has_one() -> None:
     cases = [
         ({"name": "Richie Benaud", "maturity": "release"}, "DFE 2.2.2 Richie Benaud"),
-        ({"name": "  Richie Benaud  ", "maturity": "release"}, "DFE 2.2.2 Richie Benaud"),
+        (
+            {"name": "  Richie Benaud  ", "maturity": "release"},
+            "DFE 2.2.2 Richie Benaud",
+        ),
         ({"name": "Richie Benaud", "maturity": "rc"}, "DFE 2.2.2"),
         ({"name": "Richie Benaud"}, "DFE 2.2.2"),
         ({"maturity": "release"}, "DFE 2.2.2"),
@@ -1863,8 +2089,7 @@ def test_a_cut_keeps_the_name_within_its_version() -> None:
 
     named = _CUT_FIXTURE.replace(
         '  9.9.0-rc.2:\n    maturity: "rc"\n',
-        '  9.9.0-rc.2:\n    # The release name.\n    name: "Richie Benaud"\n'
-        '    maturity: "rc"\n',
+        '  9.9.0-rc.2:\n    # The release name.\n    name: "Richie Benaud"\n    maturity: "rc"\n',
     )
     expect("the fixture carries a name", named != _CUT_FIXTURE, "replace missed")
     with tempfile.TemporaryDirectory() as td:
@@ -1875,7 +2100,9 @@ def test_a_cut_keeps_the_name_within_its_version() -> None:
         stacks = stack.parse_simple_yaml(text)["stacks"]
         source, cut = stacks["9.9.0-rc.2"], stacks["9.9.0-rc.3"]
         expect("the source keeps its name", source.get("name") == "Richie Benaud", "")
-        expect("an rc of the same version keeps it", cut.get("name") == "Richie Benaud", "")
+        expect(
+            "an rc of the same version keeps it", cut.get("name") == "Richie Benaud", ""
+        )
         title = stack.release_title("9.9.0-rc.3", cut)
         expect("but an rc title stays plain", title == "DFE 9.9.0-rc.3", f"{title!r}")
 
@@ -1897,7 +2124,10 @@ def test_cut_refuses_to_move_a_tag_it_cannot_pin() -> None:
         original_root, original_published = stack.REPO_ROOT, stack._latest_published
         stack.REPO_ROOT = tmp
         # The app has just published, so the tag moves and the digest has no home.
-        stack._latest_published = lambda org, app, prerelease=False: ("v3.0.0", "sha256:ccc")
+        stack._latest_published = lambda org, app, prerelease=False: (
+            "v3.0.0",
+            "sha256:ccc",
+        )
         try:
             stack.cmd_cut(
                 argparse.Namespace(
@@ -1908,7 +2138,9 @@ def test_cut_refuses_to_move_a_tag_it_cannot_pin() -> None:
                     org="test-org",
                     dry_run=False,
                     registry="ghcr.io/test-org",
-                    replace_withdrawn=False, hotfix=None, reason=None,
+                    replace_withdrawn=False,
+                    hotfix=None,
+                    reason=None,
                 )
             )
         except SystemExit as exc:
@@ -1918,7 +2150,9 @@ def test_cut_refuses_to_move_a_tag_it_cannot_pin() -> None:
                 f"message={str(exc)!r}",
             )
         else:
-            expect("it refuses rather than shipping an unpinned app", False, "cut returned")
+            expect(
+                "it refuses rather than shipping an unpinned app", False, "cut returned"
+            )
         finally:
             stack.REPO_ROOT, stack._latest_published = original_root, original_published
 
@@ -1956,7 +2190,9 @@ def _chart_cut(served: dict) -> tuple[str | None, str, list[tuple[str, str, str]
 
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
-        (tmp / "versions.yaml").write_text(_CHART_CUT_FIXTURE, encoding="utf-8", newline="\n")
+        (tmp / "versions.yaml").write_text(
+            _CHART_CUT_FIXTURE, encoding="utf-8", newline="\n"
+        )
         original = (
             stack.REPO_ROOT,
             stack._latest_published,
@@ -1971,9 +2207,16 @@ def _chart_cut(served: dict) -> tuple[str | None, str, list[tuple[str, str, str]
         try:
             stack.cmd_cut(
                 argparse.Namespace(
-                    version="9.9.0-rc.3", from_stack=None, maturity=None, apps=None,
-                    org="test-org", dry_run=False, registry="ghcr.io/test-org",
-                    replace_withdrawn=False, hotfix=None, reason=None,
+                    version="9.9.0-rc.3",
+                    from_stack=None,
+                    maturity=None,
+                    apps=None,
+                    org="test-org",
+                    dry_run=False,
+                    registry="ghcr.io/test-org",
+                    replace_withdrawn=False,
+                    hotfix=None,
+                    reason=None,
                 )
             )
         except SystemExit as exc:
@@ -1990,7 +2233,9 @@ def _chart_cut(served: dict) -> tuple[str | None, str, list[tuple[str, str, str]
 
 def test_a_cut_repins_each_thin_chart_at_the_version_its_tag_names() -> None:
     """Nothing else writes chart-digests, and the appsets deploy the chart it names."""
-    refusal, text, asked = _chart_cut({("charts/an-app", "3.0.0"): "sha256:chart-three"})
+    refusal, text, asked = _chart_cut(
+        {("charts/an-app", "3.0.0"): "sha256:chart-three"}
+    )
     expect("the cut writes the file", refusal is None, f"{refusal}")
     cut = stack.parse_simple_yaml(text)["stacks"]["9.9.0-rc.3"]
     expect("the app tag moved", cut["apps"]["an-app"] == "v3.0.0", f"{cut['apps']}")
@@ -2039,20 +2284,40 @@ def test_every_consecutive_stack_pair_is_a_verified_upgrade_path() -> None:
 
     check-upgrade answers from stack.previous alone, so a stale value makes a
     real consecutive upgrade report NOT A VERIFIED PATH. A withdrawn stack is
-    no upgrade target, so the chain walks past it.
+    no upgrade target, so the chain walks past it. So is a re-cut candidate, a
+    stack cut after a release that sorts above it, which declares that release
+    as its previous: its own edge must still name a stack that exists.
     """
     import itertools
 
     root = stack.load_root()
+    stacks = root["stacks"]
+    by_norm = {stack._norm_version(n): n for n in stacks}
+    key = stack.semver_key
+
+    def recut(name: str) -> bool:
+        own = key(name)
+        return own is not None and any(
+            key(p) is not None and key(p) > own
+            for p in stack.stack_previous(stacks[name])
+        )
+
+    chain = [n for n in stack.upgrade_targets(root) if not recut(n)]
     broken = []
-    for frm, to in itertools.pairwise(stack.upgrade_targets(root)):
-        declared = [
-            p.strip()
-            for p in root["stacks"][to].get("stack", {}).get("previous", "").split(",")
-            if p.strip()
-        ]
-        if not any(stack._norm_version(p) == stack._norm_version(frm) for p in declared):
+    for frm, to in itertools.pairwise(chain):
+        declared = stack.stack_previous(stacks[to])
+        if not any(
+            stack._norm_version(p) == stack._norm_version(frm) for p in declared
+        ):
             broken.append(f"{frm} -> {to} (declares {declared or ['']})")
+    for name in (n for n in stack.upgrade_targets(root) if recut(n)):
+        missing = [
+            p
+            for p in stack.stack_previous(stacks[name])
+            if stack._norm_version(p) not in by_norm
+        ]
+        if missing:
+            broken.append(f"{name} declares {missing}, which no stack is")
     expect(
         "every adjacent stack pair declares a verified path",
         not broken,
@@ -2107,10 +2372,16 @@ def test_a_withdrawn_stack_is_a_source_and_never_a_target() -> None:
             stack.cmd_graph(argparse.Namespace())
         graph = json.loads(out.getvalue())
         edges = {(e["from"], e["to"]) for e in graph["edges"]}
-        expect("the graph keeps the withdrawn node", "9.9.1" in graph["nodes"], f"{graph}")
+        expect(
+            "the graph keeps the withdrawn node", "9.9.1" in graph["nodes"], f"{graph}"
+        )
         expect("no edge lands on it", all(to != "9.9.1" for _, to in edges), f"{edges}")
         expect("an edge still leaves it", ("9.9.1", "9.9.1-rc.2") in edges, f"{edges}")
-        expect("the graph names it withdrawn", graph.get("withdrawn") == ["9.9.1"], f"{graph}")
+        expect(
+            "the graph names it withdrawn",
+            graph.get("withdrawn") == ["9.9.1"],
+            f"{graph}",
+        )
 
         for frm, to, want in (
             ("9.9.1-rc.1", "9.9.1", 1),
@@ -2120,7 +2391,9 @@ def test_a_withdrawn_stack_is_a_source_and_never_a_target() -> None:
             out = io.StringIO()
             with contextlib.redirect_stdout(out):
                 rc = stack.cmd_check_upgrade(argparse.Namespace(frm=frm, to=to))
-            expect(f"check-upgrade {frm} -> {to} exits {want}", rc == want, out.getvalue())
+            expect(
+                f"check-upgrade {frm} -> {to} exits {want}", rc == want, out.getvalue()
+            )
     finally:
         stack.load_root = original
 
@@ -2178,7 +2451,9 @@ _REPLACE_RULES = {
 
 def _rules_text(name: str) -> str:
     """The constraints file the replace fixture carries for one stack."""
-    return f'stack: "{name}"\nrules:\n  {_REPLACE_RULES[name]}:\n    severity: "error"\n'
+    return (
+        f'stack: "{name}"\nrules:\n  {_REPLACE_RULES[name]}:\n    severity: "error"\n'
+    )
 
 
 def _withdrawn_cut(
@@ -2222,9 +2497,16 @@ def _withdrawn_cut(
         with contextlib.redirect_stdout(out):
             stack.cmd_cut(
                 argparse.Namespace(
-                    version=version, from_stack=from_stack, maturity=maturity, apps=None,
-                    org="test-org", dry_run=dry_run, registry="ghcr.io/test-org",
-                    replace_withdrawn=replace, hotfix=None, reason=None,
+                    version=version,
+                    from_stack=from_stack,
+                    maturity=maturity,
+                    apps=None,
+                    org="test-org",
+                    dry_run=dry_run,
+                    registry="ghcr.io/test-org",
+                    replace_withdrawn=replace,
+                    hotfix=None,
+                    reason=None,
                 )
             )
     except SystemExit as exc:
@@ -2284,7 +2566,9 @@ def test_a_cut_from_a_withdrawn_stack_is_standard_support() -> None:
     for maturity, want in ((None, "rc"), ("beta", "beta")):
         with tempfile.TemporaryDirectory() as td:
             tmp = Path(td)
-            refusal, out, _ = _withdrawn_cut(tmp, "9.9.1-rc.3", "9.9.1", maturity=maturity)
+            refusal, out, _ = _withdrawn_cut(
+                tmp, "9.9.1-rc.3", "9.9.1", maturity=maturity
+            )
             text = (tmp / "versions.yaml").read_text(encoding="utf-8")
 
         label = f"--maturity {maturity}" if maturity else "an inherited maturity"
@@ -2325,13 +2609,16 @@ def test_a_cut_from_a_withdrawn_stack_is_standard_support() -> None:
 
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
-        refusal, out, _ = _withdrawn_cut(tmp, "9.9.1-rc.3", "9.9.1-rc.1", maturity="beta")
+        refusal, out, _ = _withdrawn_cut(
+            tmp, "9.9.1-rc.3", "9.9.1-rc.1", maturity="beta"
+        )
         text = (tmp / "versions.yaml").read_text(encoding="utf-8")
     expect("a cut from a standard stack writes the file", refusal is None, f"{refusal}")
     cut = _block_text(text, "9.9.1-rc.3") if refusal is None else ""
     expect(
         "and keeps the note on its maturity line",
-        "\n    maturity: beta                     # kept by every cut from this stack\n" in cut,
+        "\n    maturity: beta                     # kept by every cut from this stack\n"
+        in cut,
         cut,
     )
     expect("and reports no support change", "support withdrawn" not in out, out)
@@ -2388,10 +2675,15 @@ def test_replace_withdrawn_recuts_the_release_under_its_own_name() -> None:
     )
     expect(
         "the cut says which previous it rewrote",
-        '  rewrote 9.9.1-rc.2 stack.previous: "9.9.1, 9.9.1-rc.1" -> "9.9.1-rc.1"\n' in out,
+        '  rewrote 9.9.1-rc.2 stack.previous: "9.9.1, 9.9.1-rc.1" -> "9.9.1-rc.1"\n'
+        in out,
         out,
     )
-    expect("current moves to the release", root.get("current") == "9.9.1", f"{root.get('current')}")
+    expect(
+        "current moves to the release",
+        root.get("current") == "9.9.1",
+        f"{root.get('current')}",
+    )
     expect(
         "latest is left to the release workflow",
         root.get("latest") == "9.9.0",
@@ -2403,13 +2695,19 @@ def test_replace_withdrawn_recuts_the_release_under_its_own_name() -> None:
         rules,
     )
     expect(
-        "none of the withdrawn stack's rules survive", "withdrawn-release-rule" not in rules, rules
+        "none of the withdrawn stack's rules survive",
+        "withdrawn-release-rule" not in rules,
+        rules,
     )
 
     graph = _graph_of(text)
     edges = {(e["from"], e["to"]) for e in graph["edges"]}
     expect("the graph has no cycle", not _has_cycle(edges), f"{edges}")
-    expect("no edge leaves the release", all(frm != "9.9.1" for frm, _ in edges), f"{edges}")
+    expect(
+        "no edge leaves the release",
+        all(frm != "9.9.1" for frm, _ in edges),
+        f"{edges}",
+    )
     expect(
         "the release is reached from its last candidate",
         ("9.9.1-rc.2", "9.9.1") in edges,
@@ -2423,8 +2721,18 @@ def test_replace_withdrawn_refuses_anything_but_a_withdrawn_stack() -> None:
     import tempfile
 
     for name, version, from_stack, why in (
-        ("a standard stack", "9.9.1-rc.2", "9.9.1-rc.1", ("9.9.1-rc.2", "support: standard")),
-        ("a version that does not exist", "9.9.2", "9.9.1-rc.2", ("9.9.2", "nothing to replace")),
+        (
+            "a standard stack",
+            "9.9.1-rc.2",
+            "9.9.1-rc.1",
+            ("9.9.1-rc.2", "support: standard"),
+        ),
+        (
+            "a version that does not exist",
+            "9.9.2",
+            "9.9.1-rc.2",
+            ("9.9.2", "nothing to replace"),
+        ),
         ("a cut from the stack it removes", "9.9.1", "9.9.1", ("--from 9.9.1",)),
     ):
         with tempfile.TemporaryDirectory() as td:
@@ -2453,7 +2761,9 @@ def test_replace_withdrawn_refuses_anything_but_a_withdrawn_stack() -> None:
         refusal, _, _ = _withdrawn_cut(Path(td), "9.9.1", "9.9.1-rc.2")
     expect(
         "without the flag a withdrawn name is refused, pointing at the flag",
-        refusal is not None and "already exists" in refusal and "--replace-withdrawn" in refusal,
+        refusal is not None
+        and "already exists" in refusal
+        and "--replace-withdrawn" in refusal,
         f"{refusal}",
     )
 
@@ -2481,10 +2791,15 @@ def test_replace_withdrawn_dry_run_reports_and_writes_nothing() -> None:
         rules == {n: _rules_text(n) for n in _REPLACE_RULES},
         f"{rules}",
     )
-    expect("it names the block it would splice", "  would splice out 9.9.1 (withdrawn)" in out, out)
+    expect(
+        "it names the block it would splice",
+        "  would splice out 9.9.1 (withdrawn)" in out,
+        out,
+    )
     expect(
         "each previous it would rewrite, old -> new",
-        '  would rewrite 9.9.1-rc.2 stack.previous: "9.9.1, 9.9.1-rc.1" -> "9.9.1-rc.1"\n' in out,
+        '  would rewrite 9.9.1-rc.2 stack.previous: "9.9.1, 9.9.1-rc.1" -> "9.9.1-rc.1"\n'
+        in out,
         out,
     )
     expect(
@@ -2492,7 +2807,11 @@ def test_replace_withdrawn_dry_run_reports_and_writes_nothing() -> None:
         "  would remove constraints/9.9.1.yaml (the withdrawn stack's rules)\n" in out,
         out,
     )
-    expect("and it says nothing was written", "dry-run: versions.yaml unchanged" in out, out)
+    expect(
+        "and it says nothing was written",
+        "dry-run: versions.yaml unchanged" in out,
+        out,
+    )
 
 
 _REFRESH_FIXTURE = """\
@@ -2547,11 +2866,13 @@ def test_refresh_rewrites_a_digest_repeated_across_stacks() -> None:
 
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
-        rc, text = _run_refresh(tmp, lambda ref: ("sha256:new", ""))
+        rc, text = _run_refresh(tmp, lambda ref, budget=None: ("sha256:new", ""))
         rc1 = text.split("9.9.0-rc.2:")[0]
         rc2 = text.split("9.9.0-rc.2:")[1]
 
-        expect("a digest repeated across stacks is still written", rc == 0, f"exit {rc}")
+        expect(
+            "a digest repeated across stacks is still written", rc == 0, f"exit {rc}"
+        )
         expect(
             "both of the current stack's stale digests moved",
             rc2.count('"sha256:new"') == 2,
@@ -2577,7 +2898,7 @@ def test_refresh_writes_the_healthy_pins_when_one_cannot_resolve() -> None:
     """
     import tempfile
 
-    def resolver(ref: str) -> tuple[str | None, str]:
+    def resolver(ref: str, budget: object = None) -> tuple[str | None, str]:
         return (None, "no such manifest") if "floating" in ref else ("sha256:new", "")
 
     with tempfile.TemporaryDirectory() as td:
@@ -2605,7 +2926,10 @@ def _published_engine():
 
     registry = FakeRegistry(page_size=2)
     published = (
-        ("v1.2.0", "a"), ("v1.10.0", "b"), ("v1.9.9", "c"), ("latest", "b"),
+        ("v1.2.0", "a"),
+        ("v1.10.0", "b"),
+        ("v1.9.9", "c"),
+        ("latest", "b"),
         ("v1.11.0-rc.2", "e"),
     )
     for tag, digest in published:
@@ -2618,31 +2942,53 @@ def test_cut_takes_the_highest_release_and_its_own_digest() -> None:
     registry = _published_engine()
     with registry.serving():
         found = stack._latest_published("hyperi-io", "dfe-engine")
-    expect("v1.10.0 outranks v1.9.9, the build tags and an rc", found == ("v1.10.0", "sha256:" + "b" * 64),
-           f"{found}")
-    expect("no token request carried a credential",
-           all(r.authorization == "" for r in registry.token_requests()), "a token was sent")
+    expect(
+        "v1.10.0 outranks v1.9.9, the build tags and an rc",
+        found == ("v1.10.0", "sha256:" + "b" * 64),
+        f"{found}",
+    )
+    expect(
+        "no token request carried a credential",
+        all(r.authorization == "" for r in registry.token_requests()),
+        "a token was sent",
+    )
 
 
-def test_an_rc_cut_takes_the_newest_rc_or_release_and_a_release_cut_releases_only() -> None:
+def test_an_rc_cut_takes_the_newest_rc_or_release_and_a_release_cut_releases_only() -> (
+    None
+):
     """An app untouched since its last release has no rc, so an rc stack pins that release."""
     from _oci import FakeRegistry
 
     cases = (
         ("an untouched app keeps its release", True, ("v1.15.64",), "v1.15.64"),
-        ("a changed app takes its newest rc", True,
-         ("v1.15.64", "v1.16.0-rc.2", "v1.16.0-rc.10", "v1.17.0-beta.1"), "v1.16.0-rc.10"),
-        ("a release published above its rcs wins", True,
-         ("v1.15.64", "v1.16.0-rc.2", "v1.16.0"), "v1.16.0"),
-        ("a release cut never takes an rc", False,
-         ("v1.15.64", "v1.16.0-rc.2"), "v1.15.64"),
+        (
+            "a changed app takes its newest rc",
+            True,
+            ("v1.15.64", "v1.16.0-rc.2", "v1.16.0-rc.10", "v1.17.0-beta.1"),
+            "v1.16.0-rc.10",
+        ),
+        (
+            "a release published above its rcs wins",
+            True,
+            ("v1.15.64", "v1.16.0-rc.2", "v1.16.0"),
+            "v1.16.0",
+        ),
+        (
+            "a release cut never takes an rc",
+            False,
+            ("v1.15.64", "v1.16.0-rc.2"),
+            "v1.15.64",
+        ),
     )
     for label, prerelease, tags, want in cases:
         registry = FakeRegistry(page_size=2)
         for index, tag in enumerate(tags):
             registry.add("hyperi-io/dfe-engine", tag, f"sha256:{index:064d}")
         with registry.serving():
-            found = stack._latest_published("hyperi-io", "dfe-engine", prerelease=prerelease)
+            found = stack._latest_published(
+                "hyperi-io", "dfe-engine", prerelease=prerelease
+            )
         expect(label, found is not None and found[0] == want, f"{found}")
 
 
@@ -2678,7 +3024,9 @@ def _release_cut_from_rc(
         tmp = Path(td)
         (tmp / "versions.yaml").write_text(fixture, encoding="utf-8", newline="\n")
 
-        def latest(org: str, app: str, prerelease: bool = False) -> tuple[str, str] | None:
+        def latest(
+            org: str, app: str, prerelease: bool = False
+        ) -> tuple[str, str] | None:
             tag = published.get(app)
             return (tag, f"sha256:{app}") if tag else None
 
@@ -2688,9 +3036,16 @@ def _release_cut_from_rc(
         try:
             stack.cmd_cut(
                 argparse.Namespace(
-                    version="9.9.1", from_stack=None, maturity="release", apps=apps,
-                    org="test-org", dry_run=False, registry="ghcr.io/test-org",
-                    replace_withdrawn=False, hotfix=None, reason=None,
+                    version="9.9.1",
+                    from_stack=None,
+                    maturity="release",
+                    apps=apps,
+                    org="test-org",
+                    dry_run=False,
+                    registry="ghcr.io/test-org",
+                    replace_withdrawn=False,
+                    hotfix=None,
+                    reason=None,
                 )
             )
         except SystemExit as exc:
@@ -2703,12 +3058,31 @@ def _release_cut_from_rc(
 def test_a_release_cut_refuses_to_carry_an_rc_pin_over() -> None:
     """A held pin or an --apps-excluded one keeps its rc, so the cut checks every app."""
     for label, apps, published, named in (
-        ("no release published for app-b", None, {"app-a": "v1.1.0"}, ["app-b v2.0.0-rc.1"]),
-        ("--apps leaves app-b out", "app-a", {"app-a": "v1.1.0", "app-b": "v2.0.0"}, ["app-b v2.0.0-rc.1"]),
-        ("nothing promoted at all", None, {}, ["app-a v1.1.0-rc.2", "app-b v2.0.0-rc.1"]),
+        (
+            "no release published for app-b",
+            None,
+            {"app-a": "v1.1.0"},
+            ["app-b v2.0.0-rc.1"],
+        ),
+        (
+            "--apps leaves app-b out",
+            "app-a",
+            {"app-a": "v1.1.0", "app-b": "v2.0.0"},
+            ["app-b v2.0.0-rc.1"],
+        ),
+        (
+            "nothing promoted at all",
+            None,
+            {},
+            ["app-a v1.1.0-rc.2", "app-b v2.0.0-rc.1"],
+        ),
     ):
         refusal, text = _release_cut_from_rc(apps, published)
-        expect(f"{label}: the cut refuses", refusal is not None, "it wrote a release with an rc pin")
+        expect(
+            f"{label}: the cut refuses",
+            refusal is not None,
+            "it wrote a release with an rc pin",
+        )
         expect(
             f"{label}: and names each rc pin",
             refusal is not None and all(n in refusal for n in named),
@@ -2724,7 +3098,9 @@ def test_a_release_cut_refuses_to_carry_an_rc_pin_over() -> None:
         '    toolbox:\n      dfe-toolbox: "v1.0.7-rc.1"\n      kubectl: "v1.34.1-rc.0"\n'
         "    digests:\n",
     )
-    refusal, _ = _release_cut_from_rc(None, {"app-a": "v1.1.0", "app-b": "v2.0.0"}, with_content)
+    refusal, _ = _release_cut_from_rc(
+        None, {"app-a": "v1.1.0", "app-b": "v2.0.0"}, with_content
+    )
     expect(
         "a cloned prerelease content or toolbox pin refuses the cut, an upstream toolbox tag does not",
         refusal is not None
@@ -2742,7 +3118,9 @@ def test_the_new_stack_maturity_picks_rc_or_release_app_tags() -> None:
     for maturity, want in ((None, True), ("beta", True), ("release", False)):
         kinds: list[bool] = []
         with tempfile.TemporaryDirectory() as td:
-            _withdrawn_cut(Path(td), "9.9.1-rc.3", "9.9.1-rc.2", maturity=maturity, kinds=kinds)
+            _withdrawn_cut(
+                Path(td), "9.9.1-rc.3", "9.9.1-rc.2", maturity=maturity, kinds=kinds
+            )
         label = f"--maturity {maturity}" if maturity else "an inherited rc maturity"
         expect(
             f"{label} asks the registry for {'rc' if want else 'release'} tags",
@@ -2766,8 +3144,11 @@ def test_cut_stops_on_a_registry_that_does_not_answer() -> None:
             stack._latest_published("hyperi-io", "dfe-engine")
         except SystemExit as exc:
             stopped = str(exc)
-    expect("a registry that never answered is not an unpublished app",
-           "cannot read hyperi-io/dfe-engine" in stopped, stopped or "no SystemExit")
+    expect(
+        "a registry that never answered is not an unpublished app",
+        "cannot read hyperi-io/dfe-engine" in stopped,
+        stopped or "no SystemExit",
+    )
 
 
 def _compat_check_over(rules: str, pins: str, strict: bool) -> tuple[int, str]:
@@ -2781,7 +3162,9 @@ def _compat_check_over(rules: str, pins: str, strict: bool) -> tuple[int, str]:
         tmp = Path(td)
         (tmp / "constraints").mkdir()
         (tmp / "constraints" / "9.9.9.yaml").write_text(
-            'schema: 1\nstack: "9.9.9"\n\nrules:\n\n' + rules, encoding="utf-8", newline="\n"
+            'schema: 1\nstack: "9.9.9"\n\nrules:\n\n' + rules,
+            encoding="utf-8",
+            newline="\n",
         )
         (tmp / "versions.yaml").write_text(
             'schema: 2\ncurrent: "9.9.9"\n\nstacks:\n\n  9.9.9:\n'
@@ -2794,7 +3177,9 @@ def _compat_check_over(rules: str, pins: str, strict: bool) -> tuple[int, str]:
         try:
             stack.REPO_ROOT = tmp
             with contextlib.redirect_stdout(out):
-                rc = stack.cmd_compat_check(argparse.Namespace(stack=None, strict=strict))
+                rc = stack.cmd_compat_check(
+                    argparse.Namespace(stack=None, strict=strict)
+                )
         finally:
             stack.REPO_ROOT = original
         return rc, out.getvalue()
@@ -2851,7 +3236,9 @@ def _committed_rule(rule_id: str) -> str:
     _, pins = stack.stack_pins(stack.load_root(), None)
     text = (REPO_ROOT / pins["constraints"]).read_text(encoding="utf-8")
     body = stack.parse_simple_yaml(text)["rules"][rule_id]
-    return f"  {rule_id}:\n" + "".join(f'    {key}: "{value}"\n' for key, value in body.items())
+    return f"  {rule_id}:\n" + "".join(
+        f'    {key}: "{value}"\n' for key, value in body.items()
+    )
 
 
 def _gateway_pins(gateway: str, proxy: str) -> str:
@@ -2865,16 +3252,24 @@ def test_a_gateway_bump_without_its_proxy_fails_strict() -> None:
     """The proxy image is the gateway's compiled default made explicit, so the
     two move as one: a gateway lift that leaves the proxy behind must not ship."""
     rule = _committed_rule("envoy-gateway-proxy-pairing")
-    rc, out = _compat_check_over(rule, _gateway_pins("v1.9.3", "distroless-v1.39.2"), strict=True)
+    rc, out = _compat_check_over(
+        rule, _gateway_pins("v1.9.3", "distroless-v1.39.2"), strict=True
+    )
     expect("strict exits non-zero", rc == 1, f"exit {rc}\n{out}")
     expect("because the pairing's guard went dead", "DEAD" in out, out)
 
 
 def test_a_proxy_bump_without_its_gateway_fails_strict() -> None:
     rule = _committed_rule("envoy-gateway-proxy-pairing")
-    rc, out = _compat_check_over(rule, _gateway_pins("v1.9.2", "distroless-v1.39.3"), strict=True)
+    rc, out = _compat_check_over(
+        rule, _gateway_pins("v1.9.2", "distroless-v1.39.3"), strict=True
+    )
     expect("strict exits non-zero", rc == 1, f"exit {rc}\n{out}")
-    expect("naming the proxy pin it rejects", "FAIL" in out and "distroless-v1.39.3" in out, out)
+    expect(
+        "naming the proxy pin it rejects",
+        "FAIL" in out and "distroless-v1.39.3" in out,
+        out,
+    )
 
 
 def _cert_manager_pins(cert_manager: str, gateway: str) -> str:
@@ -2888,14 +3283,18 @@ def test_a_cert_manager_bump_rechecks_the_gateway_api_crds_it_starts_on() -> Non
     """bootstrap.sh starts cert-manager over the Gateway API CRDs Envoy Gateway
     ships, so a cert-manager lift must not ship until that pairing is re-checked."""
     rule = _committed_rule("cert-manager-gateway-api-pairing")
-    rc, out = _compat_check_over(rule, _cert_manager_pins("v1.22.0", "v1.9.2"), strict=True)
+    rc, out = _compat_check_over(
+        rule, _cert_manager_pins("v1.22.0", "v1.9.2"), strict=True
+    )
     expect("strict exits non-zero", rc == 1, f"exit {rc}\n{out}")
     expect("because the pairing's guard went dead", "DEAD" in out, out)
 
 
 def test_a_gateway_bump_rechecks_the_crds_cert_manager_starts_on() -> None:
     rule = _committed_rule("cert-manager-gateway-api-pairing")
-    rc, out = _compat_check_over(rule, _cert_manager_pins("v1.21.2", "v1.10.0"), strict=True)
+    rc, out = _compat_check_over(
+        rule, _cert_manager_pins("v1.21.2", "v1.10.0"), strict=True
+    )
     expect("strict exits non-zero", rc == 1, f"exit {rc}\n{out}")
     expect("naming the gateway pin it rejects", "FAIL" in out and "v1.10.0" in out, out)
 
@@ -2904,7 +3303,9 @@ def test_the_committed_cert_manager_and_gateway_pins_pair() -> None:
     rule = _committed_rule("cert-manager-gateway-api-pairing")
     _, pins = stack.stack_pins(stack.load_root(), None)
     flat = stack.flatten_pins(pins)
-    committed = _cert_manager_pins(flat["bootstrap.cert-manager"], flat["operators.envoy-gateway"])
+    committed = _cert_manager_pins(
+        flat["bootstrap.cert-manager"], flat["operators.envoy-gateway"]
+    )
     rc, out = _compat_check_over(rule, committed, strict=True)
     expect("strict passes on the stack as committed", rc == 0, f"exit {rc}\n{out}")
 
@@ -2920,16 +3321,22 @@ def test_a_clickhouse_bump_without_its_keeper_fails_strict() -> None:
     """Keeper ships in the server's release, so a server lift that leaves Keeper
     on the old one must not ship."""
     rule = _committed_rule("clickhouse-keeper-server-pairing")
-    rc, out = _compat_check_over(rule, _clickhouse_pins("26.3.43.1", "26.3.42.3"), strict=True)
+    rc, out = _compat_check_over(
+        rule, _clickhouse_pins("26.3.43.1", "26.3.42.3"), strict=True
+    )
     expect("strict exits non-zero", rc == 1, f"exit {rc}\n{out}")
     expect("because the pairing's guard went dead", "DEAD" in out, out)
 
 
 def test_a_keeper_bump_without_its_server_fails_strict() -> None:
     rule = _committed_rule("clickhouse-keeper-server-pairing")
-    rc, out = _compat_check_over(rule, _clickhouse_pins("26.3.42.3", "26.3.43.1"), strict=True)
+    rc, out = _compat_check_over(
+        rule, _clickhouse_pins("26.3.42.3", "26.3.43.1"), strict=True
+    )
     expect("strict exits non-zero", rc == 1, f"exit {rc}\n{out}")
-    expect("naming the keeper pin it rejects", "FAIL" in out and "26.3.43.1" in out, out)
+    expect(
+        "naming the keeper pin it rejects", "FAIL" in out and "26.3.43.1" in out, out
+    )
 
 
 def test_the_committed_constraints_pass_strict() -> None:
@@ -2948,7 +3355,9 @@ _OVERRIDE_TAG = "v9.9.9"
 _OVERRIDE_DIGEST = "sha256:" + "a" * 64
 
 
-def _resolve_over(pins_text: str, *, emit: bool = False, stack_name: str | None = None) -> tuple[int, str, str]:
+def _resolve_over(
+    pins_text: str, *, emit: bool = False, stack_name: str | None = None
+) -> tuple[int, str, str]:
     """`dfe-stack resolve` over a pins.yaml: (exit, stdout, the --emit-values fragment)."""
     import argparse
     import contextlib
@@ -2992,25 +3401,41 @@ def test_an_emitted_override_renders_one_valid_image_reference() -> None:
     values = yaml.safe_load(fragment)
     rendered = images(render_app("dfe-receiver", "slim", "local", overlay=values))
     want = f"{REGISTRY}/dfe-receiver:{_OVERRIDE_TAG}@{_OVERRIDE_DIGEST}"
-    expect("the chart renders the override tag and digest once", bool(rendered) and set(rendered) == {want}, f"{rendered}")
+    expect(
+        "the chart renders the override tag and digest once",
+        bool(rendered) and set(rendered) == {want},
+        f"{rendered}",
+    )
 
 
 def test_resolve_reads_the_stack_the_pins_name() -> None:
     """The set printed under `base dfe-infra: X` is X's, not whatever `current` is."""
     root = stack.load_root()
-    other = next(n for n in stack.stack_names(root) if n != root["current"] and not stack.is_withdrawn(root["stacks"][n]))
+    other = next(
+        n
+        for n in stack.stack_names(root)
+        if n != root["current"] and not stack.is_withdrawn(root["stacks"][n])
+    )
     _, out, _ = _resolve_over(f'base:\n  dfe-infra: "{other}"\n')
     header = out.splitlines()[0]
     expect("the header names the pinned stack once", header.count(other) == 2, header)
-    _rc, err_out, _ = _resolve_over(f'base:\n  dfe-infra: "{other}"\n', stack_name=root["current"])
-    expect("an explicit --stack still wins", root["current"] in err_out.splitlines()[0], err_out.splitlines()[0])
+    _rc, err_out, _ = _resolve_over(
+        f'base:\n  dfe-infra: "{other}"\n', stack_name=root["current"]
+    )
+    expect(
+        "an explicit --stack still wins",
+        root["current"] in err_out.splitlines()[0],
+        err_out.splitlines()[0],
+    )
 
 
 # --- hotfix stacks and recorded gates ------------------------------------------
 _BOTH_ARCHES = lambda ref: ({"linux/amd64", "linux/arm64"}, "")  # noqa: E731
 
 
-def _hotfix_block(gates: str = "", tag: str = "v1.0.1", reason: str = "CVE-2026-0001") -> str:
+def _hotfix_block(
+    gates: str = "", tag: str = "v1.0.1", reason: str = "CVE-2026-0001"
+) -> str:
     """A release stack whose an-app is the hotfix, with optional `gates:` entries."""
     record = f'    hotfix:\n      an-app:\n        tag: "{tag}"\n'
     if reason:
@@ -3018,8 +3443,7 @@ def _hotfix_block(gates: str = "", tag: str = "v1.0.1", reason: str = "CVE-2026-
     return (
         "    maturity: release\n"
         '    apps:\n      an-app: "v1.0.1"\n'
-        '    digests:\n      an-app: "sha256:new"\n'
-        + record + gates
+        '    digests:\n      an-app: "sha256:new"\n' + record + gates
     )
 
 
@@ -3029,21 +3453,53 @@ def _gate(entry: str, kind: str, result: str, digests: dict[str, str]) -> str:
         f'      {entry}:\n        kind: "{kind}"\n        result: "{result}"\n'
         f'        run: "https://ci.example/run/1"\n        date: "2026-11-09"\n        digests:\n'
     )
-    return body + "".join(f'          {name}: "{digest}"\n' for name, digest in digests.items())
+    return body + "".join(
+        f'          {name}: "{digest}"\n' for name, digest in digests.items()
+    )
 
 
 def test_release_gate_holds_a_hotfix_to_its_recorded_minimum_gate() -> None:
-    passed = _gate("hotfix-minimum-1", "hotfix-minimum", "pass", {"an-app": "sha256:new"})
-    stale = _gate("hotfix-minimum-1", "hotfix-minimum", "pass", {"an-app": "sha256:old"})
-    failed = _gate("hotfix-minimum-1", "hotfix-minimum", "fail", {"an-app": "sha256:new"})
+    passed = _gate(
+        "hotfix-minimum-1", "hotfix-minimum", "pass", {"an-app": "sha256:new"}
+    )
+    stale = _gate(
+        "hotfix-minimum-1", "hotfix-minimum", "pass", {"an-app": "sha256:old"}
+    )
+    failed = _gate(
+        "hotfix-minimum-1", "hotfix-minimum", "fail", {"an-app": "sha256:new"}
+    )
     for label, block, want, says in (
         ("no gate recorded", _hotfix_block(), 1, "no passing hotfix-minimum gate"),
-        ("a passing gate on the pinned digest", _hotfix_block("    gates:\n" + passed), 0, ""),
-        ("a gate on an older digest", _hotfix_block("    gates:\n" + stale), 1, "an-app@sha256:new"),
-        ("a failed gate", _hotfix_block("    gates:\n" + failed), 1, "no passing hotfix-minimum gate"),
-        ("a hotfix tag the stack does not pin", _hotfix_block("    gates:\n" + passed, tag="v1.0.2"), 1,
-         "is not the pinned an-app tag"),
-        ("a hotfix with no reason", _hotfix_block("    gates:\n" + passed, reason=""), 1, "records no reason"),
+        (
+            "a passing gate on the pinned digest",
+            _hotfix_block("    gates:\n" + passed),
+            0,
+            "",
+        ),
+        (
+            "a gate on an older digest",
+            _hotfix_block("    gates:\n" + stale),
+            1,
+            "an-app@sha256:new",
+        ),
+        (
+            "a failed gate",
+            _hotfix_block("    gates:\n" + failed),
+            1,
+            "no passing hotfix-minimum gate",
+        ),
+        (
+            "a hotfix tag the stack does not pin",
+            _hotfix_block("    gates:\n" + passed, tag="v1.0.2"),
+            1,
+            "is not the pinned an-app tag",
+        ),
+        (
+            "a hotfix with no reason",
+            _hotfix_block("    gates:\n" + passed, reason=""),
+            1,
+            "records no reason",
+        ),
     ):
         rc, out = _run_release_gate(block, _BOTH_ARCHES)
         expect(f"{label}: exits {want}", rc == want, f"exit {rc}\n{out}")
@@ -3064,7 +3520,12 @@ def test_the_ga_full_gate_is_required_only_behind_its_flag() -> None:
         ("no ga-full gate, flag off", "", False, 0),
         ("no ga-full gate, flag on", "", True, 1),
         ("a ga-full gate missing the content image", partial, True, 1),
-        ("a ga-full gate over every pinned digest", _gate("ga-full-1", "ga-full", "pass", full), True, 0),
+        (
+            "a ga-full gate over every pinned digest",
+            _gate("ga-full-1", "ga-full", "pass", full),
+            True,
+            0,
+        ),
     ):
         text = block + ("    gates:\n" + gates if gates else "")
         rc, out = _run_release_gate(text, _BOTH_ARCHES, require_ga_gate=flag)
@@ -3088,7 +3549,11 @@ def _record_gate(text: str, kind: str, result: str = "pass") -> tuple[str | None
             with contextlib.redirect_stdout(io.StringIO()):
                 stack.cmd_record_gate(
                     argparse.Namespace(
-                        stack=None, kind=kind, run="https://ci.example/run/7", result=result, date="2026-11-09"
+                        stack=None,
+                        kind=kind,
+                        run="https://ci.example/run/7",
+                        result=result,
+                        date="2026-11-09",
                     )
                 )
         except SystemExit as exc:
@@ -3099,16 +3564,27 @@ def _record_gate(text: str, kind: str, result: str = "pass") -> tuple[str | None
 
 
 def test_record_gate_writes_an_entry_release_gate_then_accepts() -> None:
-    text = 'schema: 2\ncurrent: "9.9.9"\nstacks:\n  9.9.9:\n' + _hotfix_block() + "\n  9.9.8:\n    maturity: rc\n"
+    text = (
+        'schema: 2\ncurrent: "9.9.9"\nstacks:\n  9.9.9:\n'
+        + _hotfix_block()
+        + "\n  9.9.8:\n    maturity: rc\n"
+    )
     refusal, after = _record_gate(text, "hotfix-minimum")
     expect("the gate is recorded", refusal is None, f"{refusal}")
-    entry = stack.parse_simple_yaml(after)["stacks"]["9.9.9"]["gates"]["hotfix-minimum-1"]
+    entry = stack.parse_simple_yaml(after)["stacks"]["9.9.9"]["gates"][
+        "hotfix-minimum-1"
+    ]
     expect(
         "naming the pinned hotfix digest and the run",
-        entry["digests"] == {"an-app": "sha256:new"} and entry["run"] == "https://ci.example/run/7",
+        entry["digests"] == {"an-app": "sha256:new"}
+        and entry["run"] == "https://ci.example/run/7",
         f"{entry}",
     )
-    expect("and the next stack is untouched", "gates" not in stack.parse_simple_yaml(after)["stacks"]["9.9.8"], after)
+    expect(
+        "and the next stack is untouched",
+        "gates" not in stack.parse_simple_yaml(after)["stacks"]["9.9.8"],
+        after,
+    )
     block = after.split("  9.9.9:\n", 1)[1].split("\n  9.9.8:", 1)[0]
     rc, out = _run_release_gate(block, _BOTH_ARCHES)
     expect("release-gate accepts the recorded gate", rc == 0, f"exit {rc}\n{out}")
@@ -3119,16 +3595,29 @@ def test_record_gate_writes_an_entry_release_gate_then_accepts() -> None:
         refusal is None and set(gates) == {"hotfix-minimum-1", "hotfix-minimum-2"},
         f"{refusal} {sorted(gates)}",
     )
-    commented = text.replace(_hotfix_block(), _hotfix_block("    gates:   # runs so far\n" + _gate(
-        "hotfix-minimum-1", "hotfix-minimum", "fail", {"an-app": "sha256:new"})))
+    commented = text.replace(
+        _hotfix_block(),
+        _hotfix_block(
+            "    gates:   # runs so far\n"
+            + _gate(
+                "hotfix-minimum-1", "hotfix-minimum", "fail", {"an-app": "sha256:new"}
+            )
+        ),
+    )
     refusal, appended = _record_gate(commented, "hotfix-minimum")
     gates = stack.parse_simple_yaml(appended)["stacks"]["9.9.9"]["gates"]
-    expect("a commented gates header still takes the next entry",
-           refusal is None and set(gates) == {"hotfix-minimum-1", "hotfix-minimum-2"}, f"{refusal} {sorted(gates)}")
+    expect(
+        "a commented gates header still takes the next entry",
+        refusal is None and set(gates) == {"hotfix-minimum-1", "hotfix-minimum-2"},
+        f"{refusal} {sorted(gates)}",
+    )
     plain = 'schema: 2\ncurrent: "9.9.9"\nstacks:\n  9.9.9:\n    maturity: release\n    apps:\n      an-app: "v1.0.0"\n'
     refusal, _ = _record_gate(plain, "hotfix-minimum")
-    expect("a stack with no hotfix has no hotfix gate", refusal is not None and "no `hotfix:` block" in refusal,
-           f"{refusal}")
+    expect(
+        "a stack with no hotfix has no hotfix gate",
+        refusal is not None and "no `hotfix:` block" in refusal,
+        f"{refusal}",
+    )
 
 
 _HOTFIX_FROM = """\
@@ -3168,7 +3657,10 @@ stacks:
 
 
 def _hotfix_cut(
-    hotfix: list[str], reason: str | None, apps: str | None = None, maturity: str | None = None
+    hotfix: list[str],
+    reason: str | None,
+    apps: str | None = None,
+    maturity: str | None = None,
 ) -> tuple[str | None, str]:
     """Cut 9.9.2 from the release fixture with --hotfix, the registry answered here."""
     import argparse
@@ -3179,25 +3671,45 @@ def _hotfix_cut(
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
         (tmp / "versions.yaml").write_text(_HOTFIX_FROM, encoding="utf-8", newline="\n")
-        original = (stack.REPO_ROOT, stack._published_tag, stack._latest_published, stack.registry_pins.head_commit)
+        original = (
+            stack.REPO_ROOT,
+            stack._published_tag,
+            stack._latest_published,
+            stack.registry_pins.head_commit,
+        )
         stack.REPO_ROOT = tmp
         stack._published_tag = lambda org, app, tag: (tag, f"sha256:{app}-{tag}")
-        stack._latest_published = lambda org, app, prerelease=False: ("v9.9.9", "sha256:never")
+        stack._latest_published = lambda org, app, prerelease=False: (
+            "v9.9.9",
+            "sha256:never",
+        )
         stack.registry_pins.head_commit = lambda org, repo, ref="main": "f" * 40
         refusal = None
         try:
             with contextlib.redirect_stdout(io.StringIO()):
                 stack.cmd_cut(
                     argparse.Namespace(
-                        version="9.9.2", from_stack=None, maturity=maturity, apps=apps, org="test-org",
-                        dry_run=False, registry="ghcr.io/test-org", replace_withdrawn=False,
-                        hotfix=hotfix, reason=reason,
+                        version="9.9.2",
+                        from_stack=None,
+                        maturity=maturity,
+                        apps=apps,
+                        org="test-org",
+                        dry_run=False,
+                        registry="ghcr.io/test-org",
+                        replace_withdrawn=False,
+                        hotfix=hotfix,
+                        reason=reason,
                     )
                 )
         except SystemExit as exc:
             refusal = str(exc)
         finally:
-            stack.REPO_ROOT, stack._published_tag, stack._latest_published, stack.registry_pins.head_commit = original
+            (
+                stack.REPO_ROOT,
+                stack._published_tag,
+                stack._latest_published,
+                stack.registry_pins.head_commit,
+            ) = original
         return refusal, (tmp / "versions.yaml").read_text(encoding="utf-8")
 
 
@@ -3207,35 +3719,74 @@ def test_a_hotfix_cut_moves_only_the_hotfix_and_records_why() -> None:
     cut = stack.parse_simple_yaml(text)["stacks"].get("9.9.2", {})
     expect(
         "app-a moves to the hotfix and its digest",
-        cut.get("apps", {}).get("app-a") == "v1.1.1" and cut.get("digests", {}).get("app-a") == "sha256:app-a-v1.1.1",
+        cut.get("apps", {}).get("app-a") == "v1.1.1"
+        and cut.get("digests", {}).get("app-a") == "sha256:app-a-v1.1.1",
         f"{cut}",
     )
-    expect("app-b holds, never moved to its newest release", cut.get("apps", {}).get("app-b") == "v2.0.0", f"{cut}")
+    expect(
+        "app-b holds, never moved to its newest release",
+        cut.get("apps", {}).get("app-b") == "v2.0.0",
+        f"{cut}",
+    )
     expect(
         "the hotfix and its reason are recorded",
         cut.get("hotfix") == {"app-a": {"tag": "v1.1.1", "reason": "CVE-2026-0001"}},
         f"{cut.get('hotfix')}",
     )
-    expect("the source stack's commented gates and hotfix blocks are not cloned",
-           "gates" not in cut and set(cut.get("hotfix", {})) == {"app-a"}, f"{cut}")
+    expect(
+        "the source stack's commented gates and hotfix blocks are not cloned",
+        "gates" not in cut and set(cut.get("hotfix", {})) == {"app-a"},
+        f"{cut}",
+    )
     expect(
         "and the dfe-docker commit stays put, outside what the hotfix gate checks",
-        cut.get("content", {}).get("dfe-docker") == "2b3d02df4f2a3a4c5e6f708192a3b4c5d6e7f809",
+        cut.get("content", {}).get("dfe-docker")
+        == "2b3d02df4f2a3a4c5e6f708192a3b4c5d6e7f809",
         f"{cut.get('content')}",
     )
 
 
 def test_a_hotfix_cut_refuses_what_is_not_a_hotfix_release() -> None:
     for label, hotfix, reason, apps, maturity, says in (
-        ("an rc tag", ["app-a=v1.1.1-rc.1"], "CVE-1", None, None, "plain vX.Y.Z release"),
+        (
+            "an rc tag",
+            ["app-a=v1.1.1-rc.1"],
+            "CVE-1",
+            None,
+            None,
+            "plain vX.Y.Z release",
+        ),
         ("no reason", ["app-a=v1.1.1"], None, None, None, "needs --reason"),
-        ("an app the stack does not pin", ["app-z=v1.0.0"], "CVE-1", None, None, "no apps.app-z pin"),
-        ("--apps beside it", ["app-a=v1.1.1"], "CVE-1", "app-b", None, "cannot take --apps"),
+        (
+            "an app the stack does not pin",
+            ["app-z=v1.0.0"],
+            "CVE-1",
+            None,
+            None,
+            "no apps.app-z pin",
+        ),
+        (
+            "--apps beside it",
+            ["app-a=v1.1.1"],
+            "CVE-1",
+            "app-b",
+            None,
+            "cannot take --apps",
+        ),
         ("an rc maturity", ["app-a=v1.1.1"], "CVE-1", None, "rc", "maturity=rc"),
-        ("no --hotfix but a reason", [], "CVE-1", None, None, "--reason only goes with --hotfix"),
+        (
+            "no --hotfix but a reason",
+            [],
+            "CVE-1",
+            None,
+            None,
+            "--reason only goes with --hotfix",
+        ),
     ):
         refusal, text = _hotfix_cut(hotfix, reason, apps, maturity)
-        expect(f"{label}: refused", refusal is not None and says in refusal, f"{refusal}")
+        expect(
+            f"{label}: refused", refusal is not None and says in refusal, f"{refusal}"
+        )
         expect(f"{label}: and nothing written", "9.9.2:" not in text, text)
 
 

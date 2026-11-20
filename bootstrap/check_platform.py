@@ -59,7 +59,9 @@ IMAGE_VOLUME_DEFAULT_FROM = "1.35"
 IMAGE_VOLUME_OVERRIDE_ENV = "DFE_IMAGE_VOLUME_ENABLED"
 METRICS_TIMEOUT_SECONDS = 60
 # One line of the Prometheus text format: the series name, its labels, its value.
-GATE_SERIES = re.compile(r"^kubernetes_feature_enabled\{([^}]*)\}[ \t]+(\S+)[ \t]*$", re.MULTILINE)
+GATE_SERIES = re.compile(
+    r"^kubernetes_feature_enabled\{([^}]*)\}[ \t]+(\S+)[ \t]*$", re.MULTILINE
+)
 SERIES_LABEL = re.compile(r'(\w+)="([^"]*)"')
 
 
@@ -127,8 +129,10 @@ def read_gate(name: str, kubectl_args: Sequence[str] = ()) -> bool | None:
     current kubecontext (`--kubeconfig`, `--context`).
     """
     try:
-        done = run_kubectl([*kubectl_args, "get", "--raw", "/metrics"], timeout=METRICS_TIMEOUT_SECONDS)
-    except (FileNotFoundError, subprocess.TimeoutExpired):
+        done = run_kubectl(
+            [*kubectl_args, "get", "--raw", "/metrics"], timeout=METRICS_TIMEOUT_SECONDS
+        )
+    except FileNotFoundError, subprocess.TimeoutExpired:
         return None
     if done.returncode != 0:
         return None
@@ -186,14 +190,18 @@ def check_image_volume(stack_name: str, actual: str) -> int:
     if level == "ok":
         print(f"platform: {message}")
     else:
-        print(f"{'WARNING' if level == 'warn' else 'REFUSED'}: {message}", file=sys.stderr)
+        print(
+            f"{'WARNING' if level == 'warn' else 'REFUSED'}: {message}", file=sys.stderr
+        )
     return 3 if level == "fail" else 0
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--file", default=None, help="Path to versions.yaml")
-    parser.add_argument("--stack", default=None, help="Stack to read (default: `current`)")
+    parser.add_argument(
+        "--stack", default=None, help="Stack to read (default: `current`)"
+    )
     parser.add_argument(
         "--actual",
         default=None,
@@ -203,27 +211,45 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    versions_file = Path(args.file) if args.file else Path(__file__).resolve().parent.parent / "versions.yaml"
+    versions_file = (
+        Path(args.file)
+        if args.file
+        else Path(__file__).resolve().parent.parent / "versions.yaml"
+    )
     root = load_versions(versions_file)
     stack_name = args.stack or root.get("current")
     stack = root.get("stacks", {}).get(stack_name)
     if stack is None:
-        print(f"ERROR: stack '{stack_name}' not found in {versions_file}", file=sys.stderr)
+        print(
+            f"ERROR: stack '{stack_name}' not found in {versions_file}", file=sys.stderr
+        )
         return 1
 
     platform = stack.get("platform")
     if not platform:
-        print(f"ERROR: stack '{stack_name}' declares no platform stage", file=sys.stderr)
+        print(
+            f"ERROR: stack '{stack_name}' declares no platform stage", file=sys.stderr
+        )
         return 1
 
     required = platform.get("kubernetes")
     if not required:
-        print(f"ERROR: platform.kubernetes missing from stack '{stack_name}'", file=sys.stderr)
+        print(
+            f"ERROR: platform.kubernetes missing from stack '{stack_name}'",
+            file=sys.stderr,
+        )
         return 1
 
     try:
-        actual, git_version = (args.actual, args.actual) if args.actual else cluster_version()
-    except (subprocess.CalledProcessError, FileNotFoundError, KeyError, json.JSONDecodeError) as exc:
+        actual, git_version = (
+            (args.actual, args.actual) if args.actual else cluster_version()
+        )
+    except (
+        subprocess.CalledProcessError,
+        FileNotFoundError,
+        KeyError,
+        json.JSONDecodeError,
+    ) as exc:
         print(f"ERROR: could not read the cluster version: {exc}", file=sys.stderr)
         return 1
 
@@ -267,7 +293,9 @@ def main() -> int:
                 file=sys.stderr,
             )
             return 3
-        print(f"platform: RKE2 {git_version} meets {rke2_required} (stack {stack_name})")
+        print(
+            f"platform: RKE2 {git_version} meets {rke2_required} (stack {stack_name})"
+        )
 
     return 0
 

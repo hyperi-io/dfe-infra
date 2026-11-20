@@ -13,7 +13,7 @@ anything can take it to, which is KEDA's minReplicaCount where KEDA drives it
 and replicaCount where it does not:
 
   floor >= 2  ->  minAvailable: 1. Nothing can shrink the workload to one pod,
-                  so one pod may always be evicted and a drain never wedges.
+                  so one pod may always be evicted and a drain never blocks.
   floor  = 1  ->  maxUnavailable: 1. The static replicaCount gate passed, but an
                   autoscaler can still take this to one pod, where minAvailable:
                   1 computes disruptionsAllowed=0 and blocks every drain until

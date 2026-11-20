@@ -1,27 +1,21 @@
-// Nodes, brokers, databases and every private endpoint sit in PRIVATE subnets.
-// Public subnets carry two things and nothing else: internet-facing load
-// balancers, and the NAT gateways the private half reaches the internet
-// through. DFE's images come from ghcr.io, which no VPC interface endpoint can
-// reach, so egress is a requirement rather than a convenience.
+// Nodes, brokers, databases and private endpoints sit in PRIVATE subnets. Public subnets hold
+// only internet-facing load balancers and the NAT gateways. Egress is required: DFE's images
+// come from ghcr.io, which no VPC interface endpoint reaches.
 
 data "aws_availability_zones" "available" {
   state = "available"
 }
 
 locals {
-  // The first var.network.az_count zones the region offers.
   azs = slice(data.aws_availability_zones.available.names, 0, var.network.az_count)
 
-  // 2^subnet_newbits equal blocks in provision.cidr. The private half takes
-  // the first az_count blocks and the public half az_count from the midpoint,
-  // so the two never collide: the network validation holds az_count to half
-  // the block count.
+  // 2^subnet_newbits equal blocks. Private takes the first az_count and public az_count from the
+  // midpoint, and the network validation holds az_count to half the block count so they never
+  // collide.
   public_subnet_offset = pow(2, var.network.subnet_newbits - 1)
   private_cidrs        = { for i, az in local.azs : az => cidrsubnet(var.provision.cidr, var.network.subnet_newbits, i) }
   public_cidrs         = { for i, az in local.azs : az => cidrsubnet(var.provision.cidr, var.network.subnet_newbits, i + local.public_subnet_offset) }
 
-  // per-az survives a zone failure and keeps egress traffic in its own zone;
-  // single is one gateway every zone routes to.
   nat_azs = var.network.nat == "per-az" ? local.azs : [local.azs[0]]
 }
 
@@ -50,16 +44,12 @@ resource "aws_subnet" "public" {
   availability_zone = each.key
   cidr_block        = each.value
 
-  // No map_public_ip_on_launch: nothing is LAUNCHED here. Load balancers and
-  // NAT gateways bring their own addresses, and a default-on public IP would
-  // silently give any future instance one.
+  // No map_public_ip_on_launch: nothing is launched here, and a default-on public IP would silently give a future instance one.
 
   tags = {
     Name = "${var.name}-public-${each.key}"
-    // The two tags the AWS load balancer controller discovers an
-    // internet-facing subnet by. Keys defined by EKS, so they are literal by
-    // necessity; the cluster tag is what keeps discovery right when a VPC
-    // holds more than one cluster.
+    // The tags the AWS load balancer controller discovers an internet-facing subnet by. EKS defines
+    // the keys, and the cluster tag keeps discovery right when a VPC holds more than one cluster.
     "kubernetes.io/role/elb"            = "1"
     "kubernetes.io/cluster/${var.name}" = "shared"
   }
@@ -76,9 +66,8 @@ resource "aws_subnet" "private" {
     Name                                = "${var.name}-private-${each.key}"
     "kubernetes.io/role/internal-elb"   = "1"
     "kubernetes.io/cluster/${var.name}" = "shared"
-    // The tag Karpenter's subnetSelectorTerms match on. It is written here
-    // rather than in karpenter.tf because aws_ec2_tag against a subnet this
-    // module already owns produces a tag each side removes on every plan.
+    // Karpenter's subnetSelectorTerms tag. Written here because aws_ec2_tag against a subnet this
+    // module owns makes each side remove the other's tag on every plan.
     "karpenter.sh/discovery" = var.name
   }
 }
@@ -103,8 +92,7 @@ resource "aws_nat_gateway" "this" {
 
   tags = { Name = "${var.name}-${each.key}" }
 
-  // A NAT gateway with no route to the internet gateway is created and then
-  // fails, so the dependency is stated rather than inferred from the routes.
+  // A NAT gateway with no route to the internet gateway is created and then fails.
   depends_on = [aws_internet_gateway.this]
 }
 
@@ -130,9 +118,8 @@ resource "aws_route_table_association" "public" {
   route_table_id = aws_route_table.public.id
 }
 
-// One private route table per zone either way, so switching network.nat
-// between single and per-az changes which gateway a route points at rather
-// than how many tables exist.
+// One private route table per zone either way, so switching network.nat re-points a route
+// instead of changing the table count.
 resource "aws_route_table" "private" {
   for_each = toset(local.azs)
 
@@ -153,9 +140,7 @@ resource "aws_route_table_association" "private" {
   route_table_id = aws_route_table.private[each.key].id
 }
 
-// The S3 gateway endpoint is free and routes S3 traffic off the NAT gateway,
-// which bills per GB. ClickHouse object storage, container layers from ECR and
-// the state bucket all take that path, so it is always created.
+// The S3 gateway endpoint is free and keeps S3 traffic off the per-GB NAT gateway, so it is always created.
 resource "aws_vpc_endpoint" "s3" {
   vpc_id            = aws_vpc.this.id
   vpc_endpoint_type = "Gateway"

@@ -45,10 +45,16 @@ def test_every_target_the_root_builds_names_its_scope() -> None:
     slice_ = target_locals()
     ports = re.findall(ASSIGNMENT.format("port"), slice_, re.MULTILINE)
     scopes = re.findall(ASSIGNMENT.format("scope"), slice_, re.MULTILINE)
-    expect("the root builds at least the api, broker and ClickHouse targets",
-           len(ports) >= 3, f"{len(ports)} port assignments")
-    expect("every target that names a port names a scope beside it",
-           len(ports) == len(scopes), f"{len(ports)} ports vs {len(scopes)} scopes")
+    expect(
+        "the root builds at least the api, broker and ClickHouse targets",
+        len(ports) >= 3,
+        f"{len(ports)} port assignments",
+    )
+    expect(
+        "every target that names a port names a scope beside it",
+        len(ports) == len(scopes),
+        f"{len(ports)} ports vs {len(scopes)} scopes",
+    )
 
 
 def test_an_unstated_scope_means_the_vpc() -> None:
@@ -56,7 +62,11 @@ def test_an_unstated_scope_means_the_vpc() -> None:
     guards against is the narrow one."""
     body = TOOLBOX.read_text(encoding="utf-8")
     declared = re.search(r'scope\s*=\s*optional\(string,\s*"([a-z]+)"\)', body)
-    expect("the module declares a default scope", declared is not None, "no optional() default found")
+    expect(
+        "the module declares a default scope",
+        declared is not None,
+        "no optional() default found",
+    )
     expect("and it is vpc", declared.group(1) == "vpc", declared.group(1))
 
 

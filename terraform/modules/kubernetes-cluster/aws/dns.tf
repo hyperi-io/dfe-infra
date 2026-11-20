@@ -1,8 +1,6 @@
-// One zone here, and the split is the private-by-default principle in DNS form.
-// Everything DFE talks to internally resolves in this PRIVATE zone, inside the
-// VPC only. The public zone, external-dns's identity and cert-manager's DNS-01
-// identity all belong to the edge module (terraform/modules/edge/aws/dns.tf),
-// because they exist only so something outside the VPC can reach in.
+// One PRIVATE zone, resolving inside the VPC only. The public zone and the identities that write
+// it (external-dns, cert-manager DNS-01) belong to the edge module
+// (terraform/modules/edge/aws/dns.tf), because they exist only so something outside can reach in.
 
 resource "aws_route53_zone" "private" {
   name = var.dns.private_zone
@@ -12,65 +10,36 @@ resource "aws_route53_zone" "private" {
   }
 }
 
-// external-dns runs policy: sync (argocd/appsets/layer1-addons.yaml), so a
-// deleted Service or Ingress gets its record removed while the controller is
-// still alive to react. Sync cannot cover `tofu destroy` itself: the EKS
-// cluster and every node go down in the same run, so whatever external-dns
-// last published is still in the zone with no controller left to remove it,
-// and Route 53 refuses to delete a hosted zone that still holds a record
-// beyond its own apex NS/SOA pair.
+// external-dns runs policy: sync, which cannot cover `tofu destroy`: the cluster and every node
+// go down in the same run, leaving the last published records in a zone Route 53 will not
+// delete while it holds anything beyond its apex NS/SOA pair. This empties it first
+// (docs/deployment/aws-configuration.md, external-dns).
 //
-// A destroy-time provisioner's command may reference only self, count.index
-// or each.key -- OpenTofu's own words: "The command field do[es] support
-// references only the self object, each.key and count.index, which
-// represents the information that OpenTofu is still having in the state
-// about the targeted resource" (opentofu.org/docs/language/resources/
-// syntax/). So the zone id and region are captured into this resource's own
-// input first, and the provisioner reads them back off self.output.
-//
-// Referencing aws_route53_zone.private.zone_id in that input is what orders
-// this resource's destroy ahead of the zone's: OpenTofu "treats those
-// references as implicit ordering requirements when creating, updating, or
-// destroying resources" (opentofu.org/docs/language/resources/behavior/),
-// and a resource that references another is created after it and destroyed
-// before it -- the same reason the destroy graph splits create and destroy
-// nodes at all, "because the destroy order is often different from the
-// create order" (opentofu.org/docs/internals/graph/).
+// A destroy-time provisioner may reference only self, so the zone id and region are captured into
+// this resource's input and read back from self.output. Referencing the zone's id also orders
+// this resource's destroy ahead of the zone's.
 resource "terraform_data" "private_zone_teardown" {
   input = {
     zone_id = aws_route53_zone.private.zone_id
     region  = var.provision.region
-    // The apex name, so the filter below can spare the apex NS/SOA pair alone.
-    // A delegation's own NS record is not the apex's and has to go, or the zone
-    // still refuses to delete.
+    // The apex name, so the filter below spares the apex NS/SOA pair alone. A delegation's own NS
+    // record is not the apex's and has to go.
     apex = aws_route53_zone.private.name
   }
 
-  // A zone replacement (the private_zone name changing) is exactly the case
-  // that needs the OLD zone emptied before the OLD terraform_data instance
-  // itself is replaced, so the trigger is the id whose change means "this
-  // zone is going away," not a value that only changes when nothing does.
+  // A zone replacement empties the OLD zone before the old instance is replaced, so the trigger is the zone id.
   triggers_replace = [aws_route53_zone.private.zone_id]
 
-  // Runs under whatever AWS identity is already authenticated for `tofu
-  // destroy` -- the same one that created the zone -- so it carries no IAM
-  // of its own. Deletes every record but the APEX NS/SOA pair Route 53
-  // manages itself, which is exactly what ChangeResourceRecordSets requires
-  // to be true before the zone can be deleted. --query does the filtering
-  // and reshaping so the only external dependency is the aws CLI already
-  // needed to authenticate this destroy, not a second tool. The CLI
-  // auto-paginates the list, so the filter sees every record.
+  // Runs under the AWS identity already authenticated for `tofu destroy`, so it has no IAM of its
+  // own. --query does the filtering, so the aws CLI the destroy already needs is the only
+  // dependency, and the CLI auto-paginates so the filter sees every record.
   //
-  // One batch, and ChangeResourceRecordSets caps one at 1000 changes: a zone
-  // holding more than that is rejected whole and falls through to the zone's
-  // own HostedZoneNotEmpty below. external-dns publishes one record per exposed
-  // Service, so passing that cap means something other than this deployment has
-  // been writing into the zone.
+  // One batch, and ChangeResourceRecordSets caps one at 1000 changes: a bigger zone is rejected
+  // whole and falls through to the zone's own HostedZoneNotEmpty.
   provisioner "local-exec" {
     when = destroy
-    // A zone already emptied or already deleted by hand must not wedge the
-    // destroy: whatever this cannot clear still surfaces as the zone's own
-    // HostedZoneNotEmpty, which names the remaining records.
+    // A zone already emptied or deleted by hand must not fail the destroy: what this cannot clear
+    // still surfaces as the zone's HostedZoneNotEmpty, which names the remaining records.
     on_failure = continue
 
     command = <<-EOT

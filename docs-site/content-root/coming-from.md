@@ -4,15 +4,15 @@ sidebar_label: Coming from Splunk or Elastic
 slug: /coming-from
 ---
 
-# Coming from Splunk, Elastic or a Lakehouse
+# Coming from Splunk or Elastic
 
-If you've run Splunk, Elastic, OpenSearch or a lakehouse, or several of them, you'll bring assumptions about how a data platform works. DFE can take the place of more than one, with one platform to run instead of several. DFE does several things differently, and the rest of the docs assume you know them.
+If you've run Splunk, Elastic or OpenSearch, or several of them, you'll bring assumptions about how a data platform works. Everything this page says about Elastic holds for OpenSearch too. DFE does several things differently, and the rest of the docs assume you know them. Coming from Snowflake, Databricks, BigQuery or Athena instead? That page is [coming from a lakehouse](coming-from-lakehouse.md).
 
 ## Nothing breaks when a source changes
 
-Index engines will take a field you never mapped, but it has a cost. Unplanned fields grow the index, and the hardware under it grows with them. A lakehouse wants the model before the data arrives. DFE lands every field from day one, and a field with no mapping yet lands in automatic typed columns.
+Index engines will take a field you never mapped, but it has a cost. Unplanned fields grow the index, and the hardware under it grows with them. DFE lands every field from day one, and a field with no mapping yet lands in automatic typed columns.
 
-We built it that way because you rarely control your sources. Vendors change formats in an update, and partners change feeds without telling you. So there's no data contract to negotiate or police upstream, and a supplier adding or renaming a field doesn't cost you events.
+We built it that way because you rarely control your sources. Suppliers change formats in an update, and partners change feeds without telling you. So there's no data contract to negotiate or police upstream, and a supplier adding or renaming a field doesn't cost you events.
 
 That gives you a two-step approach:
 
@@ -31,7 +31,7 @@ That's one of the biggest efficiency gains in DFE. A second copy of every record
 
 Most stacks are built as closed stacks: their agent, their pipeline, their store and their UI, each made to work with the others. DFE is consciously built as a set of loosely coupled parts with a standard protocol at every joint.
 
-Senders use their own protocols, so Vector, Fluent Bit, Fluentd, the OpenTelemetry Collector, Beats, Logstash and anything that speaks Splunk HEC send to dfe-receiver unchanged. Between the stages it's plain Kafka, whether that's in your cluster, Amazon MSK, Confluent Cloud or Redpanda Cloud. The store is ClickHouse, in your cluster or ClickHouse Cloud. Transforms run the engine you pick: VRL, Vector, or your Elastic pipelines. DNS, the certificate authority, the secrets store and the git host are each a config choice ([architecture](dfe-infra/architecture.md#swappable-components-the-modularity-contract)).
+Senders use their own protocols, so Vector, Fluent Bit, Fluentd, the OpenTelemetry Collector, Beats, Logstash and anything that speaks Splunk HEC send to dfe-receiver unchanged. Between the stages it's plain Kafka, whether that's in your cluster, Amazon MSK, Confluent Cloud or Redpanda Cloud. The store is ClickHouse, in your cluster or ClickHouse Cloud. Transforms run the engine you pick: VRL, Vector, or your Elastic pipelines. DNS, the certificate authority, the secrets store and the git host are each a config choice ([architecture](dfe-infra/architecture.md)).
 
 We built it that way so no single part, ours included, locks you in. You can swap one without replacing the rest, use the managed cloud services you already pay for, and put your own tools at any joint.
 
@@ -43,17 +43,17 @@ Index engines build an index over every event as it arrives, which costs storage
 
 Keeping data around is cheap. Being able to actually use it months later is what counts.
 
-Working with AWS and ClickHouse in August 2025, we ran two tests on DFE 2.1 to prove its schema models and ingest scale, the design that became DFE 2.2. An OpenSearch cluster ran alongside, so we measured it too.
+Working with AWS and ClickHouse in August 2025, we ran two PB-scale tests on DFE 2.1 to prove its schema models and ingest scale, the design that became DFE 2.2. An OpenSearch cluster ran alongside, so we measured it too.
 
 At petabyte-a-day throughput, OpenSearch couldn't keep up and DFE did. The 270-versus-14-days result came from the long-term analysis test, at terabyte scale. DFE with ClickHouse also used 10-25% of the resources there, counting the engine and ingestion pipeline together.
 
-This OpenSearch comparison is based on a fully tuned and resourced cluster with dedicated ingestion, hot, warm and cold tiers and optimised index templates, implemented by Lucene specialists. Results are HyperI's own and imply no endorsement by AWS or ClickHouse. Your mileage will vary depending on your data's shape and volume.
+This OpenSearch comparison is based on a fully tuned and resourced cluster with dedicated ingestion, hot, warm and cold tiers and optimised index templates, implemented by Lucene specialists. Results are HyperI's own and imply no endorsement by AWS or ClickHouse. Your mileage will vary with your data's columns and volume.
 
 That changes what you can ask. A newly disclosed vulnerability (a CVE) may have been exploited in the wild for nine months before anyone published it. With months of data queryable, you check whether it was used against you back then, not only in the last 14 days. A team in a theatre of operations that spots a new pattern today can trace it back the same way, through months of sensor and track data.
 
 ## Parsed once, at the edge
 
-Splunk extracts many fields at search time, so every search pays that cost again. DFE parses once, as data arrives. dfe-receiver and dfe-fetcher turn the transport (syslog headers, beats and HEC envelopes, OTLP) into JSON at the first hop, and the transforms parse vendor message bodies after that. Searches and dashboards then read fields that already exist.
+Splunk extracts many fields at search time, so every search pays that cost again. DFE parses once, as data arrives. dfe-receiver and dfe-fetcher turn the transport (syslog headers, beats and HEC envelopes, OTLP) into JSON at the first hop, and the transforms parse the message body each product writes after that. Searches and dashboards then read fields that already exist.
 
 ## Sources join
 
@@ -62,21 +62,94 @@ Index engines are built for searching events. Matching events against an invento
 DFE keeps two kinds of table. Fact tables hold the observability data: the large, time-series stream of events, logs and metrics from each source. Dimension tables hold the context: smaller, point-in-time reference data such as an inventory, an identity directory or a CMDB. You join the two in ClickHouse SQL.
 
 ```mermaid
-flowchart LR
-  subgraph OBS["Observability: fact tables (large, time-series)"]
-    F1[Device events]
-    F2[Application logs]
-    F3[Metrics]
+---
+config:
+  theme: base
+  look: neo
+  fontFamily: Inter, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif
+  flowchart:
+    curve: linear
+    nodeSpacing: 40
+    rankSpacing: 64
+    padding: 18
+    wrappingWidth: 280
+    htmlLabels: true
+  elk:
+    preset: modelOrder
+  themeVariables:
+    fontSize: 15px
+    lineColor: "#64748B"
+    primaryTextColor: "#0F172A"
+    clusterBorder: "#0072B2"
+    edgeLabelBackground: "#FFFFFF"
+  themeCSS: >-
+    p{margin:0}
+    .node[data-look] rect,.node[data-look] path,.node[data-look] polygon,.node[data-look] .outer-path{filter:drop-shadow(0 1px 2px rgba(15,23,42,.10)) drop-shadow(0 6px 14px rgba(15,23,42,.10))}
+    .node rect{rx:10px;ry:10px}
+    .cluster rect{rx:16px;ry:16px}
+    .node .label div{min-width:150px}
+    .node.decision .label div{min-width:0}
+    .cluster[data-look] rect{filter:none}
+    .nodeLabel{line-height:1.35}
+    .nodeLabel b{font-weight:600;font-size:15px;letter-spacing:-0.01em}
+    .nodeLabel span{font-size:12.5px;font-weight:400;color:#334155}
+    .cluster-label span.nodeLabel{display:inline-block;background:#FFFFFF;color:#0B2A3F;border:1.5px solid #0072B2;border-radius:999px;padding:2px 12px;font-size:11.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase}
+    .flowchart-link{stroke-width:1.75px}
+    .labelBkg{background:transparent!important}
+    span.edgeLabel{display:inline-block;background:#FFFFFF!important;color:#1E293B;border:1px solid #94A3B8;border-radius:999px;padding:2px 10px;font-size:12px;font-weight:500}
+    span.edgeLabel p{background:transparent!important}
+    .label-icon{width:20px;height:20px;vertical-align:-4px;margin-right:6px}
+    .ingest .label-icon{color:#0E8A7D}
+    .xform .label-icon{color:#7B4FB0}
+    .load .label-icon{color:#0072B2}
+    .bus .label-icon{color:#A8517F}
+    .store .label-icon{color:#00785A}
+    .ui .label-icon{color:#D9480F}
+    .ext .label-icon{color:#64748B}
+---
+flowchart TB
+  accTitle: L4 Detail -- Fact and dimension tables
+  accDescr: Fact tables hold device events, application logs and metrics. Dimension tables hold the asset inventory, identity directory and CMDB. A JOIN in ClickHouse SQL combines them to answer questions such as which devices stopped reporting.
+  subgraph OBS["Facts: large, time-series"]
+    direction LR
+    F1("<b>Device events</b>")
+    F2("<b>Application logs</b>")
+    F3("<b>Metrics</b>")
   end
-  subgraph CTX["Context: dimension tables (small, point-in-time)"]
-    D1[Asset inventory]
-    D2[Identity directory]
-    D3[CMDB]
+  subgraph CTX["Context: small, point-in-time"]
+    direction LR
+    D1("<b>Asset inventory</b>")
+    D2("<b>Identity directory</b>")
+    D3("<b>CMDB</b>")
   end
-  OBS --> J{{"JOIN in ClickHouse SQL"}}
-  CTX --> J
-  J --> Q["Which devices stopped reporting?<br/>Errors by customer tier"]
+  subgraph ASK["The question"]
+    direction LR
+    J{"<b>JOIN</b><br/><span>in ClickHouse SQL</span>"}
+    Q("<b>Answers</b><br/><span>Which devices stopped reporting?</span><br/><span>Errors by customer tier</span>")
+    J --> Q
+  end
+  OBS --> ASK
+  CTX --> ASK
+  class F1,F2,F3,D1,D2,D3 store
+  class J decision
+  class Q part
+  classDef ext fill:#F4F6F8,stroke:#94A3B8,stroke-width:1.5px,stroke-dasharray:5 4,color:#0F172A
+  classDef ingest fill:#FFFFFF,stroke:#0E8A7D,stroke-width:3px,color:#0F172A
+  classDef xform fill:#FFFFFF,stroke:#7B4FB0,stroke-width:3px,color:#0F172A
+  classDef load fill:#FFFFFF,stroke:#0072B2,stroke-width:3px,color:#0F172A
+  classDef bus fill:#FFFFFF,stroke:#A8517F,stroke-width:3px,color:#0F172A
+  classDef store fill:#FFFFFF,stroke:#00785A,stroke-width:3px,color:#0F172A
+  classDef ui fill:#FFFFFF,stroke:#D9480F,stroke-width:3px,color:#0F172A
+  classDef decision fill:#FFFFFF,stroke:#9A6700,stroke-width:3px,color:#0F172A
+  classDef error fill:#FFFFFF,stroke:#C2410C,stroke-width:3px,color:#0F172A
+  classDef control fill:#FFFFFF,stroke:#334155,stroke-width:3px,color:#0F172A
+  classDef part fill:#FFFFFF,stroke:#94A3B8,stroke-width:1.5px,color:#0F172A
+  style OBS fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
+  style CTX fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
+  style ASK fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
 ```
+
+*Figure 1. L4 Detail -- Fact and dimension tables.* Up: [L2 Services -- DFE data path](README.md).
 
 "Which devices in my inventory stopped reporting this week?" is one query.
 
@@ -106,11 +179,13 @@ So point a copy of one feed at DFE and keep the rest where it is. Logstash, Vect
 
 Two limits to know. Elastic Agent isn't tested yet. And DFE doesn't write back into an Elastic cluster, so it runs beside one rather than in front of it.
 
+Running more than one of Splunk, Elastic and OpenSearch? DFE can take the place of several, with one platform to run. From DFE's side the one difference between Elastic and OpenSearch is licensing: OpenSearch is Apache-2.0, the more permissive of the two.
+
 ## Lift and shift
 
 dfe-transform-elastic is built to carry Elastic data across unchanged, from the shipper to the ECS fields. Beats data arrives in its own protocol, and dfe-transform-elastic runs the Elastic ingest pipelines for each supported Beats and Elastic Agent integration, with the same ECS field mapping, type coercion and enrichment Elastic's own pipeline gives it ([parity](dfe-transform-elastic/parity.md)). For the integrations it covers, anything downstream that expects ECS fields finds them.
 
-Saved searches need rewriting. SPL, KQL and Lucene queries don't translate on their own, so each becomes ClickHouse SQL, and one that alerts becomes a rule on its source. Sigma rules are the shortcut where you have them: the Sigma pipeline turns a selected rule into a DFE rule and a hunt (off by default in 2.2.1, see [detections and hunts](operate/detections-and-hunts.md)).
+Saved searches need rewriting. SPL, KQL and Lucene queries don't translate on their own, so each becomes ClickHouse SQL, and one that alerts becomes a rule on its source. Sigma rules are the shortcut where you have them: the Sigma pipeline turns a selected rule into a DFE rule and a hunt (off by default in this release, see [detections and hunts](operate/detections-and-hunts.md)).
 
 ## Doing it the DFE way
 
@@ -142,4 +217,3 @@ Saved searches need rewriting. SPL, KQL and Lucene queries don't translate on th
 | SPL, KQL or Lucene queries | SQL on ClickHouse, and search in the DFE console |
 | A saved search that alerts | A rule (a SQL query on a source), run on a schedule by a hunt |
 | Hot, warm and cold tiers | ClickHouse storage tiering ([guide](dfe-infra/deployment/clickhouse-tiering.md)) |
-| dbt models over a lake | The `dfe-schemas` definition, compiled to tables by dfe-engine |

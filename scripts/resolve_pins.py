@@ -157,7 +157,9 @@ def _selected_apps(stack_map, requested: list[str]) -> list[str]:
     return [a for a in apps if a in digests]
 
 
-def resolve_rows(stack_map, org: str, apps: list[str], tag_override: str | None) -> list[Row]:
+def resolve_rows(
+    stack_map, org: str, apps: list[str], tag_override: str | None
+) -> list[Row]:
     """Resolve each selected app's tag to its registry digest."""
     app_pins = stack_map.get("apps", {})
     digests = stack_map.get("digests", {})
@@ -269,7 +271,8 @@ def cmd_pin(args: argparse.Namespace) -> int:
 
     apps = _selected_apps(stack_map, args.app)
     print(
-        f"=== resolve_pins: stack {name}, org {args.org} ({len(apps)} app(s)) ===", file=sys.stderr
+        f"=== resolve_pins: stack {name}, org {args.org} ({len(apps)} app(s)) ===",
+        file=sys.stderr,
     )
 
     rows = resolve_rows(stack_map, args.org, apps, args.version)
@@ -302,7 +305,10 @@ def cmd_pin(args: argparse.Namespace) -> int:
     stale = [r for r in rows if r.outcome == Outcome.STALE]
 
     if errors:
-        print(f"\n{len(errors)} app(s) failed to resolve (registry error).", file=sys.stderr)
+        print(
+            f"\n{len(errors)} app(s) failed to resolve (registry error).",
+            file=sys.stderr,
+        )
         return 1
 
     if args.write and stale:
@@ -314,7 +320,9 @@ def cmd_pin(args: argparse.Namespace) -> int:
         )
         if written:
             print("\n" + "\n".join(written))
-            print(f"\n{len(written)} digest(s) written to versions.yaml (stack {name}).")
+            print(
+                f"\n{len(written)} digest(s) written to versions.yaml (stack {name})."
+            )
         if held:
             print("\n" + "\n".join(held), file=sys.stderr)
         if missing:
@@ -370,9 +378,13 @@ def add_pin_subparser(sub: argparse._SubParsersAction) -> None:
         metavar="TAG",
         help="resolve this tag instead of the apps: pin (needs one --app)",
     )
-    p.add_argument("--stack", default=None, help="stack version (default: versions.yaml `current`)")
+    p.add_argument(
+        "--stack", default=None, help="stack version (default: versions.yaml `current`)"
+    )
     p.add_argument("--org", default=DEFAULT_ORG, help="GH org owning the packages")
-    p.add_argument("--registry", default=DEFAULT_REGISTRY, help="registry prefix for printed refs")
+    p.add_argument(
+        "--registry", default=DEFAULT_REGISTRY, help="registry prefix for printed refs"
+    )
     p.add_argument(
         "--check",
         action="store_true",

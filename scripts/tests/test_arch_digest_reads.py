@@ -88,11 +88,17 @@ class Registry:
 
 
 def karpenter(version: str = "1.14.1") -> tuple[str, str]:
-    return f"name: karpenter\nversion: {version}\nappVersion: {version}\n", KARPENTER_VALUES
+    return (
+        f"name: karpenter\nversion: {version}\nappVersion: {version}\n",
+        KARPENTER_VALUES,
+    )
 
 
 def alb_chart() -> tuple[str, str]:
-    return "name: aws-load-balancer-controller\nversion: 3.6.0\nappVersion: v3.6.0\n", ""
+    return (
+        "name: aws-load-balancer-controller\nversion: 3.6.0\nappVersion: v3.6.0\n",
+        "",
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -105,7 +111,9 @@ def run_gate(
 ) -> int:
     monkeypatch.setattr(subprocess, "run", registry)
     monkeypatch.setattr(arch.dfe_stack, "load_root", dict)
-    monkeypatch.setattr(arch.dfe_stack, "stack_pins", lambda _root, _name: ("test", stack))
+    monkeypatch.setattr(
+        arch.dfe_stack, "stack_pins", lambda _root, _name: ("test", stack)
+    )
     argv = ["check_image_arch.py", "--third-party-only", "--resolve-charts"]
     monkeypatch.setattr(sys, "argv", [*argv, "--verdict-cache", str(cache)])
     return arch.main()
@@ -119,13 +127,17 @@ def test_the_karpenter_controller_is_read_at_the_digest_its_chart_pins(
 ) -> None:
     registry = Registry({f"{KARPENTER_CHART} 1.14.1": karpenter()})
 
-    status = run_gate(monkeypatch, registry, {"operators": {"karpenter": "1.14.1"}}, tmp_path / "v")
+    status = run_gate(
+        monkeypatch, registry, {"operators": {"karpenter": "1.14.1"}}, tmp_path / "v"
+    )
 
     assert status == 0
     assert CONTROLLER in registry.images_read()
     assert "public.ecr.aws/karpenter/controller:1.14.1" not in registry.images_read()
     pulls = registry.charts_read()
-    assert [cmd[:5] for cmd in pulls] == [["helm", "pull", KARPENTER_CHART, "--version", "1.14.1"]]
+    assert [cmd[:5] for cmd in pulls] == [
+        ["helm", "pull", KARPENTER_CHART, "--version", "1.14.1"]
+    ]
 
 
 def test_a_chart_pinned_by_version_is_read_every_run_and_its_controller_once(
@@ -133,7 +145,9 @@ def test_a_chart_pinned_by_version_is_read_every_run_and_its_controller_once(
 ) -> None:
     stack = {"operators": {"karpenter": "1.14.1"}}
     cache = tmp_path / "verdicts.json"
-    run_gate(monkeypatch, Registry({f"{KARPENTER_CHART} 1.14.1": karpenter()}), stack, cache)
+    run_gate(
+        monkeypatch, Registry({f"{KARPENTER_CHART} 1.14.1": karpenter()}), stack, cache
+    )
     capsys.readouterr()
 
     second = Registry({f"{KARPENTER_CHART} 1.14.1": karpenter()})
@@ -169,11 +183,18 @@ def test_a_chart_pinned_by_digest_is_read_once_and_needs_no_read_after(
     assert CONTROLLER not in second.images_read()
     assert "charts at a digest: 1 hit, 0 miss" in out
     assert "public.ecr.aws" not in out.rsplit("registry reads:", 1)[1].splitlines()[0]
-    recorded = json.loads(cache.read_text())["charts"][f"{KARPENTER_CHART}@{CHART_DIGEST}"]
-    assert recorded == {"version": "1.14.1", "images": {"karpenter controller": CONTROLLER}}
+    recorded = json.loads(cache.read_text())["charts"][
+        f"{KARPENTER_CHART}@{CHART_DIGEST}"
+    ]
+    assert recorded == {
+        "version": "1.14.1",
+        "images": {"karpenter controller": CONTROLLER},
+    }
 
 
-def test_a_chart_digest_of_another_version_fails_the_gate(monkeypatch, tmp_path, capsys) -> None:
+def test_a_chart_digest_of_another_version_fails_the_gate(
+    monkeypatch, tmp_path, capsys
+) -> None:
     stack = {
         "operators": {"karpenter": "1.14.1"},
         "services-digests": {"karpenter": CHART_DIGEST},
@@ -183,7 +204,10 @@ def test_a_chart_digest_of_another_version_fails_the_gate(monkeypatch, tmp_path,
     assert run_gate(monkeypatch, registry, stack, tmp_path / "v") == 1
 
     out = capsys.readouterr().out
-    assert f"{KARPENTER_CHART}@{CHART_DIGEST} is chart version 1.15.0, not the pinned 1.14.1" in out
+    assert (
+        f"{KARPENTER_CHART}@{CHART_DIGEST} is chart version 1.15.0, not the pinned 1.14.1"
+        in out
+    )
     assert json.loads((tmp_path / "v").read_text())["charts"] == {}
 
 
@@ -193,7 +217,9 @@ def test_a_recalled_chart_is_read_again_when_the_pin_names_another_version(
     source = f"{KARPENTER_CHART}@{CHART_DIGEST}"
     cache = tmp_path / "verdicts.json"
     record = {"version": "1.13.0", "images": {"karpenter controller": CONTROLLER}}
-    cache.write_text(json.dumps({"schema": 1, "images": {}, "charts": {source: record}}))
+    cache.write_text(
+        json.dumps({"schema": 1, "images": {}, "charts": {source: record}})
+    )
     stack = {
         "operators": {"karpenter": "1.14.1"},
         "services-digests": {"karpenter": CHART_DIGEST},
@@ -216,7 +242,10 @@ def test_a_digest_on_a_chart_from_a_classic_repository_fails_the_gate(
 
     assert run_gate(monkeypatch, registry, stack, tmp_path / "v") == 1
 
-    assert "comes from a classic repository, which serves no digest" in capsys.readouterr().out
+    assert (
+        "comes from a classic repository, which serves no digest"
+        in capsys.readouterr().out
+    )
 
 
 # ------------------------------------------------- aws-load-balancer-controller
@@ -253,7 +282,10 @@ def test_the_load_balancer_controller_is_read_by_the_digest_the_stack_pins(
 
     assert not [ref for ref in second.images_read() if ref.startswith(ALB)]
     out = capsys.readouterr().out
-    assert f"  ok     services.aws-load-balancer-controller-image {ALB}:v3.6.0@{ALB_DIGEST}" in out
+    assert (
+        f"  ok     services.aws-load-balancer-controller-image {ALB}:v3.6.0@{ALB_DIGEST}"
+        in out
+    )
 
 
 def test_a_pinned_tag_the_chart_does_not_render_fails_the_gate(
@@ -269,10 +301,15 @@ def test_a_pinned_tag_the_chart_does_not_render_fails_the_gate(
     assert run_gate(monkeypatch, registry, stack, tmp_path / "v") == 1
 
     out = capsys.readouterr().out
-    assert f"pins {ALB}:v3.5.0, but operators.aws-load-balancer-controller chart 3.6.0" in out
+    assert (
+        f"pins {ALB}:v3.5.0, but operators.aws-load-balancer-controller chart 3.6.0"
+        in out
+    )
 
 
-def test_a_pinned_image_tag_with_no_digest_fails_the_gate(monkeypatch, tmp_path, capsys) -> None:
+def test_a_pinned_image_tag_with_no_digest_fails_the_gate(
+    monkeypatch, tmp_path, capsys
+) -> None:
     stack = {
         "operators": {"aws-load-balancer-controller": "3.6.0"},
         "services": {"aws-load-balancer-controller-image": "v3.6.0"},

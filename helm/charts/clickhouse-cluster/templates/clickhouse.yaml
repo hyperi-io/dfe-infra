@@ -1,9 +1,4 @@
 {{- if eq .Values.clickhouse.mode "cluster" }}
-# CLUSTER-MODE CONFIG NOTE (dfe-infra#4.2): the earlier exit-231 crashloop here was
-# NOT a zombie-probe leak (operator 0.0.7 uses httpGet /ping, verified). Its real
-# cause was custom_settings_prefixes below rejecting the operator's injected
-# custom_operator_reload_revision setting -> CANNOT_LOAD_CONFIG. Fixed by allowing
-# the custom_ prefix (see settings.extraConfig). Keep both prefixes in cluster mode.
 apiVersion: clickhouse.com/v1alpha1
 kind: ClickHouseCluster
 metadata:
@@ -14,7 +9,7 @@ spec:
   shards: {{ .Values.clickhouse.shardsCount }}
   replicas: {{ .Values.clickhouse.replicas }}
   containerTemplate:
-    # The operator renders repository:tag and drops `hash` whenever a tag is set (its defaulting sets one), so the digest rides in the tag.
+    # The operator drops `hash` whenever a tag is set, so the digest rides in the tag.
     image:
       repository: docker.io/clickhouse/clickhouse-server
       tag: "{{ .Values.clickhouse.version }}{{ with .Values.clickhouse.imageDigest }}@{{ . }}{{ end }}"
@@ -30,16 +25,12 @@ spec:
       {{- include "dfe-clickhouse.objectStoreEnv" . | nindent 6 }}
     {{- end }}
     {{- if eq (include "dfe-clickhouse.cacheVolume" .) "instance-store" }}
-    # Appended to the operator's own mounts, and outside the data PVC at
-    # /var/lib/clickhouse -- see dfe-clickhouse.instanceStoreCacheMount.
+    # Outside the data PVC. dfe-clickhouse.instanceStoreCacheMount says why.
     volumeMounts:
       - name: object-cache
         mountPath: {{ include "dfe-clickhouse.instanceStoreCacheMount" . }}
     {{- end }}
-  # Must be durable in every storage model. Under a tiered family this is the HOT
-  # tier and holds the only copy of the parts on it; under a cached family it
-  # holds the map from ClickHouse paths to object blobs, which cannot be rebuilt
-  # from the bucket.
+  # Durable in every model: the hot tier's only copy of its parts, or the map from paths to object blobs.
   dataVolumeClaimSpec:
     accessModes: ["ReadWriteOnce"]
     resources:
@@ -49,10 +40,7 @@ spec:
     storageClassName: {{ . | quote }}
     {{- end }}
   {{- if eq (include "dfe-clickhouse.storageBulk" .) "block" }}
-  # The operator mounts each entry at /var/lib/clickhouse/disks/<name> and
-  # registers a ClickHouse disk of the same name, which the ranked policy in
-  # extraConfig then puts behind the hot volume. Fixed at cluster creation: the
-  # CRD does not accept a new disk on an existing ClickHouseCluster.
+  # The operator mounts each entry at /var/lib/clickhouse/disks/<name> and registers a disk of that name.
   additionalVolumeClaimTemplates:
     - metadata:
         name: {{ .Values.clickhouse.tieredBlock.coldName }}
@@ -68,13 +56,9 @@ spec:
   keeperClusterRef:
     name: {{ .Values.clickhouse.keeperClusterRef.name | default "dfe-keeper" }}
   settings:
-    # Level and rotation for the server's log file and its stdout copy; see
-    # clickhouse.serverLog for what an unset logger costs.
     logger:
       {{- include "dfe-clickhouse.logger" .Values.clickhouse.serverLog | nindent 6 }}
     {{- if include "dfe-clickhouse.tlsEnabled" . }}
-    # Adds 8443 and 9440 to every pod and the headless Service; required drops
-    # 8123 and 9000. The operator mounts the Secret as a directory.
     tls:
       enabled: true
       required: {{ .Values.clickhouse.tls.required }}
@@ -82,53 +66,29 @@ spec:
         name: {{ .Values.clickhouse.tls.secretName }}
     {{- end }}
     extraConfig:
-      # Allow the SQL_ custom-settings prefix (server config) so DFE tenant
-      # isolation enforces: the per-_org_id RESTRICTIVE row policy reads
-      # getSetting('SQL_current_tenant_id') and the engine injects it per query.
-      # SQL_ is ClickHouse Cloud's built-in prefix; this self-hosted cluster must
-      # allow it here, else CH rejects every SQL_* setting and tenant scoping
-      # silently cannot apply. See dfe-engine governance/ch/models.py TENANT_SETTING.
-      # custom_ is required in cluster mode: the ClickHouse operator injects
-      # custom_operator_reload_revision into the __operator profile, and CH refuses
-      # to load users.yaml (CANNOT_LOAD_CONFIG, crashloop) if that prefix is unallowed.
+      # Tenant isolation needs SQL_. custom_ must stay: the operator injects custom_operator_reload_revision.
+      # docs/deployment/clickhouse.md, Server and Keeper settings.
       custom_settings_prefixes: SQL_,custom_
-      # The system database is deny-by-default, so an org-fenced tenant cannot read
-      # server metadata no row policy covers; dfe-engine grants back only what the
-      # embedded HyperDX needs (governance/ch/models.py TENANT_SYSTEM_TABLES).
       access_control_improvements:
         select_from_system_db_requires_grant: true
         select_from_information_schema_requires_grant: true
       {{- with (include "dfe-clickhouse.storageConfiguration" .) }}
       {{- . | nindent 6 }}
       {{- end }}
-      {{- /* Thread, memory and merge-pool limits for the cluster tier. Sized
-      from the replica's own CPU request, and gated to cluster mode inside the
-      helper -- see clickhouse.serverProfile in values.yaml. */ -}}
+      {{- /* Cluster mode only, gated in the helper. */ -}}
       {{- with (include "dfe-clickhouse.serverProfile" .) }}
       {{- . | nindent 6 }}
       {{- end }}
-      {{- /* A TTL on each system log table the operator switches on, and the
-      ones switched off; see clickhouse.systemLogTTLDays and systemLogsOff. */ -}}
       {{- with (include "dfe-clickhouse.systemLogs" . | trim) }}
       {{- . | nindent 6 }}
       {{- end }}
-    # Async inserts for EVERY writer, via the default settings profile (the base
-    # every identity inherits). async_insert is a user/query-scope setting --
-    # there is no table-level form -- so this one profile covers every table any
-    # identity writes; identities with tuned values (dfe_loader's minted profile)
-    # still override it. Both are ClickHouse's own defaults since 26.2 and are
-    # written here EXPLICITLY, so a `compatibility` setting or a future
-    # re-default cannot move them underneath us. The flush cadence stays on
-    # ClickHouse's adaptive defaults (24.2+).
+    # docs/deployment/clickhouse.md, Server and Keeper settings.
     extraUsersConfig:
       profiles:
         default:
           async_insert: {{ .Values.clickhouse.userProfile.asyncInsert }}
           wait_for_async_insert: {{ .Values.clickhouse.userProfile.waitForAsyncInsert }}
-    # The deploy layer's one credential. Cluster mode creates no account of its
-    # own, so without this every app is refused with code 516 (dfe-infra#136).
-    # Secret-backed rather than declared in extraUsersConfig, which takes a
-    # password only inline and would commit it to git.
+    # Secret-backed: extraUsersConfig takes a password only inline, which would commit it to git.
     defaultUserPassword:
       secret:
         name: {{ .Values.clickhouse.users.admin.secretName }}
@@ -139,10 +99,7 @@ spec:
     {{- with .Values.clickhouse.serviceAccount.name }}
     serviceAccountName: {{ . }}
     {{- end }}
-    {{- /* instance-store needs a hard requirement, not a preference: the cache
-    is only real NVMe on the node-pools chart's own `clickhouse` pool
-    (build_pool_classes labels every pool's nodes after its use case), so it
-    requires that pool whether or not the cluster secret names it. */ -}}
+    {{- /* instance-store requires the clickhouse pool, the only one with the NVMe. */ -}}
     {{- with include "dfe-clickhouse.poolSelector" (dict "root" $ "pool" "clickhouse" "always" $cacheOnInstanceStore) | fromYaml }}
     nodeSelector:
       {{- toYaml . | nindent 6 }}
@@ -152,9 +109,7 @@ spec:
       {{- toYaml .Values.nodeScheduling.tolerations | nindent 6 }}
     {{- end }}
     {{- if .Values.clickhouse.podSpread.enabled }}
-    {{- /* Selects the labels the operator writes on server pods -- the chart's
-    own are on no pod -- and matchLabelKeys narrows each count to the pod's own
-    shard (label source: scripts/tests/test_clickhouse_replica_spread.py). */}}
+    {{- /* The operator's labels on server pods. matchLabelKeys counts each pod's own shard. */}}
     topologySpreadConstraints:
       - maxSkew: {{ .Values.clickhouse.podSpread.maxSkew }}
         topologyKey: {{ .Values.clickhouse.podSpread.topologyKey }}
@@ -168,9 +123,7 @@ spec:
     {{- end }}
     {{- if $cacheOnInstanceStore }}
     volumes:
-      # The cache disk's actual backing store, limited to cacheSize. The cache's
-      # own max_size is cache.maxSizeRatioToSizeLimit of it (templates/_storage.tpl),
-      # so the cache stops short of the limit the kubelet evicts at.
+      # The cache disk's backing store. Its max_size is a fraction of this limit (templates/_storage.tpl).
       - name: object-cache
         emptyDir:
           sizeLimit: {{ .Values.clickhouse.objectStore.cacheSize | quote }}

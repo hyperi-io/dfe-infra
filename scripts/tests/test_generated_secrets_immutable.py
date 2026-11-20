@@ -65,7 +65,9 @@ class Case:
     secret: str
 
 
-KAFKA = Case("kafka single-tier broker user", "kafka", ("kafka.mode=single",), "dfe-kafka-user")
+KAFKA = Case(
+    "kafka single-tier broker user", "kafka", ("kafka.mode=single",), "dfe-kafka-user"
+)
 KAFBAT = Case("kafbat break-glass admin", "kafbat", (), "dfe-kafbat-breakglass")
 DOCUMENTDB = Case(
     "documentdb gateway login",
@@ -93,11 +95,21 @@ APPKEYS = Case(
 
 def render(case: Case) -> tuple[dict, ...]:
     """The chart as helm renders it with the case's values."""
-    cmd = ["helm", "template", case.chart, str(REPO_ROOT / "helm" / "charts" / case.chart)]
+    cmd = [
+        "helm",
+        "template",
+        case.chart,
+        str(REPO_ROOT / "helm" / "charts" / case.chart),
+    ]
     for value in case.sets:
         cmd += ["--set", value]
     out = subprocess.run(
-        cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False
+        cmd,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
     )
     if out.returncode != 0:
         raise SystemExit(f"helm template failed for {case.label}:\n{out.stderr}")
@@ -187,7 +199,9 @@ def test_the_static_app_keys_come_only_from_a_fake_generator() -> None:
         for entry in d["spec"]["dataFrom"]
     ]
     kinds = sorted({ref.get("kind") for ref in refs})
-    expect(f"{APPKEYS.label}: every generator is a Fake", kinds == ["Fake"], f"got {kinds}")
+    expect(
+        f"{APPKEYS.label}: every generator is a Fake", kinds == ["Fake"], f"got {kinds}"
+    )
 
 
 def main() -> int:

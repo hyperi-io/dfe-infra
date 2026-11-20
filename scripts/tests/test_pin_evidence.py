@@ -42,28 +42,31 @@ spec.loader.exec_module(evidence)
 def _fragment(older: str, newer: str) -> dict:
     """A two-stack versions.yaml carrying one services pin per stack."""
     return evidence.read_pins(
-        'schema: 2\n'
+        "schema: 2\n"
         'current: "9.9.0-rc.2"\n'
-        '\n'
-        'stacks:\n'
-        '\n'
-        '  9.9.0-rc.1:\n'
-        '    services:\n'
-        f'{older}'
-        '    stack:\n'
+        "\n"
+        "stacks:\n"
+        "\n"
+        "  9.9.0-rc.1:\n"
+        "    services:\n"
+        f"{older}"
+        "    stack:\n"
         '      previous: ""\n'
-        '\n'
-        '  9.9.0-rc.2:\n'
-        '    services:\n'
-        f'{newer}'
-        '    stack:\n'
+        "\n"
+        "  9.9.0-rc.2:\n"
+        "    services:\n"
+        f"{newer}"
+        "    stack:\n"
         '      previous: "9.9.0-rc.1"\n'
     )
 
 
 def _detached(older: str, newer: str) -> list[str]:
     stacks = _fragment(older, newer)
-    return [name for name, _, _ in evidence.detached(stacks["9.9.0-rc.1"], stacks["9.9.0-rc.2"])]
+    return [
+        name
+        for name, _, _ in evidence.detached(stacks["9.9.0-rc.1"], stacks["9.9.0-rc.2"])
+    ]
 
 
 def test_a_value_rewritten_under_its_old_comment_is_caught() -> None:
@@ -83,7 +86,8 @@ def test_a_move_that_rewrites_its_evidence_is_left_alone() -> None:
         _detached(
             '      a-thing: "1.0.0"    # 2026-07-22 (clears cooldown).\n',
             '      a-thing: "2.0.0"    # 2026-08-18 (clears cooldown); newest on the LTS line.\n',
-        ) == [],
+        )
+        == [],
     )
 
 
@@ -98,7 +102,8 @@ def test_a_pin_the_previous_stack_never_had_is_not_a_detachment() -> None:
     """A stack that adds a component has no earlier evidence to have detached."""
     expect(
         "a new pin raises nothing",
-        _detached("", '      a-thing: "1.0.0"    # 2026-07-22 (clears cooldown).\n') == [],
+        _detached("", '      a-thing: "1.0.0"    # 2026-07-22 (clears cooldown).\n')
+        == [],
     )
 
 
@@ -161,10 +166,10 @@ def test_digests_are_not_treated_as_evidence_bearing_pins() -> None:
     """A digest is the immutable half of a tag pinned elsewhere; it moves WITH
     that tag and its comment is the image ref, not a justification."""
     stacks = evidence.read_pins(
-        'stacks:\n'
-        '\n'
-        '  9.9.0-rc.1:\n'
-        '    digests:\n'
+        "stacks:\n"
+        "\n"
+        "  9.9.0-rc.1:\n"
+        "    digests:\n"
         '      an-app: "sha256:aaa"   # ghcr.io/org/an-app:v1.0.0\n'
     )
     expect(
@@ -180,7 +185,11 @@ def test_it_reads_the_committed_file_and_finds_real_pins() -> None:
     stacks = evidence.read_pins(evidence.VERSIONS_FILE.read_text(encoding="utf-8"))
     expect("every stack block is seen", len(stacks) >= 13, f"{sorted(stacks)}")
     current = stacks.get("2.2.0-rc.13", {})
-    expect("and the current stack yields a real pin set", len(current) > 40, f"{len(current)}")
+    expect(
+        "and the current stack yields a real pin set",
+        len(current) > 40,
+        f"{len(current)}",
+    )
     expect(
         "including a pin whose evidence is the wrapped block above it",
         "1 (clears cooldown)" not in current["services.redpanda-version"].evidence

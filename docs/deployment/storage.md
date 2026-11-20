@@ -7,7 +7,7 @@ The deep dives stay where they are: [clickhouse.md](clickhouse.md) for the Click
 ## The four dimensions
 
 1. Service: `clickhouse` or `kafka`. Both take a storage model, but not the same ones.
-2. Deployment mode: who deploys the datastore or broker. ClickHouse has `cluster` (operator), `single` (plain StatefulSet) and `external` (bring your own). Kafka has `disabled` (no broker, gRPC transport), `single` (non-operator broker), `cluster` (Strimzi or Redpanda operator) and `external`.
+2. Deployment mode: who deploys the datastore or broker. ClickHouse has `cluster` (operator), `single` (plain StatefulSet) and `external` (one you bring). Kafka has `disabled` (no broker, gRPC transport), `single` (non-operator broker), `cluster` (Strimzi or Redpanda operator) and `external`.
 3. Storage model: where the data lives, and whether it moves or is copied.
 4. Sub-dimensions: the dials inside a model, such as cache placement, object-store flavour, request bounds and per-topic granularity.
 
@@ -15,11 +15,11 @@ Modes and models are INDEPENDENT axes. Not every pair is legal, and the illegal 
 
 ## The vocabulary
 
-A storage model is named `<family>-<bulk>`, and both halves carry meaning.
+A storage model's name is `<family>-<bulk>`, and both halves mean something.
 
 | Half | Value | Means |
 | --- | --- | --- |
-| family | `tiered` | Data MOVES to the bulk store. The bulk copy is the only copy, so both stores must be durable. |
+| family | `tiered` | Data MOVES to the bulk store. The bulk copy is the one copy, so both stores must be durable. |
 | family | `cached` | Data is COPIED to the bulk store. The local copy is disposable, and the bulk store holds the durable one. |
 | bulk | `block` | A second volume on a cheaper StorageClass. |
 | bulk | `object` | An S3-compatible object store. |
@@ -30,7 +30,7 @@ The charts read the two halves through a pair of helpers (`storageFamily` / `sto
 
 ## Status and evidence vocabularies
 
-Every cell below carries one status and one proof level. Both lists are closed.
+Every cell below has one status and one proof level. Both lists are closed.
 
 | Status | Means |
 | --- | --- |
@@ -38,11 +38,11 @@ Every cell below carries one status and one proof level. Both lists are closed.
 | **opt-in** | Shipped and supported, inert unless the deployer sets it. |
 | **refused** | The render fails. The guard is named in the cell. |
 | **follow-up** | Understood and written up, deliberately not surfaced as a value. |
-| **wired-unverified** | A code path exists but has never run against the real backend. |
+| **wired-unverified** | A code path exists but has never run against the backend. |
 
 | Proof | Means |
 | --- | --- |
-| **live-proven** | Run on real hardware, with the measurement named. |
+| **live-proven** | Run on hardware, with the measurement given. |
 | **render-verified** | `helm template` plus an assertion in `scripts/tests/test_storage_model.py`. No runtime. |
 | **unverified** | Neither. |
 
@@ -58,21 +58,21 @@ Every cell below carries one status and one proof level. Both lists are closed.
 | `single` | **default** (single tier), live-proven | **opt-in**, render-verified | **opt-in**, render-verified |
 | `external` | **opt-in**. The model is forced, the supplied ClickHouse owns its storage | **refused** | **refused** |
 
-**Preference order.** ClickHouse Cloud runs SharedMergeTree by default and is the reference shape. `cached-object` is our best-effort equivalent of it, and is the preferred model wherever an object store exists: always on Kubernetes in a cloud, and on-prem whenever an S3-compatible store such as MinIO is supplied. `local` is the last resort: on-prem with no object store, and the slim and single tiers, where one volume is the point. A deployment migrating off the retired private-cloud ClickHouse fork lands here too. See [Migrating from DFE 2.x before 2.2](upgrades.md#migrating-from-dfe-2x-before-22).
+**Preference order.** ClickHouse Cloud runs SharedMergeTree by default and is the reference setup. `cached-object` is our best-effort equivalent of it, and is the preferred model wherever an object store exists: always on Kubernetes in a cloud, and on-prem whenever an S3-compatible store such as MinIO is supplied. `local` is the last resort: on-prem with no object store, and the slim and single tiers, where one volume is the point. A deployment migrating off the retired private-cloud ClickHouse fork lands here as well. See [Migrating from DFE/XDR 2.1.x and earlier](migrating-from-2.1.md).
 
-That order is a three-value dial. `clickhouse.storageModel` takes `auto` (the chart default, and what an empty value means too), `cached-object` or `local`. On `auto`, `dfe-clickhouse.storageModel` reads `cached-object` from a set `clickhouse.objectStore.endpoint` and `local` from nothing. The other two are explicit overrides that win outright. `cached-object` refuses to render with no endpoint set, and `local` keeps local storage even with one configured.
+That order is a three-value dial, `sizing.storage_model`: `auto`, `cached-object` or `local`. The chart key `clickhouse.storageModel` takes those three, `auto` being the chart default and what an empty value means, plus `tiered-block`, which a deploy repo overlay alone sets. On `auto`, `dfe-clickhouse.storageModel` reads `cached-object` from a set `clickhouse.objectStore.endpoint` and `local` from nothing. The other two are explicit overrides that win outright. `cached-object` fails the render with no endpoint set, and `local` keeps local storage even with one configured.
 
-Every template reads the derived answer, so the two can't disagree. Because every model is locked at first deploy, the derivation runs once and `governance/policies/storage-layout.yaml` holds it afterwards. The `cluster` row above still reads `local` as default because `cached-object` is render-verified only. It becomes the cluster-tier default once live-proven.
+Every template reads the derived answer, so the two can't disagree. Because every model is locked at first deploy, the derivation runs once and `governance/policies/storage-layout.yaml` holds it afterwards. The `cluster` row above still reads `local` as default because `cached-object` is render-verified and no more. It becomes the cluster-tier default once live-proven.
 
-The dial reaches the chart from `sizing.storage_model` in the deployment dial (`deployment.example.yaml`, default `auto`). The `dfe-ops init` wizard asks for it directly. `resolve_sizing.py` writes `clickhouse.storageModel` into the scale-tier values fragment only on an explicit value, and leaves the key out on `auto` so the chart derives. It's scale-tier only (`resolve_sizing.py` sizes that tier alone). Slim and single set no `clickhouse.storageModel` in `argocd/values/profile-{slim,single}.yaml`, so they already derive the same way with no dial needed.
+The dial reaches the chart from `sizing.storage_model` in the deployment dial (`deployment.example.yaml`, default `auto`). The `dfe-ops init` wizard asks for it directly. `resolve_sizing.py` writes `clickhouse.storageModel` into the scale-tier values fragment on an explicit value alone, and leaves the key out on `auto` so the chart derives. It's for the scale tier (`resolve_sizing.py` sizes that tier alone). Slim and single set no `clickhouse.storageModel` in `argocd/values/profile-{slim,single}.yaml`, so they derive the same way with no dial needed.
 
-**Where the AWS bucket comes from, and what it commits you to.** `terraform/modules/kubernetes-cluster/aws/object-store.tf` provisions the S3 bucket `cached-object` needs on AWS: SSE-KMS on the deployment's own key, ACLs disabled, all public access blocked, plaintext HTTP denied, no versioning, and a lifecycle rule aborting an incomplete multipart upload after 7 days. It mints a Pod Identity role scoped to that bucket alone, bound to the chart's own `dfe-clickhouse` ServiceAccount (`clickhouse.serviceAccount.name`) rather than the release namespace's default account, so nothing else running there inherits the role.
+**Where the AWS bucket comes from, and what it commits you to.** `terraform/modules/kubernetes-cluster/aws/object-store.tf` provisions the S3 bucket `cached-object` needs on AWS: SSE-KMS on the deployment key, ACLs disabled, all public access blocked, plaintext HTTP denied, no versioning, and a lifecycle rule aborting an incomplete multipart upload after 7 days. It mints a Pod Identity role scoped to that bucket alone, bound to the chart's `dfe-clickhouse` ServiceAccount (`clickhouse.serviceAccount.name`) rather than the release namespace's default account, so nothing else running there inherits the role.
 
-`bootstrap.sh` carries the bucket's URL onto the cluster secret as the `dfe.hyperi.io/clickhouse_object_store_endpoint` annotation, and `argocd/appsets/layer2-data.yaml` passes it through as `clickhouse.objectStore.endpoint`. Set `clickhouse.objectStore.usePodIdentity: true` alongside it and the pod authenticates as that role instead of the static-key ExternalSecret every other target uses (Dimension 4: credential binding, below).
+`bootstrap.sh` puts the bucket's URL on the cluster secret as the `dfe.hyperi.io/clickhouse_object_store_endpoint` annotation, and `argocd/appsets/layer2-data.yaml` passes it through as `clickhouse.objectStore.endpoint`. Set `clickhouse.objectStore.usePodIdentity: true` alongside it and the pod authenticates as that role instead of the static-key ExternalSecret every other target uses (Dimension 4: credential binding, below).
 
-The cache placement the resolver decides travels the same way, because a fresh deploy repo has no overlay for it to arrive in. `resolve_sizing.py` writes `sizing/<tier>.clickhouse-storage.json`, `bootstrap.sh` carries it as `dfe.hyperi.io/clickhouse_storage`, and layer2-data hands clickhouse-cluster its `storageModel` and `objectStore` keys. They land with the bucket or not at all, the model always beside an instance-store cache, so the cache never arrives without an object store to front. With a bucket on the cluster secret they beat a deploy-repo overlay, as values fixed at first deploy should. With none, nothing storage-related is inlined, and an overlay's own `clickhouse.objectStore.endpoint` stands, which is how an on-prem MinIO reaches the chart.
+The cache placement the resolver decides travels the same way, because a fresh deploy repo has no overlay for it to arrive in. `resolve_sizing.py` writes `sizing/<tier>.clickhouse-storage.json`, `bootstrap.sh` puts it on the cluster secret as `dfe.hyperi.io/clickhouse_storage`, and layer2-data hands clickhouse-cluster its `storageModel` and `objectStore` keys. They land with the bucket or not at all, the model always beside an instance-store cache, so the cache never arrives without an object store to front. With a bucket on the cluster secret they beat a deploy-repo overlay, as values fixed at first deploy should. With none, nothing storage-related is inlined, and an overlay's `clickhouse.objectStore.endpoint` stands, which is how an on-prem MinIO reaches the chart.
 
-That bucket is unconditional, so **every AWS deploy derives `cached-object`**, although the table still records it as opt-in and it remains render-verified rather than live-proven. The model is locked at first deploy, so the first AWS apply is what live-proves it. Until then AWS is the one target where the table's `opt-in` reads as `derived`. A deployment that wants `local` on AWS has to say so, before the first deploy: `sizing.storage_model: local` in the deployment dial (the wizard asks for it), or `clickhouse.storageModel: local` in the deploy repo's own `infra/clickhouse-cluster.yaml` overlay for a deployment resolve_sizing.py never sizes.
+That bucket is unconditional, so **every AWS deploy derives `cached-object`**, although the table still records it as opt-in and it remains render-verified rather than live-proven. The model is locked at first deploy, so the first AWS apply is what live-proves it. Until then AWS is the one target where the table's `opt-in` reads as `derived`. A deployment that wants `local` on AWS has to say so, before the first deploy: `sizing.storage_model: local` in the deployment dial (the wizard asks for it), or `clickhouse.storageModel: local` in the deploy repo's `infra/clickhouse-cluster.yaml` overlay for a deployment resolve_sizing.py never sizes.
 
 The two refusals share one guard in `dfe-clickhouse.validateStorageModel`:
 
@@ -81,11 +81,11 @@ clickhouse.storageModel=cached-object is meaningless with mode=external --
 the supplied ClickHouse owns its own storage
 ```
 
-**`cached-object` evidence.** The cache disk must sort AFTER the disk it wraps, because ClickHouse builds a cache only once its backing disk exists and the operator serialises `extraConfig` as sorted-key JSON. Name it anything earlier and the server fails at startup with `BAD_ARGUMENTS` "there is no such disk (it should be initialized before cache disk)", proven live 2026-08-30. The disk names `s3_object` and `s3_object_cache` encode that ordering.
+**`cached-object` evidence.** The cache disk must sort AFTER the disk it wraps, because ClickHouse builds a cache once its backing disk exists and not before and the operator serialises `extraConfig` as sorted-key JSON. Name it anything earlier and the server fails at startup with `BAD_ARGUMENTS` "there is no such disk (it should be initialized before cache disk)", proven live 2026-08-30. The disk names `s3_object` and `s3_object_cache` encode that ordering.
 
 **`tiered-block` evidence.** Demotion triggers on the hot volume's free space as a fraction of its total. We verified it on a cluster whose hot tier was an SSD with 55.7 GiB free of 61 (a free ratio of 0.91) and whose cold tier was a separate 491 GiB spinning disk. `moveFactor` 0.95 demoted new parts to the cold volume, and 0.2 left them hot. One node, one dataset, changing nothing but the value.
 
-**Single mode carries the same on-disk layout.** In cluster mode the operator mounts each additional volume claim at `/var/lib/clickhouse/disks/<name>` and registers a ClickHouse disk of the same name. Single mode runs no operator, so the chart mounts the same path and declares the disk itself. Both modes then share one `storage_configuration` fragment.
+**Single mode has the same on-disk layout.** In cluster mode the operator mounts each additional volume claim at `/var/lib/clickhouse/disks/<name>` and registers a ClickHouse disk of the same name. Single mode runs no operator, so the chart mounts the same path and declares the disk itself. Both modes then share one `storage_configuration` fragment.
 
 ## Dimension 2 x 3: Kafka
 
@@ -99,7 +99,7 @@ the supplied ClickHouse owns its own storage
 | `cluster` + `redpanda` | **opt-in** (BSL gate) | **refused** -- "is a Strimzi Kafka CR field" |
 | `external` | **opt-in** | **refused** -- needs `mode=cluster` |
 
-The opt-in cell has two further guards. `kafka.tieredObject.className` is required, because Strimzi supports `type: custom` only and ships no RemoteStorageManager, so the broker image must carry a plugin. And `kafka.operatorVersion` must be at least 0.38.0, where `spec.kafka.tieredStorage` landed. Strimzi drops unknown CR fields silently, so an older operator would deploy a broker that looks configured and tiers nothing.
+The opt-in cell has two further guards. `kafka.tieredObject.className` is required, because Strimzi supports `type: custom` alone and ships no RemoteStorageManager, so the broker image must have a plugin. And `kafka.operatorVersion` must be at least 0.38.0, where `spec.kafka.tieredStorage` landed. Strimzi drops unknown CR fields silently, so an older operator would deploy a broker that looks configured and tiers nothing.
 
 ## Dimension 4: cache placement (`cached-object`, ClickHouse)
 
@@ -107,21 +107,21 @@ The opt-in cell has two further guards. `kafka.tieredObject.className` is requir
 
 | Placement | Status | Proof | Constraint |
 | --- | --- | --- | --- |
-| `pvc` -- a subdirectory of the data PVC, bounded by `clickhouse.objectStore.cache.maxSizeRatioToTotalSpace` (0.6), or by `clickhouse.objectStore.cacheSize` when that is set | **default** | render-verified | The cache and the part metadata share `clickhouse.storage.size`, and ClickHouse refuses both bounds at once |
-| `instance-store` -- an `emptyDir` on the node's local NVMe, limited to `clickhouse.objectStore.cacheSize` (required), with the cache's `max_size` at `cache.maxSizeRatioToSizeLimit` (0.95) of it | **default** on AWS, where the resolver places it on every NVMe ClickHouse shape, and **opt-in** elsewhere, cluster mode only | render-verified | Needs `clickhouse.mode: cluster` and a node whose NVMe is assembled under the kubelet |
+| `pvc` -- a subdirectory of the data PVC, bounded by `clickhouse.objectStore.cache.maxSizeRatioToTotalSpace` (0.6), or by `clickhouse.objectStore.cacheSize` when that is set | **default** | render-verified | The cache and the part metadata share `clickhouse.storage.size`, and ClickHouse rejects both bounds at once |
+| `instance-store` -- an `emptyDir` on the node's local NVMe, limited to `clickhouse.objectStore.cacheSize` (required), with the cache's `max_size` at `cache.maxSizeRatioToSizeLimit` (0.95) of it | **default** on AWS, where the resolver places it on every NVMe ClickHouse node type, and **opt-in** elsewhere, cluster mode alone | render-verified | Needs `clickhouse.mode: cluster` and a node whose NVMe is assembled under the kubelet |
 | Dedicated disposable cache PVC | **follow-up** | unverified | A different mechanism to `instance-store` above -- see below |
 
-**Why `instance-store` over a bigger `pvc`.** A gp3 volume provisioned large enough to hold a useful cache is the expensive answer, and it's never what either dial value defaults to. On AWS the Karpenter `clickhouse` pool's shape (`shapes/compute-shapes.yaml`) already carries local NVMe sized for exactly this cache. At about 474 GB an r9gd.2xlarge's NVMe costs what gp3 costs provisioned to the instance's own EBS ceiling, with 14.5x the IOPS.
+**Why `instance-store` over a bigger `pvc`.** A gp3 volume provisioned large enough to hold a useful cache is the expensive answer, and it's never what either dial value defaults to. On AWS the Karpenter `clickhouse` pool (`shapes/compute-shapes.yaml`) has local NVMe sized for exactly this cache. At about 474 GB an r9gd.2xlarge's NVMe costs what gp3 costs provisioned to the instance's EBS ceiling, with 14.5x the IOPS.
 
-`instance-store` mounts that NVMe as a plain pod-level `emptyDir` at `/var/lib/clickhouse-cache` (see "Extra mounts" below), with a `nodeSelector` on `dfe.hyperi.io/workload: clickhouse`. That's the label `build_pool_classes` (`scripts/resolve_sizing.py`) gives every pool it builds, named after the pool's own use case. The EKS managed node group for the same shape carries that label too, and assembles its NVMe the same way. The resolver marks the shape `instance_store_policy: RAID0`, and the node group's launch template hands nodeadm a NodeConfig asking for the RAID0 array under the kubelet and containerd, as Karpenter's `instanceStorePolicy` does.
+`instance-store` mounts that NVMe as a plain pod-level `emptyDir` at `/var/lib/clickhouse-cache` (see "Extra mounts" below), with a `nodeSelector` on `dfe.hyperi.io/workload: clickhouse`. That's the label `build_pool_classes` (`scripts/resolve_sizing.py`) gives every pool it builds, named after the pool's use case. The EKS managed node group for the same pool has that label as well, and assembles its NVMe the same way. The resolver marks the pool `instance_store_policy: RAID0`, and the node group's launch template hands nodeadm a NodeConfig asking for the RAID0 array under the kubelet and containerd, as Karpenter's `instanceStorePolicy` does.
 
-The array also holds images and pod logs, and the kubelet evicts at 10% free on it. So the resolver sets `cacheSize` to `clickhouse.instance_store_cache_share` (0.8) of the NVMe rather than all of it. The data PVC keeps its default mount and now holds only the `s3_object` metadata_path. The resolver's own `clickhouse.storage.size` default doesn't shrink to reflect that yet, because it's still sized for a PVC-resident cache. A deployer running `instance-store` can safely set it much smaller by hand. Teaching the resolver that ratio is a follow-up.
+The array holds images and pod logs as well, and the kubelet evicts at 10% free on it. So the resolver sets `cacheSize` to `clickhouse.instance_store_cache_share` (0.8) of the NVMe rather than all of it. The data PVC keeps its default mount and holds the `s3_object` metadata_path alone. The resolver's `clickhouse.storage.size` default doesn't shrink to reflect that yet, because it's still sized for a PVC-resident cache. A deployer running `instance-store` can safely set it much smaller by hand. Teaching the resolver that ratio is a follow-up.
 
-**Node replacement empties the cache.** An `emptyDir` is destroyed with its pod. A node replacement (Karpenter consolidation, an instance replacement, a rolling restart) empties the cache, and the server rewarms it from the object store cold on the next read. The `clickhouse` Karpenter pool is on-demand only (`STATEFUL_USE_CASES` in `scripts/resolve_sizing.py`), so spot reclamation isn't a cause here, but node churn still is. That's why the pool already carries a disruption budget of one node at a time, which limits how many caches are cold at once.
+**Node replacement empties the cache.** An `emptyDir` is destroyed with its pod. A node replacement (Karpenter consolidation, an instance replacement, a rolling restart) empties the cache, and the server rewarms it from the object store cold on the next read. The `clickhouse` Karpenter pool is on-demand alone (`STATEFUL_USE_CASES` in `scripts/resolve_sizing.py`), so spot reclamation isn't a cause here, but node churn still is. That's why the pool has a disruption budget of one node at a time, which limits how many caches are cold at once.
 
 **Extra mounts stay outside the data volume.** The container runtime creates a nested mount's missing directories root-owned inside the data PVC, and the non-root server can't create anything else in them. A cache mounted at `/var/lib/clickhouse/disks/s3_object_cache` left `disks/` root-owned, so every replica exited unable to create the `s3_object` `metadata_path`. Hence `instance-store` mounts at `/var/lib/clickhouse-cache`, and `test_the_cache_mount_sits_outside_the_data_volume` fails a render that nests one.
 
-A dedicated cache PVC hits the same wall. The operator mounts each additional claim at `/var/lib/clickhouse/disks/<name>` and registers a disk of that name, which also rules out `s3_object_cache`.
+A dedicated cache PVC hits the same wall. The operator mounts each additional claim at `/var/lib/clickhouse/disks/<name>` and registers a disk of that name, which rules out as well `s3_object_cache`.
 
 ## Dimension 4: object-store flavour
 
@@ -141,7 +141,7 @@ Kafka's flavour isn't a chart dimension. `kafka.tieredObject.config` passes plug
 
 ## Dimension 4: request bounds (`cached-object`, ClickHouse)
 
-`clickhouse.objectStore.retryAttempts`, `.connectTimeoutMs` and `.requestTimeoutMs` are **opt-in** and unset by default, leaving the server's own behaviour alone. That behaviour is the reason they exist. **Live-proven**: a read against an unreachable store blocked for over nine minutes before failing, and `1 / 2000 / 5000` brought the same failure down to 10.4 seconds. Those numbers are a demonstration, not a recommendation. One retry is aggressive against real S3, which returns transient 5xx routinely, so pick production values against the actual store. Just don't leave them unbounded, because a nine-minute stall on a dashboard is indistinguishable from an outage.
+`clickhouse.objectStore.retryAttempts`, `.connectTimeoutMs` and `.requestTimeoutMs` are **opt-in** and unset by default, leaving the server's behaviour alone. That behaviour is the reason they exist. **Live-proven**: a read against an unreachable store blocked for over nine minutes before failing, and `1 / 2000 / 5000` brought the same failure down to 10.4 seconds. Those numbers are a demonstration, not a recommendation. One retry is aggressive against S3, which returns transient 5xx routinely, so pick production values against the actual store. Just don't leave them unbounded, because a nine-minute stall on a dashboard is indistinguishable from an outage.
 
 ## Dimension 4: credential binding (both services)
 
@@ -152,6 +152,8 @@ Kafka's flavour isn't a chart dimension. `kafka.tieredObject.config` passes plug
 | A credential literal in a values file | **refused** by construction | render-verified |
 
 Both charts read the credential from the environment, wired from a Secret the secrets store materialises. Nothing is inline in the CR or the ConfigMap, both of which live in git.
+
+On AWS, `clickhouse.objectStore.usePodIdentity: true` renders neither the ClickHouse Secret nor its environment variables, and the disk's `use_environment_credentials` resolves through EKS Pod Identity alone. A static `AWS_ACCESS_KEY_ID` in the pod's environment would shadow the credentials the Pod Identity Agent injects, because the AWS SDK checks environment variables first.
 
 ## Dimension 4: granularity of the opt-in
 
@@ -168,18 +170,18 @@ Both are refused at render time, so asking for one fails loudly rather than depl
 
 | Cell | Service | What it would be | Blocking work |
 | --- | --- | --- | --- |
-| `tiered-object` | ClickHouse | Parts MOVED to an object store, matching Kafka's shape | A ranked policy whose cold volume is an object disk. No evidence gathered |
+| `tiered-object` | ClickHouse | Parts MOVED to an object store, matching Kafka's tiering | A ranked policy whose cold volume is an object disk. No evidence gathered |
 | `cached-block` | ClickHouse | An SSD cache over a cheap local volume | Needs `local_blob_storage`, which is proven on a rig and not surfaced |
 
 ## Locked at deploy
 
-Changing a storage model on a live deployment means recreating resources and migrating data, and the API refuses the edit by default.
+Changing a storage model on a live deployment means recreating resources and migrating data, and the API rejects the edit by default.
 
 The mechanisms: the ClickHouse operator takes no new disk on an existing `ClickHouseCluster`, so a model that adds a volume claim can't be reached later. And `volumeClaimTemplates` are immutable, so a size or class change needs every PVC patched and the StatefulSet recreated. `local-path` can't resize at all.
 
-The enforcement: dfe-engine seeds a `storage-layout` policy holding `clickhouse.mode`, `clickhouse.storageModel`, `clickhouse.objectStore.*`, `clickhouse.tieredBlock.*`, `clickhouse.storage.size`, `clickhouse.storage.storageClass` and the five matching `kafka.*` patterns as protected vars. The API refuses a post-deploy edit and names the pattern that blocked it. A holder of `helmvars:override` can still make a deliberate exception, and a direct git commit still gets through. The policy governs the API, not the repo.
+The enforcement: dfe-engine seeds a `storage-layout` policy holding `clickhouse.mode`, `clickhouse.storageModel`, `clickhouse.objectStore.*`, `clickhouse.tieredBlock.*`, `clickhouse.storage.size`, `clickhouse.storage.storageClass` and the five matching `kafka.*` patterns as protected vars. The API rejects a post-deploy edit and names the pattern that blocked it. A holder of `helmvars:override` can still make a deliberate exception, and a direct git commit still gets through. The policy governs the API, not the repo.
 
-The API also reports what syncing a write would do, and the verdict differs by service. Writing `kafka.storageModel` is a `roll`, because Strimzi reconciles `tieredStorage` onto the running CR. `clickhouse.storageModel` is a `recreate`.
+The API reports what syncing a write would do as well, and the verdict differs by service. Writing `kafka.storageModel` is a `roll`, because Strimzi reconciles `tieredStorage` onto the running CR. `clickhouse.storageModel` is a `recreate`.
 
 ## Runtime identity: what a rename is not
 
@@ -187,8 +189,8 @@ Some names in the rendered output aren't labels. They're what the running server
 
 | Identifier | Why it is frozen |
 | --- | --- |
-| Disks `s3_object` and `s3_object_cache`, and policy `s3_cached` | ClickHouse refuses a policy change that drops a volume name it already loaded, and `merge_tree.storage_policy` is the server-wide default every existing table resolved through |
-| Policy `default`, volume `default`, the cold volume name | The same refusal, and the cold name is also the PVC template name, which is immutable in both the operator claim template and a StatefulSet |
+| Disks `s3_object` and `s3_object_cache`, and policy `s3_cached` | ClickHouse rejects a policy change that drops a volume name it has loaded, and `merge_tree.storage_policy` is the server-wide default every existing table resolved through |
+| Policy `default`, volume `default`, the cold volume name | The same refusal, and the cold name is the PVC template name as well, which is immutable in both the operator claim template and a StatefulSet |
 | Mount path `/var/lib/clickhouse/disks/<name>` | Changing it strands the metadata the disk points at |
 | Derived credential paths `<project>/<env>/clickhouse/s3` and `<project>/<env>/kafka/tiered` | A deployment that seeded there and never set `remoteKey` would lose its credential |
 | Secret names `dfe-clickhouse-s3`, `dfe-kafka-tiered` | Moving them orphans the materialised Secret and rolls every pod that reads it |

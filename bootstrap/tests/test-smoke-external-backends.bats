@@ -405,7 +405,7 @@ managed_kafka() {
     [[ "$(cat "${STUB_DIR}/clickhouse-client.log")" != *"--user"* ]]
 }
 
-@test "a managed broker's seam is proven from a client pod in the app namespace that mounts dfe-kafka-user" {
+@test "a managed broker's kafka path is proven from a client pod in the app namespace that mounts dfe-kafka-user" {
     managed_kafka
     run bash "${SMOKE}"
     [[ "${output}" == *"[PASS] topic main_land exists (created)"* ]]
@@ -459,7 +459,7 @@ managed_kafka() {
     run bash "${SMOKE}"
     [ "${status}" -eq 1 ]
     [[ "${output}" == *"[FAIL] managed-broker client pod Ready in ns/dfe-test"* ]]
-    [[ "${output}" != *"[SKIP] kafka seam"* ]]
+    [[ "${output}" != *"[SKIP] kafka path"* ]]
     [[ "$(cat "${STUB_DIR}/kubectl.log")" == *"-n dfe-test delete pod,networkpolicy -l dfe.hyperi.io/smoke-run=smoke-"* ]]
 }
 

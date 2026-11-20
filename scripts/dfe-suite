@@ -37,7 +37,10 @@ readable with no hyperi-ai installed.
 ``check`` is the DRY-RUN half. It reads each out-edge, runs the check for that
 edge's kind, and prints what moved and what the next step is. It changes
 nothing. ``walk`` runs the same checks and then rebuilds each consumer whose
-check said so -- concurrently, one PR per consumer. A failed rebuild stops
+check said so -- every consumer at once unless ``--jobs`` caps it, one PR per
+consumer, each in its own worktree at ``origin/main``. A PR merges with no
+release trailer, and the walk ends by printing the command that releases each
+merge, so the releases go out together. A failed rebuild stops
 new rebuilds from starting, and the ones already running finish and report. Every edge the rebuild does not answer is reported and counted,
 whether or not a rebuild ran for that consumer, and the list of what is left
 for a person is printed before the walk returns however it ends.
@@ -52,8 +55,6 @@ review and what to leave off that subagent, and the caller decides the rest.
 machinery, with the older subcommand names.
 """
 
-from __future__ import annotations
-
 import sys
 from pathlib import Path
 
@@ -65,11 +66,13 @@ import argparse
 import io
 import json
 import os
+import shlex
+import shutil
 import subprocess
 import threading
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import AbstractContextManager
+from contextlib import AbstractContextManager, nullcontext
 
 import check_member_pins
 from dfe_suite.graph import in_edges, load_graph, load_producer, out_edges
@@ -83,30 +86,17 @@ from dfe_suite.kinds import (
     check_edge,
 )
 from dfe_suite.proc import DEFAULT_ORG, FleetError, labelled, say, set_tag
-from dfe_suite.rebuild import rebuild_python, rebuild_rust
-from dfe_suite.repos import find_repo
+from dfe_suite.rebuild import GATE_LOCAL, GATES, rebuild_python, rebuild_rust
+from dfe_suite.repos import find_repo, remove_worktree, repo_slug, walk_worktree
+from dfe_suite.runners import MODES, SELF_HOSTED, SELF_HOSTED_JOBS, runner_mode
 from dfe_suite.ship import SHIP_PY, SHIP_RS, ShipSpec, ship_library
 
 TAG = "dfe-suite"
 
-# The read-only signal gather /fixes uses. It ships with hyperi-ai and is
-# REFERENCED, never copied: a second copy here would be 774 lines drifting
-# against the original in another repo under another licence.
-def _fixes_scan() -> Path | None:
-    """hyperi-ai's signal scanner, or None when hyperi-ai is not installed."""
-    root = os.environ.get("HYPERI_AI_ROOT")
-    candidates = [Path(root) / "tools" / "fixes_scan.py"] if root else []
-    candidates += [
-        Path.home() / ".local" / "share" / "hyperi-ai" / "tools" / "fixes_scan.py",
-        Path("/usr/local/share/hyperi-ai/tools/fixes_scan.py"),
-    ]
-    for path in candidates:
-        if path.is_file():
-            return path
-    return None
 
-
-FIXES_SCAN = _fixes_scan()
+# The read-only signal gather /fixes uses, called through hyperi-ai's CLI and
+# never copied: a copy here would drift against the original in another repo.
+FIXES_SCAN = ("hyperi-ai", "scan", "fixes")
 
 # Library nodes this tool can release today. A node absent from here is not a
 # refusal on principle -- it is a node whose release path has not been proven,
@@ -178,9 +168,8 @@ DISPATCH_RULE = (
 
 NOT_ON_DISK = "not on disk"
 
-# A Rust rebuild peaks at about 6 CI jobs, and the org shares 60 concurrent
-# GitHub-hosted jobs, so 6 consumers leave room for the producer's and the PR runs.
-WALK_JOBS = 6
+# The worktree each consumer's rebuild runs in, under its checkout's .worktrees/.
+WALK_WORKTREE = "dfe-suite-walk"
 
 
 def cmd_release(args: argparse.Namespace) -> int:
@@ -285,10 +274,12 @@ def _rebuild_for(action: str) -> Callable[..., int]:
 def cmd_walk(args: argparse.Namespace) -> int:
     """Walk one producer's out-edges and ACT: rebuild each consumer that moved.
 
-    Consumers run concurrently, up to --jobs at once (WALK_JOBS by default),
-    and a consumer with several edges is rebuilt once. Local builds take turns
-    on one lock, while the PR checks and release runs overlap on the CI
-    runners. What the rebuild does NOT re-do is reported under "after the rebuild, confirm:" and counted,
+    Every consumer runs at once unless --jobs caps it, except that consumers
+    whose CI runs self-hosted take turns, SELF_HOSTED_JOBS at a time. A
+    consumer with several edges is rebuilt once. Local builds take turns on one lock, while
+    the PR checks overlap on the CI runners. Each rebuild merges with no release
+    trailer, and the command that releases each merge is printed once the walk
+    ends. What the rebuild does NOT re-do is reported under "after the rebuild, confirm:" and counted,
     so a lockstep edge cannot be swallowed by a sibling edge that happened to
     dispatch a rebuild first.
 
@@ -297,6 +288,11 @@ def cmd_walk(args: argparse.Namespace) -> int:
     rebuild stops consumers that have not started, the ones in flight finish
     and report, and the person-list is printed either way.
     """
+    args.runner_mode = args.runner_mode or os.environ.get("GH_RUNNER_MODE") or None
+    if args.runner_mode not in (None, *MODES):
+        raise FleetError(
+            f"runner mode {args.runner_mode!r} is not one of {', '.join(MODES)}"
+        )
     dfe_infra = Path(args.dfe_infra).expanduser() if args.dfe_infra else None
     payload = load_producer(args.producer, dfe_infra=dfe_infra)
     edges = out_edges(payload, args.producer)
@@ -324,7 +320,9 @@ def cmd_walk(args: argparse.Namespace) -> int:
         queued[consumer] = group
     stop = threading.Event()
     gate_lock = threading.Lock()
+    self_hosted_slots = threading.BoundedSemaphore(SELF_HOSTED_JOBS)
     not_started: list[str] = []
+    releases: list[tuple[str, list[str]]] = []
 
     def walk_one(consumer: str) -> int:
         if stop.is_set():
@@ -338,6 +336,8 @@ def cmd_walk(args: argparse.Namespace) -> int:
                 package=package,
                 left=left_for_a_person,
                 gate_lock=gate_lock,
+                releases=releases,
+                self_hosted_slots=self_hosted_slots,
             )
         if rc:
             stop.set()
@@ -353,9 +353,21 @@ def cmd_walk(args: argparse.Namespace) -> int:
         say(f"{len(left_for_a_person)} edge(s) need a person or another tool:")
         for consumer, action, detail in left_for_a_person:
             print(f"  {consumer}: {action} -- {detail}", flush=True)
+    _print_releases(releases, dry_run=args.dry_run)
     if failed:
         return failed
     return 2 if left_for_a_person else 0
+
+
+def _print_releases(releases: list[tuple[str, list[str]]], *, dry_run: bool) -> None:
+    """The release command for each merged rebuild, a ``cd`` and the command on lines of their own."""
+    if not releases:
+        return
+    when = "would be merged" if dry_run else "merged without a release"
+    say(f"{len(releases)} rebuild(s) {when}. Release each one:")
+    for checkout, argv in sorted(releases):
+        print(f"  cd {shlex.quote(checkout)}", flush=True)
+        print(f"  {shlex.join(argv)}", flush=True)
 
 
 def _walk_consumer(
@@ -366,8 +378,17 @@ def _walk_consumer(
     package: str | None,
     left: list[tuple[str, str, str]],
     gate_lock: AbstractContextManager[object] | None = None,
+    releases: list[tuple[str, list[str]]] | None = None,
+    self_hosted_slots: AbstractContextManager[object] | None = None,
 ) -> int:
     """Check one consumer's edges and rebuild it if the graph says so.
+
+    The edge checks and the rebuild both read a worktree of the consumer at
+    ``origin/main``, a dry run's included, so a stale checkout decides nothing,
+    and the checkout keeps its branch and its uncommitted work. The rebuild merges
+    with no release trailer, and appends ``(checkout, release argv)`` to
+    ``releases``. A consumer whose CI runs self-hosted holds one of
+    ``self_hosted_slots`` for the whole rebuild.
 
     Returns:
         The rebuild's exit code, or 0 when none ran or none was needed. Edges
@@ -375,11 +396,44 @@ def _walk_consumer(
     """
     try:
         repo = _consumer_repo(consumer, args.repos)
+        worktree = walk_worktree(repo, WALK_WORKTREE)
     except FleetError as exc:
         print(f"{consumer} | - | - | unknown | {ACTION_HUMAN_READ} | {exc}", flush=True)
         left.append((consumer, ACTION_HUMAN_READ, str(exc)))
         return 0
+    rc = _walk_worktree(
+        consumer,
+        group,
+        args,
+        repo=repo,
+        worktree=worktree,
+        package=package,
+        left=left,
+        gate_lock=gate_lock,
+        releases=[] if releases is None else releases,
+        self_hosted_slots=self_hosted_slots,
+    )
+    if rc == 0:
+        remove_worktree(repo, worktree)
+    elif worktree != repo:
+        say(f"left the worktree at {worktree} as it stands")
+    return rc
 
+
+def _walk_worktree(
+    consumer: str,
+    group: list[dict],
+    args: argparse.Namespace,
+    *,
+    repo: Path,
+    worktree: Path,
+    package: str | None,
+    left: list[tuple[str, str, str]],
+    gate_lock: AbstractContextManager[object] | None,
+    releases: list[tuple[str, list[str]]],
+    self_hosted_slots: AbstractContextManager[object] | None,
+) -> int:
+    """The body of :func:`_walk_consumer`, reading ``worktree`` and naming ``repo`` in the release lines."""
     acting: list[tuple[dict, CheckResult]] = []
     rebuild_action: str | None = None
     for edge in group:
@@ -387,7 +441,7 @@ def _walk_consumer(
             result = check_edge(
                 edge,
                 producer_version=args.version,
-                consumer_repo=repo,
+                consumer_repo=worktree,
                 package=package,
                 dry_run=args.dry_run,
             )
@@ -435,6 +489,10 @@ def _walk_consumer(
             left.append((consumer, result.action or ACTION_HUMAN_READ, result.detail))
 
     say(f"{consumer}: rebuilding onto {args.producer} {args.version}")
+
+    def landed(argv: list[str]) -> None:
+        releases.append((str(repo), argv))
+
     rebuild = _rebuild_for(rebuild_action)
     kwargs: dict[str, object] = {
         "package": package,
@@ -442,11 +500,23 @@ def _walk_consumer(
         "dry_run": args.dry_run,
         "org": args.org,
         "gate_lock": gate_lock,
+        "sync": False,
+        "on_landed": landed,
     }
     if rebuild is rebuild_rust:
         kwargs["run_tests"] = not _flag_applies(args.no_tests, consumer)
+        kwargs["gate"] = args.gate
+    if args.runner_mode:
+        mode, why = args.runner_mode, "--runner-mode or GH_RUNNER_MODE"
+    else:
+        mode, why = runner_mode(worktree, repo_slug(repo, args.org))
+    slot: AbstractContextManager[object] = nullcontext()
+    if mode == SELF_HOSTED and self_hosted_slots is not None:
+        slot = self_hosted_slots
+    say(f"CI runs {mode} ({why})")
     try:
-        rc = rebuild(repo, args.version, **kwargs)
+        with slot:
+            rc = rebuild(worktree, args.version, **kwargs)
     except FleetError as exc:
         say(f"{consumer}: rebuild failed -- {exc}")
         left.append((consumer, rebuild_action, str(exc)))
@@ -470,14 +540,13 @@ def _gather(member: str, repo: Path) -> dict:
         FleetError: If the gather fails or answers with something that is not
             JSON.
     """
-    if FIXES_SCAN is None:
+    if shutil.which(FIXES_SCAN[0]) is None:
         raise FleetError(
-            f"signal gather needs hyperi-ai's fixes_scan.py and it is not "
-            f"installed (looked under HYPERI_AI_ROOT, ~/.local/share/hyperi-ai "
-            f"and /usr/local/share/hyperi-ai). Run `/fixes` in {member} instead."
+            f"signal gather needs `{' '.join(FIXES_SCAN)}` and hyperi-ai is not "
+            f"on PATH. Run `/fixes` in {member} instead."
         )
     proc = subprocess.run(
-        [sys.executable, str(FIXES_SCAN), "--repo", str(repo), "--no-audit"],
+        [*FIXES_SCAN, "--repo", str(repo), "--no-audit"],
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -531,8 +600,10 @@ def cmd_signals(args: argparse.Namespace) -> int:
     checked = bool(report["ci"]["checked"])
     total = sum(counts.values())
     headline = ", ".join(
-        "ci warnings not checked" if k == "ci warnings" and not checked
-        else "pins not read" if k == "pin drift" and not pins_read
+        "ci warnings not checked"
+        if k == "ci warnings" and not checked
+        else "pins not read"
+        if k == "pin drift" and not pins_read
         else f"{k} {v}"
         for k, v in counts.items()
     )
@@ -838,13 +909,33 @@ def build_parser() -> argparse.ArgumentParser:
     walk.add_argument(
         "--jobs",
         type=int,
-        default=WALK_JOBS,
+        default=0,
         help=(
-            f"consumers rebuilt at once (default {WALK_JOBS}, 0 for all of them,"
-            " 1 for one at a time)"
+            "cap on consumers rebuilt at once (default 0: no cap, though "
+            f"consumers whose CI runs self-hosted take turns, {SELF_HOSTED_JOBS} at a time)"
+        ),
+    )
+    walk.add_argument(
+        "--runner-mode",
+        choices=MODES,
+        default=None,
+        help=(
+            "where every consumer's CI runs, for the self-hosted cap (default: "
+            "GH_RUNNER_MODE from the environment, else each consumer's own, "
+            "resolved as hyperi-ci resolves it)"
         ),
     )
     walk.add_argument("--subject", default="", help="commit subject for each rebuild")
+    walk.add_argument(
+        "--gate",
+        choices=GATES,
+        default=GATE_LOCAL,
+        help=(
+            "where each Rust rebuild's clippy and tests run: local, in the worktree, "
+            "or pr-ci, which skips both here and takes the PR's CI Quality and Test "
+            "as the gate"
+        ),
+    )
     walk.add_argument(
         "--no-tests",
         nargs="?",
@@ -877,16 +968,23 @@ def build_parser() -> argparse.ArgumentParser:
     signals.add_argument("--repos", help="directory holding the member checkouts")
 
     pins = sub.add_parser(
-        "pins", help="every member's backing-service pins at origin/main against versions.yaml"
+        "pins",
+        help="every member's backing-service pins at origin/main against versions.yaml",
     )
     add_shared(pins)
-    pins.add_argument("member", nargs="*", help="members to scan (default: every suite.yaml node)")
+    pins.add_argument(
+        "member", nargs="*", help="members to scan (default: every suite.yaml node)"
+    )
     pins.add_argument("--repos", help="directory holding the member checkouts")
     pins.add_argument(
-        "--no-fetch", action="store_true", help="read origin/main as it stands, without a fetch"
+        "--no-fetch",
+        action="store_true",
+        help="read origin/main as it stands, without a fetch",
     )
     pins.add_argument(
-        "--api", action="store_true", help="read every member's main through gh api, even one checked out here"
+        "--api",
+        action="store_true",
+        help="read every member's main through gh api, even one checked out here",
     )
 
     review = sub.add_parser(

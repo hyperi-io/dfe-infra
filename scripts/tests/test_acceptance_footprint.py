@@ -42,8 +42,10 @@ LISTENER = dict(beats.LUMBERJACK_SWITCHES)
 
 def printed(footprint_: footprint.Footprint) -> dict:
     return {
-        "configmaps": dict(footprint_.configmaps), "replicas": dict(footprint_.replicas),
-        "sources": footprint_.sources, "overlay": dict(footprint_.overlay),
+        "configmaps": dict(footprint_.configmaps),
+        "replicas": dict(footprint_.replicas),
+        "sources": footprint_.sources,
+        "overlay": dict(footprint_.overlay),
         "namespaces": footprint_.namespaces,
     }
 
@@ -56,7 +58,11 @@ class Cluster:
 
     def __init__(self) -> None:
         self.sources: set[str] = {"main"}
-        self.deployments: dict[str, int] = {"dfe-receiver": 2, "dfe-engine": 1, "dfe-loader": 3}
+        self.deployments: dict[str, int] = {
+            "dfe-receiver": 2,
+            "dfe-engine": 1,
+            "dfe-loader": 3,
+        }
         self.autoscaled: set[str] = {"dfe-loader"}
         self.configmaps: dict[str, dict] = {"dfe-receiver": {"routes": "main"}}
         self.overlay: dict[str, object] = {}
@@ -67,7 +73,10 @@ class Cluster:
         if path == "/sources":
             return Reply(200, {"items": [{"name": n} for n in sorted(self.sources)]})
         if path == footprint.RECEIVER_ROUTE and method == "GET":
-            fields = [{"path": p, "is_set": p in self.overlay, "value": self.overlay.get(p)} for p in LISTENER]
+            fields = [
+                {"path": p, "is_set": p in self.overlay, "value": self.overlay.get(p)}
+                for p in LISTENER
+            ]
             return Reply(200, {"fields": fields, "unknown": []})
         if path == f"/sources/{NAME}":
             return Reply(200 if NAME in self.sources else 404, {})
@@ -76,15 +85,33 @@ class Cluster:
     # kubectl
     def kubectl_json(self, kube: list[str], *argv: str) -> dict:
         if "configmap" in argv:
-            return {"items": [{"metadata": {"name": n}, "data": d} for n, d in self.configmaps.items()]}
+            return {
+                "items": [
+                    {"metadata": {"name": n}, "data": d}
+                    for n, d in self.configmaps.items()
+                ]
+            }
         if "deployment" in argv:
-            return {"items": [{"metadata": {"name": n}, "spec": {"replicas": r}} for n, r in self.deployments.items()]}
+            return {
+                "items": [
+                    {"metadata": {"name": n}, "spec": {"replicas": r}}
+                    for n, r in self.deployments.items()
+                ]
+            }
         if "hpa" in argv:
-            return {"items": [
-                {"spec": {"scaleTargetRef": {"kind": "Deployment", "name": n}}} for n in self.autoscaled
-            ]}
+            return {
+                "items": [
+                    {"spec": {"scaleTargetRef": {"kind": "Deployment", "name": n}}}
+                    for n in self.autoscaled
+                ]
+            }
         if "namespace" in argv:
-            return {"items": [{"metadata": {"name": n}, "status": {"phase": p}} for n, p in self.namespaces.items()]}
+            return {
+                "items": [
+                    {"metadata": {"name": n}, "status": {"phase": p}}
+                    for n, p in self.namespaces.items()
+                ]
+            }
         raise AssertionError(argv)
 
     def read(self) -> footprint.Footprint:
@@ -166,20 +193,31 @@ def _leave(cluster: Cluster, what: str) -> None:
         ("namespace", ["namespaces"]),
     ],
 )
-def test_any_difference_is_named_by_part(cluster: Cluster, what: str, parts: list[str]) -> None:
+def test_any_difference_is_named_by_part(
+    cluster: Cluster, what: str, parts: list[str]
+) -> None:
     before = cluster.read()
     _leave(cluster, what)
     assert sorted(footprint.diff(before, cluster.read())) == parts
 
 
-def test_keep_allows_the_kept_source_and_what_is_named_after_it_and_nothing_else(cluster: Cluster) -> None:
+def test_keep_allows_the_kept_source_and_what_is_named_after_it_and_nothing_else(
+    cluster: Cluster,
+) -> None:
     before = cluster.read()
     cluster.create_source()
     assert footprint.diff(before, cluster.read(), keep_name=NAME) == {}
-    assert sorted(footprint.diff(before, cluster.read())) == ["configmaps", "deployments", "sources"]
+    assert sorted(footprint.diff(before, cluster.read())) == [
+        "configmaps",
+        "deployments",
+        "sources",
+    ]
     cluster.overlay = dict(LISTENER)
     cluster.deployments["dfe-other"] = 1
-    assert sorted(footprint.diff(before, cluster.read(), keep_name=NAME)) == ["deployments", "receiver-overlay"]
+    assert sorted(footprint.diff(before, cluster.read(), keep_name=NAME)) == [
+        "deployments",
+        "receiver-overlay",
+    ]
 
 
 def test_settle_waits_for_the_apps_to_leave(cluster: Cluster) -> None:
@@ -195,7 +233,12 @@ def test_settle_waits_for_the_apps_to_leave(cluster: Cluster) -> None:
 
     now = [0.0]
     rows = footprint.settle(
-        before, read, deadline=60, interval=5, sleep=lambda s: now.__setitem__(0, now[0] + s), clock=lambda: now[0]
+        before,
+        read,
+        deadline=60,
+        interval=5,
+        sleep=lambda s: now.__setitem__(0, now[0] + s),
+        clock=lambda: now[0],
     )
     assert [(r.slug, r.status) for r in rows] == [("no-trace", "done")]
     assert len(reads) == 3
@@ -206,10 +249,18 @@ def test_settle_names_what_is_still_there_at_the_deadline(cluster: Cluster) -> N
     cluster.create_source()
     now = [0.0]
     rows = footprint.settle(
-        before, cluster.read, deadline=10, interval=5, sleep=lambda s: now.__setitem__(0, now[0] + s),
+        before,
+        cluster.read,
+        deadline=10,
+        interval=5,
+        sleep=lambda s: now.__setitem__(0, now[0] + s),
         clock=lambda: now[0],
     )
-    assert {r.slug for r in rows} == {"no-trace-configmaps", "no-trace-deployments", "no-trace-sources"}
+    assert {r.slug for r in rows} == {
+        "no-trace-configmaps",
+        "no-trace-deployments",
+        "no-trace-sources",
+    }
     assert all(r.status == "failed" for r in rows)
     assert NAME in next(r for r in rows if r.slug == "no-trace-sources").detail
 
@@ -252,7 +303,9 @@ class FakeCase:
 
     name = NAME
 
-    def __init__(self, cluster: Cluster, fail_at: str, *, restores: bool = True) -> None:
+    def __init__(
+        self, cluster: Cluster, fail_at: str, *, restores: bool = True
+    ) -> None:
         self.cluster, self.fail_at, self.restores = cluster, fail_at, restores
 
     def step(self, at: str) -> None:
@@ -265,8 +318,14 @@ class FakeCase:
         return [wizard.StepResult("receiver-lumberjack-restored", "done", "put back")]
 
 
-def _drive(monkeypatch: pytest.MonkeyPatch, cluster: Cluster, case: FakeCase, *, keep: bool = False,
-           removes: bool = True) -> tuple[footprint.Footprint, list[wizard.StepResult]]:
+def _drive(
+    monkeypatch: pytest.MonkeyPatch,
+    cluster: Cluster,
+    case: FakeCase,
+    *,
+    keep: bool = False,
+    removes: bool = True,
+) -> tuple[footprint.Footprint, list[wizard.StepResult]]:
     """Run the source runner's attempt and conclude against the cluster and return the reading before and the rows."""
 
     def walk(run: object, c: FakeCase, *_a: object) -> None:
@@ -282,15 +341,22 @@ def _drive(monkeypatch: pytest.MonkeyPatch, cluster: Cluster, case: FakeCase, *,
 
     monkeypatch.setattr(source_run, "walk", walk)
     monkeypatch.setattr(source_run, "remove_source", remove_source)
-    monkeypatch.setattr(source_run.steps, "assert_hyperdx_source_gone", lambda *_a: ("done", "gone"))
+    monkeypatch.setattr(
+        source_run.steps, "assert_hyperdx_source_gone", lambda *_a: ("done", "gone")
+    )
     driver = RecordingDriver()
     run = types.SimpleNamespace(
-        driver=driver, engine=types.SimpleNamespace(call=cluster.call, verify=False, token=None),
-        args=types.SimpleNamespace(keep=keep, diagnostics_exec="", diagnostics_timeout=1.0),
+        driver=driver,
+        engine=types.SimpleNamespace(call=cluster.call, verify=False, token=None),
+        args=types.SimpleNamespace(
+            keep=keep, diagnostics_exec="", diagnostics_timeout=1.0
+        ),
     )
     before = cluster.read()
     taken = source_run.attempt(run, case, [], [], lambda: None, cluster.read)
-    assert taken == before, "the reading taken before the walk is the deployment as it stood"
+    assert taken == before, (
+        "the reading taken before the walk is the deployment as it stood"
+    )
     source_run.conclude(run, case, "https://engine", taken, cluster.read)
     return before, driver.results
 
@@ -309,11 +375,16 @@ def test_the_source_run_leaves_the_deployment_as_it_found_it(
 
 
 @pytest.mark.parametrize("fail_at", ["feed", "prove"])
-def test_keep_leaves_only_the_documented_source(monkeypatch: pytest.MonkeyPatch, cluster: Cluster, fail_at: str) -> None:
+def test_keep_leaves_only_the_documented_source(
+    monkeypatch: pytest.MonkeyPatch, cluster: Cluster, fail_at: str
+) -> None:
     case = FakeCase(cluster, fail_at)
     _, rows = _drive(monkeypatch, cluster, case, keep=True, removes=False)
     assert {r.slug: r.status for r in rows}["no-trace"] == "done"
-    assert "apart from the kept source" in next(r for r in rows if r.slug == "no-trace").detail
+    assert (
+        "apart from the kept source"
+        in next(r for r in rows if r.slug == "no-trace").detail
+    )
 
 
 @pytest.mark.parametrize("fail_at", ["feed", "prove"])
@@ -325,10 +396,15 @@ def test_a_cleanup_that_leaves_the_listener_open_fails_by_name(
     _, rows = _drive(monkeypatch, cluster, case)
     failed = {r.slug: r for r in rows if r.status == "failed"}
     assert "no-trace-receiver-overlay" in failed
-    assert "config.lumberjack.accept_unauthenticated" in failed["no-trace-receiver-overlay"].detail
+    assert (
+        "config.lumberjack.accept_unauthenticated"
+        in failed["no-trace-receiver-overlay"].detail
+    )
 
 
-def test_a_source_the_delete_leaves_behind_fails_by_name(monkeypatch: pytest.MonkeyPatch, cluster: Cluster) -> None:
+def test_a_source_the_delete_leaves_behind_fails_by_name(
+    monkeypatch: pytest.MonkeyPatch, cluster: Cluster
+) -> None:
     case = FakeCase(cluster, "feed")
     _, rows = _drive(monkeypatch, cluster, case, removes=False)
     failed = {r.slug for r in rows if r.status == "failed"}
@@ -338,21 +414,45 @@ def test_a_source_the_delete_leaves_behind_fails_by_name(monkeypatch: pytest.Mon
 # --- the edge runner ---------------------------------------------------------------------------
 
 
-def _edge(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, cluster: Cluster, prove) -> tuple[int, str]:
+def _edge(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, cluster: Cluster, prove
+) -> tuple[int, str]:
     monkeypatch.setenv("DFE_E2E_ADMIN_PASSWORD", "pw")
-    monkeypatch.setattr(edge_run.Datastore, "from_env", classmethod(lambda cls, _env: types.SimpleNamespace(password="")))
     monkeypatch.setattr(
-        edge_run, "Engine",
-        lambda *_a, **_k: types.SimpleNamespace(call=cluster.call, password="", token="", base="https://e"),
+        edge_run.Datastore,
+        "from_env",
+        classmethod(lambda cls, _env: types.SimpleNamespace(password="")),
+    )
+    monkeypatch.setattr(
+        edge_run,
+        "Engine",
+        lambda *_a, **_k: types.SimpleNamespace(
+            call=cluster.call, password="", token="", base="https://e"
+        ),
     )
     monkeypatch.setattr(edge_run.onboarding, "_apply_resolve_map", lambda _pairs: None)
     monkeypatch.setattr(edge_run, "prove", prove)
-    args = edge_run.build_parser().parse_args([
-        "--ui-url", "https://dfe.example", "--engine-url", "https://dfe.example", "--namespace", "dfe",
-        "--kubectl", "kubectl", "--allow", "203.0.113.7/32", "--egress-cidrs", "198.51.100.1/32",
-        "--shots-dir", str(tmp_path / "shots"),
-    ])
-    return edge_run.run(args), (tmp_path / "shots" / "steps.txt").read_text(encoding="utf-8")
+    args = edge_run.build_parser().parse_args(
+        [
+            "--ui-url",
+            "https://dfe.example",
+            "--engine-url",
+            "https://dfe.example",
+            "--namespace",
+            "dfe",
+            "--kubectl",
+            "kubectl",
+            "--allow",
+            "203.0.113.7/32",
+            "--egress-cidrs",
+            "198.51.100.1/32",
+            "--shots-dir",
+            str(tmp_path / "shots"),
+        ]
+    )
+    return edge_run.run(args), (tmp_path / "shots" / "steps.txt").read_text(
+        encoding="utf-8"
+    )
 
 
 def test_an_edge_run_that_fails_midway_still_leaves_nothing(

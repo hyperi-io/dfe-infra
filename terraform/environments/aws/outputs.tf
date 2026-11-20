@@ -1,5 +1,4 @@
-// The DFE_* set is the hand-off to bootstrap.sh, read by bootstrap/bridge.py
-// from `tofu output -json`. Same contract as the local root's, for a cloud.
+// The DFE_* set is the hand-off to bootstrap.sh, read by bootstrap/bridge.py from `tofu output -json`.
 
 output "DFE_ENV" {
   value = var.env
@@ -247,9 +246,7 @@ output "DFE_DNS_PROVIDER" {
   value       = "aws"
 }
 
-// ---------------------------------------------------------------------------
 // Operator-facing
-// ---------------------------------------------------------------------------
 
 output "cluster_name" {
   value = module.cluster.cluster_name
@@ -342,9 +339,7 @@ output "network" {
   value       = module.cluster.network
 }
 
-// ---------------------------------------------------------------------------
-// Toolbox -- read by `dfe-ops bastion {up,shell,forward,down,status}`.
-// ---------------------------------------------------------------------------
+// Toolbox, read by `dfe-ops bastion {up,shell,forward,down,status}`.
 
 output "toolbox_instance_id" {
   description = "Empty when the toolbox is not enabled -- dfe-ops bastion status/down reads this to tell 'never brought up' from 'torn down'."

@@ -114,7 +114,9 @@ def engine_env(
         {"name": "DFE_ENGINE_AUTH_LOCAL_ADMIN_SECRET_KEY", "value": admin[1]},
         {
             "name": "DFE_ENGINE_AUTH_BREAKGLASS_PASSWORD",
-            "valueFrom": {"secretKeyRef": {"name": breakglass[0], "key": breakglass[1]}},
+            "valueFrom": {
+                "secretKeyRef": {"name": breakglass[0], "key": breakglass[1]}
+            },
         },
     ]
 
@@ -189,7 +191,8 @@ def test_the_endpoints_come_from_the_live_routes() -> None:
     rows = endpoints(text)
     expect(
         "the renamed host is listed, and exposed",
-        f"| DFE UI (+ embedded HyperDX explore) | https://console.{DOMAIN} | exposed |" in rows,
+        f"| DFE UI (+ embedded HyperDX explore) | https://console.{DOMAIN} | exposed |"
+        in rows,
         f"{rows}",
     )
     expect(
@@ -229,16 +232,30 @@ def test_the_ingest_routes_are_listed_like_the_others() -> None:
 def test_the_summary_says_otel_ingress_is_not_exposed_by_default() -> None:
     """A deploy that never turned it on carries no otel route, and the summary says so."""
     text = run_summary()
-    expect("the OTLP ingress line reads not exposed", "OTLP ingress: not exposed" in text, text)
+    expect(
+        "the OTLP ingress line reads not exposed",
+        "OTLP ingress: not exposed" in text,
+        text,
+    )
 
 
 def test_the_summary_says_where_otel_ingress_answers_and_what_it_needs() -> None:
     route = {
         "spec": {"hostnames": [f"otel.{DOMAIN}"]},
-        "status": {"parents": [{"conditions": [
-            {"type": "Accepted", "status": "True", "reason": "Accepted"},
-            {"type": "ResolvedRefs", "status": "True", "reason": "ResolvedRefs"},
-        ]}]},
+        "status": {
+            "parents": [
+                {
+                    "conditions": [
+                        {"type": "Accepted", "status": "True", "reason": "Accepted"},
+                        {
+                            "type": "ResolvedRefs",
+                            "status": "True",
+                            "reason": "ResolvedRefs",
+                        },
+                    ]
+                }
+            ]
+        },
     }
     text = run_summary(
         otel_route=route,
@@ -255,7 +272,9 @@ def test_the_summary_says_where_otel_ingress_answers_and_what_it_needs() -> None
 
 def test_a_route_added_later_still_gets_a_row() -> None:
     """The label map is a courtesy, so an unknown route falls back to its name."""
-    rows = endpoints(run_summary(httproutes=[route("grafana", f"grafana.{DOMAIN}", path="/")]))
+    rows = endpoints(
+        run_summary(httproutes=[route("grafana", f"grafana.{DOMAIN}", path="/")])
+    )
     expect(
         "an unmapped route is named after itself",
         f"| grafana | https://grafana.{DOMAIN} | exposed |" in rows,
@@ -272,7 +291,11 @@ def test_a_route_the_gateway_refused_is_not_exposed() -> None:
     rows = endpoints(
         run_summary(
             httproutes=[
-                route("dfe-ui", f"dfe.{DOMAIN}", accepted="False=NoMatchingListenerHostname"),
+                route(
+                    "dfe-ui",
+                    f"dfe.{DOMAIN}",
+                    accepted="False=NoMatchingListenerHostname",
+                ),
                 route("hyperdx", f"hyperdx.{DOMAIN}"),
             ]
         )
@@ -293,7 +316,11 @@ def test_a_route_the_gateway_refused_is_not_exposed() -> None:
 def test_a_route_with_unresolvable_backends_is_not_exposed() -> None:
     """Accepted says the listener took the hostname, not that a backend exists."""
     rows = endpoints(
-        run_summary(httproutes=[route("dfe-ui", f"dfe.{DOMAIN}", resolved="False=BackendNotFound")])
+        run_summary(
+            httproutes=[
+                route("dfe-ui", f"dfe.{DOMAIN}", resolved="False=BackendNotFound")
+            ]
+        )
     )
     expect(
         "an accepted route with no backend reads refs unresolved",
@@ -306,7 +333,9 @@ def test_a_route_with_unresolvable_backends_is_not_exposed() -> None:
 def test_a_route_with_no_status_yet_is_not_exposed() -> None:
     """A route the gateway has not reached is not a reachable URL."""
     rows = endpoints(
-        run_summary(httproutes=[route("dfe-ui", f"dfe.{DOMAIN}", accepted="", resolved="")])
+        run_summary(
+            httproutes=[route("dfe-ui", f"dfe.{DOMAIN}", accepted="", resolved="")]
+        )
     )
     expect(
         "an unprogrammed route says so",
@@ -319,7 +348,9 @@ def test_a_route_with_no_status_yet_is_not_exposed() -> None:
 def test_every_hostname_of_a_route_gets_a_row() -> None:
     """hostnames is a list; taking [0] hides every alias the overlay declares."""
     rows = endpoints(
-        run_summary(httproutes=[route("dfe-ui", f"dfe.{DOMAIN}", f"console.{DOMAIN}", path="/")])
+        run_summary(
+            httproutes=[route("dfe-ui", f"dfe.{DOMAIN}", f"console.{DOMAIN}", path="/")]
+        )
     )
     expect(
         "the two-hostname route yields two rows",
@@ -408,7 +439,8 @@ def test_the_credential_block_names_the_minted_secrets() -> None:
     )
     expect(
         "the break-glass secret is fetched too",
-        "get secret dfe-engine-breakglass -o jsonpath='{.data.breakglass-password}'" in text,
+        "get secret dfe-engine-breakglass -o jsonpath='{.data.breakglass-password}'"
+        in text,
         text,
     )
     expect(

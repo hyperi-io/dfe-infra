@@ -119,7 +119,7 @@ def offenders(pattern: re.Pattern[str], allowed: set[str]) -> list[str]:
             continue
         try:
             body = path.read_text(encoding="utf-8")
-        except (UnicodeDecodeError, OSError):
+        except UnicodeDecodeError, OSError:
             continue
         for number, line in enumerate(body.splitlines(), start=1):
             if pattern.search(line):
@@ -173,7 +173,11 @@ def test_the_kafka_chart_renders_no_topic_on_any_mode() -> None:
             for d in docs
             if d.get("kind") == "Job" and "kafka-topics.sh" in yaml.safe_dump(d)
         ]
-        expect(f"kafka.mode={mode} renders no topic-creating Job", creators == [], f"got {creators}")
+        expect(
+            f"kafka.mode={mode} renders no topic-creating Job",
+            creators == [],
+            f"got {creators}",
+        )
 
 
 # --- 3: no schema-apply workload ----------------------------------------------

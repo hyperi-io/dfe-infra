@@ -36,7 +36,9 @@ import profiles  # noqa: E402
 import tester_idp  # noqa: E402
 
 # dfe-ops carries no extension, so it is loaded by path rather than imported.
-_loader = importlib.machinery.SourceFileLoader("dfeops_profiles", str(SCRIPTS / "dfe-ops"))
+_loader = importlib.machinery.SourceFileLoader(
+    "dfeops_profiles", str(SCRIPTS / "dfe-ops")
+)
 _spec = importlib.util.spec_from_loader("dfeops_profiles", _loader)
 dfeops = importlib.util.module_from_spec(_spec)
 sys.modules["dfeops_profiles"] = dfeops
@@ -47,7 +49,9 @@ BROKERLESS = ("slim", "mesh")
 
 def test_the_committed_shell_fragment_matches_the_table() -> None:
     """A hand edit or a stale commit of the generated file fails here."""
-    assert FRAGMENT.read_text(encoding="utf-8", errors="replace") == profiles.emit_shell()
+    assert (
+        FRAGMENT.read_text(encoding="utf-8", errors="replace") == profiles.emit_shell()
+    )
 
 
 def test_the_fragment_answers_for_every_mode() -> None:
@@ -116,7 +120,9 @@ def test_dfe_ops_reads_the_one_table() -> None:
 def test_mesh_is_declared_but_not_selectable() -> None:
     assert "mesh" in profiles.MODES
     assert profiles.SELECTABLE_MODES == ("slim", "single", "scale")
-    assert profiles.refusal("mesh") == "mesh is not supported in this release; use scale"
+    assert (
+        profiles.refusal("mesh") == "mesh is not supported in this release; use scale"
+    )
     assert profiles.refusal("scale") is None
 
 

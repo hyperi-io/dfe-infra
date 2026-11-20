@@ -1,15 +1,8 @@
-# dfe-transform-vector's integration values over its thin chart, layered after
-# apps/_common.yaml: the transform's wiring, under the keys the scalo-service
-# library reads. What depends on the transport sits in the
-# profile files beside this one.
-
-# The config file alone, not its directory: the lookup tables mount inside it.
+# The file alone, not its directory: the lookup tables mount inside it.
 configMount:
   subPath: true
 
-# The transform YAML and the lookup tables it reads, each a ConfigMap mounted
-# read-only. The bundled filebeat pipeline names
-# /etc/dfe-transform-vector/data/timezones.csv, so the tables mount there.
+# The bundled filebeat pipeline reads /etc/dfe-transform-vector/data/timezones.csv.
 fileSets:
   transforms:
     mountPath: /etc/dfe-transform-vector-transforms
@@ -19,13 +12,10 @@ fileSets:
     files: []
 
 extraEnv:
-  # Outranks the config file, so the app reads the transforms mounted above. The
-  # app reads an empty value as unset, which leaves its own config to decide.
+  # Outranks the config file. An empty value reads as unset.
   DFE_TRANSFORM_VECTOR_TRANSFORMS_DIR: '{{ with .Values.fileSets.transforms.files }}{{ $.Values.fileSets.transforms.mountPath }}{{ end }}'
-  # Vector's data dir, the contract's writable path `data`.
   DFE_TRANSFORM_VECTOR_VECTOR_DATA_DIR: /var/lib/vector
 
-# The contract's secret group, on the Secret these values name.
 secrets:
   kafka:
     existingSecret: '{{ .Values.kafka.saslSecretName }}'
@@ -72,16 +62,13 @@ initContainers:
 
 waitForEngine:
   service: dfe-engine
-  # Empty is the release's own namespace.
   namespace: ""
   port: 8000
   timeoutSeconds: 600
   intervalSeconds: 5
 
-# The transform's own keys, read here and in the profile files through tpl.
 kafka:
   saslSecretName: dfe-kafka-user
   sourceTopic: ""
   destTopic: ""
-  # Empty is the instance's own name.
   consumerGroup: ""

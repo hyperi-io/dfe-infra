@@ -39,7 +39,9 @@ from _expect import expect, standalone, summary
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 AWS_ROOT = REPO_ROOT / "terraform" / "environments" / "aws" / "main.tf"
-CLUSTER_OUTPUTS = REPO_ROOT / "terraform" / "modules" / "kubernetes-cluster" / "aws" / "outputs.tf"
+CLUSTER_OUTPUTS = (
+    REPO_ROOT / "terraform" / "modules" / "kubernetes-cluster" / "aws" / "outputs.tf"
+)
 MSK = REPO_ROOT / "terraform" / "modules" / "managed-kafka" / "msk"
 
 # Every input the broker module takes from the cluster module. Each one is an
@@ -75,16 +77,26 @@ def test_the_broker_module_carries_no_module_wide_depends_on() -> None:
 
 def test_no_module_in_the_root_depends_on_the_whole_cluster() -> None:
     body = strip_comments(AWS_ROOT.read_text(encoding="utf-8"))
-    offenders = [ln.strip() for ln in body.splitlines() if "depends_on" in ln and "module.cluster" in ln]
-    expect("nothing in the aws root waits on all of module.cluster", offenders == [],
-           f"got {offenders}")
+    offenders = [
+        ln.strip()
+        for ln in body.splitlines()
+        if "depends_on" in ln and "module.cluster" in ln
+    ]
+    expect(
+        "nothing in the aws root waits on all of module.cluster",
+        offenders == [],
+        f"got {offenders}",
+    )
 
 
 def test_every_cluster_fact_the_broker_takes_is_an_explicit_reference() -> None:
     block = module_block(AWS_ROOT.read_text(encoding="utf-8"), "kafka")
     for line in CLUSTER_INPUTS:
-        expect(f"module.kafka takes {line.split('=')[0].strip()} by reference",
-               line in block, f"looked for: {line}")
+        expect(
+            f"module.kafka takes {line.split('=')[0].strip()} by reference",
+            line in block,
+            f"looked for: {line}",
+        )
 
 
 def test_the_key_arn_output_orders_against_the_key_policy() -> None:
@@ -92,11 +104,17 @@ def test_the_key_arn_output_orders_against_the_key_policy() -> None:
     the one ordering the module-wide depends_on was standing in for."""
     body = CLUSTER_OUTPUTS.read_text(encoding="utf-8")
     match = re.search(r'(?ms)^output "kms_key_arn" \{\n(.*?)^\}', body)
-    expect("the cluster module still exports kms_key_arn", match is not None, "output is gone")
+    expect(
+        "the cluster module still exports kms_key_arn",
+        match is not None,
+        "output is gone",
+    )
     assert match is not None
-    expect("kms_key_arn orders against aws_kms_key_policy.this",
-           "depends_on = [aws_kms_key_policy.this]" in match.group(1),
-           "the grant ordering has nothing carrying it")
+    expect(
+        "kms_key_arn orders against aws_kms_key_policy.this",
+        "depends_on = [aws_kms_key_policy.this]" in match.group(1),
+        "the grant ordering has nothing carrying it",
+    )
 
 
 def test_the_cluster_name_reaches_only_the_pod_identity_association() -> None:
@@ -107,8 +125,11 @@ def test_the_cluster_name_reaches_only_the_pod_identity_association() -> None:
         for path in sorted(MSK.glob("*.tf"))
         if "var.eks_cluster_name" in path.read_text(encoding="utf-8")
     ]
-    expect("bootstrap.tf is the only consumer of eks_cluster_name",
-           readers == ["bootstrap.tf"], f"got {readers}")
+    expect(
+        "bootstrap.tf is the only consumer of eks_cluster_name",
+        readers == ["bootstrap.tf"],
+        f"got {readers}",
+    )
 
 
 def main() -> int:

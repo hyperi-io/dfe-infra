@@ -84,10 +84,19 @@ def parse(
         parent = stack[-1][0]
         if ": " in line:
             key, value = line.split(": ", 1)
-            _place(parent, key.strip(), _scalar(value), line_num, source, allow_duplicate_keys)
+            _place(
+                parent,
+                key.strip(),
+                _scalar(value),
+                line_num,
+                source,
+                allow_duplicate_keys,
+            )
         elif line.endswith(":"):
             child: dict[str, object] = {}
-            _place(parent, line[:-1].strip(), child, line_num, source, allow_duplicate_keys)
+            _place(
+                parent, line[:-1].strip(), child, line_num, source, allow_duplicate_keys
+            )
             stack.append((child, indent))
         else:
             raise YamlSubsetError(f"{source} line {line_num}: cannot parse {line!r}")
@@ -197,7 +206,10 @@ def value_at(text: str, path: Sequence[str]) -> str | None:
         sets one.
     """
     target = tuple(path)
-    return next((value for key_path, value in walk_keys(text) if key_path == target and value), None)
+    return next(
+        (value for key_path, value in walk_keys(text) if key_path == target and value),
+        None,
+    )
 
 
 def _scalar(raw: str) -> str:
