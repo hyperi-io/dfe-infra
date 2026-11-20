@@ -67,8 +67,8 @@ spec:
               # Set on every start, because .bootstrap.yaml reaches only a new volume. Both are Enterprise features Redpanda turns on by default.
               rpk cluster config set partition_autobalancing_mode node_add
               rpk cluster config set core_balancing_continuous false
-              # The text form drops an empty feature list, so read the JSON. A feature in use when the trial lapses blocks broker upgrades.
-              licence="$(rpk cluster license info --format json)"
+              # The text form drops an empty list, so read the JSON. Stripping whitespace keeps the match on a pretty-printed reply.
+              licence="$(rpk cluster license info --format json | tr -d ' \n\t')"
               case "${licence}" in
                 *'"enterprise_features_in_use":[]'*) ;;
                 *) echo "ERROR: Redpanda Enterprise features in use: ${licence}" >&2; kill "${RP_PID}"; exit 1 ;;

@@ -10,6 +10,7 @@ A new Redpanda cluster starts on a 30-day trial with two Enterprise features on:
 
 - `scale`: the operator applies both properties to a running cluster at the next sync.
 - `single`: the broker sets both at every start, then exits if `rpk cluster license info` still lists an Enterprise feature. A running broker picks them up at its next pod restart.
+- `kafka.mode: external`: the chart deploys no broker, so it sets neither. Whoever runs that Redpanda turns both off there.
 
 To fix a running broker now, without a restart:
 
