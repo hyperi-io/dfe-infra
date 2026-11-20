@@ -646,12 +646,9 @@ sizing:
 ## last segment of the credential's store key (<project>/<env>/kafka/<provider>),
 ## which is how the kafka chart reads the password back.
 kafka:
-  # strimzi | redpanda | msk | confluent-cloud | redpanda-cloud. DOCUMENTATION
-  # ONLY below, not yet resolved by the sizing overlay: the provider-by-tier
-  # default the resolver's aws overlay (sizing/targets/aws.yaml) is expected to
-  # apply once it picks this up is msk at Small and Medium, confluent-cloud at
-  # Large -- that file is in flight elsewhere, so this stays a comment until it
-  # lands there.
+  # strimzi | redpanda | msk | confluent-cloud | redpanda-cloud. dfe-ops init
+  # defaults it to msk at AWS Medium, confluent-cloud at AWS Large, and strimzi
+  # on-prem and at Small, which runs no broker, so the aws root builds none.
   provider: strimzi
   ## combined | separate -- where the KRaft metadata quorum runs. combined keeps
   ## it on the brokers and is the kafka chart's own default; separate is for a

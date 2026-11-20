@@ -389,9 +389,104 @@ def test_an_invalid_quorum_refuses_immediately_through_answers() -> None:
 # ---------------------------------------------------------------------------
 
 
+def _scripted(responses: list[str]) -> tuple[wiz.WizardIO, list[str], list[str]]:
+    """An interactive IO fed `responses` in order, recording prompts and messages."""
+    feed = iter(responses)
+    prompts: list[str] = []
+    messages: list[str] = []
+
+    def _read(prompt: str) -> str:
+        prompts.append(prompt)
+        return next(feed)
+
+    return wiz.WizardIO(read_line=_read, write_out=messages.append), prompts, messages
+
+
+@pytest.mark.parametrize("target", ["on-prem", "aws"])
+def test_small_asks_nothing_about_kafka_and_builds_no_broker(target: str) -> None:
+    """Small (slim) runs no broker, so a managed one would be built for nothing."""
+    io, prompts, _ = _scripted([])
+    answers = wiz.Answers(target=target, profile="slim")
+    wiz.step_kafka(io, answers)
+    assert prompts == []
+    assert answers.kafka_provider not in wiz.render_dial.MANAGED_KAFKA_PROVIDERS
+
+
+@pytest.mark.parametrize(
+    ("step", "fields"),
+    [
+        (wiz.step_lifecycle, ("lifecycle", "az_count")),
+        (wiz.step_clickhouse_storage, ("clickhouse_instance_override",)),
+    ],
+    ids=["lifecycle-and-az", "instance-override"],
+)
+def test_on_prem_is_not_asked_what_only_the_tofu_root_reads(step, fields) -> None:
+    io, prompts, _ = _scripted([""] * 5)
+    answers = wiz.Answers(target="on-prem")
+    defaults = {name: getattr(answers, name) for name in fields}
+    step(io, answers)
+    assert not any(
+        "az_count" in p or "Lifecycle" in p or "instance type" in p for p in prompts
+    )
+    assert {name: getattr(answers, name) for name in fields} == defaults
+
+
+def test_every_default_taken_interactively_finishes_with_every_ui_private() -> None:
+    """Enter at every prompt used to loop on the OIDC confirmation for ever."""
+    io, prompts, messages = _scripted([""] * 40)
+    answers = wiz.run_wizard(io)
+    assert not any(answers.ui_public.values())
+    assert sum("confirm OIDC" in p for p in prompts) == 1
+    assert any("every UI stays private" in m for m in messages)
+    # The allow-list, proxy ranges and public zone serve public UIs alone.
+    assert not any("allow-list" in p or "Public DNS zone" in p for p in prompts)
+
+
+def test_an_answers_key_no_question_reads_is_named() -> None:
+    """A stale or misspelt key must not quietly change what an answers file means."""
+    answers = {
+        "target": "on-prem",
+        "profile": "slim",
+        "kafka_provider": "msk",
+        "oidc_confirmed": "y",
+        "bogus": "1",
+    }
+    io = wiz.WizardIO(answers=answers)
+    wiz.run_wizard(io)
+    assert io.ignored() == ["kafka_provider", "bogus"]
+
+
+def test_confirming_oidc_interactively_keeps_the_public_ui() -> None:
+    io, _, _ = _scripted(["", "n", "n", "n", "n", "n", "y", "", ""])
+    answers = wiz.Answers()
+    wiz.step_public_uis(io, answers)
+    assert answers.ui_public["dfe_ui"] is True
+
+
+def test_a_yes_no_prompt_shows_its_default_once() -> None:
+    io, prompts, _ = _scripted([""])
+    wiz.ask_bool(io, "toolbox_pod_enabled", "Enable the in-cluster toolbox pod", False)
+    assert prompts == ["Enable the in-cluster toolbox pod [y/N]: "]
+
+
+@pytest.mark.parametrize(("target", "tier"), sorted(wiz.DEFAULT_BROKER_TEXT))
+def test_the_tier_list_names_the_broker_the_default_dial_builds(
+    target: str, tier: str
+) -> None:
+    """AWS Medium defaults to MSK, so a tier line promising an in-cluster broker misleads."""
+    provider = wiz._default_kafka_provider(target, tier)
+    named = {"msk": "Amazon MSK", "confluent-cloud": "Confluent Cloud"}.get(provider)
+    line = wiz._tier_line(target, tier)
+    if named:
+        assert named in line
+    else:
+        assert "MSK" not in line
+        assert "Confluent" not in line
+
+
 def test_az_count_uses_render_dial_validator() -> None:
     io = wiz.WizardIO(answers={"az_count": "7"})  # render_dial._az_count caps at 6
-    answers = wiz.Answers()
+    answers = wiz.Answers(target="aws")
     with pytest.raises(wiz.InitError, match="between 2 and 6"):
         wiz.step_lifecycle(io, answers)
 
@@ -407,7 +502,8 @@ def test_a_trusted_proxy_range_of_every_address_is_refused_through_answers() -> 
     answers = {
         "ui_allowed_cidrs": "198.51.100.0/24",
         "ui_trusted_proxy_cidrs": "192.0.2.0/25, ::/0",
-        "ui_dfe_ui": "n",
+        "ui_dfe_ui": "y",
+        "oidc_confirmed": "y",
         "public_zone": "",
     }
     with pytest.raises(wiz.InitError, match="trusts every address"):
@@ -418,7 +514,8 @@ def test_a_cdn_range_is_accepted_through_answers() -> None:
     answers = {
         "ui_allowed_cidrs": "198.51.100.0/24",
         "ui_trusted_proxy_cidrs": "192.0.2.0/25",
-        "ui_dfe_ui": "n",
+        "ui_dfe_ui": "y",
+        "oidc_confirmed": "y",
         "public_zone": "",
     }
     collected = wiz.Answers()
@@ -452,7 +549,7 @@ def test_ingest_gb_per_day_blank_means_no_estimate() -> None:
     [
         ("on-prem", "slim", "strimzi"),
         ("on-prem", "scale", "strimzi"),
-        ("aws", "slim", "msk"),
+        ("aws", "slim", "strimzi"),
         ("aws", "single", "msk"),
         ("aws", "scale", "confluent-cloud"),
     ],
