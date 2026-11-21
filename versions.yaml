@@ -11464,7 +11464,7 @@ stacks:
       # renovate: datasource=github-tags depName=hyperi-io/dfe-deploy
       dfe-deploy: "v1.0.28"              # 2026-11-22. The deploy-repo template, seeded from this tag. Its pins.yaml names stack 2.2.3-rc.2 on the rc channel.
       # Contains bbf19bf1, the Docker-only installer image and quickstart.json, which the docs site's quickstart pages render.
-      dfe-docker: "v1.0.9"                # 2026-11-17, tag at 3b518b080. Verifies each demo pack in CI (#411), takes Spamhaus DROP out of demo-cyber (#416), replays a feed that answers with no rows (#417), and keeps ClickHouse merges from taking the memory inserts need (#414).
+      dfe-docker: "v1.0.12"               # 2026-11-22, tag at fda5b2106. Fixes the demo-theatre replay (v1.0.11) and mints the ingest credential make post needs (#450).
       dfe-hyperdx: "v0.3.27-rc.1"        # 2026-11-21, amd64 and arm64. Merges upstream HyperDX 2.46.0. Retries without max_rows_to_read on role limit errors (#235) and returns 503 from /readyz when the document store is disconnected (#242).
 
     # The dfe-toolbox operator shell images (docker/dfe-toolbox/), not part of the deployed stack.
