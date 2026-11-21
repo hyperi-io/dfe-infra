@@ -1793,6 +1793,8 @@ def _cut_into(
     head: object,
     summary: object = _a_commit,
     fixture: str = _CUT_FIXTURE,
+    version: str = "9.9.0-rc.3",
+    from_stack: str | None = None,
 ) -> int:
     """Run a cut over the fixture with the registry and git reads stubbed out."""
     import argparse
@@ -1812,8 +1814,8 @@ def _cut_into(
     try:
         return stack.cmd_cut(
             argparse.Namespace(
-                version="9.9.0-rc.3",
-                from_stack=None,
+                version=version,
+                from_stack=from_stack,
                 maturity=None,
                 apps=None,
                 org="test-org",
@@ -2108,6 +2110,74 @@ def test_cut_repoints_previous_at_the_stack_it_was_cut_from() -> None:
             root["stacks"]["9.9.0-rc.2"]["stack"]["previous"] == "9.9.0-rc.1",
             f"{root['stacks']['9.9.0-rc.2']['stack']['previous']!r}",
         )
+
+
+def _stack_block(name: str, maturity: str, previous: str) -> str:
+    """One stack block in the shape _CUT_FIXTURE uses."""
+    return (
+        f"  {name}:\n"
+        f'    maturity: "{maturity}"\n'
+        "    apps:\n"
+        '      an-app: "v1.0.0"\n'
+        "    digests:\n"
+        '      an-app: "sha256:aaa"\n'
+        "    content:\n"
+        '      a-tagged-repo: "v1.0.0"\n'
+        f'      a-git-repo: "{_OLD_SHA}"\n'
+        "    stack:\n"
+        f'      previous: "{previous}"\n'
+        '      upgrade-order: "an-app"\n'
+    )
+
+
+_CUT_CHAIN_FIXTURE = (
+    'current: "9.9.0"\n'
+    "stacks:\n"
+    + _stack_block("9.9.0-rc.1", "rc", "")
+    + _stack_block("9.9.0-rc.2", "rc", "9.9.0-rc.1")
+    + _stack_block("9.9.0", "release", "9.9.0-rc.2")
+    + _stack_block("9.9.0-fix.1", "release", "9.9.0")
+    + _stack_block("9.9.0-rc.5", "rc", "")
+    + _stack_block("9.9.0-rc.6", "rc", "9.9.0-rc.5,9.9.0")
+)
+
+
+def test_a_cut_names_the_release_a_recut_source_sits_beside() -> None:
+    """A re-cut sorts below its release, so that release stays a predecessor.
+
+    check-upgrade takes a cut's declared previous as authoritative. A cut from
+    2.2.2-fix.1 therefore names 2.2.2 and 2.2.2-fix.1, or an upgrade from either
+    is refused. A plain source is still its own only predecessor.
+    """
+    import tempfile
+
+    cases = [
+        # (cut from, the version it is cut as, the previous it declares)
+        ("9.9.0", "9.9.1-rc.1", "9.9.0"),
+        ("9.9.0-rc.2", "9.9.0-rc.3", "9.9.0-rc.2"),
+        ("9.9.0-fix.1", "9.9.1-rc.1", "9.9.0,9.9.0-fix.1"),
+        ("9.9.0-rc.6", "9.9.0-rc.7", "9.9.0,9.9.0-rc.6"),
+    ]
+    for source, version, want in cases:
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            rc = _cut_into(
+                tmp,
+                lambda org, repo, ref="main": _OLD_SHA,
+                fixture=_CUT_CHAIN_FIXTURE,
+                version=version,
+                from_stack=source,
+            )
+            label = f"a cut from {source} as {version}"
+            expect(f"{label} writes the file", rc == 0, f"exit {rc}")
+            text = (tmp / "versions.yaml").read_text(encoding="utf-8")
+            stacks = stack.parse_simple_yaml(text)["stacks"]
+            cut = stacks.get(version, {}).get("stack", {})
+            expect(
+                f"{label} declares previous {want}",
+                cut.get("previous") == want,
+                f"previous={cut.get('previous')!r}",
+            )
 
 
 def test_a_release_title_carries_the_stack_name_only_when_it_has_one() -> None:

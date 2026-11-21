@@ -234,6 +234,24 @@ def stack_previous(v: dict) -> list[str]:
     ]
 
 
+def cut_previous(source: str, source_previous: list[str]) -> list[str]:
+    """The `stack.previous` a cut from `source` declares, in order.
+
+    A re-cut sorts below the release it re-cuts, so that release stays a
+    predecessor beside it: a cut from 2.2.2-fix.1 declares 2.2.2,2.2.2-fix.1.
+    A plain source is its own only predecessor.
+    """
+    own = semver_key(source)
+    if own is None:
+        return [source]
+    above = []
+    for p in source_previous:
+        key = semver_key(p)
+        if key is not None and key > own:
+            above.append(p)
+    return [*above, source]
+
+
 def stack_pins(root: dict, stack: str | None = None) -> tuple[str, dict]:
     """Resolve (name, pin-set) for a stack version (default: `current`)."""
     stacks = root.get("stacks", {})
@@ -2244,7 +2262,8 @@ def cmd_cut(args: argparse.Namespace) -> int:
     evidence comment is rewritten to cite the commit it moved to.
 
     `stack.previous` is DERIVED, not cloned: the source block is by definition
-    the new version's predecessor, so cut re-points it at `--from`.
+    the new version's predecessor, so cut re-points it at `--from`, and also at
+    the release a re-cut `--from` sorts below (cut_previous).
 
     A clone of a `support: withdrawn` block is cut as `support: standard`, without
     the notes on its maturity and support lines: those explain the withdrawal.
@@ -2309,8 +2328,13 @@ def cmd_cut(args: argparse.Namespace) -> int:
             block[i] = re.sub(re.escape(from_name), new, ln)
             break
 
-    # The block was cloned from from_name, so from_name is the new predecessor.
-    if not _rewrite_scalar(block, "stack", "previous", from_name):
+    # Read the source's previous from the lines, not `root`: _drop_withdrawn has
+    # already rewritten it when this cut replaces a withdrawn stack.
+    source_previous = stack_previous(
+        parse_simple_yaml("".join(lines))["stacks"][from_name]
+    )
+    previous = ",".join(cut_previous(from_name, source_previous))
+    if not _rewrite_scalar(block, "stack", "previous", previous):
         raise SystemExit(
             f"error: no stack.previous in {from_name} to re-point at the source"
         )
