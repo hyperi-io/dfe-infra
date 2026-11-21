@@ -41,15 +41,20 @@ the language default, because one consumer's optimised build outlasts the
 default by hours.
 
 Cargo builds into the checkout's own ``target/`` unless
-``SCALO_REBUILD_TARGET`` names another directory.
+``SCALO_REBUILD_TARGET`` names another directory. Every cargo call that compiles
+runs on the host hyperi-ai's ``remote.host`` names, through ``hyperi-ai remote
+run``, so a workstation never builds a Rust app itself.
 """
 
+import base64
+import io
 import json
 import os
 import re
 import shlex
 import shutil
-import tempfile
+import subprocess
+import tarfile
 from collections.abc import Callable, Sequence
 from contextlib import AbstractContextManager, nullcontext
 from pathlib import Path
@@ -80,37 +85,76 @@ from dfe_suite.repos import (
 )
 
 
+def _offload_host() -> str:
+    """The host hyperi-ai sends builds to (its ``remote.host``), empty when there is none."""
+    if shutil.which("hyperi-ai") is None:
+        return ""
+    found = run(["hyperi-ai", "config", "get", "remote.host"], check=False)
+    host = found.stdout.strip() if found.returncode == 0 else ""
+    return "" if host in ("", "self") else host
+
+
+def _offloaded(argv: list[str]) -> list[str]:
+    """``argv`` run through ``hyperi-ai remote run`` when an offload host is set."""
+    return ["hyperi-ai", "remote", "run", "--", *argv] if _offload_host() else argv
+
+
+def _cargo(
+    argv: list[str], *, repo: Path, check: bool = True, capture: bool = True
+) -> subprocess.CompletedProcess[str]:
+    """Run a cargo command that compiles, on the offload host when there is one."""
+    return run(_offloaded(["cargo", *argv]), cwd=repo, check=check, capture=capture)
+
+
+def _cargo_line(
+    line: str, *, repo: Path, check: bool = True
+) -> subprocess.CompletedProcess[str]:
+    """Run a shell line whose stdout is its result, so it comes back from an offload host too."""
+    return run(_offloaded(["sh", "-c", line]), cwd=repo, check=check)
+
+
 def _emit_dockerfile(repo: Path, app: str) -> None:
     """Regenerate the committed Dockerfile from the app's deployment contract.
 
     Three spellings are tried because the fleet has not standardised on one;
     collapse this to a single call once every app emits to stdout. ``--bin``
-    disambiguates the apps that ship a second binary (pgo-driver).
+    disambiguates the apps that ship a second binary (pgo-driver). Each one's
+    Dockerfile arrives on stdout, so a half-failed run cannot truncate the
+    committed one.
 
     Raises:
         FleetError: If no known spelling produced a Dockerfile.
     """
-    base = ["cargo", "run", "--quiet", "--bin", app, "--"]
-    target = repo / "Dockerfile"
-
-    stdout_form = run([*base, "emit-dockerfile"], cwd=repo, check=False)
-    if stdout_form.returncode == 0 and stdout_form.stdout.strip():
-        target.write_text(stdout_form.stdout, encoding="utf-8", newline="\n")
-        return
-
-    # Emit to a scratch path first, so a half-failed run cannot truncate the
-    # committed Dockerfile.
-    with tempfile.TemporaryDirectory(prefix="scalo-fleet-") as tmp:
-        scratch = Path(tmp) / "Dockerfile"
-        for form in (
-            [*base, "--emit-dockerfile", str(scratch)],
-            [*base, "emit-dockerfile", str(scratch)],
-        ):
-            emitted = run(form, cwd=repo, check=False).returncode == 0
-            if emitted and scratch.exists() and scratch.stat().st_size:
-                shutil.copyfile(scratch, target)
-                return
+    base = shlex.join(["cargo", "run", "--quiet", "--bin", app, "--"])
+    scratch = "f=$(mktemp) && trap 'rm -f \"$f\"' EXIT &&"
+    for line in (
+        f"{base} emit-dockerfile",
+        f'{scratch} {base} --emit-dockerfile "$f" >&2 && cat "$f"',
+        f'{scratch} {base} emit-dockerfile "$f" >&2 && cat "$f"',
+    ):
+        emitted = _cargo_line(line, repo=repo, check=False)
+        if emitted.returncode == 0 and emitted.stdout.strip():
+            (repo / "Dockerfile").write_text(
+                emitted.stdout, encoding="utf-8", newline="\n"
+            )
+            return
     raise FleetError(f"cannot regenerate the Dockerfile for {app} -- no known emit CLI")
+
+
+def _config_schema(repo: Path, app: str) -> None:
+    """Write the app's config-schema.* and capability-catalog.* into docs/.
+
+    An offload host writes them into its own copy of the tree, so they come back
+    as a tar on stdout.
+    """
+    argv = ["run", "--quiet", "--bin", app, "--", "config-schema", "--dir", "docs"]
+    if not _offload_host():
+        _cargo(argv, repo=repo, capture=False)
+        return
+    line = f"{shlex.join(['cargo', *argv])} >&2 && tar -C docs -cf - . | base64 -w0"
+    packed = base64.b64decode(_cargo_line(line, repo=repo).stdout)
+    with tarfile.open(fileobj=io.BytesIO(packed)) as docs:
+        docs.extractall(repo / "docs", filter="data")
 
 
 # Where a Rust rebuild's clippy and tests run: here, or in the PR's own CI.
@@ -443,20 +487,11 @@ def _check_unoptimized_caller(repo: Path) -> Path:
 
 
 def _local_gate(repo: Path, features: Sequence[str], *, run_tests: bool) -> None:
-    """Run clippy, and nextest unless ``run_tests`` is False, in the checkout."""
+    """Run clippy, and nextest unless ``run_tests`` is False, on the checkout."""
     say("gate: clippy (all targets, gate features, -D warnings)")
-    run(
-        [
-            "cargo",
-            "clippy",
-            "--workspace",
-            "--all-targets",
-            *features,
-            "--",
-            "-D",
-            "warnings",
-        ],
-        cwd=repo,
+    _cargo(
+        ["clippy", "--workspace", "--all-targets", *features, "--", "-D", "warnings"],
+        repo=repo,
         capture=False,
     )
     if run_tests:
@@ -464,12 +499,9 @@ def _local_gate(repo: Path, features: Sequence[str], *, run_tests: bool) -> None
         # metrics recorder, the config registry) that cross-talks under cargo
         # test's in-process parallelism and produces false failures.
         say("gate: tests (nextest, gate features)")
-        require_tools("cargo-nextest")
-        run(
-            ["cargo", "nextest", "run", "--workspace", *features],
-            cwd=repo,
-            capture=False,
-        )
+        if not _offload_host():
+            require_tools("cargo-nextest")
+        _cargo(["nextest", "run", "--workspace", *features], repo=repo, capture=False)
     else:
         # dfe-loader's integration and e2e suites are Docker-bound (ClickHouse
         # and Redpanda via testcontainers), so the local gate fails on a
@@ -635,21 +667,7 @@ def rebuild_rust(
         # way. It writes into docs/, where the fleet commits config-schema.* and
         # capability-catalog.*.
         say("regenerate the committed config artefacts")
-        run(
-            [
-                "cargo",
-                "run",
-                "--quiet",
-                "--bin",
-                app,
-                "--",
-                "config-schema",
-                "--dir",
-                "docs",
-            ],
-            cwd=repo,
-            capture=False,
-        )
+        _config_schema(repo, app)
         say("gate: fmt")
         run(["cargo", "fmt", "--all", "--", "--check"], cwd=repo, capture=False)
         if gate == GATE_PR_CI:
