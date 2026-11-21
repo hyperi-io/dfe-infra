@@ -15,8 +15,8 @@ extras:
   # The version each component's objects are labelled with, and the engine image tag the hunt runner and keda shim run
   # (image.tag empty takes it). Each is versions.yaml apps.<component>, checked by scripts/check_versions_drift.py.
   appVersions:
-    dfe-engine: "v1.22.93-rc.1"
-    dfe-ui: "v1.7.46-rc.1"
+    dfe-engine: "v1.22.93-rc.2"
+    dfe-ui: "v1.7.46-rc.2"
     dfe-receiver: "v1.15.71-rc.1"
     dfe-loader: "v1.18.75-rc.1"
     dfe-archiver: "v1.7.53-rc.1"
@@ -265,11 +265,11 @@ extras:
       image:
         repository: ""
         tag: ""
-        digest: "sha256:5ffb6e0cded3ffbb18fb3057eeb9f7106785239176df7b5b99371eb617bf9175"
+        digest: "sha256:3456e3de16399993c7c7bb55f0958d2b0bb1f4be614d642a439e9d17e55fa31a"
         pullPolicy: IfNotPresent
       stackVersion: ""
       profile: ""
-      uiVersion: "v1.7.46-rc.1"           # == versions.yaml apps.dfe-ui
+      uiVersion: "v1.7.46-rc.2"           # == versions.yaml apps.dfe-ui
       kafka:
         mode: ""
         bootstrapServers: ""
