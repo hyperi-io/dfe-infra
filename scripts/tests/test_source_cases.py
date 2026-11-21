@@ -469,7 +469,7 @@ def transform_repo(tmp_path):
 
 
 #: The cases that take the name of the catalogue entry they create, which no sweep may remove.
-CATALOGUE_NAMED = {"edgestream-hub": "edgestream-hub-syslog"}
+CATALOGUE_NAMED = {"edgestream-hub": "edgestream-hub-syslog", "flow": "netflow"}
 
 
 class TestWhichCaseARunGets:

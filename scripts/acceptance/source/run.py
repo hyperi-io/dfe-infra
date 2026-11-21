@@ -579,6 +579,25 @@ def build_parser() -> argparse.ArgumentParser:
         help="lines per vendor each transport sends, from the vendored demo corpus",
     )
     parser.add_argument(
+        "--flow-host",
+        default="",
+        metavar="HOST",
+        help="where the flow case sends NetFlow, IPFIX and sFlow datagrams over UDP "
+        "(default: the host of the receiver's ingest URL)",
+    )
+    parser.add_argument(
+        "--flow-netflow-port",
+        type=int,
+        default=2055,
+        help="the receiver's UDP port for NetFlow v5, v9 and IPFIX, which it senses per datagram",
+    )
+    parser.add_argument(
+        "--flow-sflow-port",
+        type=int,
+        default=6343,
+        help="the receiver's UDP port for sFlow v5",
+    )
+    parser.add_argument(
         "--receiver-metrics-url",
         default=os.environ.get("DFE_E2E_RECEIVER_METRICS_URL", ""),
         metavar="URL",
