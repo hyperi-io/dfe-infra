@@ -29,7 +29,7 @@ import os
 import socket
 import subprocess
 import time
-from collections.abc import Iterator
+from collections.abc import Generator
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -109,7 +109,7 @@ class BundledRepo:
     ready_timeout: float = 30.0
 
     @contextlib.contextmanager
-    def open(self, checkout: Path) -> Iterator[Session]:
+    def open(self, checkout: Path) -> Generator[Session]:
         """Forward Forgejo, point `checkout`'s origin at it (cloning it when absent), then clean up."""
         if self.url_override is not None:
             session = Session(self.url_override, {})
@@ -169,39 +169,70 @@ class BundledRepo:
         )
 
     def _attach(self, checkout: Path, session: Session) -> None:
-        """Clone into `checkout` when it holds no repo, else retarget its origin at this session."""
+        """Clone `checkout`, or retarget it, fetch, and fast-forward it.
+
+        The engine pushes to the deploy repo too, so a kept checkout goes stale.
+        A diverged one is refused, because a commit on it is rejected at push.
+        """
         env = {**os.environ, **session.git_env}
-        if (checkout / ".git").exists():
-            run = subprocess.run(
-                [
-                    "git",
-                    "-C",
-                    str(checkout),
-                    "remote",
-                    "set-url",
-                    "origin",
-                    session.url,
-                ],
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                env=env,
-                check=False,
-            )
-        else:
+        if not (checkout / ".git").exists():
             checkout.parent.mkdir(parents=True, exist_ok=True)
-            run = subprocess.run(
-                ["git", "clone", "--quiet", session.url, str(checkout)],
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                env=env,
-                check=False,
+            self._git(env, checkout, "clone", "--quiet", session.url, str(checkout))
+            return
+        self._git(
+            env,
+            checkout,
+            "-C",
+            str(checkout),
+            "remote",
+            "set-url",
+            "origin",
+            session.url,
+        )
+        self._git(env, checkout, "-C", str(checkout), "fetch", "--quiet", "origin")
+        counts = self._git(
+            env,
+            checkout,
+            "-C",
+            str(checkout),
+            "rev-list",
+            "--left-right",
+            "--count",
+            "HEAD...@{upstream}",
+        )
+        ahead, behind = (int(part) for part in counts.split())
+        if behind and ahead:
+            raise SessionError(
+                f"{checkout} has {ahead} commit(s) the deploy repo lacks, and the deploy repo has "
+                f"{behind} it lacks: rebase it onto origin, or remove the unpushed commits"
             )
+        if behind:
+            self._git(
+                env,
+                checkout,
+                "-C",
+                str(checkout),
+                "merge",
+                "--ff-only",
+                "--quiet",
+                "@{upstream}",
+            )
+
+    @staticmethod
+    def _git(env: dict[str, str], checkout: Path, *args: str) -> str:
+        """Run one git command for `_attach`, raising SessionError with git's last line on failure."""
+        run = subprocess.run(
+            ["git", *args],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            env=env,
+            check=False,
+        )
         if run.returncode != 0:
             detail = run.stderr.strip().splitlines()[-1:] or ["no detail"]
             raise SessionError(
                 f"cannot attach {checkout} to the deploy repo: {detail[0]}"
             )
+        return run.stdout.strip()
