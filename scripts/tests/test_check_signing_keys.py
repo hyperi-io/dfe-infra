@@ -98,7 +98,6 @@ def test_the_dockerfile_still_names_the_kubernetes_pin() -> None:
 
 
 KUBE = "pkgs.k8s.io v1.35: key DE15B14486CD377B9E876E1A234654DA9A296436 expires 2026-12-29, inside 60 days"
-NPA = f"{watch.NPA_ISSUE} is closed: check the pinned vpc-cni carries the fix"
 
 
 @pytest.mark.parametrize(
@@ -112,8 +111,6 @@ NPA = f"{watch.NPA_ISSUE} is closed: check the pinned vpc-cni carries the fix"
             datetime.date(2026, 11, 15),
             False,
         ),
-        (NPA, datetime.date(2026, 12, 18), True),
-        (NPA, datetime.date(2026, 12, 19), False),
         ("tools/vendored.asc: key AB has expired", datetime.date(2026, 11, 15), False),
     ],
     ids=[
@@ -121,8 +118,6 @@ NPA = f"{watch.NPA_ISSUE} is closed: check the pinned vpc-cni carries the fix"
         "key-past-date",
         "other-fingerprint",
         "rotated-key",
-        "npa-held",
-        "npa-past-date",
         "unrelated",
     ],
 )

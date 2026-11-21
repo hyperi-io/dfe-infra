@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 #  Project:      dfe-infra
 #  File:         check_signing_keys.py
-#  Purpose:      Fail while there is still time to act on a signing key or an
-#                upstream hold that will otherwise break a build on its date.
+#  Purpose:      Fail while there is still time to act on a signing key that
+#                will otherwise break a build on its date.
 #  Language:     Python
 #
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
-"""Watch the signing keys the toolbox pins and the upstream fix the gen-8 hold waits on.
+"""Watch the signing keys the toolbox pins.
 
     python3 scripts/check_signing_keys.py            # vendored keys, offline
-    python3 scripts/check_signing_keys.py --online   # plus pkgs.k8s.io, the AWS docs, and the vpc-cni fix
+    python3 scripts/check_signing_keys.py --online   # plus pkgs.k8s.io and the AWS docs
 
 The toolbox verifies kubectl, the AWS CLI and the Session Manager plugin against
 keys pinned by fingerprint. A key that expires, or rotates to a new fingerprint,
@@ -18,13 +18,12 @@ fails the image build closed on the day. This fails WARN_DAYS before that day.
 
 Offline: every vendored key under docker/dfe-toolbox must be valid for more than
 WARN_DAYS. Online: the key pkgs.k8s.io serves must still carry the Dockerfile's
-pinned fingerprint and be valid for more than WARN_DAYS, the AWS CLI key on the
-install docs page must be the one vendored, and aws-network-policy-agent #686 (the
-gen-8 hold in shapes/compute-shapes.yaml) must still be open.
+pinned fingerprint and be valid for more than WARN_DAYS, and the AWS CLI key on
+the install docs page must be the one vendored.
 
 A finding in HELD prints as HELD and does not fail until its date.
 
-Needs gpg. --online also needs network and an authenticated gh.
+Needs gpg. --online also needs network.
 """
 
 import argparse
@@ -41,18 +40,12 @@ WARN_DAYS = 60
 AWS_DOCS = (
     "https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html"
 )
-NPA_ISSUE = "aws/aws-network-policy-agent/issues/686"
 # A finding already in hand: text it contains, the day it fails again, and why.
 HELD = (
     (
         "key DE15B14486CD377B9E876E1A234654DA9A296436 expires",
         datetime.date(2026, 12, 15),
         "kubernetes/release#4552. In 2024 this key got a new expiry under the same fingerprint (kubernetes/release#3818)",
-    ),
-    (
-        f"{NPA_ISSUE} is closed",
-        datetime.date(2026, 12, 18),
-        "vpc-cni v1.23.3 carries the fix. #1160 pins it and lifts the hold with the 2.2.3 cut",
     ),
 )
 PGP_BLOCK = re.compile(
@@ -177,24 +170,6 @@ def _unescape(block: str) -> str:
     return html.unescape(TAG.sub("", block)).strip() + "\n"
 
 
-def npa_findings() -> list[str]:
-    out = subprocess.run(
-        ["gh", "api", f"repos/{NPA_ISSUE}", "--jq", ".state"],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        check=False,
-    )
-    if out.returncode != 0:
-        return [f"could not read {NPA_ISSUE}: {out.stderr.strip()}"]
-    if out.stdout.strip() == "closed":
-        return [
-            f"{NPA_ISSUE} is closed: check the pinned vpc-cni carries the fix, then lift the gen-8 hold in shapes/compute-shapes.yaml"
-        ]
-    return []
-
-
 def held(finding: str, today: datetime.date) -> str | None:
     """Why a finding does not fail yet, or None once its HELD date has passed."""
     for text, until, reason in HELD:
@@ -208,13 +183,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--online",
         action="store_true",
-        help="also check pkgs.k8s.io, the AWS docs and the vpc-cni fix",
+        help="also check pkgs.k8s.io and the AWS docs",
     )
     args = parser.parse_args(argv)
     now = datetime.datetime.now(datetime.UTC)
     findings = vendored_findings(now)
     if args.online:
-        findings += kubernetes_findings(now) + aws_findings(now) + npa_findings()
+        findings += kubernetes_findings(now) + aws_findings(now)
     failing = 0
     for finding in findings:
         reason = held(finding, now.date())
@@ -224,10 +199,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"FAIL {finding}")
             failing += 1
     if not findings:
-        print(
-            "ok: signing keys valid past the warning window"
-            + (", upstream holds unchanged" if args.online else "")
-        )
+        print("ok: signing keys valid past the warning window")
     return 1 if failing else 0
 
 

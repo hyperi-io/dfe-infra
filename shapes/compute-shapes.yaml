@@ -113,9 +113,8 @@ clouds:
         family: m
         modifiers: ""
         arch: arm64
-        ## Graviton4 until a pinned VPC CNI carries the aws-network-policy-agent #686 fix, then newest.
-        generation_policy: pinned
-        generation_pin: 8
+        generation_policy: newest
+        generation_pin: ""
         price_policy: newest-within
         price_step_max_pct: 10
         price_generations: ""
@@ -139,9 +138,8 @@ clouds:
         family: m
         modifiers: ""
         arch: arm64
-        ## Graviton4 until a pinned VPC CNI carries the aws-network-policy-agent #686 fix, then newest.
-        generation_policy: pinned
-        generation_pin: 8
+        generation_policy: newest
+        generation_pin: ""
         price_policy: newest-within
         price_step_max_pct: 10
         price_generations: ""
@@ -184,9 +182,8 @@ clouds:
         family: m
         modifiers: ""
         arch: arm64
-        ## Graviton4 until a pinned VPC CNI carries the aws-network-policy-agent #686 fix, then newest.
-        generation_policy: pinned
-        generation_pin: 8
+        generation_policy: newest
+        generation_pin: ""
         price_policy: newest-within
         price_step_max_pct: 10
         price_generations: ""
@@ -223,9 +220,8 @@ clouds:
         family: m
         modifiers: ""
         arch: arm64
-        ## Graviton4 until a pinned VPC CNI carries the aws-network-policy-agent #686 fix, then newest.
-        generation_policy: pinned
-        generation_pin: 8
+        generation_policy: newest
+        generation_pin: ""
         price_policy: newest-within
         price_step_max_pct: 10
         price_generations: ""
@@ -271,8 +267,7 @@ clouds:
         family: r
         modifiers: d
         arch: arm64
-        ## Graviton4 until a pinned VPC CNI carries the aws-network-policy-agent #686 fix, then newest-with-modifiers.
-        generation_policy: pinned
+        generation_policy: newest-with-modifiers
         generation_pin: 8
         price_policy: newest-within
         price_step_max_pct: 10
@@ -326,9 +321,8 @@ clouds:
         family: m
         modifiers: ""
         arch: arm64
-        ## Graviton4 until a pinned VPC CNI carries the aws-network-policy-agent #686 fix, then newest.
-        generation_policy: pinned
-        generation_pin: 8
+        generation_policy: newest
+        generation_pin: ""
         price_policy: newest-within
         price_step_max_pct: 10
         price_generations: ""
@@ -363,8 +357,7 @@ clouds:
         family: c
         modifiers: d
         arch: arm64
-        ## Graviton4 until a pinned VPC CNI carries the aws-network-policy-agent #686 fix, then newest-with-modifiers.
-        generation_policy: pinned
+        generation_policy: newest-with-modifiers
         generation_pin: 8
         price_policy: cheapest-of
         price_step_max_pct: ""
