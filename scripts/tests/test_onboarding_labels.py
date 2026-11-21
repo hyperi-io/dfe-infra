@@ -22,7 +22,7 @@ import pytest
 SCRIPTS = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SCRIPTS))
 
-from acceptance.onboarding.run import _label  # noqa: E402
+from acceptance.onboarding.run import LOGIN_USER_LABELS, _label  # noqa: E402
 
 
 @pytest.mark.parametrize(
@@ -37,6 +37,20 @@ def test_any_listed_label_matches():
     pattern = _label("Username", "User name")
     assert pattern.match("* User name")
     assert pattern.match("Username *")
+
+
+@pytest.mark.parametrize(
+    ("accessible_name", "matches"),
+    [
+        ("Username", True),
+        ("* Username or Email", True),
+        ("Username or Email *", True),
+        ("Email", False),
+        ("Password", False),
+    ],
+)
+def test_the_login_user_field_matches_either_console_label(accessible_name, matches):
+    assert bool(_label(*LOGIN_USER_LABELS).match(accessible_name)) is matches
 
 
 @pytest.mark.parametrize(

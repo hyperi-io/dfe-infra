@@ -59,6 +59,8 @@ CONSOLE_LANDMARKS = ("Sources", "Meta Schemas")
 
 # The login page's local-account tab, shown once a provider is registered.
 LOCAL_LOGIN_TAB = "Login with Local"
+# The login form's user field: dfe-ui 1.7.46 and later say "Username or Email".
+LOGIN_USER_LABELS = ("Username", "Username or Email")
 
 # The Add Source drawer's name field: "Source Name *" from ui v1.7.0, "Source" before it.
 SOURCE_NAME_LABELS = ("Source Name", "Source")
@@ -144,12 +146,12 @@ def sign_in(driver: Driver, user: str, password: str) -> None:
     # identity provider registered then opens on the OIDC tab, with the local
     # accounts behind the other one, so the tab is looked for only once either has rendered.
     local = driver.page.get_by_role("tab", name=LOCAL_LOGIN_TAB, exact=True)
-    username = driver.textbox("Username")
+    username = driver.textbox(*LOGIN_USER_LABELS)
     username.or_(local).first.wait_for(state="visible", timeout=STEP_TIMEOUT_MS)
     if local.count():
         local.first.click(timeout=STEP_TIMEOUT_MS)
     username.wait_for(state="visible", timeout=STEP_TIMEOUT_MS)
-    driver.textbox("Username").fill(user)
+    username.fill(user)
     driver.textbox("Password").fill(password)
     driver.button("Login").click(timeout=STEP_TIMEOUT_MS)
 
