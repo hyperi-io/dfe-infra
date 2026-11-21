@@ -137,6 +137,8 @@ DIGEST_PINNED = {
     "services.documentdb": "ghcr.io/documentdb/documentdb-kubernetes-operator/documentdb",
     "services.documentdb-gateway": "ghcr.io/documentdb/documentdb-kubernetes-operator/gateway",
     "services.documentdb-postgres": "ghcr.io/cloudnative-pg/postgresql",
+    # helm/charts/otel-collector/values.yaml runs gnmic at this tag@sha256.
+    "services.gnmic": "ghcr.io/openconfig/gnmic",
 }
 
 # Chart-run images a stack may pin under DIGEST_PINNED: image repository -> that key.
