@@ -147,6 +147,25 @@ class TestWhatTheContainersAreTold:
         assert 'format => "json_batch"' in config
         assert "beats { port => 5044 }" in config
 
+    @pytest.mark.parametrize(
+        ("token", "line"),
+        [
+            ("tok-123", 'headers => { "Authorization" => "Bearer tok-123" }'),
+            ("", None),
+        ],
+    )
+    def test_logstash_sends_the_receiver_token_only_when_set(
+        self, pair, monkeypatch, token, line
+    ):
+        monkeypatch.setenv("DFE_E2E_RECEIVER_TOKEN", token)
+        write_inputs(pair, ["a"])
+        config = (pair.workdir / "logstash.conf").read_text(encoding="utf-8")
+
+        if line:
+            assert line in config
+        else:
+            assert "headers =>" not in config
+
     def test_two_runs_never_share_a_container(self, tmp_path):
         first = beats.Pair(
             network="n", receiver_url="u", workdir=tmp_path, run_id="src-a"

@@ -21,6 +21,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -31,6 +32,7 @@ from acceptance.clients import (
     RECORD_TEXT,
     Datastore,
     Engine,
+    receiver_headers,
     remove_source,
     setup_status,
     tls_context,
@@ -736,7 +738,7 @@ def post_corpus(
             receiver_url,
             data=json.dumps(body).encode(),
             method="POST",
-            headers={"Content-Type": "application/json"},
+            headers={"Content-Type": "application/json", **receiver_headers()},
         )
         # The receiver rolls onto a new rule mid-run, so a dropped connection
         # or a 5xx from a pod on its way out is retried; a 4xx is a rejection.
@@ -919,6 +921,27 @@ def post_body(
     extra: list[str] = []
     for header in headers:
         extra += ["-H", header]
+    # Read from a file so the token stays out of the process list.
+    auth = "".join(f"{name}: {value}\n" for name, value in receiver_headers().items())
+    with tempfile.NamedTemporaryFile(
+        "w", encoding="utf-8", suffix=".headers"
+    ) as header_file:
+        header_file.write(auth)
+        header_file.flush()
+        if auth:
+            extra += ["-H", f"@{header_file.name}"]
+        return _post_with_curl(curl, extra, receiver_url, verify, body, window)
+
+
+def _post_with_curl(
+    curl: str,
+    extra: list[str],
+    receiver_url: str,
+    verify: bool,
+    body: bytes,
+    window: float,
+) -> int:
+    """Run one curl POST, retrying a 5xx or no answer for *window* seconds."""
     argv = [
         curl,
         "-sS",

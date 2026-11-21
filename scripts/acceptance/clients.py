@@ -15,6 +15,7 @@ delete-and-confirm and the setup contract live here rather than once per suite.
 """
 
 import json
+import os
 import ssl
 import subprocess
 import time
@@ -149,6 +150,15 @@ class Engine:
 #: A stored row's record as JSON text. dfe-loader writes a JSON payload to ``_json`` alone and
 #: leaves ``_raw`` NULL, and LIKE refuses the JSON type, hence ``toString``.
 RECORD_TEXT = "toString(_json)"
+
+#: The bearer token a receiver that admits only known senders wants, beside DFE_E2E_RECEIVER_URL.
+RECEIVER_TOKEN_ENV = "DFE_E2E_RECEIVER_TOKEN"
+
+
+def receiver_headers() -> dict[str, str]:
+    """The Authorization header for the receiver, or none when no token is set."""
+    token = os.environ.get(RECEIVER_TOKEN_ENV, "").strip()
+    return {"Authorization": f"Bearer {token}"} if token else {}
 
 
 @dataclass

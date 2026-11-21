@@ -50,6 +50,7 @@ class Door(ThreadingHTTPServer):
         self.limit, self.drop, self.early = limit, drop, early
         self.accepted: list[dict] = []
         self.bodies_read = 0
+        self.authorizations: list[str | None] = []
 
     @property
     def url(self) -> str:
@@ -75,6 +76,7 @@ class DoorHandler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", "0"))
         body = self.rfile.read(length)
         self.server.bodies_read += 1
+        self.server.authorizations.append(self.headers.get("Authorization"))
         if length > self.server.limit:
             self.send_response(413)
         else:
@@ -196,6 +198,24 @@ class TestThePost:
     def test_no_receiver_listening_is_an_error_not_a_verdict(self) -> None:
         with pytest.raises(RuntimeError, match="never answered"):
             steps.post_body("http://127.0.0.1:9/ingest", True, b"{}", window=0.0)
+
+    @pytest.mark.parametrize(
+        ("token", "sent"),
+        [
+            ("tok-123", "Bearer tok-123"),
+            ("  tok-123\n", "Bearer tok-123"),
+            ("", None),
+            ("   ", None),
+        ],
+    )
+    def test_the_receiver_token_is_sent_only_when_set(
+        self, door: Door, monkeypatch: pytest.MonkeyPatch, token: str, sent: str | None
+    ) -> None:
+        monkeypatch.setenv("DFE_E2E_RECEIVER_TOKEN", token)
+        steps.post_body(
+            door.url, True, steps.ceiling_body(RUN, steps.CEILING_UNDER, 512)
+        )
+        assert door.authorizations == [sent]
 
 
 @pytest.mark.requires_tool("clickhouse")
