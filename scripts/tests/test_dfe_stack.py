@@ -287,6 +287,50 @@ def _multi_arch_except(single: str):
     return reader
 
 
+_VECTOR_PINS = {
+    "apps": {"dfe-transform-vector": "v1.0.65"},
+    "digests": {"dfe-transform-vector": "sha256:ccc"},
+    "services": {"vector": "0.61.0-alpine"},
+}
+
+
+def test_the_release_gate_holds_the_baked_vector_to_services_vector() -> None:
+    """dfe-transform-vector bakes a Vector release that must be the one dfe-fetcher runs."""
+    both = {"linux/amd64", "linux/arm64"}
+    cases = (
+        ("ok", {p: {stack.VECTOR_LABEL: "0.61.0"} for p in both}, "", "ok"),
+        (
+            "one arch drifts",
+            {
+                "linux/amd64": {stack.VECTOR_LABEL: "0.61.0"},
+                "linux/arm64": {stack.VECTOR_LABEL: "0.60.1"},
+            },
+            "",
+            "FAIL",
+        ),
+        ("no label", {p: {} for p in both}, "", "FAIL"),
+        ("no platforms", {}, "", "FAIL"),
+        ("registry unreadable", None, "denied", "ERROR"),
+    )
+    original = stack.registry_pins.ref_labels
+    try:
+        for label, found, err, want in cases:
+            stack.registry_pins.ref_labels = lambda ref, found=found, err=err: (
+                found,
+                err,
+            )
+            got = stack.vector_finding(_VECTOR_PINS, "registry.example/org")
+            expect(f"{label}: {want}", got is not None and got[0] == want, f"{got}")
+    finally:
+        stack.registry_pins.ref_labels = original
+    unpinned = {**_VECTOR_PINS, "services": {}}
+    expect(
+        "no services.vector: nothing to hold it to",
+        stack.vector_finding(unpinned, "registry.example/org") is None,
+        "",
+    )
+
+
 def test_platforms_fail_an_index_missing_an_architecture() -> None:
     findings = _with_platforms(
         _multi_arch_except("a-fork"),
