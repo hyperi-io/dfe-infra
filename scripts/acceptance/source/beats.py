@@ -28,7 +28,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from acceptance.clients import RECORD_TEXT
+from acceptance.clients import RECORD_TEXT, receiver_headers
 
 # The shippers a site runs now. The Elasticsearch release dfe-transform-elastic
 # compiles its ingest pipelines from (9.2.2, its scripts/compat.py) is a separate
@@ -181,6 +181,10 @@ def write_inputs(
 
     # Logstash adds nothing: the events it posts are the envelopes filebeat built,
     # a pipeline batch to one JSON array, which the receiver splits per element.
+    headers = "".join(
+        f'    headers => {{ "{name}" => "{value}" }}\n'
+        for name, value in receiver_headers().items()
+    )
     (pair.workdir / "logstash.conf").write_text(
         "input {\n"
         f"  beats {{ port => {BEATS_PORT} }}\n"
@@ -190,6 +194,7 @@ def write_inputs(
         f'    url => "{pair.receiver_url}"\n'
         '    http_method => "post"\n'
         '    format => "json_batch"\n'
+        f"{headers}"
         "  }\n"
         "}\n",
         encoding="utf-8",
