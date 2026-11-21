@@ -302,6 +302,7 @@ class FakeCase:
     """A case that opens the receiver listener and deploys a source, then fails where told to."""
 
     name = NAME
+    owns_source = True
 
     def __init__(
         self, cluster: Cluster, fail_at: str, *, restores: bool = True

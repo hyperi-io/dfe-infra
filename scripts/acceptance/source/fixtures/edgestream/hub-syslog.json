@@ -1,0 +1,164 @@
+[
+  {
+    "@edgestream": {
+      "event": {
+        "name": "estate-syslog",
+        "src_type": "syslog_ng"
+      },
+      "hub": {
+        "host": "(unnamed)",
+        "hostname": "edgestream",
+        "org_id": "local",
+        "site_id": "local",
+        "source_type": "socket",
+        "timezone": "UTC",
+        "timestamp": "2026-11-21T01:28:18+00:00"
+      }
+    },
+    "@timestamp": "2026-11-21T01:28:18+00:00",
+    "facility": "user",
+    "host": "10.66.0.102",
+    "host_from": "10.66.0.102",
+    "legacy_msghdr": "1 ",
+    "level": "notice",
+    "message": "%SYS-5-CONFIG_I: Configured from console by admin on vty0 (10.66.0.9)",
+    "msgid": "-",
+    "pid": "-",
+    "program": "-"
+  },
+  {
+    "@edgestream": {
+      "event": {
+        "name": "estate-syslog",
+        "src_type": "syslog_ng"
+      },
+      "hub": {
+        "host": "(unnamed)",
+        "hostname": "edgestream",
+        "org_id": "local",
+        "site_id": "local",
+        "source_type": "socket",
+        "timezone": "UTC",
+        "timestamp": "2026-11-21T01:28:19+00:00"
+      }
+    },
+    "@timestamp": "2026-11-21T01:28:19+00:00",
+    "facility": "auth",
+    "host": "10.66.0.14",
+    "host_from": "10.66.0.14",
+    "legacy_msghdr": "1 ",
+    "level": "info",
+    "message": "Accepted publickey for ops from 10.66.0.9 port 51734 ssh2: ED25519 SHA256:Qf0z",
+    "msgid": "-",
+    "pid": "2113",
+    "program": "sshd"
+  },
+  {
+    "@edgestream": {
+      "event": {
+        "name": "estate-syslog",
+        "src_type": "syslog_ng"
+      },
+      "hub": {
+        "host": "(unnamed)",
+        "hostname": "edgestream",
+        "org_id": "local",
+        "site_id": "local",
+        "source_type": "socket",
+        "timezone": "UTC",
+        "timestamp": "2026-11-21T01:28:20+00:00"
+      }
+    },
+    "@timestamp": "2026-11-21T01:28:20+00:00",
+    "facility": "authpriv",
+    "host": "10.66.0.14",
+    "host_from": "10.66.0.14",
+    "legacy_msghdr": "1 ",
+    "level": "warning",
+    "message": "Failed password for invalid user admin from 203.0.113.40 port 40022 ssh2",
+    "msgid": "-",
+    "pid": "2190",
+    "program": "sshd"
+  },
+  {
+    "@edgestream": {
+      "event": {
+        "name": "estate-syslog",
+        "src_type": "syslog_ng"
+      },
+      "hub": {
+        "host": "(unnamed)",
+        "hostname": "edgestream",
+        "org_id": "local",
+        "site_id": "local",
+        "source_type": "socket",
+        "timezone": "UTC",
+        "timestamp": "2026-11-21T01:28:21+00:00"
+      }
+    },
+    "@timestamp": "2026-11-21T01:28:21+00:00",
+    "facility": "daemon",
+    "host": "10.66.0.31",
+    "host_from": "10.66.0.31",
+    "legacy_msghdr": "1 ",
+    "level": "err",
+    "message": "client @0x7f2c 10.66.0.77#53911: query (cache) 'example.test/A/IN' denied",
+    "msgid": "-",
+    "pid": "874",
+    "program": "named"
+  },
+  {
+    "@edgestream": {
+      "event": {
+        "name": "estate-syslog",
+        "src_type": "syslog_ng"
+      },
+      "hub": {
+        "host": "(unnamed)",
+        "hostname": "edgestream",
+        "org_id": "local",
+        "site_id": "local",
+        "source_type": "socket",
+        "timezone": "UTC",
+        "timestamp": "2026-11-21T01:28:22+00:00"
+      }
+    },
+    "@timestamp": "2026-11-21T01:28:22+00:00",
+    "facility": "local7",
+    "host": "10.66.0.200",
+    "host_from": "10.66.0.200",
+    "legacy_msghdr": "1 ",
+    "level": "info",
+    "message": "%LINK-3-UPDOWN: Interface GigabitEthernet1/0/12, changed state to down",
+    "msgid": "-",
+    "pid": "-",
+    "program": "-"
+  },
+  {
+    "@edgestream": {
+      "event": {
+        "name": "estate-syslog",
+        "src_type": "syslog_ng"
+      },
+      "hub": {
+        "host": "(unnamed)",
+        "hostname": "edgestream",
+        "org_id": "local",
+        "site_id": "local",
+        "source_type": "socket",
+        "timezone": "UTC",
+        "timestamp": "2026-11-21T01:28:23+00:00"
+      }
+    },
+    "@timestamp": "2026-11-21T01:28:23+00:00",
+    "facility": "kern",
+    "host": "10.66.0.52",
+    "host_from": "10.66.0.52",
+    "legacy_msghdr": "1 ",
+    "level": "crit",
+    "message": "Out of memory: Killed process 4411 (java) total-vm:8123456kB",
+    "msgid": "-",
+    "pid": "-",
+    "program": "kernel"
+  }
+]

@@ -2126,7 +2126,14 @@ ONBOARDING_RUNNER = SCRIPTS / "acceptance" / "onboarding" / "run.py"
 # created through the console and proven at every hop. Not part of `all`: it
 # runs after POST on the deployments that showcase the data path.
 SOURCE_SUITE = "source"
-SOURCE_CASES = ("filebeat", "cloudwatch", "elastic", "vector", "syslog")
+SOURCE_CASES = (
+    "filebeat",
+    "cloudwatch",
+    "elastic",
+    "vector",
+    "syslog",
+    "edgestream-hub",
+)
 SOURCE_RUNNER = SCRIPTS / "acceptance" / "source" / "run.py"
 # A send from an allow-listed address outside the cloud to the receiver's public
 # door, found in main, the console and HyperDX, and refused from the cluster's own

@@ -468,6 +468,10 @@ def transform_repo(tmp_path):
     return tmp_path
 
 
+#: The cases that take the name of the catalogue entry they create, which no sweep may remove.
+CATALOGUE_NAMED = {"edgestream-hub": "edgestream-hub-syslog"}
+
+
 class TestWhichCaseARunGets:
     def test_the_default_is_the_pushed_filebeat_source(self):
         assert isinstance(cases.build(parse()), cases.FilebeatCase)
@@ -534,9 +538,15 @@ class TestWhichCaseARunGets:
             parse_ops("--source-case", "nosuchcase")
 
     def test_the_minted_names_are_the_ones_the_sweep_removes(self):
-        for name in cases.CASES:
+        for name in cases.CASES.keys() - CATALOGUE_NAMED.keys():
             case = cases.build(parse("--case", name))
             assert steps.RUN_NAME.fullmatch(case.name)
+
+    def test_a_case_named_for_a_catalogue_entry_is_never_swept(self):
+        for name, entry in CATALOGUE_NAMED.items():
+            case = cases.build(parse("--case", name))
+            assert case.name == entry
+            assert not steps.RUN_NAME.fullmatch(case.name)
 
     def test_a_source_the_deployment_authored_is_not_a_stray(self):
         """The sweep deletes, so a real source that merely starts like ours must survive."""

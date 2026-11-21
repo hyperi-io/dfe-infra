@@ -891,9 +891,15 @@ def ceiling_body(run: str, kind: str, size: int) -> bytes:
 
 
 def post_body(
-    receiver_url: str, verify: bool, body: bytes, window: float = INGEST_RETRY_WINDOW
+    receiver_url: str,
+    verify: bool,
+    body: bytes,
+    window: float = INGEST_RETRY_WINDOW,
+    headers: tuple[str, ...] = (),
 ) -> int:
     """POST one body at the receiver and return its status, retrying only what is not an answer.
+
+    *headers* are sent beside the JSON content type, each as ``Name: value``.
 
     Through curl with ``Expect: 100-continue``, because the receiver refuses an
     oversize body on its Content-Length before reading it, and a client that
@@ -910,6 +916,9 @@ def post_body(
         raise RuntimeError(
             "the record-ceiling step posts through curl, which is not on PATH"
         )
+    extra: list[str] = []
+    for header in headers:
+        extra += ["-H", header]
     argv = [
         curl,
         "-sS",
@@ -925,6 +934,7 @@ def post_body(
         "Content-Type: application/json",
         "-H",
         "Expect: 100-continue",
+        *extra,
         "--data-binary",
         "@-",
         *([] if verify else ["--insecure"]),

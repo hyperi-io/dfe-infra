@@ -88,6 +88,26 @@ Each transport sends the whole corpus: TCP newline framed, TCP octet counted (RF
 
 dfe-ops sends from inside the cluster, because `kubectl port-forward` carries TCP only: `--syslog-exec` is `kubectl exec -i` into the first archiver pod, and bash there opens `/dev/tcp` and `/dev/udp` to `--syslog-host` (default `dfe-receiver`). It reads the receiver's counters with `curl` inside every pod `--receiver-selector` matches. With no `--syslog-exec` the runner connects from its machine.
 
+## `edgestream-hub`
+
+An EdgeStream Hub's syslog feed, posted the way the hub posts it: a gzip JSON array, each event a syslog-ng RFC 5424 event inside the hub's `@edgestream` object. Nothing in it names a DFE source, so the source routes on `@edgestream.event.src_type equals syslog_ng`, a field the hub sends.
+
+The engine API creates the source from the dfe-schemas catalogue entry `edgestream-hub-syslog`. There is no console form to drive, no transform, no archive and no app instance, so those steps are left out. A source of that name on the stack when the run starts is read as it stands and left deployed.
+
+`fixtures/edgestream/hub-syslog.json` holds six events of the hub's shape with made-up values. Each run stamps them a second apart, adds the `_e2e` marker and posts them as two arrays. A seventh event with `src_type` `vector` goes in a third.
+
+The proof:
+
+- `source-match`: the entry reads back with the hub's field as its match. An engine without the matching catalogue change reads it back as `_source` and fails here.
+- `routed`: a probe event reaches `dfe.edgestream-hub-syslog`.
+- `landed`: every event lands in the table, with none in `main`.
+- `typed-columns`: every row fills `host`, `host_from`, `facility`, `message`, `event_name`, `event_src_type`, `hub_org_id` and `hub_site_id`, the columns the hub's sample shows it sends.
+- `rfc5424-columns`: every row fills `severity` and `program`, which come from the other RFC 5424 fields syslog-ng adds.
+- `event-time`: each row's `_timestamp` and `timestamp` are the second its `@timestamp` names, not the load time.
+- `other-src-type`: the `vector` event reaches `main` and never the table.
+
+Run it with `--case edgestream-hub`, or `dfe-ops acceptance --suite source --source-case edgestream-hub`. dfe-docker's `make test-source` offers no such case yet.
+
 ## `cloudwatch`, run as `--aws-service cloudtrail`
 
 The meta schema is authored by hand in the console. The fetcher stanza goes through the API (no fetcher origin in the console yet, dfe-ui #286). The proof is rows arriving on their own within a poll interval.
