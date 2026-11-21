@@ -754,7 +754,7 @@
             "default": {}
           },
           "db": {
-            "description": "Database sources on the source framework, keyed by instance id.\n\nEach entry names an engine (`odbc` with a dialect, or `clickhouse`),\nits connection string as a credential spec, the block-cursor bounds,\nand the stores: each a query dumped whole into the snapshot envelope\nor tailed by keyset. The id is the connection id, as for `rest`. An\nengine this binary was built without is refused at load.",
+            "description": "Database sources on the source framework, keyed by instance id.\n\nEach entry names an engine (`odbc` with a dialect, `clickhouse`,\n`mongodb` or `hana`), its connection string as a credential spec, the block-cursor bounds,\nand the stores: each a query dumped whole into the snapshot envelope\nor tailed by keyset. The id is the connection id, as for `rest`. An\nengine this binary was built without is refused at load.",
             "type": "object",
             "additionalProperties": {
               "$ref": "#/$defs/DbInstance"
@@ -3838,6 +3838,14 @@
             },
             "default": {}
           },
+          "window": {
+            "description": "This instance's `delay` and `overlap` over the profile's.",
+            "$ref": "#/$defs/InstanceWindow",
+            "default": {
+              "delay": null,
+              "overlap": null
+            }
+          },
           "accumulate": {
             "description": "Batch bounds for this instance; the deployment's when unset.",
             "anyOf": [
@@ -4013,7 +4021,8 @@
               "format": "rfc3339_secs",
               "step": null,
               "lookback": "3600s",
-              "delay": null
+              "delay": null,
+              "overlap": null
             }
           },
           "probe": {
@@ -4913,6 +4922,18 @@
           },
           "delay": {
             "description": "How long after the fact the provider makes a record visible. Every\nwindow ends at least this far before now.",
+            "anyOf": [
+              {
+                "$ref": "#/$defs/DurationText"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "overlap": {
+            "description": "How far before the window's start every tick reads again. A record\nthat became visible up to this long after its window closed is read\nby the next tick, which also delivers the rows it saw before a second\ntime.",
             "anyOf": [
               {
                 "$ref": "#/$defs/DurationText"
@@ -6267,6 +6288,37 @@
         },
         "additionalProperties": false
       },
+      "InstanceWindow": {
+        "description": "An instance's own `delay` and `overlap`, over the profile's: how long\nthis provider takes to make a record visible is a property of the system,\nnot of the shape.",
+        "type": "object",
+        "properties": {
+          "delay": {
+            "description": "Replaces the profile's `window.delay` when set.",
+            "anyOf": [
+              {
+                "$ref": "#/$defs/DurationText"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "overlap": {
+            "description": "Replaces the profile's `window.overlap` when set.",
+            "anyOf": [
+              {
+                "$ref": "#/$defs/DurationText"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "additionalProperties": false
+      },
       "AccumulateConfig": {
         "description": "Batch bounds, from the config cascade under `accumulate` and overridable per\nsource.",
         "type": "object",
@@ -6317,7 +6369,7 @@
             "default": "odbc"
           },
           "dialect": {
-            "description": "The SQL dialect; required for `odbc`, implied for `clickhouse`.",
+            "description": "The SQL dialect. Required for `odbc`, implied for `clickhouse` and `hana`.",
             "anyOf": [
               {
                 "$ref": "#/$defs/Dialect"
@@ -6413,6 +6465,11 @@
             "description": "The official MongoDB driver: a collection dumped by `find`, tailed by\nchange stream or by `_id`.",
             "type": "string",
             "const": "mongodb"
+          },
+          {
+            "description": "SAP HANA over its own wire protocol, pure Rust, TLS through rustls.",
+            "type": "string",
+            "const": "hana"
           }
         ]
       },
@@ -6463,6 +6520,11 @@
             "description": "Databricks.",
             "type": "string",
             "const": "databricks"
+          },
+          {
+            "description": "SAP HANA, read by the `hana` engine. Not an ODBC dialect.",
+            "type": "string",
+            "const": "hana"
           }
         ]
       },
@@ -7944,6 +8006,18 @@
             "type": "boolean",
             "default": false
           },
+          "allow_auto_create_topics": {
+            "description": "Let scalo's producers ask the broker to create a topic they write to\n(librdkafka `allow.auto.create.topics`, default `false`).\n\nApplies to every producer scalo builds: the transport's, `KafkaProducer`\nand the Kafka DLQ's. Never to a consumer or an admin client. Off, a send\nto a missing topic backpressures until the topic exists, and a producer\nthat once wrote to a topic does not bring it back after a delete. On,\na broker with `auto.create.topics.enable` creates it. A raw\n`librdkafka_overrides` or `sizing.producer_librdkafka` value wins.",
+            "type": "boolean",
+            "default": false
+          },
+          "auth_refusal_grace_secs": {
+            "description": "Seconds a client a broker has accepted may go on failing authentication\nor TLS, with no success between, before it counts as refused again\n(default 120).\n\nInside it a failure is a restarting broker and changes nothing. Past it\nreadiness fails and the clients are rebuilt to read a rotated CA bundle,\ncertificate or password. Raising it rides out a longer broker restart\nat the cost of that many seconds of a ready pod delivering nothing after\na rotation. No record is lost either way: a refused client backpressures.",
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0,
+            "default": 120
+          },
           "enable_auto_commit": {
             "description": "Enable auto-commit (default: false for manual commit).",
             "type": "boolean",
@@ -8226,7 +8300,7 @@
             "default": null
           },
           "max_poll_records": {
-            "description": "Maximum number of messages the recv() loop returns per call.\n\nNOTE: `max.poll.records` does NOT exist in librdkafka -- there is no\nbroker-level property for this. This is a purely CLIENT-SIDE cap,\nenforced by passing this value as the `max` argument to\n`KafkaTransport::recv()` via `KafkaSizingConfig::effective_poll_cap()`.\nIt bounds the batch size delivered to the WorkBatch layer, not the\nnetwork fetch size (which is byte-governed by the knobs above).",
+            "description": "Maximum number of messages one `KafkaTransport::recv()` or `recv_limited()`\ncall returns, whatever `max` the caller passes. At least 1: a receiving\ntransport refuses 0 when it is built, because a receive always takes its\nfirst record.\n\n`max.poll.records` does NOT exist in librdkafka, so this is a CLIENT-SIDE\ncap, read through `KafkaSizingConfig::effective_poll_cap()` when the\ntransport is built. It bounds the batch size delivered to the WorkBatch\nlayer, not the network fetch size (which is byte-governed by the knobs\nabove).",
             "type": [
               "integer",
               "null"
