@@ -2133,6 +2133,7 @@ SOURCE_CASES = (
     "vector",
     "syslog",
     "edgestream-hub",
+    "flow",
 )
 SOURCE_RUNNER = SCRIPTS / "acceptance" / "source" / "run.py"
 # A send from an allow-listed address outside the cloud to the receiver's public
