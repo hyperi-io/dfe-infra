@@ -89,7 +89,7 @@ Cluster mode alone:
 
 ## Retention
 
-Retention is time-only. Every DFE time-series table, the `otel_*` tables included, drops rows older than the deployment default TTL. The default is 90 days, set at deploy by `retention.default_ttl_days` in the deployment dial, which reaches the engine as `DFE_ENGINE_CLICKHOUSE_DEFAULT_TTL_DAYS` (0 = no TTL). A changed value there reaches tables created afterwards, not deployed ones. On a running deployment, `PUT /api/v1/system/retention` (admin) changes the default TTL and applies it to every table that follows the default with `ALTER TABLE ... MODIFY TTL`.
+Retention is time-only. Every DFE time-series table, the `otel_*` tables included, drops rows older than the deployment default TTL. The default is 90 days, set at deploy by `retention.default_ttl_days` in the deployment dial, which reaches the engine as `DFE_ENGINE_CLICKHOUSE_DEFAULT_TTL_DAYS` (0 = no TTL). A changed value there reaches every table at the engine's next start. On a running deployment, `PUT /api/v1/system/retention` (admin) stores a new default TTL and returns before any table changes. A background pass then runs `ALTER TABLE ... MODIFY TTL` on every table that follows the default, and retries until each one has it, so a ClickHouse that is down at the time takes the value once it's back.
 
 The server's system log tables are a separate dial, `clickhouse.systemLogTTLDays` in the `clickhouse-cluster` chart. It's 7 days for `metric_log`, `asynchronous_metric_log`, `text_log` (which the dfe-hyperdx ClickHouse log source searches) and `part_log`, and 30 for `query_log`, in both cluster and single mode.
 
