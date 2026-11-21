@@ -389,6 +389,35 @@ def ref_platforms(
     return {single}, ""
 
 
+def ref_labels(
+    ref: str, budget: RetryBudget | None = None
+) -> tuple[dict[str, dict[str, str]] | None, str]:
+    """({platform: labels}, error) for a full image ref, read with `docker buildx imagetools`.
+
+    An index answers one image config per platform. A single-manifest image answers
+    one, keyed by the platform its config names.
+    """
+    out, err = _imagetools(ref, "--format", "{{json .Image}}", budget=budget)
+    if out is None:
+        return None, err
+    try:
+        doc = json.loads(out)
+    except json.JSONDecodeError as exc:
+        return None, f"unreadable image config: {exc}"
+    if not isinstance(doc, dict):
+        return None, "image config is not an object"
+    images = {"": doc} if "config" in doc else doc
+    found: dict[str, dict[str, str]] = {}
+    for platform, image in images.items():
+        if not isinstance(image, dict):
+            continue
+        labels = (image.get("config") or {}).get("Labels") or {}
+        found[platform or (config_platform(image) or "")] = {
+            str(k): str(v) for k, v in labels.items()
+        }
+    return found, ""
+
+
 def provenance_builders(doc: object) -> dict[str, str] | None:
     """`os/arch` -> the builder platform its SLSA provenance records, or None when doc is not a map.
 

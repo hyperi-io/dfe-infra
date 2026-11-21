@@ -479,6 +479,42 @@ def platform_findings(v: dict, registry: str) -> list[tuple[str, str, str]]:
     return findings
 
 
+# The label dfe-transform-vector's Dockerfile stamps with the Vector release it bakes in.
+VECTOR_LABEL = "io.hyperi.vector.version"
+VECTOR_APP = "dfe-transform-vector"
+
+
+def vector_finding(v: dict, registry: str) -> tuple[str, str, str] | None:
+    """(status, image, detail) for the Vector release dfe-transform-vector bakes in.
+
+    It must be services.vector less its image variant (`0.61.0-alpine` is 0.61.0),
+    because dfe-fetcher runs that image beside it. None when the stack pins either
+    one without the other.
+    """
+    want = str(v.get("services", {}).get("vector", "")).partition("-")[0]
+    ref = app_images(v, registry).get(VECTOR_APP)
+    if not want or not ref:
+        return None
+    label = f"{VECTOR_APP}:{image_tag(v, VECTOR_APP)}"
+    found, err = registry_pins.ref_labels(ref)
+    if found is None:
+        return ("ERROR", label, err)
+    have = {
+        platform: labels.get(VECTOR_LABEL, "") for platform, labels in found.items()
+    }
+    wrong = {platform: got for platform, got in have.items() if got != want}
+    if not have or wrong:
+        detail = ", ".join(
+            f"{p or 'image'} {g or 'no label'}" for p, g in sorted(wrong.items())
+        )
+        return (
+            "FAIL",
+            label,
+            f"bakes Vector {detail or 'no label'}, services.vector is {want}",
+        )
+    return ("ok", label, f"bakes Vector {want}")
+
+
 # ---------------------------------------------------------------------------
 # Docker-path rendering (the .env pin fragment dfe-docker consumes)
 # ---------------------------------------------------------------------------
@@ -1763,7 +1799,8 @@ def cmd_release_gate(args: argparse.Namespace) -> int:
         )
         failed = True
     findings = platform_findings(v, args.registry)
-    for status, image, detail in findings:
+    vector = vector_finding(v, args.registry)
+    for status, image, detail in [*findings, *([vector] if vector else [])]:
         if status != "ok":
             print(
                 f"release-gate FAIL: {name} {image} {status}: {detail}", file=sys.stderr
