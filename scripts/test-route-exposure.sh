@@ -385,7 +385,10 @@ BROWSER_PREFIXES=(
   /api/v1/rules /api/v1/alerts /api/v1/transforms /api/v1/schemas /api/v1/hunts
   /api/v1/governance /api/v1/helm /api/v1/apps /api/v1/backing-services
   /api/v1/library /api/v1/gitops /api/v1/lifecycle /api/v1/repository
+  /api/v1/ingest /api/v1/usage
 )
+# The families plus /.well-known.
+BROWSER_TOTAL=$(( ${#BROWSER_PREFIXES[@]} + 1 ))
 CLI_PREFIXES=(
   /api/v1/queries /api/v1/sigma /api/v1/cel /api/v1/pipeline
   /api/v1/authoring /api/v1/app-contracts /api/v1/tasks /api/v1/synthetic-data
@@ -402,8 +405,8 @@ for p in "${BROWSER_PREFIXES[@]}"; do
   assert_has "engine-browser" "${p}" "${P}"
 done
 assert_has "engine-browser" "/.well-known" "${P}"
-# 21 families plus /.well-known, and nothing that was not asked for.
-assert_count "engine-browser-total" 22 "$(printf '%s\n' "${P}" | grep -c .)"
+# Nothing that was not asked for.
+assert_count "engine-browser-total" "${BROWSER_TOTAL}" "$(printf '%s\n' "${P}" | grep -c .)"
 for p in "${CLI_PREFIXES[@]}" "${NEVER_PUBLIC[@]}"; do
   assert_absent "engine-browser" "${p}" "${P}"
 done
@@ -415,13 +418,13 @@ P="$(route_paths dfe-engine-cli-public --set ui.engine_api.cli_families_public=t
 for p in "${CLI_PREFIXES[@]}"; do
   assert_has "engine-cli" "${p}" "${P}"
 done
-# 12 families plus the spec: 35 across the two routes, the 22 browser ones unchanged.
+# 12 families plus the spec, the browser ones unchanged.
 assert_count "engine-cli-total" 13 "$(printf '%s\n' "${P}" | grep -c .)"
 for p in "${BROWSER_PREFIXES[@]}" /.well-known /api/v1/scim/v2; do
   assert_absent "engine-cli" "${p}" "${P}"
 done
 P="$(route_paths dfe-engine-public --set ui.engine_api.cli_families_public=true)"
-assert_count "engine-browser-unmoved" 22 "$(printf '%s\n' "${P}" | grep -c .)"
+assert_count "engine-browser-unmoved" "${BROWSER_TOTAL}" "$(printf '%s\n' "${P}" | grep -c .)"
 for p in "${CLI_PREFIXES[@]}"; do
   assert_absent "engine-browser-unmoved" "${p}" "${P}"
 done
@@ -455,7 +458,7 @@ done
 echo ""
 echo "case 20b -- the internal names split the same way: no CLI path on the browser route, no browser path on the CLI route"
 P="$(route_paths dfe-engine)"
-assert_count "engine-internal-browser-total" 22 "$(printf '%s\n' "${P}" | grep -c .)"
+assert_count "engine-internal-browser-total" "${BROWSER_TOTAL}" "$(printf '%s\n' "${P}" | grep -c .)"
 for p in "${CLI_PREFIXES[@]}" /api/v1 /api/v1/scim/v2 /docs /redoc; do
   assert_absent "engine-internal-browser" "${p}" "${P}"
 done

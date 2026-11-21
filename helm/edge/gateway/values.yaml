@@ -334,6 +334,8 @@ routes:
       - gitops
       - lifecycle
       - repository
+      - ingest
+      - usage
     # Engine ROOT paths the browser needs: JWKS and OIDC discovery, public by design
     # so peers and the edge jwt_authn can verify DFE tokens.
     browserPaths:
