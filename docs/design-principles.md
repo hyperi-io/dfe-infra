@@ -162,7 +162,7 @@ It's never the normal input to a transform, and never on in a demo.
 | lumberjack / beats | no | The source line is parsed into `message`. `event.original` is not kept. | |
 | OTLP | no | The JSON holds the same data as the protobuf. | |
 | GELF, Fluent forward, HTTP JSON | no | JSON, or msgpack of the same structure. | |
-| NetFlow v5, v9, IPFIX, sFlow (alpha) | yes, `flow.raw_capture` | Raw packets decode with the exporter's template state alone, so the decoded record is what's worth keeping. | the decoder's rendering of the record, every record of the packet in `canonical` mode |
+| NetFlow v5, v9, IPFIX, sFlow | yes, `flow.raw_capture` | Raw packets decode with the exporter's template state alone, so the decoded record is what's worth keeping. | the decoder's rendering of the record, every record of the packet in `canonical` mode |
 | fetcher: M365, Entra, Okta, GitHub, CloudWatch | no | The APIs return JSON with no publisher digest to check bytes against. | |
 | fetcher: CloudTrail | not per event | Integrity validation hashes the whole log file, so evidence lives at file level in the S3 trail. | |
 
