@@ -537,6 +537,18 @@ CHECKS += [
         Path("helm/charts/otel-collector/values.yaml"),
         r'library/busybox\n\s*tag:[^\n]*\n(?:\s*#[^\n]*\n)*\s*digest:\s*"([^"]+)"',
     ),
+    Check(
+        "otel gnmic image tag",
+        "services.gnmic",
+        Path("helm/charts/otel-collector/values.yaml"),
+        r"openconfig/gnmic\n\s*tag:\s*\"([^\"]+)\"",
+    ),
+    Check(
+        "otel gnmic image digest",
+        "services-digests.gnmic",
+        Path("helm/charts/otel-collector/values.yaml"),
+        r'openconfig/gnmic\n\s*tag:[^\n]*\n(?:\s*#[^\n]*\n)*\s*digest:\s*"([^"]+)"',
+    ),
     # valkey plain manifest: one tag@sha256 string, both halves checked
     Check(
         "valkey manifest image tag",
@@ -1228,6 +1240,8 @@ PENDING_MIRRORS: dict[str, str] = {
     "services-digests.karpenter": "pinned starting the 2.2.1-rc.14 block; a stack that predates it deploys the chart by version",
     "services.aws-load-balancer-controller-image": "pinned starting the 2.2.1-rc.14 block; a stack that predates it runs the chart's own tag",
     "services-digests.aws-load-balancer-controller-image": "pinned starting the 2.2.1-rc.14 block; a stack that predates it runs the chart's own tag",
+    "services.gnmic": "pinned starting the 2.2.3 block; a stack that predates it runs no gnmic",
+    "services-digests.gnmic": "pinned starting the 2.2.3 block; a stack that predates it runs no gnmic",
     **{
         key: "pinned starting the stack cut after 2.2.1-rc.17; a stack that predates it runs FerretDB on k8s"
         for key in (
