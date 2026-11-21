@@ -71,20 +71,24 @@ def walk(
         run.driver, restart_exec, [*created, *steps.reply_hints(deployed), *hints]
     )
     steps.record_table(run.driver, run.store, case.name)
-    reported = steps.record_instance_up(
-        run.driver,
-        run.engine,
-        case.service,
-        case.name,
-        case.instance_step,
-        case.instance_deadline,
-        case.reporting_deadline,
-    )
+    # A source with no transform and no fetcher has no app to wait for.
+    reported = None
+    if case.service:
+        reported = steps.record_instance_up(
+            run.driver,
+            run.engine,
+            case.service,
+            case.name,
+            case.instance_step,
+            case.instance_deadline,
+            case.reporting_deadline,
+        )
     fed_at = time.monotonic()
     case.feed(run)
-    steps.record_reporting(
-        run.driver, run.store, case.service, case.reporting_step, reported, fed_at
-    )
+    if reported is not None:
+        steps.record_reporting(
+            run.driver, run.store, case.service, case.reporting_step, reported, fed_at
+        )
     case.prove(run)
     steps.record_ceiling(
         run.driver,
@@ -131,7 +135,15 @@ def remove_run_source(run: cases.Run, case: cases.Case, api_url: str) -> None:
         refused = f"the engine did not serve the run: {exc}"
         driver.results.append(wizard.StepResult("teardown", "failed", refused))
         return
-    if created and not run.args.keep:
+    if created and not case.owns_source:
+        driver.results.append(
+            wizard.StepResult(
+                "teardown",
+                "kept",
+                f"{case.name} was on the stack before the run, so it is left deployed",
+            )
+        )
+    elif created and not run.args.keep:
         detail = remove_source(
             api_url,
             run.engine.verify,

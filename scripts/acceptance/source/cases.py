@@ -31,7 +31,7 @@ from urllib.parse import urlsplit
 from acceptance.clients import Datastore, Engine, remove_source
 from acceptance.onboarding import run as onboarding
 from acceptance.onboarding import wizard
-from acceptance.source import beats, fetcher, steps, syslog
+from acceptance.source import beats, edgestream, fetcher, steps, syslog
 from acceptance.source.listener import Listener
 from acceptance.source.steps import STEP_TIMEOUT_MS
 
@@ -133,6 +133,11 @@ class Case:
     def cleanup(self, run: Run) -> list[wizard.StepResult]:
         """Rows for anything besides the source itself that this run authored."""
         return []
+
+    @property
+    def owns_source(self) -> bool:
+        """Whether the run made the source, so the teardown may remove it."""
+        return True
 
 
 # --- filebeat: synthetic lines pushed at the receiver -------------------------
@@ -1400,6 +1405,187 @@ class FetchedAwsCase(Case):
         ]
 
 
+# --- edgestream hub: a syslog feed that names no DFE source -------------------
+
+
+class EdgestreamHubCase(Case):
+    """An EdgeStream Hub's syslog events, posted as the hub posts them.
+
+    The engine creates the catalogue entry of the same name. It has no transform,
+    no archive and no console form, and its receiver match is the hub's
+    ``@edgestream.event.src_type``. The proof is that table holding every event
+    typed, with the event time from ``@timestamp``, and an event of another source
+    type left for ``main``. A source on the stack under that name when the run
+    starts is read as it stands and left deployed.
+    """
+
+    service = ""
+    observes = False
+    archives = False
+    console = False
+    LAND_DEADLINE = 180.0
+    OTHER_DEADLINE = 60.0
+
+    def __init__(self, args: argparse.Namespace) -> None:
+        super().__init__(args)
+        self.name = edgestream.CATALOGUE_ENTRY
+        # A hyphen is not a legal bare name in SQL.
+        self._table = f"`{self.name}`"
+        self._adopted = False
+        self._events: list[dict] = []
+
+    @property
+    def owns_source(self) -> bool:
+        return not self._adopted
+
+    def create(self, run: Run) -> list[str]:
+        engine = run.engine
+        hints: list[str] = []
+        if engine.call("GET", f"/sources/{self.name}").status == 200:
+            self._adopted = True
+            run.driver.record(
+                "add-source",
+                "skipped",
+                f"{self.name} is on the stack, so the run reads it as it stands "
+                "and leaves it deployed",
+            )
+        else:
+            entries = {"entries": [{"entry": edgestream.CATALOGUE_ENTRY}]}
+            reply = engine.call("POST", "/sources/from-catalogue", entries)
+            body = reply.body if isinstance(reply.body, dict) else {}
+            if reply.status not in (200, 201, 202) or body.get("failed"):
+                raise RuntimeError(
+                    f"creating {self.name} from the catalogue was refused: "
+                    f"{reply.status} {reply.body}"
+                )
+            hints = steps.reply_hints(reply.body)
+            run.driver.record(
+                "add-source",
+                "api-fallback",
+                f"the engine created {self.name} from the catalogue entry of that name",
+            )
+        stored = (engine.call("GET", f"/sources/{self.name}").body or {}).get(
+            "match"
+        ) or {}
+        read = {key: stored.get(key) for key in edgestream.MATCH}
+        run.driver.record(
+            "source-match",
+            "done" if read == edgestream.MATCH else "failed",
+            f"{self.name} reads back with match {read}, and the hub sends {edgestream.MATCH['field']}",
+        )
+        return hints
+
+    def feed(self, run: Run) -> None:
+        driver, store = run.driver, run.store
+        if not (run.receiver_url and store.host):
+            driver.record("feed", "skipped", "no receiver or no datastore in this run")
+            return
+        recorded = edgestream.recorded_events()
+        detail, routed = self._wait_routed(run, recorded)
+        driver.record("routed", "done" if routed else "failed", detail)
+        self._events = edgestream.stamped(recorded, run.run_id, steps.CORPUS)
+        middle = len(self._events) // 2
+        other = edgestream.stamped(
+            recorded[:1], run.run_id, edgestream.OTHER, edgestream.OTHER_SRC_TYPE
+        )
+        batches = [self._events[:middle], self._events[middle:], other]
+        statuses = [
+            edgestream.post(run.receiver_url, run.verify, batch) for batch in batches
+        ]
+        driver.record(
+            "feed",
+            "done" if all(200 <= status < 300 for status in statuses) else "failed",
+            f"posted {len(self._events)} hub events as two gzip JSON arrays and one more of "
+            f"src_type {edgestream.OTHER_SRC_TYPE}, answered {statuses}, marked "
+            f"{steps.MARKER}.run {run.run_id}",
+        )
+
+    def _wait_routed(self, run: Run, recorded: list[dict]) -> tuple[str, bool]:
+        """Probe until one of this run's probes reaches the source's table."""
+        until = time.monotonic() + steps.ROUTING_DEADLINE
+        passes = 0
+        while True:
+            probe = edgestream.stamped(recorded[:1], run.run_id, steps.PROBE)
+            edgestream.post(run.receiver_url, run.verify, probe)
+            passes += 1
+            probes = steps.marked(run.run_id, steps.PROBE)
+            if run.store.scalar(f"SELECT count() FROM {self._table} WHERE {probes}"):
+                return (
+                    f"routed into dfe.{self.name} after {passes} probe pass(es)",
+                    True,
+                )
+            if time.monotonic() >= until:
+                return (
+                    f"NOT routed into dfe.{self.name} within {steps.ROUTING_DEADLINE:.0f}s",
+                    False,
+                )
+            time.sleep(20)
+
+    def prove(self, run: Run) -> None:
+        driver, store = run.driver, run.store
+        wanted = len(self._events)
+        if not wanted:
+            driver.record(
+                "landed", "unproven", "nothing was posted, so nothing can land"
+            )
+            return
+        corpus = steps.marked(run.run_id, steps.CORPUS)
+        landed = steps.wait_rows(store, self._table, wanted, self.LAND_DEADLINE, corpus)
+        strayed = steps.strayed_rows(store, run.run_id)
+        driver.record(
+            "landed",
+            "done" if landed >= wanted and not strayed else "failed",
+            f"dfe.{self.name} holds {landed} of {wanted} corpus rows marked "
+            f"{steps.MARKER}.run {run.run_id}, {strayed} strayed into dfe.main",
+        )
+        for step, columns in (
+            ("typed-columns", (*edgestream.SAMPLE_COLUMNS, *edgestream.HUB_COLUMNS)),
+            ("rfc5424-columns", edgestream.RFC5424_COLUMNS),
+        ):
+            filled = " AND ".join(
+                f"isNotNull({name}) AND {name} != ''" for name in columns
+            )
+            typed = store.scalar(
+                f"SELECT count() FROM {self._table} WHERE {corpus} AND {filled}"
+            )
+            driver.record(
+                step,
+                "done" if typed >= wanted else "failed",
+                f"{typed} of {wanted} corpus rows fill {', '.join(columns)}",
+            )
+        self._prove_event_time(run, corpus, wanted)
+        self._prove_boundary(run)
+
+    def _prove_event_time(self, run: Run, corpus: str, wanted: int) -> None:
+        """Each row's ``_timestamp`` is the second its ``@timestamp`` says, not the load time."""
+        seconds = ", ".join(
+            str(second) for second in edgestream.event_times(self._events)
+        )
+        timed = run.store.scalar(
+            f"SELECT count() FROM {self._table} WHERE {corpus} "
+            f"AND toUnixTimestamp(_timestamp) IN ({seconds}) "
+            "AND toUnixTimestamp(timestamp) = toUnixTimestamp(_timestamp)"
+        )
+        run.driver.record(
+            "event-time",
+            "done" if timed >= wanted else "failed",
+            f"{timed} of {wanted} corpus rows carry the event time of their @timestamp in "
+            "_timestamp and timestamp",
+        )
+
+    def _prove_boundary(self, run: Run) -> None:
+        """An event of another hub source type reaches ``main`` and never this table."""
+        other = steps.marked(run.run_id, edgestream.OTHER)
+        in_main = steps.wait_rows(run.store, "main", 1, self.OTHER_DEADLINE, other)
+        in_table = run.store.scalar(f"SELECT count() FROM {self._table} WHERE {other}")
+        run.driver.record(
+            "other-src-type",
+            "done" if in_main >= 1 and not in_table else "failed",
+            f"the src_type {edgestream.OTHER_SRC_TYPE} event reached dfe.main {in_main} time(s) "
+            f"and dfe.{self.name} {in_table}",
+        )
+
+
 #: Every case a run may ask for, which is also the runner's --case choices, so
 #: a case cannot exist without being reachable.
 CASES: dict[str, type[Case]] = {
@@ -1408,6 +1594,7 @@ CASES: dict[str, type[Case]] = {
     "elastic": ElasticCase,
     "vector": VectorCase,
     "syslog": SyslogCase,
+    "edgestream-hub": EdgestreamHubCase,
 }
 
 
