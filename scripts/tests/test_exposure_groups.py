@@ -185,9 +185,37 @@ def test_expected_fail_no_family_answers_on_both_engine_routes() -> None:
     assert "openapi.json" not in str(r["dfeEngine"])
 
 
-def test_the_browser_route_carries_what_dfe_ui_calls() -> None:
-    """dfe-ui's Admin Tools page reads /api/v1/deployment/admin-links."""
-    assert "deployment" in routes()["dfeEngine"]["browserFamilies"]
+# Every /api/v1/<family> dfe-ui's apps/dfe-core-ui/src calls. A family left out falls
+# through to dfe-ui, which answers 307 to /login.
+DFE_UI_FAMILIES = (
+    "alerts",
+    "apps",
+    "auth",
+    "backing-services",
+    "config/client",
+    "deployment",
+    "field-maps",
+    "gitops",
+    "governance",
+    "helm",
+    "hunts",
+    "ingest",
+    "library",
+    "lifecycle",
+    "orgs",
+    "repository",
+    "rules",
+    "schemas",
+    "sources",
+    "system",
+    "transforms",
+    "usage",
+)
+
+
+@pytest.mark.parametrize("family", DFE_UI_FAMILIES)
+def test_the_browser_route_carries_what_dfe_ui_calls(family: str) -> None:
+    assert family in routes()["dfeEngine"]["browserFamilies"]
 
 
 # --- no tracked values file carries a retired key --------------------------------------
