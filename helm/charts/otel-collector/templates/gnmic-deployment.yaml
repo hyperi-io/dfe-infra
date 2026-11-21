@@ -1,0 +1,74 @@
+{{- if .Values.gnmic.enabled }}
+# One subscriber: a second pod would read every device twice.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "dfe-common.fullname" . }}-gnmic
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "dfe-common.fullname" . }}-gnmic
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/gnmic-configmap.yaml") . | sha256sum }}
+      labels:
+        app.kubernetes.io/name: {{ include "dfe-common.fullname" . }}-gnmic
+        app.kubernetes.io/part-of: {{ .Values.project | quote }}
+    spec:
+      {{- include "dfe-common.podSecurityContext" . | nindent 6 }}
+      serviceAccountName: {{ include "otel-collector.gnmicServiceAccount" . }}
+      automountServiceAccountToken: false
+      {{- include "dfe-common.scheduling" . | nindent 6 }}
+      containers:
+        - name: gnmic
+          image: "{{ .Values.gnmic.image.repository }}:{{ .Values.gnmic.image.tag }}{{ with .Values.gnmic.image.digest }}@{{ . }}{{ end }}"
+          imagePullPolicy: {{ .Values.gnmic.image.pullPolicy }}
+          args: ["subscribe", "--config", "/etc/gnmic/gnmic.yaml"]
+          {{- include "dfe-common.containerSecurityContext" . | nindent 10 }}
+          {{- with .Values.gnmic.credentials.secretName }}
+          env:
+            - name: GNMIC_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ . }}
+                  key: {{ $.Values.gnmic.credentials.usernameKey }}
+            - name: GNMIC_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ . }}
+                  key: {{ $.Values.gnmic.credentials.passwordKey }}
+          {{- end }}
+          # The exec runs wget in the container because the API listens on loopback, which the kubelet cannot reach.
+          startupProbe:
+            exec:
+              command: ["wget", "-q", "-O", "/dev/null", "http://127.0.0.1:7890/api/v1/healthz"]
+            periodSeconds: 2
+            failureThreshold: 30
+          livenessProbe:
+            exec:
+              command: ["wget", "-q", "-O", "/dev/null", "http://127.0.0.1:7890/api/v1/healthz"]
+            periodSeconds: 10
+          readinessProbe:
+            exec:
+              command: ["wget", "-q", "-O", "/dev/null", "http://127.0.0.1:7890/api/v1/healthz"]
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.gnmic.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/gnmic
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "dfe-common.fullname" . }}-gnmic-config
+        - name: tmp
+          emptyDir: {}
+{{- end }}

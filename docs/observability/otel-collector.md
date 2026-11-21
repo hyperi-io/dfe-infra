@@ -9,6 +9,7 @@
 | `<project>-otel-collector-gateway` Deployment | `gateway.replicas` pods | Takes OTLP on 4317 (gRPC) and 4318 (HTTP), runs the cluster, ClickHouse, Kafka and Prometheus scrapes, and writes ClickHouse. Serves what it received on a Prometheus endpoint, 8889. |
 | `<project>-otel-collector-daemonset` DaemonSet | one pod per node | Reads container logs and host metrics, and kubelet stats where enabled, then pushes OTLP to the gateway. |
 | `<project>-otel-collector-provider-logs` | one pod, or a DaemonSet on Rancher | The provider's log service. A failed receiver restarts only this pod. |
+| `<project>-otel-collector-gnmic` Deployment | one pod, only with `gnmic.enabled` | Subscribes to network devices over gNMI and pushes OTLP to the gateway. See [gNMI telemetry](gnmi.md). |
 
 The gateway's `exporters.clickhouse` is the default sink. `exporters.hyperdx` pushes OTLP to a dfe-hyperdx collector instead and stays off, because the dfe-hyperdx image has no OTLP listener.
 

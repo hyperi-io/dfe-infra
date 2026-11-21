@@ -1,0 +1,27 @@
+{{- if .Values.gnmic.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "dfe-common.fullname" . }}-gnmic-config
+  labels:
+    {{- include "dfe-common.labels" . | nindent 4 }}
+data:
+  gnmic.yaml: |
+    api-server:
+      address: 127.0.0.1:7890
+    targets:
+      {{- toYaml .Values.gnmic.targets | nindent 6 }}
+    subscriptions:
+      {{- toYaml .Values.gnmic.subscriptions | nindent 6 }}
+    outputs:
+      otel-collector:
+        type: otlp
+        counter-patterns:
+          {{- toYaml .Values.gnmic.output.counterPatterns | nindent 10 }}
+        endpoint: {{ include "dfe-common.fullname" . }}-gateway:{{ .Values.gateway.service.grpcPort }}
+        metric-prefix: {{ .Values.gnmic.output.metricPrefix }}
+        protocol: grpc
+        resource-attributes:
+          service.name: gnmic
+        strip-leading-underscore: true
+{{- end }}
