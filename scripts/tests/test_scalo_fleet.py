@@ -608,7 +608,7 @@ class RebuildRsOffloadTests(RebuildRsTests):
         hyperi.write_text(
             "#!/bin/sh\n"
             f'printf "%s\\n" "$@" >> "{self.bindir / "hyperi-ai.argv"}"\n'
-            'if [ "$1 $2 $3" = "config get remote.host" ]; then echo desktop-derek; exit 0; fi\n'
+            'if [ "$1 $2 $3" = "config get remote.host" ]; then echo build.example.internal; exit 0; fi\n'
             'if [ "$1 $2 $3" = "remote run --" ]; then shift 3; exec "$@"; fi\n'
             "exit 1\n",
             encoding="utf-8",
