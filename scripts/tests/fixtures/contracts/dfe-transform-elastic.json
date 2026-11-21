@@ -393,10 +393,10 @@
         ]
       },
       "EnvelopeSetting": {
-        "description": "What the operator said about the envelope.\n\n`auto` is the default: the family is read off the first event of each batch,\nso a deployment that changes producer needs no config change. Naming one\npins it, which is the way through for a shape that carries no marker.",
+        "description": "What the operator said about the envelope.\n\n`auto` is the default: the family is read off each event, so a deployment\nthat changes producer needs no config change. Naming one\npins it, which is the way through for a shape that carries no marker.",
         "oneOf": [
           {
-            "description": "Detect the family from each batch's first event.",
+            "description": "Detect the family from each event.",
             "type": "string",
             "const": "auto"
           },
@@ -459,7 +459,7 @@
             "default": null
           },
           "max_message_bytes": {
-            "description": "Ceiling on one outbound record. An event that serialises larger is\ndropped and counted on `events_oversize_total`.\n\nThe default is the DFE record cap, 8,000,000 bytes. Against a broker or\ntopic whose `message.max.bytes` is lower, set this below that limit, or\nthe broker refuses those events instead and they count on\n`send_filtered_dlq_total`. Brokers that carry more can raise it, up to\n16 MiB.",
+            "description": "Ceiling on one outbound record. An event that serialises larger is\ndead-lettered, with its size and this budget as the reason, and counted\non `events_oversize_total`.\n\nThe default is the DFE record cap, 8,000,000 bytes. Against a broker or\ntopic whose `message.max.bytes` is lower, set this below that limit, or\nthe broker refuses those events instead and they count on\n`send_filtered_dlq_total`. Brokers that carry more can raise it, up to\n16 MiB.",
             "type": "integer",
             "format": "uint",
             "minimum": 0,
