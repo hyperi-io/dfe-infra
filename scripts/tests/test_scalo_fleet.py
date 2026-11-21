@@ -162,6 +162,8 @@ class OnPathTestCase(unittest.TestCase):
         os.environ["PATH"] = f"{self.bindir}{os.pathsep}{os.environ.get('PATH', '')}"
         _fake_bin(self.bindir, "gh", status=1)
         _fake_bin(self.bindir, "cargo", status=1)
+        # No offload host, so cargo runs here unless a test names one.
+        _fake_bin(self.bindir, "hyperi-ai", status=1)
 
 
 class _ScriptedRegistry:
@@ -595,6 +597,53 @@ class RebuildRsTests(OnPathTestCase):
         output = buffer.getvalue()
         assert "the Dockerfile and docs/ artefacts" in output
         assert "chart/" not in output
+
+
+class RebuildRsOffloadTests(RebuildRsTests):
+    """With an offload host set, every cargo call that compiles goes through hyperi-ai remote run."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        hyperi = self.bindir / "hyperi-ai"
+        hyperi.write_text(
+            "#!/bin/sh\n"
+            f'printf "%s\\n" "$@" >> "{self.bindir / "hyperi-ai.argv"}"\n'
+            'if [ "$1 $2 $3" = "config get remote.host" ]; then echo build.example.internal; exit 0; fi\n'
+            'if [ "$1 $2 $3" = "remote run --" ]; then shift 3; exec "$@"; fi\n'
+            "exit 1\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+        hyperi.chmod(0o755)
+        cargo = self.bindir / "cargo"
+        cargo.write_text(
+            "#!/bin/sh\n"
+            f'printf "%s\\n" "$@" >> "{self.bindir / "cargo.argv"}"\n'
+            'case " $* " in *" config-schema "*) mkdir -p docs && echo "{}" > docs/config-schema.json ;; esac\n'
+            "echo 'FROM scratch'\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+        cargo.chmod(0o755)
+
+    def test_every_compiling_cargo_call_runs_on_the_offload_host(self) -> None:
+        assert sf.cmd_rebuild_rs(self._args("--no-tests", "--gate", "local")) == 0
+        runs = _fake_argv(self.bindir, "hyperi-ai")
+        offloaded = [
+            runs[i + 3]
+            for i in range(len(runs) - 3)
+            if runs[i : i + 3] == ["remote", "run", "--"]
+        ]
+        # emit-dockerfile and config-schema go as shell lines, so their output comes back on stdout.
+        assert offloaded.count("sh") == 2
+        assert offloaded.count("cargo") == 1
+        assert "clippy" in _fake_argv(self.bindir, "cargo")
+        assert (self.repo / "Dockerfile").read_text(
+            encoding="utf-8"
+        ).strip() == "FROM scratch"
+        assert (self.repo / "docs" / "config-schema.json").read_text(
+            encoding="utf-8"
+        ).strip() == "{}"
 
 
 def _target_recording_cargo(directory: Path) -> Path:
