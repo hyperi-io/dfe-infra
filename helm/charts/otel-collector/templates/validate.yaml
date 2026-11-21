@@ -3,3 +3,4 @@
 {{- include "otel-collector.validatePriorityClass" . -}}
 
 {{- include "otel-collector.validateProviderLogs" . -}}
+{{- include "otel-collector.validateGnmic" . -}}

@@ -269,3 +269,15 @@ that names a source it cannot read fails the render.
 {{- define "otel-collector.providerLogsServiceAccount" -}}
 {{- printf "%s-provider-logs" (include "dfe-common.fullname" .) -}}
 {{- end -}}
+
+{{/* The gnmic workload's ServiceAccount, separate from the shared account the cluster-wide read role binds to. */}}
+{{- define "otel-collector.gnmicServiceAccount" -}}
+{{- printf "%s-gnmic" (include "dfe-common.fullname" .) -}}
+{{- end -}}
+
+{{/* otel-collector.validateGnmic -- gnmic exits with no target, so an enabled block with none fails the render. */}}
+{{- define "otel-collector.validateGnmic" -}}
+{{- if and .Values.gnmic.enabled (empty .Values.gnmic.targets) -}}
+{{- fail "gnmic.enabled is true and gnmic.targets is empty -- gnmic exits with no device to subscribe to, so name at least one" -}}
+{{- end -}}
+{{- end -}}

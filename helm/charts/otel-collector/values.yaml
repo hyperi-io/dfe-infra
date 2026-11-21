@@ -284,6 +284,43 @@ exporters:
     connectionParams:
       type_json_skip_duplicated_paths: "1"
 
+# gNMI telemetry from network devices: gnmic subscribes and pushes OTLP to the gateway. See docs/observability/gnmi.md.
+gnmic:
+  enabled: false
+  image:
+    repository: ghcr.io/openconfig/gnmic
+    tag: "0.49.1"
+    digest: "sha256:d148508c7ab3e5fd446759648d529409c1e37c2cc99c8b681078d120ca1a302b"
+    pullPolicy: IfNotPresent
+  # Device name -> gnmic target settings: address, insecure, skip-verify, tls-ca and the rest of gnmic's target keys. Required when enabled.
+  targets: {}
+  # The Secret holding the login every target without its own username and password uses. Empty sends none.
+  credentials:
+    secretName: ""
+    usernameKey: username
+    passwordKey: password
+  # gnmic's subscriptions map. Each path lands as its own metric.
+  subscriptions:
+    interface-counters:
+      mode: stream
+      paths:
+        - /interfaces/interface/state/counters
+      sample-interval: 30s
+      stream-mode: sample
+  output:
+    # Prefix on every metric name.
+    metricPrefix: gnmic
+    # Value names matching one of these regexes export as cumulative sums, the rest as gauges.
+    counterPatterns:
+      - counters
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
 # OTLP ingest from outside the cluster, on a bearer token. See docs/observability/otel-collector.md#otlp-ingest-from-outside-the-cluster.
 otel:
   ingress:
