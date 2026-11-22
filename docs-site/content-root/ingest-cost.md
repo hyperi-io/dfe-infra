@@ -4,7 +4,7 @@
 
 No ingest tier to buy, size or babysit. DFE parses in the pipeline the data already flows through, and two production deployments and our PB-scale tests proved it costs less.
 
-- Up to 5x less CPU than Elasticsearch ingest for the same ECS fields, same data, same enriched output.
+- Up to 5x less CPU than Elastic ingest for the same ECS fields, same data, same enriched output.
 - Up to 19x less memory: a few hundred MiB where an ingest node runs 5-6 GiB.
 - Up to 6x less provisioned CPU over a working year, because DFE scales down at the lows and an ingest tier can't.
 - Zero wrong fields: full field parity with Elastic's own pipelines on every source we tested.
