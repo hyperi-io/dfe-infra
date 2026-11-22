@@ -1491,13 +1491,43 @@ def run_search(frame, marker: str = "") -> str:
         time.sleep(5)
 
 
-def record_observe(driver, name: str, marker: str = "") -> None:
+# Padding either side of a run's own event times in the Observe search window.
+OBSERVE_WINDOW_MARGIN_MS = 60_000
+
+
+def observe_window(store: Datastore, name: str, run: str) -> tuple[int, int] | None:
+    """The epoch-ms span of *run*'s corpus rows in *name* by event time, padded, or None when it has none.
+
+    HyperDX searches on ``_timestamp``, the event time a transform parses, which
+    for a replayed corpus can be months before the rows were received.
+    """
+    where = marked(run, CORPUS)
+    low = store.scalar(
+        f"SELECT toUnixTimestamp64Milli(min(_timestamp)) FROM {name} WHERE {where}"
+    )
+    high = store.scalar(
+        f"SELECT toUnixTimestamp64Milli(max(_timestamp)) FROM {name} WHERE {where}"
+    )
+    if low <= 0 or high <= 0:
+        return None
+    return low - OBSERVE_WINDOW_MARGIN_MS, high + OBSERVE_WINDOW_MARGIN_MS
+
+
+def observe_url(ui: str, window: tuple[int, int] | None) -> str:
+    """The console's Observe search, over *window* when given. The console passes from and to on to HyperDX."""
+    base = f"{ui}/observe/search"
+    return f"{base}?from={window[0]}&to={window[1]}" if window else base
+
+
+def record_observe(
+    driver, name: str, marker: str = "", window: tuple[int, int] | None = None
+) -> None:
     """Open the console's Observe search on the source and see its rows.
 
     The console iframes HyperDX from a second origin, so this one step meets
     what a tester meets: the embed's frame-ancestors, the login shared across
     the two origins, and the source's own view, together. A *marker* narrows
-    the search to the rows that carry it.
+    the search to the rows that carry it, and *window* sets its time range.
     """
     page = driver.page
     blocked: list[str] = []
@@ -1510,7 +1540,7 @@ def record_observe(driver, name: str, marker: str = "") -> None:
     frame_url, picked, results = "", False, ""
     try:
         page.goto(
-            f"{driver.ui}/observe/search",
+            observe_url(driver.ui, window),
             wait_until="domcontentloaded",
             timeout=STEP_TIMEOUT_MS * 2,
         )

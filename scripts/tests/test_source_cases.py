@@ -2588,6 +2588,43 @@ class TestTheObserveStep:
         assert "does not offer fb1" in detail
         assert "TimeoutError" in detail
 
+    @pytest.mark.parametrize(
+        ("low", "high", "window"),
+        [
+            (
+                1_741_140_667_512,
+                1_741_550_873_081,
+                (1_741_140_607_512, 1_741_550_933_081),
+            ),
+            (0, 0, None),
+            (1_741_140_667_512, 0, None),
+        ],
+    )
+    def test_the_window_spans_the_runs_own_event_times(self, low, high, window):
+        """A corpus replayed months after it was logged lands at its own event time."""
+
+        class Answers:
+            def __init__(self):
+                self.asked: list[str] = []
+
+            def scalar(self, sql):
+                self.asked.append(sql)
+                return low if "min(_timestamp)" in sql else high
+
+        store = Answers()
+        assert steps.observe_window(store, "fb1", "src-1") == window
+        assert all("FROM fb1 WHERE" in sql and "src-1" in sql for sql in store.asked)
+
+    @pytest.mark.parametrize(
+        ("window", "url"),
+        [
+            ((10, 20), "https://ui.example.com/observe/search?from=10&to=20"),
+            (None, "https://ui.example.com/observe/search"),
+        ],
+    )
+    def test_the_observe_url_carries_the_window(self, window, url):
+        assert steps.observe_url("https://ui.example.com", window) == url
+
     def test_a_count_with_a_thousands_separator_is_a_pass(self):
         assert steps.results_count("1,050 Results") == 1050
         assert steps.observe_outcome("cw1", self.FRAME, "", True, "1,050 Results") == (

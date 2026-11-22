@@ -101,7 +101,11 @@ def walk(
     if case.archives:
         steps.record_archive(run.driver, archive_exec, case.name)
     if case.observes:
-        steps.record_observe(run.driver, case.name)
+        steps.record_observe(
+            run.driver,
+            case.name,
+            window=steps.observe_window(run.store, case.name, run.run_id),
+        )
 
 
 def teardown(run: cases.Run, case: cases.Case, api_url: str) -> None:
