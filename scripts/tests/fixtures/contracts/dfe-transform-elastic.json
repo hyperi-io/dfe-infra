@@ -309,6 +309,11 @@
             "default": {
               "enabled": true
             }
+          },
+          "conf": {
+            "description": "Settings the integration's pipeline reads, set as `_conf` on every event\nbefore the transform runs. Elastic Agent sets the same map from the\nintegration's settings, such as `cisco_nexus`'s `tz_map`, which turns a\nzone abbreviation like `AEST` into `Australia/Sydney`:\n\n```yaml\nconf:\n  tz_map:\n    - {tz_short: AEST, tz_long: Australia/Sydney}\n```\n\nEmpty by default, and an empty map costs nothing per event. Startup\nrefuses a top-level key the selected transform never reads, a key named\n`secret`, `password`, `token`, `api_key` or `client_secret` at any depth,\nand a map over 16 KiB. In agentless mode every detected source gets the\nmap and ignores the keys it does not read, and a key none of the\ncandidates read is refused. A `_conf` an event already carries keeps the\nkeys this does not name.",
+            "type": "object",
+            "additionalProperties": true
           }
         }
       },
