@@ -123,10 +123,12 @@ def _emit_dockerfile(repo: Path, app: str) -> None:
     committed one.
 
     Raises:
-        FleetError: If no known spelling produced a Dockerfile.
+        FleetError: If no spelling produced a Dockerfile. It quotes the tail of
+            the first spelling's stderr, where a compile failure shows.
     """
     base = shlex.join(["cargo", "run", "--quiet", "--bin", app, "--"])
     scratch = "f=$(mktemp) && trap 'rm -f \"$f\"' EXIT &&"
+    failures: list[subprocess.CompletedProcess[str]] = []
     for line in (
         f"{base} emit-dockerfile",
         f'{scratch} {base} --emit-dockerfile "$f" >&2 && cat "$f"',
@@ -138,7 +140,55 @@ def _emit_dockerfile(repo: Path, app: str) -> None:
                 emitted.stdout, encoding="utf-8", newline="\n"
             )
             return
-    raise FleetError(f"cannot regenerate the Dockerfile for {app} -- no known emit CLI")
+        failures.append(emitted)
+    first = failures[0]
+    tail = "\n".join(first.stderr.strip().splitlines()[-_STDERR_TAIL_LINES:])
+    raise FleetError(
+        f"cannot regenerate the Dockerfile for {app}: every emit spelling failed,"
+        f" the first exiting {first.returncode}:\n{tail or '(no stderr)'}"
+    )
+
+
+_STDERR_TAIL_LINES = 40
+
+# cargo names the package it could not fit as `name` or `name = "req"`.
+_CARGO_CONFLICT = re.compile(
+    r"failed to select a version for (?:the requirement )?`([\w-]+)"
+)
+
+
+def _relock(repo: Path, package: str, version: str) -> None:
+    """Move ``package`` to exactly ``version`` in Cargo.lock.
+
+    ``-p package --precise`` holds every other locked package, so it fails when
+    the new version raises a transitive floor above the lock. Each package cargo
+    names as the conflict is updated within its declared ranges, then the
+    precise update runs again. cargo rejects ``--recursive`` beside
+    ``--precise``.
+
+    Raises:
+        FleetError: If the update still fails, or names a package already lifted.
+    """
+    precise = ["cargo", "update", "-p", package, "--precise", version]
+    if run(precise, cwd=repo, check=False).returncode == 0:
+        return
+    # The lock may still pin the crate as a PATH source from a local
+    # verification build, and --precise then fails with "did not match any
+    # packages". `cargo fetch` re-resolves it from crates.io first.
+    run(["cargo", "fetch"], cwd=repo, capture=False)
+    lifted: set[str] = set()
+    while True:
+        tried = run(precise, cwd=repo, check=False)
+        if tried.returncode == 0:
+            return
+        conflict = _CARGO_CONFLICT.search(tried.stderr)
+        if conflict is None or conflict.group(1) in lifted:
+            raise FleetError(
+                f"cannot lock {package} {version}:\n{tried.stderr.strip()}"
+            )
+        lifted.add(conflict.group(1))
+        say(f"update {conflict.group(1)} so {package} {version} fits the lock")
+        run(["cargo", "update", "-p", conflict.group(1)], cwd=repo)
 
 
 def _config_schema(repo: Path, app: str) -> None:
@@ -653,13 +703,7 @@ def rebuild_rust(
 
     with gate_lock:
         say(f"bump {package} -> {version}")
-        # The lock may still pin the crate as a PATH source from a local
-        # verification build, and --precise then fails with "did not match any
-        # packages". `cargo fetch` re-resolves it from crates.io first.
-        precise = ["cargo", "update", "-p", package, "--precise", version]
-        if run(precise, cwd=repo, check=False).returncode != 0:
-            run(["cargo", "fetch"], cwd=repo, capture=False)
-            run(precise, cwd=repo, capture=False)
+        _relock(repo, package, version)
 
         say("regenerate the Dockerfile from the deployment contract")
         _emit_dockerfile(repo, app)
