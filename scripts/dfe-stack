@@ -100,6 +100,7 @@ import registry_pins  # noqa: E402
 import stack_freeze  # noqa: E402
 import suite_graph  # noqa: E402
 import version_range  # noqa: E402
+from stack_comments import strip_held_comments  # noqa: E402
 from stack_images import annotated_images  # noqa: E402
 from stack_images import block_span as _block_span  # noqa: E402
 
@@ -2250,7 +2251,8 @@ def cmd_cut(args: argparse.Namespace) -> int:
     """Cut a new stack version from the CURRENT LATEST build of every app.
 
     Clones the `--from` block as the SHAPE, so a key cannot be dropped by
-    omission, then moves each DFE-owned app to its newest published tag of the
+    omission, drops the comments on every pin it holds (stack_comments), then
+    moves each DFE-owned app to its newest published tag of the
     kinds the new stack's maturity takes (vX.Y.Z-rc.N or plain vX.Y.Z below
     `release`, plain vX.Y.Z only at `release`) and repins the matching image digest, then repins every thin chart at the version
     its tag names (repin_charts). Third-party pins carry over untouched: those are
@@ -2313,6 +2315,7 @@ def cmd_cut(args: argparse.Namespace) -> int:
         replacing, gone_rules = _drop_withdrawn(lines, root, new)
     start, end = _block_span(lines, from_name)
     block = lines[start:end]
+    from_block = list(block)
 
     block[0] = f"  {new}:\n"
     # A release name belongs to one version: rc.1 to its GA keeps it, 2.2.2 to 2.2.3 drops it.
@@ -2412,6 +2415,9 @@ def cmd_cut(args: argparse.Namespace) -> int:
                 f"error: a release stack must pin plain vX.Y.Z DFE builds, but {new} would "
                 f"carry {', '.join(rc_pins)} -- promote those builds first"
             )
+
+    # A pin's reason lives in the block that moved it, so a held pin carries none.
+    block = strip_held_comments(block, new, from_block, from_name)
 
     print(f"cut {new} from {from_name}")
     if from_withdrawn:

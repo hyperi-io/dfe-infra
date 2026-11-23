@@ -43,14 +43,13 @@ import os
 import re
 import socket
 import sys
-import uuid
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 import access_summary as access_summary_file
 
-from acceptance.clients import engine_token, remove_source, setup_status
+from acceptance.clients import engine_token, remove_source, run_name, setup_status
 from acceptance.onboarding import wizard
 
 # The nav entries every role sees, so the check is a rendered console rather than
@@ -234,6 +233,46 @@ def sign_in_as_admin(
     return new_password
 
 
+#: The display name the first-user step gives the account it makes.
+FIRST_USER_NAME = "Acceptance Operator"
+
+
+def fill_first_user(driver: Driver, user: str, password: str) -> None:
+    """Fill the first-user form. dfe-ui 1.7.46 and later also require a Name."""
+    driver.textbox("Username").fill(user)
+    name = driver.textbox("Name")
+    if name.count():
+        name.fill(FIRST_USER_NAME)
+    # The console requires an address here. `.invalid` is reserved, so the account
+    # this run makes can never be mailed by a deployment that wires up email.
+    driver.textbox("Email").fill(f"{user}@acceptance.invalid")
+    driver.textbox("Password").fill(password)
+
+
+#: How long an account change gets to open the step-up dialog before the run takes it as absent.
+STEP_UP_WAIT_MS = 5_000
+
+
+def confirm_step_up(driver: Driver, password: str) -> bool:
+    """Answer the "Confirm it's you" dialog dfe-ui 1.7.46 opens on an account change.
+
+    Matched by its role and title, not its body text, which names the change.
+
+    Returns:
+        True when the dialog opened and was answered, False when the console has none.
+    """
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
+    dialog = driver.page.get_by_role("dialog", name="Confirm it's you")
+    try:
+        dialog.wait_for(state="visible", timeout=STEP_UP_WAIT_MS)
+    except PlaywrightTimeoutError:
+        return False
+    dialog.get_by_label("Your password").fill(password)
+    dialog.get_by_role("button", name="Confirm").click(timeout=STEP_TIMEOUT_MS)
+    return True
+
+
 def walk_organisation(driver: Driver, org: str) -> None:
     """Complete the organisation screen the console is on."""
     driver.page.wait_for_url(f"**/setup/{wizard.ORGANISATION}", timeout=STEP_TIMEOUT_MS)
@@ -346,12 +385,9 @@ def walk_wizard(
 
     driver.page.wait_for_url(f"**/setup/{wizard.FIRST_USER}", timeout=STEP_TIMEOUT_MS)
     driver.seen.append(wizard.FIRST_USER)
-    driver.textbox("Username").fill(user)
-    # The console requires an address here. `.invalid` is reserved, so the account
-    # this run makes can never be mailed by a deployment that wires up email.
-    driver.textbox("Email").fill(f"{user}@acceptance.invalid")
-    driver.textbox("Password").fill(password)
+    fill_first_user(driver, user, password)
     driver.button("Create Account").click(timeout=STEP_TIMEOUT_MS)
+    confirm_step_up(driver, admin_password)
     # The console keeps a rejected form on the screen with its field errors, so
     # leaving it is what says the account was made rather than the click landing.
     driver.page.wait_for_url(
@@ -445,7 +481,7 @@ def check_console(
         "navigation", "done", f"the console renders {', '.join(CONSOLE_LANDMARKS)}"
     )
 
-    name = f"onboard{uuid.uuid4().hex[:8]}"
+    name = run_name("onboard")
     driver.button("Add Source").first.click(timeout=STEP_TIMEOUT_MS)
     fill_source_form(driver, name)
     driver.button("Add Source").last.click(timeout=STEP_TIMEOUT_MS)
