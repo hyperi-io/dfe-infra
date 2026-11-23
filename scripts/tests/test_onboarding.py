@@ -234,6 +234,62 @@ class _Driver:
         self.records.append(row)
 
 
+class _Dialog:
+    """The step-up dialog, open or never opened."""
+
+    def __init__(self, opens):
+        self.opens, self.filled, self.clicked = opens, {}, []
+
+    def wait_for(self, **_):
+        if not self.opens:
+            raise _StubTimeoutError()
+
+    def get_by_label(self, label):
+        return _DialogField(self, label)
+
+    def get_by_role(self, _role, name="", **_):
+        return _DialogField(self, name)
+
+
+class _DialogField:
+    def __init__(self, dialog, label):
+        self._dialog, self._label = dialog, label
+
+    def fill(self, value):
+        self._dialog.filled[self._label] = value
+
+    def click(self, **_):
+        self._dialog.clicked.append(self._label)
+
+
+class TestTheStepUpDialog:
+    @pytest.fixture(autouse=True)
+    def _no_browser(self, monkeypatch):
+        stub = type(sys)("playwright.sync_api")
+        stub.TimeoutError = _StubTimeoutError
+        monkeypatch.setitem(sys.modules, "playwright", type(sys)("playwright"))
+        monkeypatch.setitem(sys.modules, "playwright.sync_api", stub)
+
+    @pytest.mark.parametrize(
+        "opens", [True, False], ids=["console-asks", "console-before-step-up"]
+    )
+    def test_the_admin_password_answers_the_dialog_only_when_it_opens(self, opens):
+        dialog = _Dialog(opens)
+        driver = _Driver({})
+        asked = []
+
+        def get_by_role(role, name="", **_):
+            asked.append((role, name))
+            return dialog
+
+        driver.page.get_by_role = get_by_role
+
+        assert onboarding_run.confirm_step_up(driver, "admin-pw") is opens
+        assert asked == [("dialog", "Confirm it's you")]
+        assert dialog.filled == ({"Your password": "admin-pw"} if opens else {})
+        assert dialog.clicked == (["Confirm"] if opens else [])
+
+
 class TestTheFirstUserForm:
     @pytest.mark.parametrize(
         ("offered", "named"),

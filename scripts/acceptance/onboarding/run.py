@@ -249,6 +249,30 @@ def fill_first_user(driver: Driver, user: str, password: str) -> None:
     driver.textbox("Password").fill(password)
 
 
+#: How long an account change gets to open the step-up dialog before the run takes it as absent.
+STEP_UP_WAIT_MS = 5_000
+
+
+def confirm_step_up(driver: Driver, password: str) -> bool:
+    """Answer the "Confirm it's you" dialog dfe-ui 1.7.46 opens on an account change.
+
+    Matched by its role and title, not its body text, which names the change.
+
+    Returns:
+        True when the dialog opened and was answered, False when the console has none.
+    """
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
+    dialog = driver.page.get_by_role("dialog", name="Confirm it's you")
+    try:
+        dialog.wait_for(state="visible", timeout=STEP_UP_WAIT_MS)
+    except PlaywrightTimeoutError:
+        return False
+    dialog.get_by_label("Your password").fill(password)
+    dialog.get_by_role("button", name="Confirm").click(timeout=STEP_TIMEOUT_MS)
+    return True
+
+
 def walk_organisation(driver: Driver, org: str) -> None:
     """Complete the organisation screen the console is on."""
     driver.page.wait_for_url(f"**/setup/{wizard.ORGANISATION}", timeout=STEP_TIMEOUT_MS)
@@ -363,6 +387,7 @@ def walk_wizard(
     driver.seen.append(wizard.FIRST_USER)
     fill_first_user(driver, user, password)
     driver.button("Create Account").click(timeout=STEP_TIMEOUT_MS)
+    confirm_step_up(driver, admin_password)
     # The console keeps a rejected form on the screen with its field errors, so
     # leaving it is what says the account was made rather than the click landing.
     driver.page.wait_for_url(
