@@ -69,8 +69,7 @@ dfe = _load_dfe_stack()
 LEGACY_EDITED = frozenset(
     {
         *(f"2.2.0-rc.{n}" for n in range(1, 15)),
-        "2.2.0",
-        *(f"2.2.1-rc.{n}" for n in range(1, 7)),
+        "2.2.1-rc.6",
     }
 )
 
@@ -142,6 +141,23 @@ def _recut_rewrites(declared: list[str], stack: str, then: dict, now: dict) -> s
     return {", ".join(names) for names in reached}
 
 
+def _without_comments(block: str) -> str:
+    """A block's values alone: comment-only and blank lines dropped, trailing notes cut.
+
+    `dfe-stack cut` writes a reason only where a pin moves, so what a tag freezes is
+    the values, not the prose beside them.
+    """
+    kept = []
+    for line in block.splitlines(keepends=True):
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        quoted = re.match(r'^([^#"]*"[^"]*")', line)
+        text = quoted[1] if quoted else line.split(" #", 1)[0]
+        indent = line[: len(line) - len(line.lstrip())]
+        kept.append(indent + " ".join(text.split()) + "\n")
+    return "".join(kept)
+
+
 def _equals_tag_bar_recut(stack: str, at_tag: str, now: str) -> bool:
     """Whether a stack's block equals its block at the tag, bar a re-cut's `previous` edit.
 
@@ -158,6 +174,10 @@ def _equals_tag_bar_recut(stack: str, at_tag: str, now: str) -> bool:
     now_block = _block(now, stack)
     if tagged_block is None or now_block is None:
         return False
+    tagged_block, now_block = (
+        _without_comments(tagged_block),
+        _without_comments(now_block),
+    )
     if tagged_block == now_block:
         return True
     then_lines = tagged_block.splitlines(keepends=True)
@@ -366,17 +386,9 @@ def test_a_withdrawn_stack_deleted_instead_of_cut_again_fails():
     [
         ('dfe-engine: "v1.0.0"', 'dfe-engine: "v1.0.1"'),  # a pin moves
         (
-            "# The release an environment",
-            "# The stack an environment",
-        ),  # a comment moves
-        (
             'upgrade-order: "dfe-engine"\n',
             'upgrade-order: "dfe-engine"\n      extra: "x"\n',
         ),
-        (
-            "   # cut from the withdrawn release",
-            "   # re-cut",
-        ),  # the previous line's own note
         (
             "    maturity: rc\n    support: standard\n    apps:",
             "    maturity: beta\n    support: standard\n    apps:",
@@ -653,3 +665,17 @@ def test_resolve_pins_write_writes_when_the_tag_is_not_cut_yet(tmp_path, monkeyp
     assert 'dfe-engine: "sha256:new"' in (repo / "versions.yaml").read_text(
         encoding="utf-8"
     )
+
+
+@pytest.mark.parametrize(
+    "edit",
+    [
+        ("# The release an environment", "# The stack an environment"),
+        ("   # cut from the withdrawn release", "   # re-cut"),
+    ],
+)
+def test_a_comment_edit_is_not_a_change_to_what_shipped(edit):
+    tagged = _versions("9.9.0, 9.9.0-rc.1")
+    now = _versions("9.9.0, 9.9.0-rc.1", "standard")
+    assert edit[0] in now
+    assert _equals_tag_bar_recut(_RELEASED, tagged, now.replace(*edit, 1))

@@ -99,6 +99,7 @@ jobs:
             scripts/oci_registry.py
             scripts/profiles.py
             scripts/registry_pins.py
+            scripts/stack_comments.py
             scripts/stack_freeze.py
             scripts/stack_images.py
             scripts/suite_graph.py
