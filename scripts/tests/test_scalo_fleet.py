@@ -30,11 +30,14 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 
 from dfe_suite.landing import dispatch_release
+from dfe_suite.proc import FleetError
 from dfe_suite.rebuild import (
     _check_unoptimized_caller,
+    _emit_dockerfile,
     _gate_exclusions,
     _gate_features,
     _release_timeout,
+    _relock,
     _suite_node,
 )
 from dfe_suite.repos import remove_worktree, walk_worktree
@@ -644,6 +647,87 @@ class RebuildRsOffloadTests(RebuildRsTests):
         assert (self.repo / "docs" / "config-schema.json").read_text(
             encoding="utf-8"
         ).strip() == "{}"
+
+
+_ARC_SWAP_CONFLICT = (
+    "error: failed to select a version for `arc-swap`.\n"
+    "    ... required by package `aws-sdk-s3 v1.161.0`\n"
+    "  previously selected package `arc-swap v1.9.5`"
+)
+
+
+class RustRebuildFailureTests(OnPathTestCase):
+    """A relock lifts the floor a new scalo raises, and a failed emit says why."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        scratch = tempfile.TemporaryDirectory(prefix="scalo-fleet-fail-")
+        self.addCleanup(scratch.cleanup)
+        self.repo = Path(scratch.name)
+
+    def _cargo(self, body: str) -> None:
+        script = self.bindir / "cargo"
+        script.write_text(
+            "#!/bin/sh\n"
+            f'printf "%s\\n" "$*" >> "{self.bindir / "cargo.calls"}"\n' + body,
+            encoding="utf-8",
+            newline="\n",
+        )
+        script.chmod(0o755)
+
+    def _calls(self) -> list[str]:
+        return (self.bindir / "cargo.calls").read_text(encoding="utf-8").splitlines()
+
+    def _precise_fails_until(self, lifted: str, stderr: str) -> None:
+        # The precise update fails until `cargo update -p <lifted>` has run.
+        marker = self.bindir / "lifted"
+        self._cargo(
+            f'case "$*" in\n'
+            f'  "update -p {lifted}") touch "{marker}" ;;\n'
+            f'  *--precise*) [ -e "{marker}" ] || {{ printf "%s\\n" "{stderr}" >&2; exit 101; }} ;;\n'
+            "esac\n"
+        )
+
+    def test_a_named_conflict_is_updated_and_the_precise_update_retried(self) -> None:
+        self._precise_fails_until("arc-swap", _ARC_SWAP_CONFLICT.replace("`", "\\`"))
+        _relock(self.repo, "scalo", "2.14.34")
+        calls = self._calls()
+        assert "update -p arc-swap" in calls
+        assert calls[-1] == "update -p scalo --precise 2.14.34"
+
+    def test_a_relock_that_cannot_fit_raises_with_cargos_reason(self) -> None:
+        cases = [
+            ("the conflict outlives its update", "nothing", _ARC_SWAP_CONFLICT),
+            (
+                "cargo names no package",
+                "nothing",
+                "error: no matching package named `scalo`",
+            ),
+        ]
+        for name, lifted, stderr in cases:
+            with self.subTest(name):
+                (self.bindir / "cargo.calls").unlink(missing_ok=True)
+                self._precise_fails_until(lifted, stderr.replace("`", "\\`"))
+                with pytest.raises(
+                    FleetError, match=r"cannot lock scalo 2\.14\.34"
+                ) as raised:
+                    _relock(self.repo, "scalo", "2.14.34")
+                assert stderr.splitlines()[0] in str(raised.value)
+                assert self._calls().count("update -p arc-swap") <= 1
+
+    def test_a_failed_emit_quotes_the_compile_error(self) -> None:
+        self._cargo(
+            "echo 'error[E0046]: not all trait items implemented' >&2\n"
+            "echo ' --> src/sink/grpc/mod.rs:124' >&2\n"
+            "exit 101\n"
+        )
+        with pytest.raises(FleetError) as raised:
+            _emit_dockerfile(self.repo, "dfe-receiver")
+        message = str(raised.value)
+        assert "error[E0046]" in message
+        assert "src/sink/grpc/mod.rs:124" in message
+        assert "exiting 101" in message
+        assert not (self.repo / "Dockerfile").exists()
 
 
 def _target_recording_cargo(directory: Path) -> Path:
