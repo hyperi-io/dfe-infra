@@ -23,20 +23,20 @@
     "docusaurus-plugin-sass": "0.2.7",
     "docusaurus-theme-openapi-docs": "5.2.0",
     "js-yaml": "5.5.0",
-    "katex": "0.18.11",
+    "katex": "0.19.1",
     "react": "19.3.1",
     "react-dom": "19.3.1",
     "rehype-katex": "7.0.1",
     "remark-math": "6.0.0",
-    "sass": "1.108.1"
+    "sass": "1.108.2"
   },
   "devDependencies": {
-    "wrangler": "4.158.0"
+    "wrangler": "4.163.0"
   },
   "overrides": {
     "tinypool": "2.2.0",
     "serialize-javascript": "7.1.4",
-    "postcss-selector-parser": "7.1.8",
+    "postcss-selector-parser": "7.2.1",
     "postman-collection": {
       "uuid": "11.1.1"
     },
@@ -54,7 +54,7 @@
       "minimatch": "11.0.4",
       "yaml": "2.8.3"
     },
-    "katex": "0.18.11"
+    "katex": "0.19.1"
   },
   "browserslist": {
     "production": [
