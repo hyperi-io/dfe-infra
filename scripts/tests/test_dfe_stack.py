@@ -1966,8 +1966,9 @@ def test_a_cut_that_moves_the_ref_writes_evidence_the_checker_accepts() -> None:
     )
 
 
-def test_a_cut_that_leaves_the_ref_alone_keeps_its_evidence() -> None:
-    """A ref already at main did not move, so its comment is still true."""
+def test_a_cut_that_leaves_the_ref_alone_does_not_copy_its_evidence() -> None:
+    """A ref already at main did not move, so its reason stays in the block that
+    moved it and the machine-read annotation above the pin stays beside it."""
     import tempfile
 
     import check_pin_evidence as evidence
@@ -1983,17 +1984,22 @@ def test_a_cut_that_leaves_the_ref_alone_keeps_its_evidence() -> None:
         text = (tmp / "versions.yaml").read_text(encoding="utf-8")
 
     expect("the cut writes the file", rc == 0, f"exit {rc}")
-    expect(
-        "the comment and pin line carry over byte for byte",
-        _OLD_PIN_LINES in _cut_block(text),
-        _cut_block(text),
-    )
     stacks = evidence.read_pins(text)
     expect(
-        "the evidence reads the same as the stack it was cut from",
-        stacks["9.9.0-rc.3"]["content.a-git-repo"].evidence
-        == stacks["9.9.0-rc.2"]["content.a-git-repo"].evidence,
+        "the held pin carries no copied reason",
+        "old trailing note" not in stacks["9.9.0-rc.3"]["content.a-git-repo"].evidence,
         f"{stacks['9.9.0-rc.3']['content.a-git-repo'].evidence!r}",
+    )
+    expect(
+        "the source stack keeps the reason",
+        "old trailing note" in stacks["9.9.0-rc.2"]["content.a-git-repo"].evidence,
+        f"{stacks['9.9.0-rc.2']['content.a-git-repo'].evidence!r}",
+    )
+    expect(
+        "the Renovate annotation above the held pin survives",
+        "      # renovate: datasource=git-refs depName=https://example.test/a-git-repo\n"
+        in _cut_block(text),
+        _cut_block(text),
     )
 
 

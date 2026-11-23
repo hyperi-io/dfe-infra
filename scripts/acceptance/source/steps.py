@@ -30,11 +30,13 @@ from types import ModuleType
 
 from acceptance.clients import (
     RECORD_TEXT,
+    RUN_NAME,
     Datastore,
     Engine,
     receiver_headers,
     remove_source,
     setup_status,
+    table_ref,
     tls_context,
 )
 from acceptance.onboarding import run as onboarding
@@ -61,12 +63,6 @@ IDLE_WINDOW = 120
 # while the instance holds work. scalo exports on a 60 s interval.
 WORK_DEADLINE = 180.0
 WORK_POLL_SECONDS = 15.0
-# Source names this suite mints, so a sweep can tell its own strays from a
-# deployment's real sources.
-RUN_PREFIXES = ("fb", "cw", "el", "vc", "sy", "onboard")
-# The whole minted shape rather than the prefix alone, because a sweep removes
-# sources and a deployment may own one called `elastic` or `fbprod`.
-RUN_NAME = re.compile(rf"(?:{'|'.join(RUN_PREFIXES)})[0-9a-f]{{8}}")
 # The wrapper an Elastic Agent puts round each vendor line, in the shape of
 # dfe-transform-elastic's tests/envelopes/beats/agent_cisco_ios.json.
 AGENT_NAME = "dfe-acceptance"
@@ -797,7 +793,9 @@ def wait_routed(
     while True:
         post_corpus(receiver_url, verify, engine_repo, run, 1, modules, PROBE)
         passes += 1
-        if store.scalar(f"SELECT count() FROM {name} WHERE {marked(run, PROBE)}"):
+        if store.scalar(
+            f"SELECT count() FROM {table_ref(name)} WHERE {marked(run, PROBE)}"
+        ):
             return (
                 f"routed into dfe.{name} after {passes} probe pass(es), "
                 f"{probes_in_main(store, run)}"
@@ -845,9 +843,9 @@ def dataset_outcome(store: Datastore, table: str, dataset: str) -> tuple[str, st
     Returns:
         The status and detail for ``Driver.record``.
     """
-    total = store.scalar(f"SELECT count() FROM {table}")
+    total = store.scalar(f"SELECT count() FROM {table_ref(table)}")
     carrying = store.scalar(
-        f"SELECT count() FROM {table} "
+        f"SELECT count() FROM {table_ref(table)} "
         f"WHERE JSONExtractString({RECORD_TEXT}, 'data_stream', 'dataset') = '{dataset}'"
     )
     detail = (
@@ -868,7 +866,7 @@ def wait_rows(
     clause = f" WHERE {where}" if where else ""
     until = time.monotonic() + deadline
     while True:
-        found = store.scalar(f"SELECT count() FROM {table}{clause}")
+        found = store.scalar(f"SELECT count() FROM {table_ref(table)}{clause}")
         if found >= wanted or time.monotonic() >= until:
             return found
         time.sleep(interval)
@@ -1503,10 +1501,10 @@ def observe_window(store: Datastore, name: str, run: str) -> tuple[int, int] | N
     """
     where = marked(run, CORPUS)
     low = store.scalar(
-        f"SELECT toUnixTimestamp64Milli(min(_timestamp)) FROM {name} WHERE {where}"
+        f"SELECT toUnixTimestamp64Milli(min(_timestamp)) FROM {table_ref(name)} WHERE {where}"
     )
     high = store.scalar(
-        f"SELECT toUnixTimestamp64Milli(max(_timestamp)) FROM {name} WHERE {where}"
+        f"SELECT toUnixTimestamp64Milli(max(_timestamp)) FROM {table_ref(name)} WHERE {where}"
     )
     if low <= 0 or high <= 0:
         return None

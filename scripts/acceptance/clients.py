@@ -16,12 +16,14 @@ delete-and-confirm and the setup contract live here rather than once per suite.
 
 import json
 import os
+import re
 import ssl
 import subprocess
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -159,6 +161,41 @@ def receiver_headers() -> dict[str, str]:
     """The Authorization header for the receiver, or none when no token is set."""
     token = os.environ.get(RECEIVER_TOKEN_ENV, "").strip()
     return {"Authorization": f"Bearer {token}"} if token else {}
+
+
+# The kinds of source this suite mints as `acceptance-<kind>-<8 hex>`, a name the
+# console's Sources list shows readably and its 40-character rule admits.
+RUN_KINDS = ("filebeat", "elastic", "vector", "syslog", "aws", "onboard")
+# The `<prefix><8 hex>` names earlier runs minted, which a sweep still clears.
+LEGACY_RUN_PREFIXES = ("fb", "cw", "el", "vc", "sy", "onboard")
+# The whole minted shape rather than the prefix alone, because a sweep removes
+# sources and a deployment may own one called `elastic` or `fbprod`.
+RUN_NAME = re.compile(
+    rf"(?:acceptance-(?:{'|'.join(RUN_KINDS)})-|(?:{'|'.join(LEGACY_RUN_PREFIXES)}))"
+    r"[0-9a-f]{8}"
+)
+
+
+def run_name(kind: str) -> str:
+    """Return a new source name for *kind*, in the shape the stray sweep removes.
+
+    Raises:
+        ValueError: When *kind* is not one of RUN_KINDS.
+    """
+    if kind not in RUN_KINDS:
+        raise ValueError(f"no source kind {kind!r}, expected one of {RUN_KINDS}")
+    return f"acceptance-{kind}-{uuid.uuid4().hex[:8]}"
+
+
+def table_ref(name: str) -> str:
+    """Return *name* backtick-quoted, because a source label joins its words with '-'.
+
+    Raises:
+        ValueError: When *name* holds a backtick, which this quoting can't carry.
+    """
+    if "`" in name:
+        raise ValueError(f"table name {name!r} holds a backtick")
+    return f"`{name}`"
 
 
 @dataclass
