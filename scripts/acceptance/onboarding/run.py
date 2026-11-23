@@ -43,14 +43,13 @@ import os
 import re
 import socket
 import sys
-import uuid
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 import access_summary as access_summary_file
 
-from acceptance.clients import engine_token, remove_source, setup_status
+from acceptance.clients import engine_token, remove_source, run_name, setup_status
 from acceptance.onboarding import wizard
 
 # The nav entries every role sees, so the check is a rendered console rather than
@@ -445,7 +444,7 @@ def check_console(
         "navigation", "done", f"the console renders {', '.join(CONSOLE_LANDMARKS)}"
     )
 
-    name = f"onboard{uuid.uuid4().hex[:8]}"
+    name = run_name("onboard")
     driver.button("Add Source").first.click(timeout=STEP_TIMEOUT_MS)
     fill_source_form(driver, name)
     driver.button("Add Source").last.click(timeout=STEP_TIMEOUT_MS)
