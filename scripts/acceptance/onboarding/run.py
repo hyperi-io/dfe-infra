@@ -233,6 +233,22 @@ def sign_in_as_admin(
     return new_password
 
 
+#: The display name the first-user step gives the account it makes.
+FIRST_USER_NAME = "Acceptance Operator"
+
+
+def fill_first_user(driver: Driver, user: str, password: str) -> None:
+    """Fill the first-user form. dfe-ui 1.7.46 and later also require a Name."""
+    driver.textbox("Username").fill(user)
+    name = driver.textbox("Name")
+    if name.count():
+        name.fill(FIRST_USER_NAME)
+    # The console requires an address here. `.invalid` is reserved, so the account
+    # this run makes can never be mailed by a deployment that wires up email.
+    driver.textbox("Email").fill(f"{user}@acceptance.invalid")
+    driver.textbox("Password").fill(password)
+
+
 def walk_organisation(driver: Driver, org: str) -> None:
     """Complete the organisation screen the console is on."""
     driver.page.wait_for_url(f"**/setup/{wizard.ORGANISATION}", timeout=STEP_TIMEOUT_MS)
@@ -345,11 +361,7 @@ def walk_wizard(
 
     driver.page.wait_for_url(f"**/setup/{wizard.FIRST_USER}", timeout=STEP_TIMEOUT_MS)
     driver.seen.append(wizard.FIRST_USER)
-    driver.textbox("Username").fill(user)
-    # The console requires an address here. `.invalid` is reserved, so the account
-    # this run makes can never be mailed by a deployment that wires up email.
-    driver.textbox("Email").fill(f"{user}@acceptance.invalid")
-    driver.textbox("Password").fill(password)
+    fill_first_user(driver, user, password)
     driver.button("Create Account").click(timeout=STEP_TIMEOUT_MS)
     # The console keeps a rejected form on the screen with its field errors, so
     # leaving it is what says the account was made rather than the click landing.

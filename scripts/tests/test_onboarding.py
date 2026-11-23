@@ -234,6 +234,26 @@ class _Driver:
         self.records.append(row)
 
 
+class TestTheFirstUserForm:
+    @pytest.mark.parametrize(
+        ("offered", "named"),
+        [(("Name",), True), ((), False)],
+        ids=["console-asks-for-a-name", "console-before-the-name-field"],
+    )
+    def test_the_name_is_filled_only_where_the_console_asks(self, offered, named):
+        driver = _Driver({}, offered=offered)
+
+        onboarding_run.fill_first_user(driver, "operator", "pw")
+
+        filled = driver.page.filled
+        assert filled["Username"] == "operator"
+        assert filled["Email"] == "operator@acceptance.invalid"
+        assert filled["Password"] == "pw"
+        assert ("Name" in filled) is named
+        if named:
+            assert filled["Name"] == onboarding_run.FIRST_USER_NAME
+
+
 class TestTheForcedChange:
     @pytest.fixture(autouse=True)
     def _no_browser(self, monkeypatch):
