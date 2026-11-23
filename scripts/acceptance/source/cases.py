@@ -28,7 +28,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from acceptance.clients import Datastore, Engine, remove_source
+from acceptance.clients import Datastore, Engine, remove_source, run_name, table_ref
 from acceptance.onboarding import run as onboarding
 from acceptance.onboarding import wizard
 from acceptance.source import beats, edgestream, fetcher, steps, syslog
@@ -183,12 +183,12 @@ class FilebeatCase(Case):
     companion_repo = "dfe-transform-vrl"
     instance_step = "transform-instance"
     reporting_step = "transform-reporting"
-    #: Prefix of the source name this kind mints, which the sweep knows.
-    prefix = "fb"
+    #: The kind in the source name this case mints, which the sweep knows.
+    kind = "filebeat"
 
     def __init__(self, args: argparse.Namespace) -> None:
         super().__init__(args)
-        self.name = fetcher.new_name(self.prefix)
+        self.name = run_name(self.kind)
         self._posted = 0
         #: The agent's containers, on a run that ships through a real filebeat only.
         self._pair: beats.Pair | None = None
@@ -722,7 +722,7 @@ class ElasticCase(FilebeatCase):
     service = f"dfe-transform-{TRANSFORM_ENGINE}"
     # The transform is compiled in, so no checkout holds anything this case reads.
     companion_repo = ""
-    prefix = "el"
+    kind = "elastic"
 
     def _transform_body(self) -> dict[str, str]:
         """Engine and variant together, because one without the other deploys nothing.
@@ -777,7 +777,7 @@ class VectorCase(FilebeatCase):
     companion_repo = ""
     #: The checkout the program and its table are read from, ahead of any --transform-repo.
     program_repo = "dfe-transform-vector"
-    prefix = "vc"
+    kind = "vector"
 
 
 # --- syslog: raw vendor lines at the receiver's own listeners ----------------
@@ -798,7 +798,7 @@ class SyslogCase(Case):
     service = "dfe-transform-elastic"
     instance_step = "transform-instance"
     reporting_step = "transform-reporting"
-    prefix = "sy"
+    kind = "syslog"
     observes = False
     archives = False
     console = False
@@ -810,7 +810,7 @@ class SyslogCase(Case):
 
     def __init__(self, args: argparse.Namespace) -> None:
         super().__init__(args)
-        self.name = fetcher.new_name(self.prefix)
+        self.name = run_name(self.kind)
         #: The table each vendor's lines land in, which the detector names by the vendor.
         self.tables = {vendor: vendor for vendor in syslog.VENDORS}
         self._listener = Listener(
@@ -1306,7 +1306,7 @@ class FetchedAwsCase(Case):
     def __init__(self, args: argparse.Namespace) -> None:
         super().__init__(args)
         self.upstream = fetcher.AWS_CASES[args.aws_service]
-        self.name = fetcher.new_name("cw")
+        self.name = run_name("aws")
         self.schema = fetcher.schema_path(self.upstream, self.name)
 
     def create(self, run: Run) -> list[str]:
@@ -1383,7 +1383,7 @@ class FetchedAwsCase(Case):
             columns = self.upstream.proof_columns
             carried = " AND ".join(f"{column} != ''" for column in columns)
             short = run.store.scalar(
-                f"SELECT count() FROM {self.name} WHERE NOT ({carried})"
+                f"SELECT count() FROM {table_ref(self.name)} WHERE NOT ({carried})"
             )
             run.driver.record(
                 "fetched-columns",
@@ -1430,7 +1430,7 @@ class EdgestreamHubCase(Case):
         super().__init__(args)
         self.name = edgestream.CATALOGUE_ENTRY
         # A hyphen is not a legal bare name in SQL.
-        self._table = f"`{self.name}`"
+        self._table = table_ref(self.name)
         self._adopted = False
         self._events: list[dict] = []
 
@@ -1530,7 +1530,7 @@ class EdgestreamHubCase(Case):
             )
             return
         corpus = steps.marked(run.run_id, steps.CORPUS)
-        landed = steps.wait_rows(store, self._table, wanted, self.LAND_DEADLINE, corpus)
+        landed = steps.wait_rows(store, self.name, wanted, self.LAND_DEADLINE, corpus)
         strayed = steps.strayed_rows(store, run.run_id)
         driver.record(
             "landed",

@@ -254,7 +254,7 @@ class TestTheCaseProvesTheRows:
             f"'{steps.CORPUS}'": strayed,
             "toUnixTimestamp": timed,
             "isNotNull": typed,
-            f"FROM main WHERE JSONExtractString(toString(_json), '_e2e', 'run') = "
+            f"FROM `main` WHERE JSONExtractString(toString(_json), '_e2e', 'run') = "
             f"'{RUN}' AND JSONExtractString(toString(_json), '_e2e', 'kind') = "
             f"'{edgestream.OTHER}'": other_main,
             f"`edgestream-hub-syslog` WHERE JSONExtractString(toString(_json), '_e2e', "

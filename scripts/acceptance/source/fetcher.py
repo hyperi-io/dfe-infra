@@ -20,7 +20,6 @@ time a source has no schema waiting for it.
 """
 
 import time
-import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -360,7 +359,3 @@ def upstream_note(case: AwsCase, log_group: str) -> str:
     if case.service == "cloudwatch_logs":
         return f"aws/{case.service} on log group {log_group}"
     return f"aws/{case.service} on the account's own API activity"
-
-
-def new_name(prefix: str = "cw") -> str:
-    return f"{prefix}{uuid.uuid4().hex[:8]}"
