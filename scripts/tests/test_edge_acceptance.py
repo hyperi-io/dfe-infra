@@ -975,7 +975,7 @@ def test_the_marker_found_in_main_is_the_landing() -> None:
     store = Store(1)
     assert edge.record_landed(results, store, "edgeabc", 0.0)
     assert (results[0].slug, results[0].status) == ("landed", "done")
-    assert "FROM main" in store.asked[0]
+    assert "FROM `main`" in store.asked[0]
     assert source_steps.marked("edgeabc", edge.MARKER_KIND) in store.asked[0]
 
 

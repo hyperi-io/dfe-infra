@@ -43,6 +43,7 @@ import yaml
 SCRIPTS = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SCRIPTS))
 
+from acceptance import clients  # noqa: E402
 from acceptance.source import cases, fetcher, steps, syslog  # noqa: E402
 from acceptance.source.run import build_parser, teardown, walk  # noqa: E402
 
@@ -557,8 +558,42 @@ class TestWhichCaseARunGets:
             "fbprod",
             "cwlogs",
             "onboarding",
+            "acceptance-filebeat",
+            "acceptance-filebeat-prod",
+            "acceptance-other-0123abcd",
         ):
             assert not steps.RUN_NAME.fullmatch(owned)
+
+    @pytest.mark.parametrize("kind", clients.RUN_KINDS)
+    def test_a_minted_name_is_one_the_console_takes_and_the_sweep_removes(self, kind):
+        name = clients.run_name(kind)
+        assert name.startswith(f"acceptance-{kind}-")
+        assert steps.RUN_NAME.fullmatch(name)
+        # dfe-ui's source name rule: Sources/utils/validation.ts.
+        assert len(name) <= 40
+        assert re.fullmatch(r"[a-z]([a-z0-9-]*[a-z0-9])?", name)
+
+    @pytest.mark.parametrize("name", ["fb0123abcd", "cw0123abcd", "onboard0123abcd"])
+    def test_a_name_an_earlier_run_minted_is_still_swept(self, name):
+        assert steps.RUN_NAME.fullmatch(name)
+
+    def test_expected_fail_a_kind_the_sweep_does_not_know(self):
+        with pytest.raises(ValueError, match="no source kind"):
+            clients.run_name("nosuchkind")
+
+    @pytest.mark.parametrize(
+        ("name", "quoted"),
+        [
+            ("acceptance-filebeat-0123abcd", "`acceptance-filebeat-0123abcd`"),
+            ("main", "`main`"),
+        ],
+    )
+    def test_a_table_name_is_quoted_for_its_hyphens(self, name, quoted):
+        assert clients.table_ref(name) == quoted
+
+    def test_expected_fail_a_backtick_in_a_table_name(self):
+        with pytest.raises(ValueError, match="backtick"):
+            clients.table_ref("a`b")
 
     def test_the_fetched_case_authors_a_schema_under_its_own_name(self):
         case = cases.build(parse("--case", "cloudwatch", "--aws-service", "cloudtrail"))
@@ -1942,7 +1977,7 @@ class LandedRows(LocalClickHouse):
         return json.dumps(record)
 
 
-_COUNT = re.compile(r"SELECT count\(\) FROM (\w+)(?: WHERE (.+))?")
+_COUNT = re.compile(r"SELECT count\(\) FROM `?([\w-]+)`?(?: WHERE (.+))?")
 _EXTRACT = re.compile(r"JSONExtractString\(toString\(_json\), (.+)\) = '([^']*)'")
 _NOT_NULL = re.compile(r"(\w+) IS NOT NULL")
 _LIKE = re.compile(r"toString\(_json\) LIKE '%([^%']*)%'")
@@ -2613,7 +2648,7 @@ class TestTheObserveStep:
 
         store = Answers()
         assert steps.observe_window(store, "fb1", "src-1") == window
-        assert all("FROM fb1 WHERE" in sql and "src-1" in sql for sql in store.asked)
+        assert all("FROM `fb1` WHERE" in sql and "src-1" in sql for sql in store.asked)
 
     @pytest.mark.parametrize(
         ("window", "url"),
