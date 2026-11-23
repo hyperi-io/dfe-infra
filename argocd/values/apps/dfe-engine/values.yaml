@@ -374,7 +374,7 @@ content:
       kind: emit
       role: contract
       app: dfe-fetcher
-      ref: "ghcr.io/hyperi-io/dfe-fetcher:v1.4.59-rc.1@sha256:fbb5a9838ef5312b7290de9e8eb94ad57ee7df3129ed2ff9288cda48daa8f453"
+      ref: "ghcr.io/hyperi-io/dfe-fetcher:v1.4.60-rc.1@sha256:8940c9481c35e8ec76d70323d1458bb67fd46b8634de99d527f49a52b9d5fd71"
     - name: dfe-transform-vrl-contract
       kind: emit
       role: contract

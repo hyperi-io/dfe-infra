@@ -63,7 +63,7 @@ spec:
                 "culvert" "sha256:423166ccc25223b702864e49684f95b150cc1d8dded42f0bace6b05844b068f6"
                 "dfe-archiver" "sha256:b27c21db4cdf6eaf87014b2c8cb6ed9656bde08eaf92d35d8e1d6ead41d4f51e"
                 "dfe-engine" "sha256:f8515ccd2697b47985a04d9d4bd27210f27942fb8ecc86c339eba051cf107467"
-                "dfe-fetcher" "sha256:4622d0f6f33d5a2bcbc85fdd57f21968073cd1a99059a56919dee192b7a4428e"
+                "dfe-fetcher" "sha256:c8f668630bd86a1167842a5ba7841909c8793db60bbd6590fdbb22a8ab1dcd9c"
                 "dfe-hyperdx" "sha256:5a1bf5700916838a6f1a130f2f219903ca001c16412796b817ede3517cb03356"
                 "dfe-loader" "sha256:0f62649437d0e4a7a8e4ba0002d47ca0da9716495914ee299f3f93d2e5a92987"
                 "dfe-receiver" "sha256:27c225b94465010df2da89bf3d72a165d2c96d2bce867bda0714088e51738e1e"
