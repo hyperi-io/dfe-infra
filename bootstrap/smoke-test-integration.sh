@@ -333,7 +333,7 @@ resolve_ch_auth() {
 
   # `default` first: it is the account the deploy layer owns on every target.
   # `admin` stays in the list so an older deploy still resolves.
-  pw="$(kubectl -n "$NS_CH" get secret "${DFE_CH_ADMIN_SECRET:-clickhouse-admin-password}" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null)"
+  pw="$(kubectl -n "$NS_CH" get secret "${DFE_CH_ADMIN_SECRET:-clickhouse-admin-password}" -o jsonpath='{.data.password}' 2>/dev/null | base64 --decode 2>/dev/null)"
   if [ -n "$pw" ]; then
     CH_PASSWORD="$pw" CH_PASSWORD_SET=1
     for u in default admin; do
@@ -608,11 +608,16 @@ OTEL_WAIT_INTERVAL="${DFE_OTEL_WAIT_INTERVAL:-5}"
 otel_logs_fresh() {
   test "$(chq "SELECT count() FROM ${OTEL_DB}.${OTEL_LOGS_TABLE} WHERE Timestamp > now() - INTERVAL ${FRESH_WINDOW} SECOND")" -gt 0 2>/dev/null
 }
+# True once more than $2 seconds have passed since $SECONDS read $1. $SECONDS counts
+# whole seconds of real time, so a -ge test can end a wait up to a second short.
+waited_past() {
+  [ "$2" -le 0 ] || [ $((SECONDS - $1)) -gt "$2" ]
+}
 # The bound is elapsed seconds, not a count of sleeps: each query runs through kubectl
 # exec and takes far longer than the sleep between them, so a count read 180s over ten minutes.
 otel_started=$SECONDS
 while ! otel_logs_fresh; do
-  [ $((SECONDS - otel_started)) -ge "$OTEL_WAIT" ] && break
+  waited_past "$otel_started" "$OTEL_WAIT" && break
   sleep "$OTEL_WAIT_INTERVAL"
 done
 otel_waited=$((SECONDS - otel_started))
@@ -641,7 +646,7 @@ if [ "$PROVIDER_LOGS" = aws ]; then
   PROVIDER_LOGS_WAIT="${DFE_PROVIDER_LOGS_WAIT:-300}"
   provider_started=$SECONDS
   while ! provider_log_fresh eks-audit; do
-    [ $((SECONDS - provider_started)) -ge "$PROVIDER_LOGS_WAIT" ] && break
+    waited_past "$provider_started" "$PROVIDER_LOGS_WAIT" && break
     sleep "$OTEL_WAIT_INTERVAL"
   done
   echo "  waited $((SECONDS - provider_started))s of ${PROVIDER_LOGS_WAIT}s for an EKS audit row newer than ${FRESH_WINDOW}s"
@@ -718,7 +723,7 @@ else
   else
     service_started=$SECONDS
     silent="$(silent_apps "$expected")"
-    while [ -n "$silent" ] && [ $((SECONDS - service_started)) -lt "$OTEL_WAIT" ]; do
+    while [ -n "$silent" ] && ! waited_past "$service_started" "$OTEL_WAIT"; do
       sleep "$OTEL_WAIT_INTERVAL"
       silent="$(silent_apps "$expected")"
     done
@@ -851,7 +856,7 @@ if [ -n "$KPOD" ]; then
     # no credential crosses kubectl at all.
     KPW=""
     if [ "$KAFKA_MODE" != external ]; then
-      KPW="$(kubectl -n "$NS_KAFKA" get secret "${DFE_KAFKA_USER:-dfe-kafka-user}" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null)"
+      KPW="$(kubectl -n "$NS_KAFKA" get secret "${DFE_KAFKA_USER:-dfe-kafka-user}" -o jsonpath='{.data.password}' 2>/dev/null | base64 --decode 2>/dev/null)"
     fi
     # The pod-side lines writing the client config to $P, escaping the quotes and backslashes a JAAS string cannot carry raw.
     kafka_client_props() {
