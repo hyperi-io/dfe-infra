@@ -12296,7 +12296,7 @@ stacks:
       dfe-transform-elastic: "sha256:2d6a2d283c3104fe955f209f415fb44097a7509ec348e4d6c256ae953adec4bb"
       dfe-hyperdx: "sha256:9737864ad9a6a895d0bfa3b22fa63189c0f94b7369a628cdbf6b55f7a94b1259"
       culvert: "sha256:467b5effcd73c7db549426a5cc843e8f82b0a02877a3378ae8bc864d0787bed0"
-      dfe-toolbox-base: "sha256:bd633946e6defb53dbe29d046543330782d8f2f97260e7288e69692281079d15"
+      dfe-toolbox-base: "sha256:2d3940c3fe864978c46d9ce1d2d276f7f2a42694753d4a358ba088321ae9109d"
 
     # Each component's thin chart, assembled from its deployment contract, by manifest digest and
     # keyed by deploy.service. The layer 2 appsets carry a literal copy (check_versions_drift.py),
