@@ -3,7 +3,7 @@ component: kafbat
 env: local
 cloud: local
 
-# Deployed with the Kafka substrate in the single + scale tiers; gated OFF on the
+# Deployed with the Kafka broker in the single + scale tiers; gated OFF on the
 # brokerless tiers (slim, mesh -- gRPC, no Kafka). Namespaced under
 # `kafbat:` so the shared profile cascade (common + <cloud> + profile-<tier>.yaml,
 # applied to EVERY chart) can toggle it WITHOUT the switch leaking to other

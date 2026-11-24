@@ -113,7 +113,7 @@ def _cargo_line(
     return run(_offloaded(["sh", "-c", line]), cwd=repo, check=check)
 
 
-def _emit_dockerfile(repo: Path, app: str) -> None:
+def _emit_dockerfile(repo: Path, app: str, against: str = "its new pins") -> None:
     """Regenerate the committed Dockerfile from the app's deployment contract.
 
     Three spellings are tried because the fleet has not standardised on one;
@@ -122,9 +122,16 @@ def _emit_dockerfile(repo: Path, app: str) -> None:
     Dockerfile arrives on stdout, so a half-failed run cannot truncate the
     committed one.
 
+    Args:
+        repo: The consumer checkout.
+        app: The binary that emits the Dockerfile.
+        against: What the app was just moved to, e.g. ``scalo 2.14.37``, named
+            when the app fails to compile.
+
     Raises:
         FleetError: If no spelling produced a Dockerfile. It quotes the tail of
-            the first spelling's stderr, where a compile failure shows.
+            the first spelling's stderr, and says the app does not compile when
+            cargo exits 101 over a rustc error.
     """
     base = shlex.join(["cargo", "run", "--quiet", "--bin", app, "--"])
     scratch = "f=$(mktemp) && trap 'rm -f \"$f\"' EXIT &&"
@@ -143,6 +150,8 @@ def _emit_dockerfile(repo: Path, app: str) -> None:
         failures.append(emitted)
     first = failures[0]
     tail = "\n".join(first.stderr.strip().splitlines()[-_STDERR_TAIL_LINES:])
+    if first.returncode == 101 and _RUSTC_ERROR.search(first.stderr):
+        raise FleetError(f"{app} does not compile against {against}:\n{tail}")
     raise FleetError(
         f"cannot regenerate the Dockerfile for {app}: every emit spelling failed,"
         f" the first exiting {first.returncode}:\n{tail or '(no stderr)'}"
@@ -150,6 +159,8 @@ def _emit_dockerfile(repo: Path, app: str) -> None:
 
 
 _STDERR_TAIL_LINES = 40
+
+_RUSTC_ERROR = re.compile(r"^error\[E\d{4}\]", re.MULTILINE)
 
 # cargo names the package it could not fit as `name` or `name = "req"`.
 _CARGO_CONFLICT = re.compile(
@@ -706,7 +717,7 @@ def rebuild_rust(
         _relock(repo, package, version)
 
         say("regenerate the Dockerfile from the deployment contract")
-        _emit_dockerfile(repo, app)
+        _emit_dockerfile(repo, app, f"{package} {version}")
         # config-schema is a scalo StandardCommand, so every app spells it the same
         # way. It writes into docs/, where the fleet commits config-schema.* and
         # capability-catalog.*.

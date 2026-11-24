@@ -43,6 +43,8 @@ curl -X POST http://localhost:8080/ingest \
 
 > **Coming from Splunk or Elastic?** You didn't create an index or a mapping first, and you won't need to. `main` takes whatever fields you send and they all work straight away, so a sender adding or changing a field breaks nothing. You tune the fields that matter later. More in [what's different](../coming-from.md#nothing-breaks-when-a-source-changes).
 
+> **Coming from a lakehouse?** You didn't run `CREATE TABLE`, `INFER_SCHEMA` or a `COPY INTO` before sending. `main` took the record as it came, and an unmapped field the sender adds tomorrow lands in `_json` with no loader restart. More in [coming from a lakehouse](../coming-from-lakehouse.md#schema-first-or-land-then-promote).
+
 Where to find it: the console is at http://localhost:3000, ClickHouse HTTP at http://localhost:8123 and the engine API at http://localhost:8003. `single-kafka` adds the Kafka UI at http://localhost:8081. The ingest ports listen on every interface, and everything else on this host only.
 
 Next:
