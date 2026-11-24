@@ -6,9 +6,9 @@ cloud: local
 
 image:
   repository: otel/opentelemetry-collector-contrib
-  tag: "0.163.2"  # == versions.yaml services.otel-collector (drift-checked).
+  tag: "0.165.0"  # == versions.yaml services.otel-collector (drift-checked).
   # == versions.yaml services-digests.otel-collector (drift-checked).
-  digest: "sha256:7f22d2a6748110ffb6a59bc0df448bccbf501cdb667d610ede4c61d3863d5849"
+  digest: "sha256:e40d61f10c9a617cca1ffd1be4d7e2b3a4b0f0001798ff07e58cabe82e618cea"
   pullPolicy: IfNotPresent
 
 # The gateway's pod securityContext. The daemonset's is daemonset.podSecurityContext.
@@ -89,7 +89,7 @@ waitForEngine:
     repository: public.ecr.aws/docker/library/busybox
     tag: "1.38.0"  # == versions.yaml services.busybox (drift-checked).
     # == versions.yaml services-digests.busybox (drift-checked).
-    digest: "sha256:fd7dc98638c8e305f4dc34e979f1c0fdfdcaeb0fbf8fcff77ae834b6da3d7e6e"
+    digest: "sha256:a46257e06c82ad85242d0d38077d0a52d9896389ca60a1a59d3463db586e5fa4"
     pullPolicy: IfNotPresent
   resources:
     requests:

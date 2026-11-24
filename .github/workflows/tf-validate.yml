@@ -13,7 +13,7 @@ permissions:
 
 # Tracks versions.yaml toolbox.tofu (check_versions_drift.py), so the operator shell and CI validate on one OpenTofu.
 env:
-  TOFU_VERSION: "1.13.2"
+  TOFU_VERSION: "1.13.9"
 
 jobs:
   changes:

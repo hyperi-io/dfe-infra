@@ -341,12 +341,12 @@ def test_the_iam_jar_is_pinned_and_verified() -> None:
     expect("the jar is fetched by an init container", len(pod["initContainers"]) == 1)
     expect(
         "the pinned version is in the URL",
-        "releases/download/v2.3.9/aws-msk-iam-auth-2.3.9-all.jar" in fetch,
+        "releases/download/v2.4.0/aws-msk-iam-auth-2.4.0-all.jar" in fetch,
         fetch,
     )
     expect(
         "the published checksum is pinned",
-        "922064f312ddc8a5f3dbe65fcef3d02ddbd588a02e3a6f0fca4b5a4dbec1ba43" in fetch,
+        "b758405bd032d0aa3579eabe3fc3344da7003d723c4bb687767924450da7bbfd" in fetch,
         fetch,
     )
     expect("the checksum is checked, not just carried", "sha256sum" in fetch, fetch)

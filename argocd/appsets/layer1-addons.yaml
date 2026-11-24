@@ -138,10 +138,10 @@ spec:
                 # imageTag and imageDigest are versions.yaml services.aws-load-balancer-controller-image, empty until pinned.
                 - chart: aws-load-balancer-controller
                   repo: https://aws.github.io/eks-charts
-                  version: "3.6.2"
+                  version: "3.6.3"
                   chartDigest: ""
-                  imageTag: "v3.6.2"
-                  imageDigest: "sha256:fd51f0ec82f8d357837aa57fdfaa4fca7137b75f25a09b421d95c425c9dc2d94"
+                  imageTag: "v3.6.3"
+                  imageDigest: "sha256:bc9bee8bc5b2b9f69fe914c06ed3ddb24ce9c94e234cf101dff1ec04693a6974"
                   namespace: kube-system
                   wave: "1"
                   appProject: infra
