@@ -6,7 +6,7 @@ cloud: local
 
 image:
   repository: otel/opentelemetry-collector-contrib
-  tag: "0.163.2"  # == versions.yaml services.otel-collector (drift-checked).
+  tag: "0.165.0"  # == versions.yaml services.otel-collector (drift-checked).
   # == versions.yaml services-digests.otel-collector (drift-checked).
   digest: "sha256:7f22d2a6748110ffb6a59bc0df448bccbf501cdb667d610ede4c61d3863d5849"
   pullPolicy: IfNotPresent

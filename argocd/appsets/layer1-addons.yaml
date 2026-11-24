@@ -138,7 +138,7 @@ spec:
                 # imageTag and imageDigest are versions.yaml services.aws-load-balancer-controller-image, empty until pinned.
                 - chart: aws-load-balancer-controller
                   repo: https://aws.github.io/eks-charts
-                  version: "3.6.2"
+                  version: "3.6.3"
                   chartDigest: ""
                   imageTag: "v3.6.2"
                   imageDigest: "sha256:fd51f0ec82f8d357837aa57fdfaa4fca7137b75f25a09b421d95c425c9dc2d94"
