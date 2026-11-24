@@ -12358,7 +12358,7 @@ stacks:
     # Each Dockerfile ARG default equals its pin here (drift-checked). clickhouse-client follows services.clickhouse-version.
     toolbox:
       # renovate: datasource=docker depName=ghcr.io/hyperi-io/dfe-toolbox-base
-      dfe-toolbox: "v1.0.8"         # New family tag: helm, kubectl, argocd-cli, tofu, yq, aws-cli and az-cli moved.
+      dfe-toolbox: "v1.0.8"         # New family tag: helm, kubectl, tofu, yq, aws-cli and az-cli moved. argocd-cli holds at v3.5.6 with the bootstrap Argo CD chart.
       # renovate: datasource=docker depName=debian
       debian: "trixie-slim@sha256:62bd423aeee912639ca8ee681c2b762cb3e25137e0a92b20be455898a9f034ad"
       # renovate: datasource=github-releases depName=kubernetes/kubernetes
@@ -12366,8 +12366,8 @@ stacks:
       # renovate: datasource=github-releases depName=helm/helm
       helm: "v4.3.2"                # 2026-11-13, clears the 7-day cooldown. Patch release on the 4.3 line.
       # renovate: datasource=github-releases depName=argoproj/argo-cd
-      argocd-cli: "v3.6.1"          # 2026-11-05, clears the 7-day cooldown. The newest Argo CD CLI.
-      argocd-cli-arm64-sha256: "6636e9183de7dba666b673a417986e7ff54dbadd948b2f9f6c83bcf7d33ebb94"  # sha256 of argocd-linux-arm64 at v3.6.1, matching the release's cli_checksums.txt.
+      argocd-cli: "v3.5.6"
+      argocd-cli-arm64-sha256: "281aea75a1eaea15e2839f12626e78684f76099f09ffb0b05d35f64344ed1256"
       # renovate: datasource=docker depName=quay.io/argoproj/argocd
       argocd-cli-image: "v3.5.6@sha256:8e5cc5bb008df8a09dba439462e58c94c55b7735888d3ebde0c25fc05e4e5335"
       # renovate: datasource=github-releases depName=opentofu/opentofu
@@ -12376,7 +12376,7 @@ stacks:
       yq: "v4.54.3"                 # 2026-11-09, clears the 7-day cooldown. Patch release on the 4.54 line.
       yq-arm64-sha256: "89f69310b61b68d1245065a1241d1fc843f7a36cd6103ffd77ad987613bd1b67"  # sha256 of yq_linux_arm64 at v4.54.3, downloaded from the GitHub release.
       # renovate: datasource=docker depName=ghcr.io/mikefarah/yq
-      yq-image: "4.54.1@sha256:4b3d9475d65571d28cbb19544d3820ec2945e4c8b2f18279394282b8dc3a592e"
+      yq-image: "4.54.3@sha256:7834187596ad56fd5a81436114e0b0b9dd54c91bb43946d1f7145b2be5f9c3d2"  # 2026-11-09, amd64 and arm64, the image of toolbox.yq v4.54.3. The amd64 build copies yq from it.
       # renovate: datasource=github-tags depName=aws/aws-cli
       aws-cli: "2.40.4"             # Tagged 2026-11-17, clears the 7-day cooldown. The newest v2 tag.
       # renovate: datasource=github-releases depName=aws/session-manager-plugin
