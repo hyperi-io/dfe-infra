@@ -26,6 +26,19 @@ To send telemetry somewhere else, set the destination:
 
 A misspelt `telemetry.mode` fails silently, because nothing rejects an unknown value. An app with an empty endpoint exports nothing.
 
+### What reaches HyperI
+
+DFE sends HyperI no telemetry from a deployment. The stack's logs, metrics and traces go to the destination you set above, your ClickHouse by default.
+
+The one call to HyperI is a release check, made at startup by dfe-engine and each Rust app. The console and the hunt runner make none. The check POSTs the product name, the version, the OS, the CPU architecture and an install id to `releases.hyperi.io`, and logs when a newer version exists. Unless you set `instanceId`, the id is a one-way UUIDv5 of the cluster's CA certificate and the namespace on Kubernetes, or of the machine id on a host. Failing both, it's a random UUID, kept on disk where the app can write one. Deployment names and your data are never sent, and a failed check costs one warning line.
+
+The check is on by default, and one setting turns it off in all of them:
+
+- Kubernetes: `versionCheck.enabled: false` in your deploy repo's `infra/common.yaml`.
+- Docker: `DFE_VERSION_CHECK_ENABLED=false` in `.env`.
+
+`versionCheck.sendInstanceId: false`, or `DFE_VERSION_CHECK_SEND_INSTANCE_ID=false` on Docker, keeps the check and drops the id. The console's usage reporting, which goes to a third party, is off unless you turn it on. The third-party images, ClickHouse and Kafka among them, are set separately, and this setting doesn't reach them.
+
 ## Dashboards
 
 Eight ship with the engine: Overview, DFE Services, DFE Pipeline Health, DFE Throughput, DFE Kafka, and three on ClickHouse (Health, Internals, Overview). They arrive in the console read-only, provisioned within a minute. To change one, export it and import your own copy. A dashboard seeds only for a team that holds the sources it reads, so a tenant's team doesn't get the platform's.
