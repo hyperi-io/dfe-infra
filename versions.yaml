@@ -12350,7 +12350,7 @@ stacks:
     content:
       dfe-schemas: "v0.2.32"
       # renovate: datasource=github-tags depName=hyperi-io/dfe-deploy
-      dfe-deploy: "v1.0.33"
+      dfe-deploy: "v1.0.34"              # 2026-11-25. The deploy-repo template, seeded from this tag. Its pins.yaml names stack 2.2.4-rc.1 on the rc channel.
       dfe-docker: "v1.0.13"
       dfe-hyperdx: "v0.3.28-rc.1"   # 2026-11-24, amd64 and arm64.
 
