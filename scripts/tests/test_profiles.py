@@ -90,13 +90,13 @@ def test_the_two_platforms_partition_the_profile_names() -> None:
     assert not set(profiles.MODES) & set(profiles.COMPOSE_MODES)
 
 
-def test_the_brokerless_modes_deploy_no_kafka_substrate() -> None:
+def test_the_brokerless_modes_deploy_no_kafka_chart() -> None:
     for mode in BROKERLESS:
         assert not profiles.has_kafka(mode)
-        assert "kafka" not in profiles.substrate(mode)
+        assert "kafka" not in profiles.backing_charts(mode)
     for mode in ("single", "scale"):
         assert profiles.has_kafka(mode)
-        assert "kafka" in profiles.substrate(mode)
+        assert "kafka" in profiles.backing_charts(mode)
 
 
 def test_an_unknown_mode_is_not_credited_with_a_broker() -> None:

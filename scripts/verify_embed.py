@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 #  Project:      dfe-infra
 #  File:         verify_embed.py
-#  Purpose:      Verify the dfe-ui <-> hyperdx SEAMLESS EMBED (Option B): log in to
+#  Purpose:      Verify the dfe-ui <-> hyperdx CHROMELESS EMBED (Option B): log in to
 #                dfe-ui, open /observe/<feature>, and assert the dfe-ui shell hosts a
 #                chromeless hyperdx iframe (dfe-ui owns the nav; hyperdx has none).
 #                Python-Playwright, python3 allow-list. Grows with the embed work.
@@ -9,7 +9,7 @@
 #
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
-"""Verify the DFE seamless embed end-to-end.
+"""Verify the DFE chromeless embed, from dfe-ui login to the hyperdx iframe.
 
     python3 scripts/verify_embed.py --dfeui http://localhost:3000 \
         --hyperdx http://localhost:8080 --user dev --password dev --feature search
@@ -208,7 +208,7 @@ def run(
 
 def main() -> int:
     ap = argparse.ArgumentParser(
-        description="Verify the dfe-ui<->hyperdx seamless embed."
+        description="Verify the dfe-ui<->hyperdx chromeless embed."
     )
     ap.add_argument("--dfeui", default="http://localhost:3000")
     ap.add_argument("--hyperdx", default="http://localhost:8080")
