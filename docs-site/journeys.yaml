@@ -154,6 +154,7 @@ placement:
     deployment/upgrades.md: "Operate / Upgrade"
     deployment/migrating-from-2.1.md: "Operate / Upgrade"
     deployment/upgrade-rollback.md: "Operate / Upgrade"
+    apache-nifi.md: "Operate / Sources"
     integrations/: "Operate / Sources"
   dfe-loader:
     default: "Operate / Day to day and troubleshooting"

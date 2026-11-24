@@ -39,7 +39,7 @@ The receiver's default `server.max_body_size` is 10,485,760 bytes and the Docker
 
 A stopped loader doesn't cause a 503, because Kafka holds the records and the receiver confirms them. A broker that stops answering does.
 
-On a Kubernetes deployment the receiver's ingest door is the deployment's edge, described in [the ingest edge](../ingest-edge.md). The Docker install serves `/ingest` over plain HTTP, and the receiver logs `tls=false` at startup.
+On a Kubernetes deployment the receiver's ingest door is the deployment's edge, described in [the ingest edge](ingest-edge.md). The Docker install serves `/ingest` over plain HTTP, and the receiver logs `tls=false` at startup.
 
 ## Pull with the fetcher
 
