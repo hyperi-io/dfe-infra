@@ -95,6 +95,14 @@ rules:
     require-range: ">=1.22.89"
     reason: "dfe-ui v1.7.43 reads the schema column vocabulary and the source form's limits from the engine (dfe-ui #707 #711), which dfe-engine serves from v1.22.89 (#1127 #1131)."
     source: "https://github.com/hyperi-io/dfe-ui/pull/707 and https://github.com/hyperi-io/dfe-engine/pull/1127"
+  ui-engine-rules-v2:
+    severity: "error"
+    when-key: "apps.dfe-ui"
+    when-range: ">=1.7.47-rc.1"
+    require-key: "apps.dfe-engine"
+    require-range: ">=1.22.94-rc.2"
+    reason: "dfe-ui v1.7.47-rc.1's rules screens (dfe-ui #778) call /api/v1/rules-v2 and /api/v1/config/feature-flags, which dfe-engine serves from v1.22.94-rc.2 (#1249)."
+    source: "https://github.com/hyperi-io/dfe-ui/pull/778 and https://github.com/hyperi-io/dfe-engine/pull/1249"
 
 # Accepted, tracked exceptions the check must not fail on yet. A waiver names a
 # rule id it suppresses (or a free scope), a reason, an expiry, and a ref.
