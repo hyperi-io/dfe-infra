@@ -52,6 +52,8 @@ The Altinity operator is unsupported. DFE never adopted it or ran a validation c
 
 > **Coming from Splunk or Elastic?** The TTL on each table sets retention here, and the storage model sets where parts sit while they wait. The storage policy is server-wide, so the engine's DDL needs no per-table `storage_policy` and queries use the same table and SQL across both tiers.
 
+> **Coming from a lakehouse?** You'd partition by date and let a bucket lifecycle rule expire the old files. Here the table's TTL removes rows past retention inside ClickHouse, and the storage model decides whether parts wait on local disk or in object storage. More in [coming from a lakehouse](../../docs-site/content-root/coming-from-lakehouse.md#doing-it-the-dfe-way).
+
 `clickhouse.storageModel` is a separate axis from `clickhouse.mode` and is fixed for the life of the deployment. It ships as `auto` and is derived: `cached-object` when `clickhouse.objectStore.endpoint` is supplied, `local` otherwise, where the PVC is the capacity ceiling. An empty value means the same, and a model written here overrides the derivation. `tiered-block` is never derived and is reached only by setting it. Models are named `<family>-<bulk>`. The family says whether parts MOVE to the bulk store or are COPIED to it, and the bulk half says what that store is. Every combination and its evidence: [storage.md](storage.md).
 
 `cached-object` renders a `storage_configuration` with an `s3` disk, a `cache` disk in front of it, and a `s3_cached` policy set as the server-wide `merge_tree.storage_policy`. The cache is a separate volume, chosen by `clickhouse.objectStore.cache.volume`. The default `pvc` places it on the data PVC alongside the part metadata. `instance-store` puts it on an `emptyDir` over the node's local NVMe instead, sized by `clickhouse.objectStore.cacheSize`. See "Dimension 4: cache placement" in [storage.md](storage.md) for both.
@@ -89,7 +91,7 @@ Cluster mode alone:
 
 ## Retention
 
-Retention is time-only. Every DFE time-series table, the `otel_*` tables included, drops rows older than the deployment default TTL. The default is 90 days, set at deploy by `retention.default_ttl_days` in the deployment dial, which reaches the engine as `DFE_ENGINE_CLICKHOUSE_DEFAULT_TTL_DAYS` (0 = no TTL). A changed value there reaches tables created afterwards, not deployed ones. On a running deployment, `PUT /api/v1/system/retention` (admin) changes the default TTL and applies it to every table that follows the default with `ALTER TABLE ... MODIFY TTL`.
+Retention is time-only. Every DFE time-series table, the `otel_*` tables included, drops rows older than the deployment default TTL. The default is 90 days, set at deploy by `retention.default_ttl_days` in the deployment dial, which reaches the engine as `DFE_ENGINE_CLICKHOUSE_DEFAULT_TTL_DAYS` (0 = no TTL). A changed value there reaches every table at the engine's next start. On a running deployment, `PUT /api/v1/system/retention` (admin) stores a new default TTL and returns before any table changes. A background pass then runs `ALTER TABLE ... MODIFY TTL` on every table that follows the default, and retries until each one has it, so a ClickHouse that is down at the time takes the value once it's back.
 
 The server's system log tables are a separate dial, `clickhouse.systemLogTTLDays` in the `clickhouse-cluster` chart. It's 7 days for `metric_log`, `asynchronous_metric_log`, `text_log` (which the dfe-hyperdx ClickHouse log source searches) and `part_log`, and 30 for `query_log`, in both cluster and single mode.
 

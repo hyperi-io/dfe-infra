@@ -70,6 +70,7 @@ A provider in `api` mode lists your directory's groups on a schedule. A synced g
 
 ## The detail
 
+- [Organisations and `_org_id`](organisations.md): how a record gets its org, and how ClickHouse holds each org to its rows.
 - [RBAC vocabulary](../dfe-engine/control-plane/rbac-vocabulary.md): every role, every default group, the naming rules.
 - [Identity resolution and first login](../dfe-engine/control-plane/rbac-sign-in.md): the sign-in allowlist, local accounts, rotating the two passwords.
 - [IdP group sync and links](../dfe-engine/control-plane/rbac-groups.md): the sync, and what the groups API refuses.

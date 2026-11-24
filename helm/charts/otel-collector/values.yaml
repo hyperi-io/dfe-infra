@@ -6,9 +6,9 @@ cloud: local
 
 image:
   repository: otel/opentelemetry-collector-contrib
-  tag: "0.163.2"  # == versions.yaml services.otel-collector (drift-checked).
+  tag: "0.165.0"  # == versions.yaml services.otel-collector (drift-checked).
   # == versions.yaml services-digests.otel-collector (drift-checked).
-  digest: "sha256:7f22d2a6748110ffb6a59bc0df448bccbf501cdb667d610ede4c61d3863d5849"
+  digest: "sha256:e40d61f10c9a617cca1ffd1be4d7e2b3a4b0f0001798ff07e58cabe82e618cea"
   pullPolicy: IfNotPresent
 
 # The gateway's pod securityContext. The daemonset's is daemonset.podSecurityContext.
@@ -89,7 +89,7 @@ waitForEngine:
     repository: public.ecr.aws/docker/library/busybox
     tag: "1.38.0"  # == versions.yaml services.busybox (drift-checked).
     # == versions.yaml services-digests.busybox (drift-checked).
-    digest: "sha256:fd7dc98638c8e305f4dc34e979f1c0fdfdcaeb0fbf8fcff77ae834b6da3d7e6e"
+    digest: "sha256:a46257e06c82ad85242d0d38077d0a52d9896389ca60a1a59d3463db586e5fa4"
     pullPolicy: IfNotPresent
   resources:
     requests:
@@ -283,6 +283,43 @@ exporters:
     # Merged into the exporter's DSN. See docs/observability/otel-collector.md#rows-and-writes.
     connectionParams:
       type_json_skip_duplicated_paths: "1"
+
+# gNMI telemetry from network devices: gnmic subscribes and pushes OTLP to the gateway. See docs/observability/gnmi.md.
+gnmic:
+  enabled: false
+  image:
+    repository: ghcr.io/openconfig/gnmic
+    tag: "0.49.1"
+    digest: "sha256:d148508c7ab3e5fd446759648d529409c1e37c2cc99c8b681078d120ca1a302b"
+    pullPolicy: IfNotPresent
+  # Device name -> gnmic target settings: address, insecure, skip-verify, tls-ca and the rest of gnmic's target keys. Required when enabled.
+  targets: {}
+  # The Secret holding the login every target without its own username and password uses. Empty sends none.
+  credentials:
+    secretName: ""
+    usernameKey: username
+    passwordKey: password
+  # gnmic's subscriptions map. Each path lands as its own metric.
+  subscriptions:
+    interface-counters:
+      mode: stream
+      paths:
+        - /interfaces/interface/state/counters
+      sample-interval: 30s
+      stream-mode: sample
+  output:
+    # Prefix on every metric name.
+    metricPrefix: gnmic
+    # Value names matching one of these regexes export as cumulative sums, the rest as gauges.
+    counterPatterns:
+      - counters
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
 
 # OTLP ingest from outside the cluster, on a bearer token. See docs/observability/otel-collector.md#otlp-ingest-from-outside-the-cluster.
 otel:

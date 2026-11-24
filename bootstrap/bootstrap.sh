@@ -880,7 +880,7 @@ export DFE_RESOURCE_TAGS_ANNOTATION="${DFE_RESOURCE_TAGS:+dfe.hyperi.io/resource
 
 echo "==> [0a/7] On-prem node-capacity preflight"
 # DFE_CLOUD=local is this script's own token for "we do not create these
-# nodes" (see the header's DFE_CLOUD comment) -- the same substrate
+# nodes" (see the header's DFE_CLOUD comment) -- the same on-prem nodes
 # sizing/targets/onprem.yaml and compute-shapes.yaml's onprem stub call
 # `cloud: onprem`. resolve_sizing.py writes the demand only for that cloud, so
 # a nodes.json existing at all already means this deployment is on-prem; a

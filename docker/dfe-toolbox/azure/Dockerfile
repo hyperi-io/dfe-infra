@@ -4,11 +4,11 @@
 #
 # ARG default mirrors versions.yaml's toolbox.az-cli pin (drift-checked); the
 # workflow overrides it at build time from the same source.
-ARG BASE_TAG="v1.0.7"
+ARG BASE_TAG="v1.0.8"
 
 FROM ghcr.io/hyperi-io/dfe-toolbox-base:${BASE_TAG}
 
-ARG AZ_CLI_VERSION="2.91.0"
+ARG AZ_CLI_VERSION="2.93.0"
 
 USER 0
 

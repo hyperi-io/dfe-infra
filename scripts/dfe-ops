@@ -323,7 +323,7 @@ NAMESPACE_DRIFT_CHECK = SCRIPTS / "check_namespace_drift.py"
 #   dfe_ops_pod_logs -- `pod-logs`, and the follower the acceptance stage starts and stops.
 #   envfile      -- every tool parses an operator's env file the same way.
 #   private_file -- every credential file lands 0600 before its first byte.
-#   profiles     -- the deploy MODES and what follows from one (broker, substrate
+#   profiles     -- the deploy MODES and what follows from one (broker, backing-service
 #                   charts, capacity floor); the bootstrap smoke tests read the
 #                   same table through a generated shell fragment.
 #   resolve_pins -- `pin`, so the standalone tool and `dfe-ops pin` are one code
@@ -4001,6 +4001,31 @@ def _ca_status_lines(kube: list[str], args: argparse.Namespace) -> list[str]:
     return [line for line in out if line.strip()]
 
 
+def stuck_renewal_lines(requests: dict, issuers: dict) -> list[str]:
+    """Pending CertificateRequests and issuers not Ready, which a Certificate's READY True hides until it expires."""
+    stuck = []
+    for doc, wanted in ((requests, "Pending"), (issuers, None)):
+        for item in doc.get("items") or []:
+            conditions = (item.get("status") or {}).get("conditions") or []
+            ready = next((c for c in conditions if c.get("type") == "Ready"), {})
+            if ready.get("status") == "True":
+                continue
+            if wanted and ready.get("reason") != wanted:
+                continue
+            meta = item.get("metadata") or {}
+            where = "/".join(p for p in (meta.get("namespace"), meta.get("name")) if p)
+            why = (
+                f"{ready.get('reason', 'no status')} {ready.get('message', '')}".strip()
+            )
+            stuck.append(f"  {item.get('kind', '?')} {where}: {why}")
+    if not stuck:
+        return ["cert-manager renewals: none stuck"]
+    return [
+        f"cert-manager renewals: {len(stuck)} stuck, so a Certificate showing READY True will not renew",
+        *stuck,
+    ]
+
+
 def _ca_install_lines(path: str, name: str, system: str | None = None) -> list[str]:
     """The root install commands that need root, for one OS or for both.
 
@@ -4083,6 +4108,18 @@ def cmd_ca(args: argparse.Namespace) -> int:
 
     if args.status:
         print("\n".join(_ca_status_lines(kube, args)))
+        _, requests, _ = _kubectl_json(
+            [*kube, "get", "certificaterequests.cert-manager.io", "-A"]
+        )
+        _, issuers, _ = _kubectl_json(
+            [
+                *kube,
+                "get",
+                "issuers.cert-manager.io,clusterissuers.cert-manager.io",
+                "-A",
+            ]
+        )
+        print("\n".join(stuck_renewal_lines(requests, issuers)))
         return 0
 
     mode, issuer = _issuer_mode(kube, args.issuer)
@@ -5246,7 +5283,7 @@ def _offline_preflight(args: argparse.Namespace) -> int:
         layers = ["-f", str(common), "-f", str(profile)]
         renders = [
             (chart, ["helm", "template", chart, str(HELM_CHARTS / chart), *layers])
-            for chart in profiles.substrate(args.mode)
+            for chart in profiles.backing_charts(args.mode)
         ]
         renders += [
             (f"dfe-extras {app}", _extras_render(app, args.mode))

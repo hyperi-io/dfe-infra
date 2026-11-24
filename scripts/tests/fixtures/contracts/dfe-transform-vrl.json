@@ -155,7 +155,7 @@
   "config_schema": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "title": "Config",
-    "description": "Main configuration.\n\n## This struct is the wrapper's half of the `--config` file\n\nIt owns `pipeline`, `source`, `sink`, `transforms`, `enrichment_tables` and\n`dlq`.\nscalo's own sections -- `metrics`, `logger`, `scaling`, `worker_pool`,\n`batch_processing`, `self_regulation`, `version_check`, `otel_tracing` --\nmay sit beside them: scalo's cascade reads the same file as its settings\nlayer, and its env layer outranks the file. [`SCALO_CASCADE_SECTIONS`] lists\nthem, and [`warn_unreachable_scalo_settings`] warns for one in a\nworking-directory `config.yaml` read without `--config`, which scalo never\nsees.\n\n## Requires pod restart (bound at startup)\n\n- `pipeline.name` — baked into Kafka `group_id`, metrics labels, tracing spans\n- `source.*` — rdkafka consumer: connection, subscription, auth, TLS, buffers\n- `sink.brokers` — rdkafka producer connection established at startup\n- `sink.topic` — output topic (changing mid-stream risks data loss)\n- `sink.compression` — rdkafka `compression.type` set at producer creation\n- `sink.sasl.*` / `sink.tls.*` — security protocol set at producer creation\n- `sink.max_buffer_bytes` — rdkafka `queue.buffering.max.kbytes` at creation\n- `sink.librdkafka_options` — passed to `ClientConfig` at creation\n- `transforms.*` — VRL programs compiled at startup, immutable for process lifetime\n- `dlq.*` — the dead-letter queue is spawned at startup\n\n## Accepted but not applied\n\n[`Config::inert_settings`] is the list, and the wrapper warns at startup for\neach one a deployment has actually set.",
+    "description": "Main configuration.\n\n## This struct is the wrapper's half of the `--config` file\n\nIt owns `pipeline`, `source`, `sink`, `transforms`, `enrichment_tables` and\n`dlq`.\nscalo's own sections -- `metrics`, `logger`, `memory`, `scaling`,\n`worker_pool`, `batch_processing`, `self_regulation`, `version_check`,\n`otel_tracing` --\nmay sit beside them: scalo's cascade reads the same file as its settings\nlayer, and its env layer outranks the file. [`SCALO_CASCADE_SECTIONS`] lists\nthem, and [`warn_unreachable_scalo_settings`] warns for one in a\nworking-directory `config.yaml` read without `--config`, which scalo never\nsees.\n\n## Requires pod restart (bound at startup)\n\n- `pipeline.name` — baked into Kafka `group_id`, metrics labels, tracing spans\n- `source.*` — rdkafka consumer: connection, subscription, auth, TLS, buffers\n- `sink.brokers` — rdkafka producer connection established at startup\n- `sink.topic` — output topic (changing mid-stream risks data loss)\n- `sink.compression` — rdkafka `compression.type` set at producer creation\n- `sink.sasl.*` / `sink.tls.*` — security protocol set at producer creation\n- `sink.max_buffer_bytes` — rdkafka `queue.buffering.max.kbytes` at creation\n- `sink.librdkafka_options` — passed to `ClientConfig` at creation\n- `transforms.*` — VRL programs compiled at startup, immutable for process lifetime\n- `dlq.*` — the dead-letter queue is spawned at startup\n\n## Accepted but not applied\n\n[`Config::inert_settings`] is the list, and the wrapper warns at startup for\neach one a deployment has actually set.",
     "type": "object",
     "properties": {
       "pipeline": {
@@ -258,7 +258,12 @@
             "path": "/var/spool/scalo/dlq",
             "rotation": "hourly",
             "max_age_days": 30,
-            "compress_rotated": true
+            "compress_rotated": true,
+            "max_bytes": null,
+            "max_files": null,
+            "durable": false,
+            "file_mode": null,
+            "dir_mode": null
           }
         }
       }
@@ -818,7 +823,12 @@
               "path": "/var/spool/scalo/dlq",
               "rotation": "hourly",
               "max_age_days": 30,
-              "compress_rotated": true
+              "compress_rotated": true,
+              "max_bytes": null,
+              "max_files": null,
+              "durable": false,
+              "file_mode": null,
+              "dir_mode": null
             }
           }
         }
@@ -875,26 +885,85 @@
             "default": 30
           },
           "compress_rotated": {
-            "description": "Compress rotated files with flate2/gzip.",
+            "description": "Gzip rotated files, keeping the six newest uncompressed.",
             "type": "boolean",
             "default": true
+          },
+          "max_bytes": {
+            "description": "Rotate before a write that would take the file past this many bytes.\nA write into an empty file always lands, however large. Unset: no size\nrotation. Works beside the time rotation: either rotates.",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint64",
+            "minimum": 0,
+            "default": null
+          },
+          "max_files": {
+            "description": "Rotated files kept, newest first. Older ones are deleted at each\nrotation. Unset: no count limit, only the age limit.",
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "uint32",
+            "minimum": 0,
+            "default": null
+          },
+          "durable": {
+            "description": "Sync the file's data to disk after each write, and its directory after\nthe file is created or rotated, so a write that returned `Ok` survives\npower loss. Costs a disk flush per batch. Off by default.",
+            "type": "boolean",
+            "default": false
+          },
+          "file_mode": {
+            "description": "Mode for files the writer creates, before the umask. Unset: `0666`\nbefore the umask, except in the file transport, where it is `0600`.\nUnix only: a Windows file takes its folder's ACL. Existing files keep\ntheirs.",
+            "anyOf": [
+              {
+                "$ref": "#/$defs/FileMode"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "dir_mode": {
+            "description": "Mode for directories the writer creates, before the umask. Unset:\n`0777` before the umask, except in the file transport, where it is\n`0700`. Unix only.",
+            "anyOf": [
+              {
+                "$ref": "#/$defs/FileMode"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           }
         }
       },
       "RotationPeriod": {
-        "description": "File rotation period.",
+        "description": "File rotation period, by local time.",
         "oneOf": [
           {
-            "description": "Rotate files every hour.",
+            "description": "Rotate before the first write in a new hour.",
             "type": "string",
             "const": "hourly"
           },
           {
-            "description": "Rotate files every day.",
+            "description": "Rotate before the first write on a new day.",
             "type": "string",
             "const": "daily"
+          },
+          {
+            "description": "No time rotation. `max_bytes` can still rotate the file.",
+            "type": "string",
+            "const": "never"
           }
         ]
+      },
+      "FileMode": {
+        "description": "Unix permission mode in octal, such as \"0600\". Ignored on Windows.",
+        "type": "string",
+        "pattern": "^(0o)?[0-7]{1,4}$"
       }
     }
   },

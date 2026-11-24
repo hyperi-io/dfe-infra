@@ -126,6 +126,10 @@
 #   source's transform.mode and transform.detect there, and refuses a source that
 #   sets either for an app declaring no path.
 #
+# conf_path
+#   The config key the engine writes a source's transform.conf map to. A source
+#   setting conf for an app with no conf_path is refused.
+#
 # consumes
 #   The config file the app's own image reads, by name. On Kubernetes the app's
 #   chart renders the instance overlay into a ConfigMap and the name is the
@@ -758,6 +762,8 @@ apps:
     variant_path: config.source.name
     mode_path: config.source.mode
     detect_path: config.source.detect
+    # Set as _conf on each event.
+    conf_path: config.source.conf
     source_binding:
       config.source.topics: ["{source}_land"]
       config.sink.topic: "{source}_load"

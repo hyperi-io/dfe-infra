@@ -109,7 +109,14 @@ def _engine_written_paths(app: dict) -> list[str]:
         ]
     paths += list((app.get("routing") or {}).get("values_paths", {}).values())
     paths += list(app.get("source_binding") or {})
-    paths += [app[key] for key in ("reload_setting", "variant_path") if app.get(key)]
+    path_keys = (
+        "reload_setting",
+        "variant_path",
+        "mode_path",
+        "detect_path",
+        "conf_path",
+    )
+    paths += [app[key] for key in path_keys if app.get(key)]
     return paths
 
 

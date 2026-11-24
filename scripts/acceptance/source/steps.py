@@ -21,6 +21,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -29,10 +30,13 @@ from types import ModuleType
 
 from acceptance.clients import (
     RECORD_TEXT,
+    RUN_NAME,
     Datastore,
     Engine,
+    receiver_headers,
     remove_source,
     setup_status,
+    table_ref,
     tls_context,
 )
 from acceptance.onboarding import run as onboarding
@@ -59,12 +63,6 @@ IDLE_WINDOW = 120
 # while the instance holds work. scalo exports on a 60 s interval.
 WORK_DEADLINE = 180.0
 WORK_POLL_SECONDS = 15.0
-# Source names this suite mints, so a sweep can tell its own strays from a
-# deployment's real sources.
-RUN_PREFIXES = ("fb", "cw", "el", "vc", "sy", "onboard")
-# The whole minted shape rather than the prefix alone, because a sweep removes
-# sources and a deployment may own one called `elastic` or `fbprod`.
-RUN_NAME = re.compile(rf"(?:{'|'.join(RUN_PREFIXES)})[0-9a-f]{{8}}")
 # The wrapper an Elastic Agent puts round each vendor line, in the shape of
 # dfe-transform-elastic's tests/envelopes/beats/agent_cisco_ios.json.
 AGENT_NAME = "dfe-acceptance"
@@ -736,7 +734,7 @@ def post_corpus(
             receiver_url,
             data=json.dumps(body).encode(),
             method="POST",
-            headers={"Content-Type": "application/json"},
+            headers={"Content-Type": "application/json", **receiver_headers()},
         )
         # The receiver rolls onto a new rule mid-run, so a dropped connection
         # or a 5xx from a pod on its way out is retried; a 4xx is a rejection.
@@ -795,7 +793,9 @@ def wait_routed(
     while True:
         post_corpus(receiver_url, verify, engine_repo, run, 1, modules, PROBE)
         passes += 1
-        if store.scalar(f"SELECT count() FROM {name} WHERE {marked(run, PROBE)}"):
+        if store.scalar(
+            f"SELECT count() FROM {table_ref(name)} WHERE {marked(run, PROBE)}"
+        ):
             return (
                 f"routed into dfe.{name} after {passes} probe pass(es), "
                 f"{probes_in_main(store, run)}"
@@ -843,9 +843,9 @@ def dataset_outcome(store: Datastore, table: str, dataset: str) -> tuple[str, st
     Returns:
         The status and detail for ``Driver.record``.
     """
-    total = store.scalar(f"SELECT count() FROM {table}")
+    total = store.scalar(f"SELECT count() FROM {table_ref(table)}")
     carrying = store.scalar(
-        f"SELECT count() FROM {table} "
+        f"SELECT count() FROM {table_ref(table)} "
         f"WHERE JSONExtractString({RECORD_TEXT}, 'data_stream', 'dataset') = '{dataset}'"
     )
     detail = (
@@ -866,7 +866,7 @@ def wait_rows(
     clause = f" WHERE {where}" if where else ""
     until = time.monotonic() + deadline
     while True:
-        found = store.scalar(f"SELECT count() FROM {table}{clause}")
+        found = store.scalar(f"SELECT count() FROM {table_ref(table)}{clause}")
         if found >= wanted or time.monotonic() >= until:
             return found
         time.sleep(interval)
@@ -919,6 +919,27 @@ def post_body(
     extra: list[str] = []
     for header in headers:
         extra += ["-H", header]
+    # Read from a file so the token stays out of the process list.
+    auth = "".join(f"{name}: {value}\n" for name, value in receiver_headers().items())
+    with tempfile.NamedTemporaryFile(
+        "w", encoding="utf-8", suffix=".headers"
+    ) as header_file:
+        header_file.write(auth)
+        header_file.flush()
+        if auth:
+            extra += ["-H", f"@{header_file.name}"]
+        return _post_with_curl(curl, extra, receiver_url, verify, body, window)
+
+
+def _post_with_curl(
+    curl: str,
+    extra: list[str],
+    receiver_url: str,
+    verify: bool,
+    body: bytes,
+    window: float,
+) -> int:
+    """Run one curl POST, retrying a 5xx or no answer for *window* seconds."""
     argv = [
         curl,
         "-sS",
@@ -1468,13 +1489,43 @@ def run_search(frame, marker: str = "") -> str:
         time.sleep(5)
 
 
-def record_observe(driver, name: str, marker: str = "") -> None:
+# Padding either side of a run's own event times in the Observe search window.
+OBSERVE_WINDOW_MARGIN_MS = 60_000
+
+
+def observe_window(store: Datastore, name: str, run: str) -> tuple[int, int] | None:
+    """The epoch-ms span of *run*'s corpus rows in *name* by event time, padded, or None when it has none.
+
+    HyperDX searches on ``_timestamp``, the event time a transform parses, which
+    for a replayed corpus can be months before the rows were received.
+    """
+    where = marked(run, CORPUS)
+    low = store.scalar(
+        f"SELECT toUnixTimestamp64Milli(min(_timestamp)) FROM {table_ref(name)} WHERE {where}"
+    )
+    high = store.scalar(
+        f"SELECT toUnixTimestamp64Milli(max(_timestamp)) FROM {table_ref(name)} WHERE {where}"
+    )
+    if low <= 0 or high <= 0:
+        return None
+    return low - OBSERVE_WINDOW_MARGIN_MS, high + OBSERVE_WINDOW_MARGIN_MS
+
+
+def observe_url(ui: str, window: tuple[int, int] | None) -> str:
+    """The console's Observe search, over *window* when given. The console passes from and to on to HyperDX."""
+    base = f"{ui}/observe/search"
+    return f"{base}?from={window[0]}&to={window[1]}" if window else base
+
+
+def record_observe(
+    driver, name: str, marker: str = "", window: tuple[int, int] | None = None
+) -> None:
     """Open the console's Observe search on the source and see its rows.
 
     The console iframes HyperDX from a second origin, so this one step meets
     what a tester meets: the embed's frame-ancestors, the login shared across
     the two origins, and the source's own view, together. A *marker* narrows
-    the search to the rows that carry it.
+    the search to the rows that carry it, and *window* sets its time range.
     """
     page = driver.page
     blocked: list[str] = []
@@ -1487,7 +1538,7 @@ def record_observe(driver, name: str, marker: str = "") -> None:
     frame_url, picked, results = "", False, ""
     try:
         page.goto(
-            f"{driver.ui}/observe/search",
+            observe_url(driver.ui, window),
             wait_until="domcontentloaded",
             timeout=STEP_TIMEOUT_MS * 2,
         )

@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 #  Project:      dfe-infra
 #  File:         deploy_matrix.py
-#  Purpose:      Create-test-teardown matrix harness for the substrate charts
+#  Purpose:      Create-test-teardown matrix harness for the backing-service charts
 #                (ClickHouse + Kafka modes x profiles) against a live cluster.
 #  Language:     Python
 #
 #  License:      BUSL-1.1
 #  Copyright:    (c) 2026 HYPERI PTY LIMITED
-"""Deployment-matrix harness -- the "deployment CI" for substrate charts.
+"""Deployment-matrix harness -- the "deployment CI" for backing-service charts.
 
 Per the canonical model (docs/deployment/state-and-repos.md) the dev cycle is
 repeat create -> test -> teardown across a matrix of deployment types. This
-harness exercises the substrate charts (clickhouse-cluster, kafka) across their
+harness exercises the backing-service charts (clickhouse-cluster, kafka) across their
 modes, helm-direct (not via Argo), so the *charts themselves* are proven solid on
 a target cluster before the gitops wiring + multi-cloud rollout.
 
@@ -124,7 +124,7 @@ def matrix_profiles() -> tuple[str, ...]:
     """The profiles worth a cell: the single-node tier and the multi-node one.
 
     Every cell --sets the chart's own mode, so a profile contributes only its
-    values cascade -- and on the substrate charts the four modes collapse to two
+    values cascade -- and on the backing-service charts the four modes collapse to two
     shapes. slim and single both size ClickHouse single/1; mesh sizes it
     cluster/3 exactly as scale does, differing only in the broker the cell's
     --set already varies. Running all four would double a live cluster matrix for
@@ -757,7 +757,9 @@ def run_cell(cell: Cell, *, do_apply: bool) -> CellResult:
 
 
 def main() -> int:
-    p = argparse.ArgumentParser(description="Substrate create-test-teardown matrix.")
+    p = argparse.ArgumentParser(
+        description="Backing-service chart create-test-teardown matrix."
+    )
     p.add_argument(
         "--preset", default="default", help="matrix preset named in the report header"
     )

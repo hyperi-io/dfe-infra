@@ -1,6 +1,6 @@
 apiVersion: v2
 name: kafka
-description: DFE Kafka substrate -- mode (disabled/single/cluster/external) x provider (strimzi/redpanda)
+description: DFE Kafka broker -- mode (disabled/single/cluster/external) x provider (strimzi/redpanda)
 type: application
 version: 0.2.0
 appVersion: "4.3.1"

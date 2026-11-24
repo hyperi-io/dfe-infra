@@ -100,6 +100,7 @@ import registry_pins  # noqa: E402
 import stack_freeze  # noqa: E402
 import suite_graph  # noqa: E402
 import version_range  # noqa: E402
+from stack_comments import strip_held_comments  # noqa: E402
 from stack_images import annotated_images  # noqa: E402
 from stack_images import block_span as _block_span  # noqa: E402
 
@@ -232,6 +233,24 @@ def stack_previous(v: dict) -> list[str]:
         for p in v.get("stack", {}).get("previous", "").split(",")
         if p.strip()
     ]
+
+
+def cut_previous(source: str, source_previous: list[str]) -> list[str]:
+    """The `stack.previous` a cut from `source` declares, in order.
+
+    A re-cut sorts below the release it re-cuts, so that release stays a
+    predecessor beside it: a cut from 2.2.2-fix.1 declares 2.2.2,2.2.2-fix.1.
+    A plain source is its own only predecessor.
+    """
+    own = semver_key(source)
+    if own is None:
+        return [source]
+    above = []
+    for p in source_previous:
+        key = semver_key(p)
+        if key is not None and key > own:
+            above.append(p)
+    return [*above, source]
 
 
 def stack_pins(root: dict, stack: str | None = None) -> tuple[str, dict]:
@@ -477,6 +496,42 @@ def platform_findings(v: dict, registry: str) -> list[tuple[str, str, str]]:
             )
         )
     return findings
+
+
+# The label dfe-transform-vector's Dockerfile stamps with the Vector release it bakes in.
+VECTOR_LABEL = "io.hyperi.vector.version"
+VECTOR_APP = "dfe-transform-vector"
+
+
+def vector_finding(v: dict, registry: str) -> tuple[str, str, str] | None:
+    """(status, image, detail) for the Vector release dfe-transform-vector bakes in.
+
+    It must be services.vector less its image variant (`0.61.0-alpine` is 0.61.0),
+    because dfe-fetcher runs that image beside it. None when the stack pins either
+    one without the other.
+    """
+    want = str(v.get("services", {}).get("vector", "")).partition("-")[0]
+    ref = app_images(v, registry).get(VECTOR_APP)
+    if not want or not ref:
+        return None
+    label = f"{VECTOR_APP}:{image_tag(v, VECTOR_APP)}"
+    found, err = registry_pins.ref_labels(ref)
+    if found is None:
+        return ("ERROR", label, err)
+    have = {
+        platform: labels.get(VECTOR_LABEL, "") for platform, labels in found.items()
+    }
+    wrong = {platform: got for platform, got in have.items() if got != want}
+    if not have or wrong:
+        detail = ", ".join(
+            f"{p or 'image'} {g or 'no label'}" for p, g in sorted(wrong.items())
+        )
+        return (
+            "FAIL",
+            label,
+            f"bakes Vector {detail or 'no label'}, services.vector is {want}",
+        )
+    return ("ok", label, f"bakes Vector {want}")
 
 
 # ---------------------------------------------------------------------------
@@ -1018,7 +1073,7 @@ def _rewrite_chart_pin(
     i = _scalar_line(block, "chart-digests", service)
     if i is None:
         return False
-    m = re.match(rf'^(\s+{re.escape(service)}:\s*)"[^"]*"(\s*)', block[i])
+    m = re.match(rf'^(\s+{re.escape(service)}:\s*)"[^"]*"([ \t]*)', block[i])
     gap = m.group(2) or "  "
     block[i] = f'{m.group(1)}"{digest}"{gap}# {version}\n'
     return True
@@ -1763,7 +1818,8 @@ def cmd_release_gate(args: argparse.Namespace) -> int:
         )
         failed = True
     findings = platform_findings(v, args.registry)
-    for status, image, detail in findings:
+    vector = vector_finding(v, args.registry)
+    for status, image, detail in [*findings, *([vector] if vector else [])]:
         if status != "ok":
             print(
                 f"release-gate FAIL: {name} {image} {status}: {detail}", file=sys.stderr
@@ -2195,7 +2251,8 @@ def cmd_cut(args: argparse.Namespace) -> int:
     """Cut a new stack version from the CURRENT LATEST build of every app.
 
     Clones the `--from` block as the SHAPE, so a key cannot be dropped by
-    omission, then moves each DFE-owned app to its newest published tag of the
+    omission, drops the comments on every pin it holds (stack_comments), then
+    moves each DFE-owned app to its newest published tag of the
     kinds the new stack's maturity takes (vX.Y.Z-rc.N or plain vX.Y.Z below
     `release`, plain vX.Y.Z only at `release`) and repins the matching image digest, then repins every thin chart at the version
     its tag names (repin_charts). Third-party pins carry over untouched: those are
@@ -2207,7 +2264,8 @@ def cmd_cut(args: argparse.Namespace) -> int:
     evidence comment is rewritten to cite the commit it moved to.
 
     `stack.previous` is DERIVED, not cloned: the source block is by definition
-    the new version's predecessor, so cut re-points it at `--from`.
+    the new version's predecessor, so cut re-points it at `--from`, and also at
+    the release a re-cut `--from` sorts below (cut_previous).
 
     A clone of a `support: withdrawn` block is cut as `support: standard`, without
     the notes on its maturity and support lines: those explain the withdrawal.
@@ -2257,6 +2315,7 @@ def cmd_cut(args: argparse.Namespace) -> int:
         replacing, gone_rules = _drop_withdrawn(lines, root, new)
     start, end = _block_span(lines, from_name)
     block = lines[start:end]
+    from_block = list(block)
 
     block[0] = f"  {new}:\n"
     # A release name belongs to one version: rc.1 to its GA keeps it, 2.2.2 to 2.2.3 drops it.
@@ -2272,8 +2331,13 @@ def cmd_cut(args: argparse.Namespace) -> int:
             block[i] = re.sub(re.escape(from_name), new, ln)
             break
 
-    # The block was cloned from from_name, so from_name is the new predecessor.
-    if not _rewrite_scalar(block, "stack", "previous", from_name):
+    # Read the source's previous from the lines, not `root`: _drop_withdrawn has
+    # already rewritten it when this cut replaces a withdrawn stack.
+    source_previous = stack_previous(
+        parse_simple_yaml("".join(lines))["stacks"][from_name]
+    )
+    previous = ",".join(cut_previous(from_name, source_previous))
+    if not _rewrite_scalar(block, "stack", "previous", previous):
         raise SystemExit(
             f"error: no stack.previous in {from_name} to re-point at the source"
         )
@@ -2351,6 +2415,9 @@ def cmd_cut(args: argparse.Namespace) -> int:
                 f"error: a release stack must pin plain vX.Y.Z DFE builds, but {new} would "
                 f"carry {', '.join(rc_pins)} -- promote those builds first"
             )
+
+    # A pin's reason lives in the block that moved it, so a held pin carries none.
+    block = strip_held_comments(block, new, from_block, from_name)
 
     print(f"cut {new} from {from_name}")
     if from_withdrawn:

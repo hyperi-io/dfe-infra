@@ -69,9 +69,11 @@ placement:
     operate/transforms.md: "Operate / Transforms"
     operate/splunk-transforms.mdx: "Operate / Transforms"
     operate/users-and-oidc.md: "Operate / Users and OIDC"
+    operate/organisations.md: "Operate / Users and OIDC"
     operate/detections-and-hunts.md: "Operate / Detections and hunts"
     operate/monitoring.md: "Operate / Monitoring"
     operate/day-to-day.md: "Operate / Day to day and troubleshooting"
+    operate/lakehouse-export.md: "Operate / Archiving"
     ai-agents.md: "Reference / Using the docs with an AI agent"
   culvert:
     default: "Deploy / Remote access (culvert, optional)"
@@ -154,6 +156,7 @@ placement:
     deployment/upgrades.md: "Operate / Upgrade"
     deployment/migrating-from-2.1.md: "Operate / Upgrade"
     deployment/upgrade-rollback.md: "Operate / Upgrade"
+    apache-nifi.md: "Operate / Sources"
     integrations/: "Operate / Sources"
   dfe-loader:
     default: "Operate / Day to day and troubleshooting"

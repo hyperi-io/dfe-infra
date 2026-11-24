@@ -29,12 +29,16 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 
+from dfe_suite import landing
 from dfe_suite.landing import dispatch_release
+from dfe_suite.proc import PR_VIEW_ATTEMPTS, FleetError
 from dfe_suite.rebuild import (
     _check_unoptimized_caller,
+    _emit_dockerfile,
     _gate_exclusions,
     _gate_features,
     _release_timeout,
+    _relock,
     _suite_node,
 )
 from dfe_suite.repos import remove_worktree, walk_worktree
@@ -162,6 +166,8 @@ class OnPathTestCase(unittest.TestCase):
         os.environ["PATH"] = f"{self.bindir}{os.pathsep}{os.environ.get('PATH', '')}"
         _fake_bin(self.bindir, "gh", status=1)
         _fake_bin(self.bindir, "cargo", status=1)
+        # No offload host, so cargo runs here unless a test names one.
+        _fake_bin(self.bindir, "hyperi-ai", status=1)
 
 
 class _ScriptedRegistry:
@@ -595,6 +601,184 @@ class RebuildRsTests(OnPathTestCase):
         output = buffer.getvalue()
         assert "the Dockerfile and docs/ artefacts" in output
         assert "chart/" not in output
+
+
+class RebuildRsOffloadTests(RebuildRsTests):
+    """With an offload host set, every cargo call that compiles goes through hyperi-ai remote run."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        hyperi = self.bindir / "hyperi-ai"
+        hyperi.write_text(
+            "#!/bin/sh\n"
+            f'printf "%s\\n" "$@" >> "{self.bindir / "hyperi-ai.argv"}"\n'
+            'if [ "$1 $2 $3" = "config get remote.host" ]; then echo build.example.internal; exit 0; fi\n'
+            'if [ "$1 $2 $3" = "remote run --" ]; then shift 3; exec "$@"; fi\n'
+            "exit 1\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+        hyperi.chmod(0o755)
+        cargo = self.bindir / "cargo"
+        cargo.write_text(
+            "#!/bin/sh\n"
+            f'printf "%s\\n" "$@" >> "{self.bindir / "cargo.argv"}"\n'
+            'case " $* " in *" config-schema "*) mkdir -p docs && echo "{}" > docs/config-schema.json ;; esac\n'
+            "echo 'FROM scratch'\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+        cargo.chmod(0o755)
+
+    def test_every_compiling_cargo_call_runs_on_the_offload_host(self) -> None:
+        assert sf.cmd_rebuild_rs(self._args("--no-tests", "--gate", "local")) == 0
+        runs = _fake_argv(self.bindir, "hyperi-ai")
+        offloaded = [
+            runs[i + 3]
+            for i in range(len(runs) - 3)
+            if runs[i : i + 3] == ["remote", "run", "--"]
+        ]
+        # emit-dockerfile and config-schema go as shell lines, so their output comes back on stdout.
+        assert offloaded.count("sh") == 2
+        assert offloaded.count("cargo") == 1
+        assert "clippy" in _fake_argv(self.bindir, "cargo")
+        assert (self.repo / "Dockerfile").read_text(
+            encoding="utf-8"
+        ).strip() == "FROM scratch"
+        assert (self.repo / "docs" / "config-schema.json").read_text(
+            encoding="utf-8"
+        ).strip() == "{}"
+
+
+_ARC_SWAP_CONFLICT = (
+    "error: failed to select a version for `arc-swap`.\n"
+    "    ... required by package `aws-sdk-s3 v1.161.0`\n"
+    "  previously selected package `arc-swap v1.9.5`"
+)
+
+
+class RustRebuildFailureTests(OnPathTestCase):
+    """A relock lifts the floor a new scalo raises, and a failed emit says why."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        scratch = tempfile.TemporaryDirectory(prefix="scalo-fleet-fail-")
+        self.addCleanup(scratch.cleanup)
+        self.repo = Path(scratch.name)
+
+    def _cargo(self, body: str) -> None:
+        script = self.bindir / "cargo"
+        script.write_text(
+            "#!/bin/sh\n"
+            f'printf "%s\\n" "$*" >> "{self.bindir / "cargo.calls"}"\n' + body,
+            encoding="utf-8",
+            newline="\n",
+        )
+        script.chmod(0o755)
+
+    def _calls(self) -> list[str]:
+        return (self.bindir / "cargo.calls").read_text(encoding="utf-8").splitlines()
+
+    def _precise_fails_until(self, lifted: str, stderr: str) -> None:
+        # The precise update fails until `cargo update -p <lifted>` has run.
+        marker = self.bindir / "lifted"
+        self._cargo(
+            f'case "$*" in\n'
+            f'  "update -p {lifted}") touch "{marker}" ;;\n'
+            f'  *--precise*) [ -e "{marker}" ] || {{ printf "%s\\n" "{stderr}" >&2; exit 101; }} ;;\n'
+            "esac\n"
+        )
+
+    def test_a_named_conflict_is_updated_and_the_precise_update_retried(self) -> None:
+        self._precise_fails_until("arc-swap", _ARC_SWAP_CONFLICT.replace("`", "\\`"))
+        _relock(self.repo, "scalo", "2.14.34")
+        calls = self._calls()
+        assert "update -p arc-swap" in calls
+        assert calls[-1] == "update -p scalo --precise 2.14.34"
+
+    def test_a_relock_that_cannot_fit_raises_with_cargos_reason(self) -> None:
+        cases = [
+            ("the conflict outlives its update", "nothing", _ARC_SWAP_CONFLICT),
+            (
+                "cargo names no package",
+                "nothing",
+                "error: no matching package named `scalo`",
+            ),
+        ]
+        for name, lifted, stderr in cases:
+            with self.subTest(name):
+                (self.bindir / "cargo.calls").unlink(missing_ok=True)
+                self._precise_fails_until(lifted, stderr.replace("`", "\\`"))
+                with pytest.raises(
+                    FleetError, match=r"cannot lock scalo 2\.14\.34"
+                ) as raised:
+                    _relock(self.repo, "scalo", "2.14.34")
+                assert stderr.splitlines()[0] in str(raised.value)
+                assert self._calls().count("update -p arc-swap") <= 1
+
+    def test_a_failed_emit_names_a_compile_error_as_one(self) -> None:
+        cases = [
+            (
+                "a rustc error is a compile failure",
+                "echo 'error[E0560]: struct has no field named `spool`' >&2\n"
+                "echo ' --> src/service.rs:1215' >&2\nexit 101\n",
+                "dfe-receiver does not compile against scalo 2.14.37",
+            ),
+            (
+                "an exit 101 with no rustc error stays an emit failure",
+                "echo 'thread main panicked at src/main.rs:9' >&2\nexit 101\n",
+                "every emit spelling failed, the first exiting 101",
+            ),
+            (
+                "another exit stays an emit failure",
+                "echo 'error: unrecognized subcommand' >&2\nexit 2\n",
+                "every emit spelling failed, the first exiting 2",
+            ),
+        ]
+        for name, body, want in cases:
+            with self.subTest(name):
+                self._cargo(body)
+                with pytest.raises(FleetError) as raised:
+                    _emit_dockerfile(self.repo, "dfe-receiver", "scalo 2.14.37")
+                message = str(raised.value)
+                assert want in message
+                assert body.splitlines()[0].split("'")[1] in message
+                assert not (self.repo / "Dockerfile").exists()
+
+
+class PrWaitTests(OnPathTestCase):
+    """A failed PR read is one more poll, up to PR_VIEW_ATTEMPTS in a row."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.addCleanup(setattr, landing, "RUN_POLL_SECONDS", landing.RUN_POLL_SECONDS)
+        landing.RUN_POLL_SECONDS = 0
+
+    def _gh_failing_first(self, failures: int) -> None:
+        """A gh whose first ``failures`` pr views fail as GraphQL does, then CLEAN."""
+        count = self.bindir / "gh.views"
+        clean = '{"mergeStateStatus":"CLEAN","mergeable":"MERGEABLE","statusCheckRollup":[]}'
+        script = self.bindir / "gh"
+        script.write_text(
+            "#!/bin/sh\n"
+            f'echo x >> "{count}"\n'
+            f'if [ $(wc -l < "{count}") -le {failures} ]; then\n'
+            "  echo 'GraphQL: Something went wrong while executing your query' >&2\n"
+            "  exit 1\nfi\n"
+            f"echo '{clean}'\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+        script.chmod(0o755)
+
+    def test_reads_that_fail_below_the_limit_are_retried(self) -> None:
+        self._gh_failing_first(PR_VIEW_ATTEMPTS - 1)
+        landing.await_pr_mergeable("example-org/dfe-app", 380)
+
+    def test_reads_that_fail_at_the_limit_end_the_wait(self) -> None:
+        self._gh_failing_first(PR_VIEW_ATTEMPTS)
+        with pytest.raises(FleetError, match="Something went wrong"):
+            landing.await_pr_mergeable("example-org/dfe-app", 380)
 
 
 def _target_recording_cargo(directory: Path) -> Path:

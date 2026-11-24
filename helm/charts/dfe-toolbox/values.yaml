@@ -43,10 +43,10 @@ image:
   # stacks.<current>.toolbox.dfe-toolbox in versions.yaml -- check_versions_drift.py
   # holds this and Chart.yaml's appVersion to the same pin (CHECKS entries
   # "dfe-toolbox chart image tag" / "dfe-toolbox chart appVersion").
-  tag: "v1.0.7"
+  tag: "v1.0.8"
   # stacks.<current>.digests.dfe-toolbox-base, drift-checked ("dfe-toolbox chart
   # image digest"); dfe-common.image renders tag@digest.
-  digest: "sha256:bd633946e6defb53dbe29d046543330782d8f2f97260e7288e69692281079d15"
+  digest: "sha256:2d3940c3fe864978c46d9ce1d2d276f7f2a42694753d4a358ba088321ae9109d"
   pullPolicy: IfNotPresent
 
 # The DFE namespaces the pod may read from when kubeApiAccess is true, and

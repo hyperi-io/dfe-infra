@@ -99,9 +99,9 @@ kafka:
         # kafka.cliImage has no MSK IAM auth jar, so an init container fetches and verifies it.
         iamAuth:
           # An aws/aws-msk-iam-auth release tag.
-          version: "2.3.9"
+          version: "2.4.0"
           # sha256 of aws-msk-iam-auth-<version>-all.jar as published. A mismatch fails the Job.
-          sha256: "922064f312ddc8a5f3dbe65fcef3d02ddbd588a02e3a6f0fca4b5a4dbec1ba43"
+          sha256: "b758405bd032d0aa3579eabe3fc3344da7003d723c4bb687767924450da7bbfd"
           # Empty derives the GitHub release URL from version. An air-gapped deploy sets a mirror, and the checksum must still match.
           url: ""
   # Decided at deploy and refused afterwards (the engine holds it as a protected var). Matrix: docs/deployment/storage.md.
@@ -175,8 +175,8 @@ kafka:
       # The four thread dials render only at a broker CPU limit (else request) of this many vCPU or more. Below it they only add context switching.
       threadDialVcpuFloor: 4
     single:
-      # On: the single tier has no topic operator to create the receiver's dynamic {source}_land topics.
-      autoCreateTopics: true
+      # Off, as on cluster: dfe-engine creates main_land, the DLQs and every source's topics at startup, and scalo producers never auto-create.
+      autoCreateTopics: false
 
   # Cruise Control, on by default at cluster mode. Kafka places partitions stickily, so without a rebalancer a scale-out leaves the load where it was. A single broker has none.
   rebalancing:

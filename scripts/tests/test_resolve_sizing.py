@@ -3489,15 +3489,15 @@ def test_the_no_estimate_floor_does_not_size_up_on_a_fixed_volume_profile(
     so the physical xlarge floor is gone and every use case falls through to
     its OWN real floor:
 
-    - eks-system lands on `m8g.large` (2 vCPU / 8 GiB). kafka-broker takes
-      `m8g.xlarge` (4 vCPU / 16 GiB): sizing.yaml's kafka_broker_ram_gib floor
-      of 8 GiB is more than an `m8g.large` leaves a pod once the kernel, the
+    - eks-system lands on `m9g.large` (2 vCPU / 8 GiB). kafka-broker takes
+      `m9g.xlarge` (4 vCPU / 16 GiB): sizing.yaml's kafka_broker_ram_gib floor
+      of 8 GiB is more than an `m9g.large` leaves a pod once the kernel, the
       kubelet and the DaemonSets have their share.
-    - kraft-controller takes `m8g.large` for the same reason: its 4 GiB
-      ram_gib_floor is more than an `m8g.medium` leaves a pod.
-    - clickhouse lands on `r8gd.large` (2 vCPU / 16 GiB) for the same reason
+    - kraft-controller takes `m9g.large` for the same reason: its 4 GiB
+      ram_gib_floor is more than an `m9g.medium` leaves a pod.
+    - clickhouse lands on `r9gd.large` (2 vCPU / 16 GiB) for the same reason
       as kafka-broker.
-    - keeper now lands on `m8g.large` too: its IOPS demand tracks the
+    - keeper now lands on `m9g.large` too: its IOPS demand tracks the
       resolved ingest instead of a flat target independent of it -- parts a
       second (ingest over the loader's flush size) times the measured
       appends a part (sizing.yaml's keeper.raft_appends_per_part), floored
@@ -3545,15 +3545,15 @@ def test_the_no_estimate_floor_does_not_size_up_on_a_fixed_volume_profile(
     shapes = {
         name: body["instance_types"][0] for name, body in doc["resolved_shapes"].items()
     }
-    assert shapes["kafka-broker"] == "m8g.xlarge", shapes
-    assert shapes["kraft-controller"] == "m8g.large", shapes
-    assert shapes["clickhouse"] == "r8gd.large", shapes
+    assert shapes["kafka-broker"] == "m9g.xlarge", shapes
+    assert shapes["kraft-controller"] == "m9g.large", shapes
+    assert shapes["clickhouse"] == "r9gd.large", shapes
     # Keeper's IOPS demand now scales with ingest: at the floor that is the
-    # idle floor (100) plus root's 300, comfortably under m8g.large's 3,600
+    # idle floor (100) plus root's 300, comfortably under m9g.large's 3,600
     # baseline, so nothing forces a step past compute-shapes.yaml's own
     # keeper floor size (large -- 2 vCPU / 8 GiB, above the 1 vCPU / 3 GiB
     # sizing.yaml itself would ask for).
-    assert shapes["keeper"] == "m8g.large", shapes
+    assert shapes["keeper"] == "m9g.large", shapes
 
 
 # ---------------------------------------------------------------------------

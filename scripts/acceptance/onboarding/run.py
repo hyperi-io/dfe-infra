@@ -43,14 +43,13 @@ import os
 import re
 import socket
 import sys
-import uuid
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 import access_summary as access_summary_file
 
-from acceptance.clients import engine_token, remove_source, setup_status
+from acceptance.clients import engine_token, remove_source, run_name, setup_status
 from acceptance.onboarding import wizard
 
 # The nav entries every role sees, so the check is a rendered console rather than
@@ -59,6 +58,8 @@ CONSOLE_LANDMARKS = ("Sources", "Meta Schemas")
 
 # The login page's local-account tab, shown once a provider is registered.
 LOCAL_LOGIN_TAB = "Login with Local"
+# The login form's user field: dfe-ui 1.7.46 and later say "Username or Email".
+LOGIN_USER_LABELS = ("Username", "Username or Email")
 
 # The Add Source drawer's name field: "Source Name *" from ui v1.7.0, "Source" before it.
 SOURCE_NAME_LABELS = ("Source Name", "Source")
@@ -144,12 +145,12 @@ def sign_in(driver: Driver, user: str, password: str) -> None:
     # identity provider registered then opens on the OIDC tab, with the local
     # accounts behind the other one, so the tab is looked for only once either has rendered.
     local = driver.page.get_by_role("tab", name=LOCAL_LOGIN_TAB, exact=True)
-    username = driver.textbox("Username")
+    username = driver.textbox(*LOGIN_USER_LABELS)
     username.or_(local).first.wait_for(state="visible", timeout=STEP_TIMEOUT_MS)
     if local.count():
         local.first.click(timeout=STEP_TIMEOUT_MS)
     username.wait_for(state="visible", timeout=STEP_TIMEOUT_MS)
-    driver.textbox("Username").fill(user)
+    username.fill(user)
     driver.textbox("Password").fill(password)
     driver.button("Login").click(timeout=STEP_TIMEOUT_MS)
 
@@ -230,6 +231,46 @@ def sign_in_as_admin(
         sign_in(driver, user, new_password)
         driver.page.wait_for_url(_left_login, timeout=STEP_TIMEOUT_MS)
     return new_password
+
+
+#: The display name the first-user step gives the account it makes.
+FIRST_USER_NAME = "Acceptance Operator"
+
+
+def fill_first_user(driver: Driver, user: str, password: str) -> None:
+    """Fill the first-user form. dfe-ui 1.7.46 and later also require a Name."""
+    driver.textbox("Username").fill(user)
+    name = driver.textbox("Name")
+    if name.count():
+        name.fill(FIRST_USER_NAME)
+    # The console requires an address here. `.invalid` is reserved, so the account
+    # this run makes can never be mailed by a deployment that wires up email.
+    driver.textbox("Email").fill(f"{user}@acceptance.invalid")
+    driver.textbox("Password").fill(password)
+
+
+#: How long an account change gets to open the step-up dialog before the run takes it as absent.
+STEP_UP_WAIT_MS = 5_000
+
+
+def confirm_step_up(driver: Driver, password: str) -> bool:
+    """Answer the "Confirm it's you" dialog dfe-ui 1.7.46 opens on an account change.
+
+    Matched by its role and title, not its body text, which names the change.
+
+    Returns:
+        True when the dialog opened and was answered, False when the console has none.
+    """
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
+    dialog = driver.page.get_by_role("dialog", name="Confirm it's you")
+    try:
+        dialog.wait_for(state="visible", timeout=STEP_UP_WAIT_MS)
+    except PlaywrightTimeoutError:
+        return False
+    dialog.get_by_label("Your password").fill(password)
+    dialog.get_by_role("button", name="Confirm").click(timeout=STEP_TIMEOUT_MS)
+    return True
 
 
 def walk_organisation(driver: Driver, org: str) -> None:
@@ -344,12 +385,9 @@ def walk_wizard(
 
     driver.page.wait_for_url(f"**/setup/{wizard.FIRST_USER}", timeout=STEP_TIMEOUT_MS)
     driver.seen.append(wizard.FIRST_USER)
-    driver.textbox("Username").fill(user)
-    # The console requires an address here. `.invalid` is reserved, so the account
-    # this run makes can never be mailed by a deployment that wires up email.
-    driver.textbox("Email").fill(f"{user}@acceptance.invalid")
-    driver.textbox("Password").fill(password)
+    fill_first_user(driver, user, password)
     driver.button("Create Account").click(timeout=STEP_TIMEOUT_MS)
+    confirm_step_up(driver, admin_password)
     # The console keeps a rejected form on the screen with its field errors, so
     # leaving it is what says the account was made rather than the click landing.
     driver.page.wait_for_url(
@@ -443,7 +481,7 @@ def check_console(
         "navigation", "done", f"the console renders {', '.join(CONSOLE_LANDMARKS)}"
     )
 
-    name = f"onboard{uuid.uuid4().hex[:8]}"
+    name = run_name("onboard")
     driver.button("Add Source").first.click(timeout=STEP_TIMEOUT_MS)
     fill_source_form(driver, name)
     driver.button("Add Source").last.click(timeout=STEP_TIMEOUT_MS)

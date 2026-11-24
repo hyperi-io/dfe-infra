@@ -142,6 +142,51 @@ def test_an_absent_checkout_is_cloned_and_a_present_one_is_retargeted(
         git(checkout, "pull", "-q")
 
 
+def _commit(repo: Path, name: str) -> None:
+    (repo / name).write_text(f"{name}\n", encoding="utf-8")
+    git(repo, "add", name)
+    git(repo, "commit", "-q", "-m", f"chore: {name}")
+
+
+@pytest.mark.parametrize(
+    ("remote_moves", "local_moves", "outcome"),
+    [
+        (False, False, "unchanged"),
+        (True, False, "fast-forwarded"),
+        (False, True, "kept"),
+        (True, True, "refused"),
+    ],
+)
+def test_a_kept_checkout_is_brought_up_to_date_or_refused(
+    bare: Path, tmp_path: Path, remote_moves: bool, local_moves: bool, outcome: str
+) -> None:
+    checkout = tmp_path / "work" / "deploy"
+    repo = drs.BundledRepo(url_override=str(bare))
+    with repo.open(checkout):
+        pass
+    if remote_moves:
+        other = tmp_path / "other"
+        subprocess.run(["git", "clone", "-q", str(bare), str(other)], check=True)
+        _commit(other, "values-sync.yaml")
+        git(other, "push", "-q", "origin", "main")
+    if local_moves:
+        _commit(checkout, "pins-bump.yaml")
+    local_head = git(checkout, "rev-parse", "HEAD")
+    if outcome == "refused":
+        with pytest.raises(drs.SessionError, match=r"1 commit.*lacks.*1 it lacks"):
+            with repo.open(checkout):
+                pass
+        return
+    with repo.open(checkout):
+        pass
+    head = git(checkout, "rev-parse", "HEAD")
+    if outcome == "fast-forwarded":
+        assert (checkout / "values-sync.yaml").exists()
+        assert head == git(checkout, "rev-parse", "origin/main")
+    else:
+        assert head == local_head
+
+
 def test_a_checkout_that_cannot_be_attached_says_why(tmp_path: Path) -> None:
     with pytest.raises(drs.SessionError, match="cannot attach"):
         with drs.BundledRepo(url_override=str(tmp_path / "missing.git")).open(

@@ -28,7 +28,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from acceptance.clients import RECORD_TEXT
+from acceptance.clients import RECORD_TEXT, receiver_headers, table_ref
 
 # The shippers a site runs now. The Elasticsearch release dfe-transform-elastic
 # compiles its ingest pipelines from (9.2.2, its scripts/compat.py) is a separate
@@ -181,6 +181,10 @@ def write_inputs(
 
     # Logstash adds nothing: the events it posts are the envelopes filebeat built,
     # a pipeline batch to one JSON array, which the receiver splits per element.
+    headers = "".join(
+        f'    headers => {{ "{name}" => "{value}" }}\n'
+        for name, value in receiver_headers().items()
+    )
     (pair.workdir / "logstash.conf").write_text(
         "input {\n"
         f"  beats {{ port => {BEATS_PORT} }}\n"
@@ -190,6 +194,7 @@ def write_inputs(
         f'    url => "{pair.receiver_url}"\n'
         '    http_method => "post"\n'
         '    format => "json_batch"\n'
+        f"{headers}"
         "  }\n"
         "}\n",
         encoding="utf-8",
@@ -356,14 +361,14 @@ def envelope_evidence(store, table: str) -> tuple[int, list[str], str]:
     shape, so it is counted rather than assumed of every row.
     """
     where = _AGENT_ROWS
-    carrying = store.scalar(f"SELECT count() FROM {table} {where}")
+    carrying = store.scalar(f"SELECT count() FROM {table_ref(table)} {where}")
     if not carrying:
         return (
             0,
             [],
             f"no row in {table} carries {AGENT_PATH}, so none of them came off the agent",
         )
-    rows = store.query(f"SELECT {RECORD_TEXT} FROM {table} {where} LIMIT 1")
+    rows = store.query(f"SELECT {RECORD_TEXT} FROM {table_ref(table)} {where} LIMIT 1")
     if not rows or not rows[0] or not rows[0][0]:
         return carrying, [], f"{table} would not hand back a row carrying {AGENT_PATH}"
     try:
@@ -387,13 +392,15 @@ def kept_outcome(store, table: str) -> tuple[str, str]:
     Returns:
         The status and detail for ``Driver.record``.
     """
-    carrying = store.scalar(f"SELECT count() FROM {table} {_AGENT_ROWS}")
+    carrying = store.scalar(f"SELECT count() FROM {table_ref(table)} {_AGENT_ROWS}")
     if not carrying:
         return (
             "failed",
             f"no row in {table} carries {AGENT_PATH}, so none of them came off the agent",
         )
-    kept = store.scalar(f"SELECT count() FROM {table} {_AGENT_ROWS} AND {_KEPT}")
+    kept = store.scalar(
+        f"SELECT count() FROM {table_ref(table)} {_AGENT_ROWS} AND {_KEPT}"
+    )
     detail = (
         f"{kept} of {carrying} agent row(s) kept agent.type {AGENT_TYPE} (filebeat's own) and "
         f"data_stream.namespace {DATA_STREAM_NAMESPACE} (operator-stamped with add_fields)"
@@ -402,7 +409,7 @@ def kept_outcome(store, table: str) -> tuple[str, str]:
         return "done", detail
     rows = store.query(
         f"SELECT {_field('agent', 'type')}, {_field('data_stream', 'namespace')} "
-        f"FROM {table} {_AGENT_ROWS} AND NOT ({_KEPT}) LIMIT 1"
+        f"FROM {table_ref(table)} {_AGENT_ROWS} AND NOT ({_KEPT}) LIMIT 1"
     )
     if rows and len(rows[0]) == 2:
         detail += f". One landed with agent.type {rows[0][0]!r} and data_stream.namespace {rows[0][1]!r}"

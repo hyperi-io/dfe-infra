@@ -287,6 +287,50 @@ def _multi_arch_except(single: str):
     return reader
 
 
+_VECTOR_PINS = {
+    "apps": {"dfe-transform-vector": "v1.0.65"},
+    "digests": {"dfe-transform-vector": "sha256:ccc"},
+    "services": {"vector": "0.61.0-alpine"},
+}
+
+
+def test_the_release_gate_holds_the_baked_vector_to_services_vector() -> None:
+    """dfe-transform-vector bakes a Vector release that must be the one dfe-fetcher runs."""
+    both = {"linux/amd64", "linux/arm64"}
+    cases = (
+        ("ok", {p: {stack.VECTOR_LABEL: "0.61.0"} for p in both}, "", "ok"),
+        (
+            "one arch drifts",
+            {
+                "linux/amd64": {stack.VECTOR_LABEL: "0.61.0"},
+                "linux/arm64": {stack.VECTOR_LABEL: "0.60.1"},
+            },
+            "",
+            "FAIL",
+        ),
+        ("no label", {p: {} for p in both}, "", "FAIL"),
+        ("no platforms", {}, "", "FAIL"),
+        ("registry unreadable", None, "denied", "ERROR"),
+    )
+    original = stack.registry_pins.ref_labels
+    try:
+        for label, found, err, want in cases:
+            stack.registry_pins.ref_labels = lambda ref, found=found, err=err: (
+                found,
+                err,
+            )
+            got = stack.vector_finding(_VECTOR_PINS, "registry.example/org")
+            expect(f"{label}: {want}", got is not None and got[0] == want, f"{got}")
+    finally:
+        stack.registry_pins.ref_labels = original
+    unpinned = {**_VECTOR_PINS, "services": {}}
+    expect(
+        "no services.vector: nothing to hold it to",
+        stack.vector_finding(unpinned, "registry.example/org") is None,
+        "",
+    )
+
+
 def test_platforms_fail_an_index_missing_an_architecture() -> None:
     findings = _with_platforms(
         _multi_arch_except("a-fork"),
@@ -1749,6 +1793,8 @@ def _cut_into(
     head: object,
     summary: object = _a_commit,
     fixture: str = _CUT_FIXTURE,
+    version: str = "9.9.0-rc.3",
+    from_stack: str | None = None,
 ) -> int:
     """Run a cut over the fixture with the registry and git reads stubbed out."""
     import argparse
@@ -1768,8 +1814,8 @@ def _cut_into(
     try:
         return stack.cmd_cut(
             argparse.Namespace(
-                version="9.9.0-rc.3",
-                from_stack=None,
+                version=version,
+                from_stack=from_stack,
                 maturity=None,
                 apps=None,
                 org="test-org",
@@ -1920,8 +1966,9 @@ def test_a_cut_that_moves_the_ref_writes_evidence_the_checker_accepts() -> None:
     )
 
 
-def test_a_cut_that_leaves_the_ref_alone_keeps_its_evidence() -> None:
-    """A ref already at main did not move, so its comment is still true."""
+def test_a_cut_that_leaves_the_ref_alone_does_not_copy_its_evidence() -> None:
+    """A ref already at main did not move, so its reason stays in the block that
+    moved it and the machine-read annotation above the pin stays beside it."""
     import tempfile
 
     import check_pin_evidence as evidence
@@ -1937,17 +1984,22 @@ def test_a_cut_that_leaves_the_ref_alone_keeps_its_evidence() -> None:
         text = (tmp / "versions.yaml").read_text(encoding="utf-8")
 
     expect("the cut writes the file", rc == 0, f"exit {rc}")
-    expect(
-        "the comment and pin line carry over byte for byte",
-        _OLD_PIN_LINES in _cut_block(text),
-        _cut_block(text),
-    )
     stacks = evidence.read_pins(text)
     expect(
-        "the evidence reads the same as the stack it was cut from",
-        stacks["9.9.0-rc.3"]["content.a-git-repo"].evidence
-        == stacks["9.9.0-rc.2"]["content.a-git-repo"].evidence,
+        "the held pin carries no copied reason",
+        "old trailing note" not in stacks["9.9.0-rc.3"]["content.a-git-repo"].evidence,
         f"{stacks['9.9.0-rc.3']['content.a-git-repo'].evidence!r}",
+    )
+    expect(
+        "the source stack keeps the reason",
+        "old trailing note" in stacks["9.9.0-rc.2"]["content.a-git-repo"].evidence,
+        f"{stacks['9.9.0-rc.2']['content.a-git-repo'].evidence!r}",
+    )
+    expect(
+        "the Renovate annotation above the held pin survives",
+        "      # renovate: datasource=git-refs depName=https://example.test/a-git-repo\n"
+        in _cut_block(text),
+        _cut_block(text),
     )
 
 
@@ -2064,6 +2116,74 @@ def test_cut_repoints_previous_at_the_stack_it_was_cut_from() -> None:
             root["stacks"]["9.9.0-rc.2"]["stack"]["previous"] == "9.9.0-rc.1",
             f"{root['stacks']['9.9.0-rc.2']['stack']['previous']!r}",
         )
+
+
+def _stack_block(name: str, maturity: str, previous: str) -> str:
+    """One stack block in the shape _CUT_FIXTURE uses."""
+    return (
+        f"  {name}:\n"
+        f'    maturity: "{maturity}"\n'
+        "    apps:\n"
+        '      an-app: "v1.0.0"\n'
+        "    digests:\n"
+        '      an-app: "sha256:aaa"\n'
+        "    content:\n"
+        '      a-tagged-repo: "v1.0.0"\n'
+        f'      a-git-repo: "{_OLD_SHA}"\n'
+        "    stack:\n"
+        f'      previous: "{previous}"\n'
+        '      upgrade-order: "an-app"\n'
+    )
+
+
+_CUT_CHAIN_FIXTURE = (
+    'current: "9.9.0"\n'
+    "stacks:\n"
+    + _stack_block("9.9.0-rc.1", "rc", "")
+    + _stack_block("9.9.0-rc.2", "rc", "9.9.0-rc.1")
+    + _stack_block("9.9.0", "release", "9.9.0-rc.2")
+    + _stack_block("9.9.0-fix.1", "release", "9.9.0")
+    + _stack_block("9.9.0-rc.5", "rc", "")
+    + _stack_block("9.9.0-rc.6", "rc", "9.9.0-rc.5,9.9.0")
+)
+
+
+def test_a_cut_names_the_release_a_recut_source_sits_beside() -> None:
+    """A re-cut sorts below its release, so that release stays a predecessor.
+
+    check-upgrade takes a cut's declared previous as authoritative. A cut from
+    2.2.2-fix.1 therefore names 2.2.2 and 2.2.2-fix.1, or an upgrade from either
+    is refused. A plain source is still its own only predecessor.
+    """
+    import tempfile
+
+    cases = [
+        # (cut from, the version it is cut as, the previous it declares)
+        ("9.9.0", "9.9.1-rc.1", "9.9.0"),
+        ("9.9.0-rc.2", "9.9.0-rc.3", "9.9.0-rc.2"),
+        ("9.9.0-fix.1", "9.9.1-rc.1", "9.9.0,9.9.0-fix.1"),
+        ("9.9.0-rc.6", "9.9.0-rc.7", "9.9.0,9.9.0-rc.6"),
+    ]
+    for source, version, want in cases:
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            rc = _cut_into(
+                tmp,
+                lambda org, repo, ref="main": _OLD_SHA,
+                fixture=_CUT_CHAIN_FIXTURE,
+                version=version,
+                from_stack=source,
+            )
+            label = f"a cut from {source} as {version}"
+            expect(f"{label} writes the file", rc == 0, f"exit {rc}")
+            text = (tmp / "versions.yaml").read_text(encoding="utf-8")
+            stacks = stack.parse_simple_yaml(text)["stacks"]
+            cut = stacks.get(version, {}).get("stack", {})
+            expect(
+                f"{label} declares previous {want}",
+                cut.get("previous") == want,
+                f"previous={cut.get('previous')!r}",
+            )
 
 
 def test_a_release_title_carries_the_stack_name_only_when_it_has_one() -> None:
@@ -2229,6 +2349,30 @@ def _chart_cut(served: dict) -> tuple[str | None, str, list[tuple[str, str, str]
                 stack.registry_pins.tag_digest,
             ) = original
         return refusal, (tmp / "versions.yaml").read_text(encoding="utf-8"), asked
+
+
+def test_a_chart_repin_writes_its_note_on_the_pin_line() -> None:
+    """With or without an old note, the version note ends the digest's own line."""
+    for label, line, want in (
+        (
+            "a pin with a note",
+            '      an-app: "sha256:old"   # 2.0.0\n',
+            '      an-app: "sha256:new"   # 3.0.0\n',
+        ),
+        (
+            "a pin without a note",
+            '      an-app: "sha256:old"\n',
+            '      an-app: "sha256:new"  # 3.0.0\n',
+        ),
+    ):
+        block = ["    chart-digests:\n", line, "    content:\n"]
+        moved = stack._rewrite_chart_pin(block, "an-app", "sha256:new", "3.0.0")
+        expect(f"{label} is found", moved, repr(block))
+        expect(
+            f"{label} stays one line",
+            block == ["    chart-digests:\n", want, "    content:\n"],
+            repr(block),
+        )
 
 
 def test_a_cut_repins_each_thin_chart_at_the_version_its_tag_names() -> None:
