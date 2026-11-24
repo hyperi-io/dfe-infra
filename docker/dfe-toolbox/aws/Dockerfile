@@ -4,12 +4,12 @@
 #
 # ARG defaults mirror versions.yaml's toolbox.* pins (drift-checked); the
 # workflow overrides them at build time from the same source.
-ARG BASE_TAG="v1.0.7"
+ARG BASE_TAG="v1.0.8"
 
 FROM ghcr.io/hyperi-io/dfe-toolbox-base:${BASE_TAG}
 
 ARG TARGETARCH
-ARG AWS_CLI_VERSION="2.38.5"
+ARG AWS_CLI_VERSION="2.40.4"
 ARG AWS_SSM_PLUGIN_VERSION="1.2.896.0"
 
 USER 0

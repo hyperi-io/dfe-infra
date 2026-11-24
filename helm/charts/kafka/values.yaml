@@ -99,7 +99,7 @@ kafka:
         # kafka.cliImage has no MSK IAM auth jar, so an init container fetches and verifies it.
         iamAuth:
           # An aws/aws-msk-iam-auth release tag.
-          version: "2.3.9"
+          version: "2.4.0"
           # sha256 of aws-msk-iam-auth-<version>-all.jar as published. A mismatch fails the Job.
           sha256: "922064f312ddc8a5f3dbe65fcef3d02ddbd588a02e3a6f0fca4b5a4dbec1ba43"
           # Empty derives the GitHub release URL from version. An air-gapped deploy sets a mirror, and the checksum must still match.

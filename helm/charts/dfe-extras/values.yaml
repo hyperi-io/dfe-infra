@@ -17,15 +17,15 @@ extras:
   appVersions:
     dfe-engine: "v1.22.93"
     dfe-ui: "v1.7.46"
-    dfe-receiver: "v1.15.71"
-    dfe-loader: "v1.18.75"
-    dfe-archiver: "v1.7.53"
-    dfe-fetcher: "v1.4.60"
-    dfe-transform-vrl: "v1.1.50"
-    dfe-transform-vector: "v1.0.67"
-    dfe-transform-elastic: "v1.1.34"
+    dfe-receiver: "v1.15.72-rc.1"
+    dfe-loader: "v1.18.76-rc.1"
+    dfe-archiver: "v1.7.54-rc.1"
+    dfe-fetcher: "v1.4.61-rc.1"
+    dfe-transform-vrl: "v1.1.51-rc.1"
+    dfe-transform-vector: "v1.0.68-rc.1"
+    dfe-transform-elastic: "v1.1.35-rc.1"
     culvert: "v2.1.30"
-    dfe-hyperdx: "v0.3.27"
+    dfe-hyperdx: "v0.3.28-rc.1"
 
   # Each component's defaults. A layer that sets a key wins, false and empty included.
   defaults:
