@@ -161,7 +161,7 @@ That gives you a history of who changed what and when, and you can put changes t
 
 ## Multi-tenant by default, with visibility control
 
-Index engines usually split tenants by index, with a role per index, so every new customer means new plumbing. DFE is multi-tenant from the first row. Every record carries an `_org_id`, and ClickHouse row policies keep each organisation to its own rows, in the DFE console and in plain SQL alike ([ClickHouse identity](dfe-infra/clickhouse-identity.md)).
+Index engines usually split tenants by index, with a role per index, so every new customer means new plumbing. DFE is multi-tenant from the first row. Every record carries an `_org_id`, and ClickHouse row policies keep each organisation to its own rows, in the DFE console and in plain SQL alike ([organisations and `_org_id`](operate/organisations.md), [ClickHouse identity](dfe-infra/clickhouse-identity.md)).
 
 The same `_org_id` that isolates customers also splits visibility by business unit, region, team, or any line you choose to draw. When someone searches in the DFE console, their view is cut to their organisation on every query, so nobody has to remember to filter.
 
