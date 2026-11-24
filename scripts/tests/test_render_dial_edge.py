@@ -589,9 +589,7 @@ REFUSED_DIALS = {
         '    trusted_proxy_cidrs: ""',
         "    trusted_proxy_cidrs: 192.0.2.0/25, 0.0.0.0/0",
     ),
-    "the renamed substrate key": lambda text: text.replace(
-        "\nplatform: k8s\n", "\nsubstrate: k8s\n"
-    ),
+    "no platform key": lambda text: text.replace("\nplatform: k8s\n", "\n"),
     "the docker-vm platform": lambda text: text.replace(
         "\nplatform: k8s\n", "\nplatform: docker-vm\n"
     ),
@@ -654,8 +652,8 @@ def test_a_refused_dial_leaves_an_existing_env_file_untouched(
             ),
         ),
         (
-            "the renamed substrate key",
-            ("`substrate` was renamed to `platform`",),
+            "no platform key",
+            ("handles platform 'k8s', the dial says None",),
         ),
         (
             "the docker-vm platform",

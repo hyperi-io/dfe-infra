@@ -5,7 +5,7 @@
 #                know what a profile is -- dfe-ops, the matrix harness, the
 #                bootstrap smoke tests, the compose projection, apps.yaml's
 #                default composition -- reads it from here instead of carrying
-#                its own copy of the name list, the broker answer, the substrate
+#                its own copy of the name list, the broker answer, the backing-service
 #                charts or the capacity floor. Stdlib only.
 #  Language:     Python
 #
@@ -30,7 +30,7 @@ and `single`, which is what `compose_profile` records.
     profiles.MODES                    # the Kubernetes deploy modes
     profiles.PROFILE_NAMES            # all six, k8s then compose
     profiles.has_kafka("mesh")        # False
-    profiles.substrate("single")      # ('clickhouse-cluster', 'kafka')
+    profiles.backing_charts("single")  # ('clickhouse-cluster', 'kafka')
     profiles.capacity("scale")        # (6.0, 12884901888, 3)
     profiles.lane_floor("slim")       # 6442450944
 
@@ -75,9 +75,9 @@ class Profile:
     # direct gRPC.
     has_kafka: bool
     description: str
-    # Substrate charts the tier actually deploys -- the offline helm-render
+    # Backing-service charts the tier actually deploys -- the offline helm-render
     # pre-flight renders exactly these.
-    substrate_charts: tuple[str, ...] = ()
+    backing_charts: tuple[str, ...] = ()
     # Guidance floor (cores, bytes, ready nodes) of allocatable capacity.
     # Operating experience, not a published minimum: a breach WARNs, never FAILs.
     capacity_floor: tuple[float, int, int] = (0.0, 0, 0)
@@ -97,7 +97,7 @@ PROFILES: dict[str, Profile] = {
     "slim": Profile(
         platform=KUBERNETES,
         has_kafka=False,
-        substrate_charts=("clickhouse-cluster",),
+        backing_charts=("clickhouse-cluster",),
         capacity_floor=(2.0, 4 * 1024**3, 1),
         lane_floor=6 * 1024**3,
         argocd_values="argocd/values/profile-slim.yaml",
@@ -106,7 +106,7 @@ PROFILES: dict[str, Profile] = {
     "single": Profile(
         platform=KUBERNETES,
         has_kafka=True,
-        substrate_charts=("clickhouse-cluster", "kafka"),
+        backing_charts=("clickhouse-cluster", "kafka"),
         capacity_floor=(4.0, 8 * 1024**3, 1),
         lane_floor=10 * 1024**3,
         argocd_values="argocd/values/profile-single.yaml",
@@ -115,7 +115,7 @@ PROFILES: dict[str, Profile] = {
     "scale": Profile(
         platform=KUBERNETES,
         has_kafka=True,
-        substrate_charts=("clickhouse-cluster", "kafka"),
+        backing_charts=("clickhouse-cluster", "kafka"),
         capacity_floor=(6.0, 12 * 1024**3, 3),
         lane_floor=16 * 1024**3,
         argocd_values="argocd/values/profile-scale.yaml",
@@ -125,7 +125,7 @@ PROFILES: dict[str, Profile] = {
         platform=KUBERNETES,
         has_kafka=False,
         # Same HA sizing as scale: dropping the broker does not shrink the apps.
-        substrate_charts=("clickhouse-cluster",),
+        backing_charts=("clickhouse-cluster",),
         capacity_floor=(6.0, 12 * 1024**3, 3),
         lane_floor=16 * 1024**3,
         argocd_values="argocd/values/profile-mesh.yaml",
@@ -224,8 +224,8 @@ def has_kafka(mode: str) -> bool:
     return bool(profile and profile.has_kafka)
 
 
-def substrate(mode: str) -> tuple[str, ...]:
-    """The substrate charts the mode deploys.
+def backing_charts(mode: str) -> tuple[str, ...]:
+    """The backing-service charts the mode deploys.
 
     Args:
         mode: A deploy mode name.
@@ -236,7 +236,7 @@ def substrate(mode: str) -> tuple[str, ...]:
     Raises:
         KeyError: The mode is not one of MODES.
     """
-    return PROFILES[mode].substrate_charts
+    return PROFILES[mode].backing_charts
 
 
 def lane_floor(mode: str) -> int:
@@ -309,7 +309,7 @@ def emit_shell() -> str:
 def _table() -> str:
     """One line per profile -- the table this module exists to declare, printed."""
     rows = [
-        "profile       broker  substrate charts                floor (cpu/mem/nodes)  lane"
+        "profile       broker  backing charts                  floor (cpu/mem/nodes)  lane"
     ]
     for name in PROFILE_NAMES:
         p = PROFILES[name]
@@ -321,7 +321,7 @@ def _table() -> str:
         lane = f"{p.lane_floor // 1024**3}Gi free" if p.lane_floor else "-"
         rows.append(
             f"{name:<13} {'yes' if p.has_kafka else 'no':<7} "
-            f"{','.join(p.substrate_charts) or '-':<31} "
+            f"{','.join(p.backing_charts) or '-':<31} "
             f"{floor:<22} {lane}"
         )
         rows.append(f"{'':<14}{p.description}")
