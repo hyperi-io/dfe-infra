@@ -11942,7 +11942,7 @@ stacks:
       clickhouse-operator: "0.0.8"
       redpanda-operator: "26.2.5"
       # renovate: datasource=github-releases depName=kubernetes-sigs/aws-load-balancer-controller
-      aws-load-balancer-controller: "3.6.2"
+      aws-load-balancer-controller: "3.6.3"
       # image: public.ecr.aws/karpenter/karpenter
       # renovate: datasource=github-releases depName=aws/karpenter-provider-aws
       karpenter: "1.14.3"
@@ -11969,14 +11969,14 @@ stacks:
       # image: code.forgejo.org/forgejo/forgejo
       forgejo: "15.0.9"
       # renovate: datasource=docker depName=otel/opentelemetry-collector-contrib
-      otel-collector: "0.163.2"
+      otel-collector: "0.165.0"
       # renovate: datasource=docker depName=ghcr.io/openconfig/gnmic
       gnmic: "0.49.1"
       hyperdx: "2.46.0"
       # renovate: datasource=docker depName=ghcr.io/kafbat/kafka-ui
       kafbat: "v1.5.0"
       # renovate: datasource=docker depName=envoyproxy/envoy
-      envoy-proxy: "v1.40.1"
+      envoy-proxy: "v1.40.2"
       # renovate: datasource=docker depName=nginxinc/nginx-unprivileged
       nginx-unprivileged: "1.31.7-trixie"
       # renovate: datasource=docker depName=registry.k8s.io/git-sync/git-sync
@@ -11984,7 +11984,7 @@ stacks:
       # image: timberio/vector
       vector: "0.61.0-alpine"
       # renovate: datasource=github-releases depName=aws/aws-msk-iam-auth
-      aws-msk-iam-auth: "2.3.9"
+      aws-msk-iam-auth: "2.4.0"
       # renovate: datasource=github-releases depName=linkedin/cruise-control-ui
       cruise-control-ui: "0.4.0"
       # renovate: datasource=docker depName=docker.io/library/busybox
@@ -12090,7 +12090,7 @@ stacks:
     content:
       dfe-schemas: "v0.2.32"
       # renovate: datasource=github-tags depName=hyperi-io/dfe-deploy
-      dfe-deploy: "v1.0.33"              # 2026-11-23. The deploy-repo template, seeded from this tag. Its pins.yaml names stack 2.2.3 on the release channel.
+      dfe-deploy: "v1.0.34"              # 2026-11-23. The deploy-repo template, seeded from this tag. Its pins.yaml names stack 2.2.3 on the release channel.
       dfe-docker: "v1.0.13"
       dfe-hyperdx: "v0.3.27"             # 2026-11-23, amd64 and arm64, GA of v0.3.27-rc.1 (same commit 2a89554bb). Merges upstream HyperDX 2.46.0. Retries without max_rows_to_read on role limit errors (#235) and returns 503 from /readyz when the document store is disconnected (#242).
 
@@ -12102,28 +12102,28 @@ stacks:
       # renovate: datasource=docker depName=debian
       debian: "trixie-slim@sha256:62bd423aeee912639ca8ee681c2b762cb3e25137e0a92b20be455898a9f034ad"
       # renovate: datasource=github-releases depName=kubernetes/kubernetes
-      kubectl: "v1.35.9"
+      kubectl: "v1.35.10"
       # renovate: datasource=github-releases depName=helm/helm
-      helm: "v4.3.1"
+      helm: "v4.3.2"
       # renovate: datasource=github-releases depName=argoproj/argo-cd
-      argocd-cli: "v3.5.6"
+      argocd-cli: "v3.6.1"
       argocd-cli-arm64-sha256: "281aea75a1eaea15e2839f12626e78684f76099f09ffb0b05d35f64344ed1256"
       # renovate: datasource=docker depName=quay.io/argoproj/argocd
       argocd-cli-image: "v3.5.6@sha256:8e5cc5bb008df8a09dba439462e58c94c55b7735888d3ebde0c25fc05e4e5335"
       # renovate: datasource=github-releases depName=opentofu/opentofu
-      tofu: "1.13.2"
+      tofu: "1.13.9"
       # renovate: datasource=github-releases depName=mikefarah/yq
-      yq: "v4.54.1"
+      yq: "v4.54.3"
       yq-arm64-sha256: "189088da0c6429ec5178dfaab1a114805f6cab0b61b165ab236efedf1d57a71b"
       # renovate: datasource=docker depName=ghcr.io/mikefarah/yq
       yq-image: "4.54.1@sha256:4b3d9475d65571d28cbb19544d3820ec2945e4c8b2f18279394282b8dc3a592e"
       # renovate: datasource=github-tags depName=aws/aws-cli
-      aws-cli: "2.38.5"
+      aws-cli: "2.41.0"
       # renovate: datasource=github-releases depName=aws/session-manager-plugin
       aws-session-manager-plugin: "1.2.896.0"
       gcloud: "587.0.0"
       # renovate: datasource=pypi depName=azure-cli
-      az-cli: "2.91.0"
+      az-cli: "2.93.0"
       kafka-cli-signer: "4.3.1:365454B8BAF2D52CCCE65EB471650CBCEA26F8A4"
 
     # The EKS managed add-ons terraform/modules/kubernetes-cluster/aws installs, which
