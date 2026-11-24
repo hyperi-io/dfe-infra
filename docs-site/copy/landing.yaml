@@ -20,6 +20,7 @@ hero:
     - {label: Gigabytes to petabytes, to: "/coming-from/#it-runs-on-your-infrastructure"}
     - {label: "Your environment, your control", to: "/coming-from/#it-runs-on-your-infrastructure"}
     - {label: GitOps from the start, to: "/coming-from/#gitops-by-design-from-the-ground-up"}
+    - {label: Multi-tenant by default, to: /operate/organisations/}
     - {label: Open source, href: "https://github.com/hyperi-io"}
 
 # The three figures hyperi-website publishes, worded as it words them.
