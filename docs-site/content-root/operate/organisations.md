@@ -23,7 +23,7 @@ Every common header a source table starts from defines `_org_id` as a non-null, 
 - For fetched data, the source the fetcher polls names its org, and every record it fetches gets that org's tenant id. A source that names none fetches under `unassigned`.
 - A bearer listener no credential lists runs without auth, and its records land under `unassigned`. No organisation can hold that id, so a login that reads every org, such as `admin`, is the one that sees them. Create an ingest credential for your org and point your senders at it, and their records land in your org.
 
-dfe-engine compiles `unassigned` into the receiver, the fetcher and the loader as the tenant for a record that names no org, so a record that reaches the loader without an `_org_id` takes it there too. A topic your own pipeline writes is the exception: a record there without one takes the org of the source the topic belongs to. The loader writes each record to the table its `_source` names, in the shared database, unless the source maps it to another table ([source routing](../dfe-engine/data-plane/source-routing.md#ingest-credentials-and-bearer-listeners)).
+dfe-engine compiles `unassigned` into the receiver, the fetcher and the loader as the tenant for a record that names no org, so a record that reaches the loader without an `_org_id` takes it there too. A topic your own pipeline writes is the exception: a record there without one takes the org of the source the topic belongs to. The loader writes each record to the table its `_source` names, in the shared database, unless the source maps it to another table ([source routing](../dfe-engine/data-plane/source-routing.md)).
 
 ## How ClickHouse holds each org to its rows
 
