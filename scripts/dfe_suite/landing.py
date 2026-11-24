@@ -33,6 +33,7 @@ from typing import NamedTuple
 from dfe_suite.artefacts import Artefact, await_artefact
 from dfe_suite.proc import (
     CHECKS_TIMEOUT,
+    PR_VIEW_ATTEMPTS,
     RUN_APPEAR_TIMEOUT,
     RUN_POLL_SECONDS,
     FleetError,
@@ -333,23 +334,37 @@ def await_pr_mergeable(slug: str, pr: int) -> None:
     PR opens -- treating that as "nothing pending" would merge the change
     unvalidated.
 
+    A failed ``gh pr view`` counts as one more poll, because GitHub's GraphQL
+    API answers "Something went wrong" now and then while the PR is fine.
+
     Raises:
-        FleetError: On a red check, a conflicted PR, or the deadline.
+        FleetError: On a red check, a conflicted PR, the deadline, or
+            ``PR_VIEW_ATTEMPTS`` failed reads in a row.
     """
     say(f"waiting on PR #{pr} checks (early-fail on any red check)")
     deadline = time.monotonic() + CHECKS_TIMEOUT
+    failed_reads = 0
     while True:
-        payload = gh_json(
-            [
-                "pr",
-                "view",
-                str(pr),
-                "-R",
-                slug,
-                "--json",
-                "mergeStateStatus,mergeable,statusCheckRollup",
-            ]
-        )
+        try:
+            payload = gh_json(
+                [
+                    "pr",
+                    "view",
+                    str(pr),
+                    "-R",
+                    slug,
+                    "--json",
+                    "mergeStateStatus,mergeable,statusCheckRollup",
+                ]
+            )
+        except FleetError as exc:
+            failed_reads += 1
+            if failed_reads >= PR_VIEW_ATTEMPTS:
+                raise
+            say(f"PR #{pr} read failed ({failed_reads}/{PR_VIEW_ATTEMPTS}): {exc}")
+            time.sleep(RUN_POLL_SECONDS)
+            continue
+        failed_reads = 0
         data = payload if isinstance(payload, dict) else {}
 
         red = _red_checks(data.get("statusCheckRollup") or [])

@@ -29,8 +29,9 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 
+from dfe_suite import landing
 from dfe_suite.landing import dispatch_release
-from dfe_suite.proc import FleetError
+from dfe_suite.proc import PR_VIEW_ATTEMPTS, FleetError
 from dfe_suite.rebuild import (
     _check_unoptimized_caller,
     _emit_dockerfile,
@@ -715,19 +716,69 @@ class RustRebuildFailureTests(OnPathTestCase):
                 assert stderr.splitlines()[0] in str(raised.value)
                 assert self._calls().count("update -p arc-swap") <= 1
 
-    def test_a_failed_emit_quotes_the_compile_error(self) -> None:
-        self._cargo(
-            "echo 'error[E0046]: not all trait items implemented' >&2\n"
-            "echo ' --> src/sink/grpc/mod.rs:124' >&2\n"
-            "exit 101\n"
+    def test_a_failed_emit_names_a_compile_error_as_one(self) -> None:
+        cases = [
+            (
+                "a rustc error is a compile failure",
+                "echo 'error[E0560]: struct has no field named `spool`' >&2\n"
+                "echo ' --> src/service.rs:1215' >&2\nexit 101\n",
+                "dfe-receiver does not compile against scalo 2.14.37",
+            ),
+            (
+                "an exit 101 with no rustc error stays an emit failure",
+                "echo 'thread main panicked at src/main.rs:9' >&2\nexit 101\n",
+                "every emit spelling failed, the first exiting 101",
+            ),
+            (
+                "another exit stays an emit failure",
+                "echo 'error: unrecognized subcommand' >&2\nexit 2\n",
+                "every emit spelling failed, the first exiting 2",
+            ),
+        ]
+        for name, body, want in cases:
+            with self.subTest(name):
+                self._cargo(body)
+                with pytest.raises(FleetError) as raised:
+                    _emit_dockerfile(self.repo, "dfe-receiver", "scalo 2.14.37")
+                message = str(raised.value)
+                assert want in message
+                assert body.splitlines()[0].split("'")[1] in message
+                assert not (self.repo / "Dockerfile").exists()
+
+
+class PrWaitTests(OnPathTestCase):
+    """A failed PR read is one more poll, up to PR_VIEW_ATTEMPTS in a row."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.addCleanup(setattr, landing, "RUN_POLL_SECONDS", landing.RUN_POLL_SECONDS)
+        landing.RUN_POLL_SECONDS = 0
+
+    def _gh_failing_first(self, failures: int) -> None:
+        """A gh whose first ``failures`` pr views fail as GraphQL does, then CLEAN."""
+        count = self.bindir / "gh.views"
+        clean = '{"mergeStateStatus":"CLEAN","mergeable":"MERGEABLE","statusCheckRollup":[]}'
+        script = self.bindir / "gh"
+        script.write_text(
+            "#!/bin/sh\n"
+            f'echo x >> "{count}"\n'
+            f'if [ $(wc -l < "{count}") -le {failures} ]; then\n'
+            "  echo 'GraphQL: Something went wrong while executing your query' >&2\n"
+            "  exit 1\nfi\n"
+            f"echo '{clean}'\n",
+            encoding="utf-8",
+            newline="\n",
         )
-        with pytest.raises(FleetError) as raised:
-            _emit_dockerfile(self.repo, "dfe-receiver")
-        message = str(raised.value)
-        assert "error[E0046]" in message
-        assert "src/sink/grpc/mod.rs:124" in message
-        assert "exiting 101" in message
-        assert not (self.repo / "Dockerfile").exists()
+        script.chmod(0o755)
+
+    def test_reads_that_fail_below_the_limit_are_retried(self) -> None:
+        self._gh_failing_first(PR_VIEW_ATTEMPTS - 1)
+        landing.await_pr_mergeable("example-org/dfe-app", 380)
+
+    def test_reads_that_fail_at_the_limit_end_the_wait(self) -> None:
+        self._gh_failing_first(PR_VIEW_ATTEMPTS)
+        with pytest.raises(FleetError, match="Something went wrong"):
+            landing.await_pr_mergeable("example-org/dfe-app", 380)
 
 
 def _target_recording_cargo(directory: Path) -> Path:
