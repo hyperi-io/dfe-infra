@@ -5,6 +5,7 @@ Start here to deploy, test and secure the DFE suite with dfe-infra. It covers th
 > **Coming from Splunk or Elastic?** DFE does several things differently on purpose. Read [coming from Splunk, Elastic or a lakehouse](../docs-site/content-root/coming-from.md) first.
 
 - [The attended acceptance cycle](acceptance-cycle.md)
+- [Apache NiFi](apache-nifi.md)
 - [dfe-infra architecture](architecture.md)
 - [Auth testing -- where the identities come from](auth-testing.md)
 - [Autoscaling: the two layers and the per-target fork](autoscaling.md)
@@ -22,7 +23,6 @@ Start here to deploy, test and secure the DFE suite with dfe-infra. It covers th
 - [Edge exposure and authentication](edge-auth.md)
 - [Readiness and failure evidence](failure-evidence.md)
 - [The ingest edge](ingest-edge.md)
-- [Integrations](integrations/README.md)
 - [It's always DNS](its-always-dns.md)
 - [...and if it's not DNS, it's PKI](and-if-its-not-dns-its-pki.md)
 - [Observability](observability/README.md)

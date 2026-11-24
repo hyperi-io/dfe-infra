@@ -13,6 +13,8 @@ The deploy layer creates ONE credential, and supplies one password per app. dfe-
 
 > **Coming from Splunk or Elastic?** You set access per index or role in the search layer. DFE doesn't. dfe-engine creates ClickHouse users, roles, grants, quotas and row policies from your IdP groups, and ClickHouse enforces them. dfe-ui, dfe-hyperdx and plain SQL all read the same tables, so the database is the one place every path passes through. A group's read access, its `_org_id` fence and its query quota are defined once, and a client that skips the UI doesn't skip the fence.
 
+> **Coming from a lakehouse?** A warehouse usually splits customers with a secure view or a row access policy per tenant. DFE keeps every tenant in one table. dfe-engine puts a restrictive `_org_id` row policy on every table that has the column, returns nothing from the rest to an org's user, and pins that user to the org's tenant ids. A new customer is a new org and no new SQL. More in [coming from a lakehouse](../docs-site/content-root/coming-from-lakehouse.md#doing-it-the-dfe-way).
+
 Nothing inside a deployment can mint the first privileged account, so something outside must. Everything after that first account is reachable by SQL, and SQL behaves the same on k8s, docker and a local checkout. Putting it anywhere else means writing it three times.
 
 `users.xml` can't express `GRANT`, a role, a quota or a row policy, so the engine is the one layer that can hold the model.
