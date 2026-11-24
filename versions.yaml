@@ -12269,7 +12269,7 @@ stacks:
     # DFE apps: Argo wave 5 (appsets/layer2-apps.yaml). Each has its own release line on GHCR.
     # A tag also names its thin chart's version, the tag less its v; dfe-stack cut and bump-app move chart-digests with it.
     apps:
-      dfe-engine: "v1.22.93"
+      dfe-engine: "v1.22.94-rc.1"   # 2026-11-24, amd64 and arm64, from main 67506e14e. Locks dfe-schemas 0.2.32. 14 commits past v1.22.93, ending with the fix that keeps promoted columns in derived schemas.
       dfe-ui: "v1.7.46"
       dfe-receiver: "v1.15.72-rc.1"  # 2026-11-24, amd64 and arm64, built on scalo 2.14.34.
       dfe-loader: "v1.18.76-rc.1"   # 2026-11-24, amd64 and arm64, built on scalo 2.14.34.
@@ -12285,7 +12285,7 @@ stacks:
     # The immutable half of each app's tag@sha256 pin, always the multi-arch index digest.
     # An app with no digest here is unpublished and left out of rendered manifests.
     digests:
-      dfe-engine: "sha256:bbc01736bf3deebae5574aeb6518c1d7c05f77c20a98832c8694214b26eecdf9"
+      dfe-engine: "sha256:d40e583edcb06fb76462cd6c1b03323717ed9d949d038b560919686d1e4896d7"
       dfe-ui: "sha256:d2c5130da8cebf652a8d36cbc79fb4824d252d3d34203fe3e4a0253db7ec5ef2"
       dfe-receiver: "sha256:ba6b5447f03fb63a7cad2680b24d4e5e864abf0b5e07f0c153bd85622a6822df"
       dfe-loader: "sha256:ee170f7f92d21fca8dc537f2b6222434a4f6db251b7706a9634f01002b50c595"
@@ -12306,7 +12306,8 @@ stacks:
     chart-digests:
       culvert: "sha256:423166ccc25223b702864e49684f95b150cc1d8dded42f0bace6b05844b068f6"
       dfe-archiver: "sha256:a71b1913549002ef394c81a846791923a32750e5650c90e7c1711e24c8bd8edf"           # 1.7.54-rc.1
-      dfe-engine: "sha256:35ffdfa3bd3af3d4f22d8cd0068c0861772a74d5177c563ccd760e887646f5c4"
+      dfe-engine: "sha256:16a274dd1622796f98b1a9e416d1aa619e92361174a97ffa8c1f2aa18ab868b4"
+# 1.22.94-rc.1
       dfe-fetcher: "sha256:d822a22c662dd8e10f39ac805d6d1d916594c2d083d854e905f8ed83bea0fa02"            # 1.4.61-rc.1
       dfe-hyperdx: "sha256:c3ab8cac57d5219a9d5eaa1b85e2fc060c3370ab1867172c38660b087098b799"            # 0.3.28-rc.1
       dfe-loader: "sha256:b21cf0303e8d34907355a346418c1d5c80244a4ff085c828083efe096308d7b4"             # 1.18.76-rc.1
