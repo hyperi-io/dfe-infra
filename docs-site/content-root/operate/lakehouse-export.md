@@ -70,4 +70,4 @@ The other direction needs no copy. The `DataLakeCatalog` database engine connect
 
 ## Raw payloads
 
-Where dfe-archiver runs, it writes each payload exactly as it arrived, as JSON lines in S3, GCS or Azure Blob ([archiving](../dfe-archiver/archiving.md)). Spark and the warehouses read those files as an external table, for as long as your bucket keeps them.
+Where dfe-archiver runs, it writes each payload exactly as it arrived, as JSON lines in S3, GCS or Azure Blob ([archiving](https://github.com/hyperi-io/dfe-archiver/blob/main/docs/archiving.md)). Spark and the warehouses read those files as an external table, for as long as your bucket keeps them.
