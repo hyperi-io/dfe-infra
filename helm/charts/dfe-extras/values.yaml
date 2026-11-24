@@ -16,7 +16,7 @@ extras:
   # (image.tag empty takes it). Each is versions.yaml apps.<component>, checked by scripts/check_versions_drift.py.
   appVersions:
     dfe-engine: "v1.22.94-rc.2"
-    dfe-ui: "v1.7.46"
+    dfe-ui: "v1.7.47-rc.1"
     dfe-receiver: "v1.15.72-rc.1"
     dfe-loader: "v1.18.76-rc.1"
     dfe-archiver: "v1.7.54-rc.1"
@@ -269,7 +269,7 @@ extras:
         pullPolicy: IfNotPresent
       stackVersion: ""
       profile: ""
-      uiVersion: "v1.7.46"           # == versions.yaml apps.dfe-ui
+      uiVersion: "v1.7.47-rc.1"           # == versions.yaml apps.dfe-ui
       kafka:
         mode: ""
         bootstrapServers: ""

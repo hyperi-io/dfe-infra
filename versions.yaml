@@ -12270,7 +12270,7 @@ stacks:
     # A tag also names its thin chart's version, the tag less its v; dfe-stack cut and bump-app move chart-digests with it.
     apps:
       dfe-engine: "v1.22.94-rc.2"   # 2026-11-24, amd64 and arm64, from main 0b9cffe44, 15 commits past v1.22.93. Adds the rules refactor (#1249) behind feature flag rules_v2, off by default. Locks dfe-schemas 0.2.32.
-      dfe-ui: "v1.7.46"
+      dfe-ui: "v1.7.47-rc.1"         # 2026-11-24, amd64 and arm64, from main 5f24ece7b. Adds the rules refactor UI (#778), which calls /api/v1/rules-v2 from engine v1.22.94-rc.2, and moves Detections to Detect (#779).
       dfe-receiver: "v1.15.72-rc.1"  # 2026-11-24, amd64 and arm64, built on scalo 2.14.34.
       dfe-loader: "v1.18.76-rc.1"   # 2026-11-24, amd64 and arm64, built on scalo 2.14.34.
       dfe-archiver: "v1.7.54-rc.1"  # 2026-11-24, amd64 and arm64, built on scalo 2.14.34.
@@ -12286,7 +12286,7 @@ stacks:
     # An app with no digest here is unpublished and left out of rendered manifests.
     digests:
       dfe-engine: "sha256:2ee4dc39f90f8962991d8fd3f3e87f74109ff8e14493a944a805ad721d5b3df1"
-      dfe-ui: "sha256:d2c5130da8cebf652a8d36cbc79fb4824d252d3d34203fe3e4a0253db7ec5ef2"
+      dfe-ui: "sha256:19496dc3426048317a9b6c4ea949eac39a5ed684d11bbdb681d00fe73aa8b201"
       dfe-receiver: "sha256:ba6b5447f03fb63a7cad2680b24d4e5e864abf0b5e07f0c153bd85622a6822df"
       dfe-loader: "sha256:ee170f7f92d21fca8dc537f2b6222434a4f6db251b7706a9634f01002b50c595"
       dfe-archiver: "sha256:823b9d71cbb42eeff95b324af58dd9f1ee44191464339eccf681c7a12bb1c89d"
@@ -12314,7 +12314,7 @@ stacks:
       dfe-transform-elastic: "sha256:5656c542b791cc2a94fef2b902d22eb90f8aaf25aacd39e0070620720c838344"  # 1.1.35-rc.1
       dfe-transform-vector: "sha256:2c3e6479f4eb2808f759c67d20514a863cf22914c5e1ee675e6602df03005f1d"   # 1.0.68-rc.1
       dfe-transform-vrl: "sha256:fd052331a72b1b1b67f5fccc38493b00baad2774d3a531b9e8f91f06bf91d7bf"      # 1.1.51-rc.1
-      dfe-ui: "sha256:f3b4f3edf9f39ef473a517eb7eea9f677367e8774e6985ed4c63bb1157620448"
+      dfe-ui: "sha256:e53e5a4990dff6a7ab1bafbfd65306bb17266ab2736f205a83e141e98643fc30"  # 1.7.47-rc.1
 
     # Digests for the third-party images, keyed like their version under services: or bootstrap:.
     # Index digests, so multi-arch safe. On k8s the cluster-mode Redpanda CR and Strimzi's broker deploy by tag.

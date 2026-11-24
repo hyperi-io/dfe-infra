@@ -70,7 +70,7 @@ spec:
                 "dfe-transform-elastic" "sha256:5656c542b791cc2a94fef2b902d22eb90f8aaf25aacd39e0070620720c838344"
                 "dfe-transform-vector" "sha256:2c3e6479f4eb2808f759c67d20514a863cf22914c5e1ee675e6602df03005f1d"
                 "dfe-transform-vrl" "sha256:fd052331a72b1b1b67f5fccc38493b00baad2774d3a531b9e8f91f06bf91d7bf"
-                "dfe-ui" "sha256:f3b4f3edf9f39ef473a517eb7eea9f677367e8774e6985ed4c63bb1157620448"
+                "dfe-ui" "sha256:e53e5a4990dff6a7ab1bafbfd65306bb17266ab2736f205a83e141e98643fc30"
             -}}
             {{- $pin := index $pins .deploy.service | default "" -}}
             {{- if not $pin -}}
