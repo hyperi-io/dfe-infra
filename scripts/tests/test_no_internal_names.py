@@ -62,7 +62,9 @@ INTERNAL = re.compile(
 # The hosts under hyperi.io the product names on purpose: the label prefix, the
 # brand-token site, the docs site and the release-check endpoint. Any other is estate, and an apex mail address
 # (sales@hyperi.io) has no host label.
-PUBLIC_HOSTS = frozenset({"dfe.hyperi.io", "graphics.hyperi.io", "dfe.docs.hyperi.io", "releases.hyperi.io"})
+PUBLIC_HOSTS = frozenset(
+    {"dfe.hyperi.io", "graphics.hyperi.io", "dfe.docs.hyperi.io", "releases.hyperi.io"}
+)
 _VENDOR_HOST = re.compile(
     r"(?<![\w.-])((?:[\w-]+\.)+hyperi\.io)(?![\w-])", re.IGNORECASE
 )
