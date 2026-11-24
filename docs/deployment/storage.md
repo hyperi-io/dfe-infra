@@ -50,6 +50,8 @@ Every cell below has one status and one proof level. Both lists are closed.
 
 > **Coming from Splunk or Elastic?** Where an object store exists, the preferred model keeps the durable parts there and serves repeated reads from a local read-through cache. Losing the cache leaves the parts intact but later reads must fetch them again. The part-metadata volume must stay durable.
 
+> **Coming from a lakehouse?** With `cached-object` the data sits in object storage, but as ClickHouse's parts, a format Spark, Trino and the warehouses don't read. For them, ClickHouse writes the columns you select as Parquet or Iceberg ([Parquet and Iceberg for other tools](../../docs-site/content-root/operate/lakehouse-export.md)).
+
 `clickhouse.storageModel` in `helm/charts/clickhouse-cluster`.
 
 | Mode | `local` | `cached-object` | `tiered-block` |
