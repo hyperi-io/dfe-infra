@@ -1073,7 +1073,7 @@ def _rewrite_chart_pin(
     i = _scalar_line(block, "chart-digests", service)
     if i is None:
         return False
-    m = re.match(rf'^(\s+{re.escape(service)}:\s*)"[^"]*"(\s*)', block[i])
+    m = re.match(rf'^(\s+{re.escape(service)}:\s*)"[^"]*"([ \t]*)', block[i])
     gap = m.group(2) or "  "
     block[i] = f'{m.group(1)}"{digest}"{gap}# {version}\n'
     return True

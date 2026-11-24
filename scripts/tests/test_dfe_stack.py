@@ -2351,6 +2351,30 @@ def _chart_cut(served: dict) -> tuple[str | None, str, list[tuple[str, str, str]
         return refusal, (tmp / "versions.yaml").read_text(encoding="utf-8"), asked
 
 
+def test_a_chart_repin_writes_its_note_on_the_pin_line() -> None:
+    """With or without an old note, the version note ends the digest's own line."""
+    for label, line, want in (
+        (
+            "a pin with a note",
+            '      an-app: "sha256:old"   # 2.0.0\n',
+            '      an-app: "sha256:new"   # 3.0.0\n',
+        ),
+        (
+            "a pin without a note",
+            '      an-app: "sha256:old"\n',
+            '      an-app: "sha256:new"  # 3.0.0\n',
+        ),
+    ):
+        block = ["    chart-digests:\n", line, "    content:\n"]
+        moved = stack._rewrite_chart_pin(block, "an-app", "sha256:new", "3.0.0")
+        expect(f"{label} is found", moved, repr(block))
+        expect(
+            f"{label} stays one line",
+            block == ["    chart-digests:\n", want, "    content:\n"],
+            repr(block),
+        )
+
+
 def test_a_cut_repins_each_thin_chart_at_the_version_its_tag_names() -> None:
     """Nothing else writes chart-digests, and the appsets deploy the chart it names."""
     refusal, text, asked = _chart_cut(
