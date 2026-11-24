@@ -3,7 +3,7 @@
 #  File:         validate_app.py
 #  Purpose:      Reusable app-layer validator (hyperdx / dfe-ui / engine): wait for
 #                readiness and assert look-and-feel + integration markers over HTTP.
-#                The app-layer counterpart to deploy_matrix.py (substrate). stdlib
+#                The app-layer counterpart to deploy_matrix.py (backing services). stdlib
 #                only (urllib) so it runs under the `python3` allow-list with no deps
 #                and no curl/sleep one-offs.
 #  Language:     Python
@@ -20,7 +20,7 @@ Checks, in order:
   assets      -- the served HTML/CSS references the expected fonts (Inter, IBM Plex
                  Mono) -- the HTTP-observable half of the look-and-feel
 
-Computed-style / layout checks (chrome-at-top, exact palette hex, seamless embed)
+Computed-style / layout checks (chrome-at-top, exact palette hex, chromeless embed)
 need a real browser -- that is the JS Playwright suite (P4), not this. This gives
 a fast, dependency-free, reusable gate that CI and a dev can both run.
 
