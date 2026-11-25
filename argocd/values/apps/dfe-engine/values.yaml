@@ -359,37 +359,37 @@ content:
       kind: emit
       role: contract
       app: dfe-receiver
-      ref: "ghcr.io/hyperi-io/dfe-receiver:v1.15.72-rc.1@sha256:ba6b5447f03fb63a7cad2680b24d4e5e864abf0b5e07f0c153bd85622a6822df"
+      ref: "ghcr.io/hyperi-io/dfe-receiver:v1.15.72-rc.2@sha256:4ef7f05f565f38439410d00305a08e2f1ea36ff2a4c28626dd34bba0c2da0a2b"
     - name: dfe-loader-contract
       kind: emit
       role: contract
       app: dfe-loader
-      ref: "ghcr.io/hyperi-io/dfe-loader:v1.18.76-rc.1@sha256:ee170f7f92d21fca8dc537f2b6222434a4f6db251b7706a9634f01002b50c595"
+      ref: "ghcr.io/hyperi-io/dfe-loader:v1.18.76-rc.4@sha256:3f9d7c63820b946fb1439e8461ce8c5158f85d76a4d49b96f1ce51d27ed7f7d1"
     - name: dfe-archiver-contract
       kind: emit
       role: contract
       app: dfe-archiver
-      ref: "ghcr.io/hyperi-io/dfe-archiver:v1.7.54-rc.1@sha256:823b9d71cbb42eeff95b324af58dd9f1ee44191464339eccf681c7a12bb1c89d"
+      ref: "ghcr.io/hyperi-io/dfe-archiver:v1.7.54-rc.3@sha256:489db2fb97a12d57ec3f731cd700084d94497769598c9fa6c6f24eaab9457fb8"
     - name: dfe-fetcher-contract
       kind: emit
       role: contract
       app: dfe-fetcher
-      ref: "ghcr.io/hyperi-io/dfe-fetcher:v1.4.61-rc.1@sha256:a7b31d96583e19c2b3d0a26366cd01908ea90741dc6a602ab44df31fb49e9e58"
+      ref: "ghcr.io/hyperi-io/dfe-fetcher:v1.4.61-rc.3@sha256:d8b34f75b5ac18f0061f8cc0f27dd7d8fc190027759cb21b8f08eca59f23c0e7"
     - name: dfe-transform-vrl-contract
       kind: emit
       role: contract
       app: dfe-transform-vrl
-      ref: "ghcr.io/hyperi-io/dfe-transform-vrl:v1.1.51-rc.1@sha256:a200bc8371e9b18bcb12a716c4faab6ab3013d0312d469787ac6826ef2f67237"
+      ref: "ghcr.io/hyperi-io/dfe-transform-vrl:v1.1.51-rc.2@sha256:d7fed6199be6c6d37f0f7b2cee8bfdd669a6fd5d29106d3d1ad35d8fdf947700"
     - name: dfe-transform-vector-contract
       kind: emit
       role: contract
       app: dfe-transform-vector
-      ref: "ghcr.io/hyperi-io/dfe-transform-vector:v1.0.68-rc.1@sha256:4ccc1a0b1742ba4147888fca1afd0740673987d5633e76cfdf1a8f9776ee5533"
+      ref: "ghcr.io/hyperi-io/dfe-transform-vector:v1.0.68-rc.2@sha256:67d1de215df5daad2501779748f9c8211f6bdce1307be52ae9f6cfa7989be89d"
     - name: dfe-transform-elastic-contract
       kind: emit
       role: contract
       app: dfe-transform-elastic
-      ref: "ghcr.io/hyperi-io/dfe-transform-elastic:v1.1.35-rc.1@sha256:2d6a2d283c3104fe955f209f415fb44097a7509ec348e4d6c256ae953adec4bb"
+      ref: "ghcr.io/hyperi-io/dfe-transform-elastic:v1.1.35-rc.3@sha256:bbfa7eec4ca420b6b24346eb04e6af3ec62b3a6a9697add77947b2fdb1e8e69f"
 # The contract's config writable path mounts at /config.
 config:
   mountPath: /config

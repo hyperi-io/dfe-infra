@@ -15,15 +15,15 @@ extras:
   # The version each component's objects are labelled with, and the engine image tag the hunt runner and keda shim run
   # (image.tag empty takes it). Each is versions.yaml apps.<component>, checked by scripts/check_versions_drift.py.
   appVersions:
-    dfe-engine: "v1.22.94-rc.3"
+    dfe-engine: "v1.22.94-rc.4"
     dfe-ui: "v1.7.47-rc.1"
-    dfe-receiver: "v1.15.72-rc.1"
-    dfe-loader: "v1.18.76-rc.1"
-    dfe-archiver: "v1.7.54-rc.1"
-    dfe-fetcher: "v1.4.61-rc.1"
-    dfe-transform-vrl: "v1.1.51-rc.1"
-    dfe-transform-vector: "v1.0.68-rc.1"
-    dfe-transform-elastic: "v1.1.35-rc.1"
+    dfe-receiver: "v1.15.72-rc.2"
+    dfe-loader: "v1.18.76-rc.4"
+    dfe-archiver: "v1.7.54-rc.3"
+    dfe-fetcher: "v1.4.61-rc.3"
+    dfe-transform-vrl: "v1.1.51-rc.2"
+    dfe-transform-vector: "v1.0.68-rc.2"
+    dfe-transform-elastic: "v1.1.35-rc.3"
     culvert: "v2.1.30"
     dfe-hyperdx: "v0.3.28-rc.1"
 
@@ -265,7 +265,7 @@ extras:
       image:
         repository: ""
         tag: ""
-        digest: "sha256:7512d58cfc2f3b761bccbdadc9c14cea73443c76665992625786db9611bbb8c7"
+        digest: "sha256:ca70186fb800712e1764922190d4b53a9b458a1603389952a15c7d0d9f142577"
         pullPolicy: IfNotPresent
       stackVersion: ""
       profile: ""
