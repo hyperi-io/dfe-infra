@@ -57,6 +57,8 @@ import dfe_ops_upgrade as u  # noqa: E402
 REAL_WAIT_FOR_ARGO = u.wait_for_argo
 # The real web check, for the preflight tests that drive it rather than stub it.
 REAL_CHECK_WEB_PLANE = u.check_web_plane
+# The real PVC release, which every other apply test steps past.
+REAL_RELEASE_STORAGE_CLASS = u.release_storage_class_ownership
 
 # ---------------------------------------------------------------------------
 # Fixture data -- small, self-contained versions.yaml / upgrade-order.yaml /
@@ -173,6 +175,116 @@ def _no_real_cluster(monkeypatch: pytest.MonkeyPatch) -> None:
         return real_run(cmd, **kwargs)
 
     monkeypatch.setattr(u, "_run", guarded)
+    monkeypatch.setattr(
+        u, "release_storage_class_ownership", lambda *_a, **_k: (True, "none")
+    )
+
+
+def _pvc(namespace: str, name: str, managed: list[tuple[str, bool]]) -> dict:
+    """A PVC whose managedFields hold one entry per (manager, owns spec.storageClassName)."""
+    entries = [
+        {
+            "manager": manager,
+            "fieldsV1": {
+                "f:spec": {
+                    "f:resources": {},
+                    **({"f:storageClassName": {}} if owns else {}),
+                }
+            },
+        }
+        for manager, owns in managed
+    ]
+    return {
+        "metadata": {"namespace": namespace, "name": name, "managedFields": entries}
+    }
+
+
+@pytest.mark.parametrize(
+    ("claims", "get_rc", "patch_rc", "ok", "patched", "said"),
+    [
+        # Argo owns the class after kubectl-client-side-apply: its entry is index 1.
+        (
+            [
+                _pvc(
+                    "forgejo",
+                    "data",
+                    [("kubectl-client-side-apply", True), ("argocd-controller", True)],
+                )
+            ],
+            0,
+            0,
+            True,
+            [("forgejo", "data", 1)],
+            "released argocd-controller's class on forgejo/data",
+        ),
+        # Argo manages the claim but never owned the class, and another manager does: untouched.
+        (
+            [
+                _pvc(
+                    "dfe",
+                    "config",
+                    [("argocd-controller", False), ("kube-controller-manager", True)],
+                )
+            ],
+            0,
+            0,
+            True,
+            [],
+            "no PVC has its class owned by argocd-controller",
+        ),
+        # No claims at all.
+        ([], 0, 0, True, [], "no PVC has its class owned by argocd-controller"),
+        # The list itself fails.
+        ([], 1, 0, False, [], "could not list PVCs: forbidden"),
+        # The patch is refused.
+        (
+            [_pvc("forgejo", "data", [("argocd-controller", True)])],
+            0,
+            1,
+            False,
+            [("forgejo", "data", 0)],
+            "could not release forgejo/data: forbidden",
+        ),
+    ],
+)
+def test_release_storage_class_ownership(
+    monkeypatch: pytest.MonkeyPatch,
+    claims: list[dict],
+    get_rc: int,
+    patch_rc: int,
+    ok: bool,
+    patched: list[tuple[str, str, int]],
+    said: str,
+) -> None:
+    """Only argocd-controller's own entry loses the class, through a JSON patch that tests the manager first."""
+    seen: list[tuple[str, str, int]] = []
+
+    def fake_run(cmd: list[str], **_kw: object) -> subprocess.CompletedProcess:
+        if cmd[1:3] == ["get", "pvc"]:
+            return _proc(
+                get_rc, stdout=json.dumps({"items": claims}), stderr="forbidden"
+            )
+        assert cmd[3:5] == ["patch", "pvc"], cmd
+        ops = json.loads(cmd[-1])
+        index = int(ops[0]["path"].split("/")[3])
+        assert ops == [
+            {
+                "op": "test",
+                "path": f"/metadata/managedFields/{index}/manager",
+                "value": "argocd-controller",
+            },
+            {
+                "op": "remove",
+                "path": f"/metadata/managedFields/{index}/fieldsV1/f:spec/f:storageClassName",
+            },
+        ]
+        seen.append((cmd[2], cmd[5], index))
+        return _proc(patch_rc, stderr="forbidden")
+
+    monkeypatch.setattr(u, "_run", fake_run)
+
+    assert REAL_RELEASE_STORAGE_CLASS(None) == (ok, said)
+    assert seen == patched
 
 
 def _proc(
@@ -3667,13 +3779,31 @@ def test_a_bare_rerun_after_an_unpushed_stage_replays_from_the_upstream_pin(
     assert not u._unpushed(pushed_real_git_deploy)
 
 
-def test_a_rejected_push_fails_the_stage_with_gits_reason(
+@pytest.mark.parametrize(
+    ("console_file", "console_text", "upgraded", "said"),
+    [
+        # The console wrote a file the upgrade never touches: rebased, pushed.
+        ("console-edit.yaml", "x: 1\n", True, None),
+        # It rewrote the pin file the stage commits: the rebase conflicts.
+        (
+            "pins.yaml",
+            "console: rewrote it\n",
+            False,
+            "FAILED at stage 1: git push failed: the remote moved and the rebase onto it failed",
+        ),
+    ],
+)
+def test_a_push_behind_the_console_rebases_once(
     monkeypatch: pytest.MonkeyPatch,
     pushed_real_git_deploy: Path,
     tmp_path: Path,
     capsys: pytest.CaptureFixture,
+    console_file: str,
+    console_text: str,
+    upgraded: bool,
+    said: str | None,
 ) -> None:
-    """The remote moved since the checkout last fetched, which the last line of git's output never says."""
+    """The remote moved since the checkout last fetched, as it does when the console commits."""
     _two_stage(monkeypatch, pushed_real_git_deploy)
     _argo_comparing_after_the_push(monkeypatch, stale_reads=0)
     remote = u._git(
@@ -3681,7 +3811,7 @@ def test_a_rejected_push_fails_the_stage_with_gits_reason(
     ).stdout.strip()
     elsewhere = tmp_path / "elsewhere"
     assert u._run(["git", "clone", "-q", remote, str(elsewhere)]).returncode == 0
-    (elsewhere / "console-edit.yaml").write_text("x: 1\n", encoding="utf-8")
+    (elsewhere / console_file).write_text(console_text, encoding="utf-8")
     for args in (["add", "-A"], ["commit", "-q", "-m", "console edit"], ["push", "-q"]):
         assert u._git(elsewhere, *args).returncode == 0, args
 
@@ -3696,9 +3826,58 @@ def test_a_rejected_push_fails_the_stage_with_gits_reason(
     )
 
     err = capsys.readouterr().err
+    if upgraded:
+        assert rc == 0, err
+        assert not u._unpushed(pushed_real_git_deploy)
+        log = u._git(pushed_real_git_deploy, "log", "--format=%s", "origin/HEAD").stdout
+        assert "console edit" in log
+    else:
+        assert rc == u.EXIT_BLOCKED, err
+        assert said in err
+        status = u._git(pushed_real_git_deploy, "status", "--porcelain").stdout
+        assert "UU" not in status, "the failed rebase was left mid-conflict"
+
+
+def test_apply_refuses_before_any_stage_when_a_claim_cannot_be_released(
+    monkeypatch: pytest.MonkeyPatch,
+    real_git_deploy: Path,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """A claim Argo still owns the class of would stop the first stage's Application from comparing."""
+    _two_stage(monkeypatch, real_git_deploy)
+    monkeypatch.setattr(
+        u,
+        "release_storage_class_ownership",
+        lambda *_a, **_k: (False, "could not release forgejo/data: forbidden"),
+    )
+    head = u._git(real_git_deploy, "rev-parse", "HEAD").stdout
+
+    rc = u.cmd_upgrade_apply(
+        _apply_args(deploy=str(real_git_deploy), to="2.0.0", yes=True, dry_run=False)
+    )
+
+    err = capsys.readouterr().err
     assert rc == u.EXIT_BLOCKED, err
-    assert "FAILED at stage 1: git push failed: ! [rejected]" in err
-    assert "(fetch first)" in err
+    assert "REFUSED -- could not release forgejo/data: forbidden" in err
+    assert u._git(real_git_deploy, "rev-parse", "HEAD").stdout == head
+
+
+def test_a_stage_with_nothing_to_push_does_not_fail_behind_the_console(
+    monkeypatch: pytest.MonkeyPatch,
+    pushed_real_git_deploy: Path,
+) -> None:
+    """A stage that committed nothing still pushed, and a remote ahead of it refused that as fetch first."""
+    remote = u._git(
+        pushed_real_git_deploy, "remote", "get-url", "origin"
+    ).stdout.strip()
+    elsewhere = pushed_real_git_deploy.parent / "elsewhere-noop"
+    assert u._run(["git", "clone", "-q", remote, str(elsewhere)]).returncode == 0
+    (elsewhere / "console-edit.yaml").write_text("x: 1\n", encoding="utf-8")
+    for args in (["add", "-A"], ["commit", "-q", "-m", "console edit"], ["push", "-q"]):
+        assert u._git(elsewhere, *args).returncode == 0, args
+
+    assert u._push(pushed_real_git_deploy) == ""
+    assert not u._unpushed(pushed_real_git_deploy)
 
 
 DFE_HYPERDX_DIGEST = "sha256:" + "0" * 64

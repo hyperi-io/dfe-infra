@@ -285,6 +285,8 @@ TARGET_REVISION_ANNOTATION = "dfe.hyperi.io/target_revision"
 STACK_VERSION_ANNOTATION = "dfe.hyperi.io/stack_version"
 DFE_NAMESPACE_ANNOTATION = "dfe.hyperi.io/dfe_namespace"
 DOMAIN_ANNOTATION = "dfe.hyperi.io/domain"
+# The field manager Argo CD's server-side apply writes as.
+ARGO_MANAGER = "argocd-controller"
 
 # The deploy repo's kafka chart overlay, layered last by appsets/layer2-data.yaml.
 KAFKA_OVERLAY = Path("infra") / "kafka.yaml"
@@ -2123,10 +2125,36 @@ def _commit_and_push(deploy: Path, message: str, *, push: bool) -> tuple[str, st
 
 
 def _push(deploy: Path) -> str:
-    """Push the deploy repo. Why it failed, in git's words, or empty."""
+    """Push the deploy repo. Why it failed, in git's words, or empty.
+
+    The console commits to the deploy repo too, so a push the remote refuses as
+    behind is rebased onto it once and retried. A rebase that conflicts is
+    aborted, leaving the checkout as it was.
+    """
     push = _git(deploy, "push")
     if push.returncode == 0:
         return ""
+    if _remote_moved(push.stderr):
+        rebase = _git(deploy, "pull", "--rebase")
+        if rebase.returncode != 0:
+            _git(deploy, "rebase", "--abort")
+            detail = _last_line(rebase.stderr) or _last_line(rebase.stdout)
+            return f"git push failed: the remote moved and the rebase onto it failed: {detail}"
+        if not _unpushed(deploy):
+            return ""
+        push = _git(deploy, "push")
+        if push.returncode == 0:
+            return ""
+    return _push_failure(push)
+
+
+def _remote_moved(stderr: str) -> bool:
+    """Whether git refused a push because the remote holds commits this checkout lacks."""
+    return "(fetch first)" in stderr or "(non-fast-forward)" in stderr
+
+
+def _push_failure(push: subprocess.CompletedProcess) -> str:
+    """Why a push failed, from the line of git's output that names the cause."""
     lines = [line.strip() for line in push.stderr.splitlines() if line.strip()]
     # git ends a rejection with hints, so the ref line or the error line says more than the last.
     reason = next((line for line in lines if "rejected]" in line), None)
@@ -3231,6 +3259,52 @@ def request_stalled_syncs(
     return started
 
 
+def release_storage_class_ownership(kubeconfig: str | None) -> tuple[bool, str]:
+    """Drop Argo CD's ownership of spec.storageClassName on every PVC that has it.
+
+    A chart that stops rendering the class, as every DFE chart does once the
+    class is blank, makes Argo's server-side diff try to remove an immutable
+    field, so the Application never compares. The claim keeps its class.
+
+    Returns:
+        (True, what was released), or (False, why a claim could not be read or patched).
+    """
+    listed = _kubectl(kubeconfig, "get", "pvc", "-A", "-o", "json")
+    if listed.returncode != 0:
+        return False, f"could not list PVCs: {_last_line(listed.stderr)}"
+    released = []
+    for claim in json.loads(listed.stdout or "{}").get("items") or []:
+        meta = claim.get("metadata") or {}
+        for index, entry in enumerate(meta.get("managedFields") or []):
+            spec = (entry.get("fieldsV1") or {}).get("f:spec") or {}
+            if entry.get("manager") != ARGO_MANAGER or "f:storageClassName" not in spec:
+                continue
+            path = f"/metadata/managedFields/{index}"
+            patch = [
+                {"op": "test", "path": f"{path}/manager", "value": ARGO_MANAGER},
+                {"op": "remove", "path": f"{path}/fieldsV1/f:spec/f:storageClassName"},
+            ]
+            name = f"{meta.get('namespace')}/{meta.get('name')}"
+            result = _kubectl(
+                kubeconfig,
+                "-n",
+                meta.get("namespace", ""),
+                "patch",
+                "pvc",
+                meta.get("name", ""),
+                "--type",
+                "json",
+                "-p",
+                json.dumps(patch),
+            )
+            if result.returncode != 0:
+                return False, f"could not release {name}: {_last_line(result.stderr)}"
+            released.append(name)
+    if not released:
+        return True, f"no PVC has its class owned by {ARGO_MANAGER}"
+    return True, f"released {ARGO_MANAGER}'s class on {', '.join(released)}"
+
+
 def wait_for_argo(
     kubeconfig: str | None,
     *,
@@ -3878,6 +3952,14 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
                 "with none of its holds in place",
                 file=sys.stderr,
             )
+            return EXIT_BLOCKED
+
+    emit(f"release {ARGO_MANAGER}'s ownership of spec.storageClassName on every PVC")
+    if not args.dry_run:
+        released, detail = release_storage_class_ownership(args.kubeconfig)
+        print(f"  storage classes: {detail}", file=sys.stderr)
+        if not released:
+            print(f"dfe-ops upgrade apply: REFUSED -- {detail}", file=sys.stderr)
             return EXIT_BLOCKED
 
     bootstrap_pending: list[str] = []
