@@ -294,5 +294,72 @@ class TestTheCaseJudgesTheRowsGained:
         assert driver.rows["landed"][0] == "unproven"
 
 
+def test_emitted_sums_every_pod_and_label():
+    bodies = [
+        'flow_records_emitted_total{transport="netflow",mode="exploded"} 12\n'
+        'flow_records_emitted_total{transport="sflow",mode="exploded"} 3\n',
+        'dfe_flow_records_emitted_total{transport="netflow",mode="exploded"} 5\n'
+        "flow_records_per_packet_count 9\n",
+    ]
+    assert flow.emitted(bodies) == 20
+
+
+def keeping_up(sent):
+    """The emitted count once *sent* fixtures have each rendered every record."""
+    return sum(f.events for f in flow.FIXTURES[:sent])
+
+
+EVENTED = sum(1 for f in flow.FIXTURES if f.events)
+EMPTY = len(flow.FIXTURES) - EVENTED
+
+
+class TestTheFeedWaitsOnEachFixture:
+    """The feed paces fixtures on the receiver's emitted count, or a fixed gap without one."""
+
+    def feed(self, monkeypatch, *, metrics, counter):
+        """Feed every fixture; *counter* maps the fixtures sent so far to the emitted count."""
+        sent, sleeps = [], []
+        monkeypatch.setattr(flow, "datagrams", lambda path: [path.name.encode()])
+        monkeypatch.setattr(flow, "send", lambda host, port, p: sent.extend(p))
+        monkeypatch.setattr(flow, "FIXTURE_DEADLINE", 0.05)
+        monkeypatch.setattr(flow, "POLL_SECONDS", 0.01)
+        monkeypatch.setattr(
+            cases.time, "sleep", lambda s: sleeps.append(s) if s >= 1 else None
+        )
+
+        def exposition(args):
+            if counter is None:
+                raise RuntimeError("did not answer")
+            return [f"flow_records_emitted_total {counter(len(sent))}"]
+
+        monkeypatch.setattr(cases, "receiver_exposition", exposition)
+        run, driver = a_run(Engine(present=flow.SOURCES), Store({}))
+        run.args.receiver_metrics_url = metrics
+        run.args.receiver_metrics_selector = ""
+        run.args.kubectl = ""
+        the_case().feed(run)
+        return sleeps, driver.rows["feed"][1]
+
+    @pytest.mark.parametrize(
+        ("metrics", "counter", "confirmed", "short"),
+        [
+            ("", keeping_up, 0, False),
+            ("http://r.example/metrics", None, 0, False),
+            ("http://r.example/metrics", keeping_up, EVENTED, False),
+            ("http://r.example/metrics", lambda sent: 0, 0, True),
+        ],
+        ids=["no-metrics", "metrics-down", "keeps-up", "never-moves"],
+    )
+    def test_pacing(self, monkeypatch, metrics, counter, confirmed, short):
+        sleeps, said = self.feed(monkeypatch, metrics=metrics, counter=counter)
+        paused = EMPTY if short else len(flow.FIXTURES) - confirmed
+        assert sleeps == [flow.FIXTURE_PAUSE] * paused
+        assert f"{confirmed} confirmed on {flow.METRIC_EMITTED}" in said
+        assert f"{paused} followed by a 2 s pause" in said
+        assert ("short of its count" in said) is short
+        if short:
+            assert all(f.name in said for f in flow.FIXTURES if f.events)
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, *sys.argv[1:]]))

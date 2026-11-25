@@ -116,7 +116,7 @@ The run needs the receiver's UDP ports reachable from the machine it runs on. On
 
 The sender is a local UDP socket. The exec-prefix sender the syslog case uses splits datagrams on a NUL byte, which a binary datagram holds, so a cluster with no UDP route from the runner is not covered.
 
-Each fixture is sent in order, a datagram apiece. Template state is per exporter, and each file carries the templates its own data needs. The proof is rows gained, not rows held, so a table that already has flows does not fool it:
+Each fixture is sent in order, a datagram apiece. Template state is per exporter, and each file carries the templates its own data needs. The next fixture waits until the receiver's `flow_records_emitted_total` counts the last one's records, read from `--receiver-metrics-url` or `--receiver-metrics-selector`, for up to 10 s. Without those, or for a fixture that yields no records, it waits 2 s. Back-to-back fixtures lost about half the NetFlow records. The `feed` step says how many fixtures the counter confirmed. The proof is rows gained, not rows held, so a table that already has flows does not fool it:
 
 - `flow-netflow-landed`, `flow-sflow-landed`: the table gained as many rows as dfe-receiver's `flow_exploded` test says the fixtures yield, and no record of that protocol reached `main`.
 - `flow-netflow-typed`, `flow-sflow-typed`: the rows carry `exporter_ip` and `flow_version`, and the flow records that have a source address carry `src_ip`.

@@ -22,6 +22,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from acceptance.source.syslog import counter
+
 #: Where the receiver's repo keeps them, below its root.
 FIXTURE_DIR = Path("tests") / "fixtures" / "flow" / "external"
 #: The catalogue sources the flow listener's records land under, NetFlow and IPFIX then sFlow.
@@ -31,6 +33,14 @@ SWITCHES = {"config.flow.enabled": True, "config.flow.output.mode": "exploded"}
 ENV = "DFE_RECEIVER_FLOW_ENABLED=true DFE_RECEIVER_FLOW_OUTPUT_MODE=exploded"
 #: A pause between datagrams, so a burst does not overrun the receiver's socket buffer.
 DATAGRAM_PAUSE = 0.005
+#: The receiver counter each fixture's records are awaited on before the next is sent.
+METRIC_EMITTED = "flow_records_emitted_total"
+#: How long one fixture's records are awaited on that counter.
+FIXTURE_DEADLINE = 10.0
+POLL_SECONDS = 0.2
+#: The gap after a fixture the counter cannot confirm. Back-to-back fixtures over docker's
+#: published ports lost about half the NetFlow records, and a 2 s gap lost none.
+FIXTURE_PAUSE = 2.0
 #: libpcap's magic as it reads in a file of each byte order and time precision.
 PCAP_MAGIC = {
     b"\xd4\xc3\xb2\xa1": "<",
@@ -105,3 +115,8 @@ def send(host: str, port: int, payloads: Sequence[bytes]) -> None:
         for payload in payloads:
             sock.sendto(payload, (host, port))
             time.sleep(DATAGRAM_PAUSE)
+
+
+def emitted(bodies: Sequence[str]) -> int:
+    """Flow records the receiver emitted, summed over every pod's exposition."""
+    return sum(counter(body, METRIC_EMITTED) for body in bodies)

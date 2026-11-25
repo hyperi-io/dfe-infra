@@ -224,8 +224,8 @@ def counters_of(bodies: Sequence[str]) -> dict[str, int]:
     }
 
 
-def read_counters(url: str) -> dict[str, int]:
-    """The syslog counters off one receiver's metrics endpoint.
+def read_exposition(url: str) -> list[str]:
+    """One receiver's metrics exposition, as a list of one body.
 
     Raises:
         RuntimeError: The endpoint did not answer.
@@ -237,16 +237,13 @@ def read_counters(url: str) -> dict[str, int]:
         raise RuntimeError(
             f"the receiver's metrics at {url} did not answer: {exc}"
         ) from exc
-    return counters_of([body])
+    return [body]
 
 
-def read_pod_counters(
+def read_pod_exposition(
     kube: Sequence[str], namespace: str, selector: str
-) -> dict[str, int]:
-    """The syslog counters summed over every running receiver pod.
-
-    A pod counts only the connections kube-proxy sent it, so one pod's counters fall
-    short whenever the Service has more than one replica.
+) -> list[str]:
+    """The metrics exposition of every running receiver pod.
 
     Raises:
         RuntimeError: No pod matched, or one did not answer.
@@ -300,7 +297,7 @@ def read_pod_counters(
                 f"the receiver's metrics in {pod} did not answer: {read.stderr.strip()}"
             )
         bodies.append(read.stdout)
-    return counters_of(bodies)
+    return bodies
 
 
 # --- what the run reports ----------------------------------------------------
