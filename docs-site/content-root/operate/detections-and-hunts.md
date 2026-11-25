@@ -98,4 +98,4 @@ The hunt runner is one pod by default. Autoscaling is opt-in, through `huntRunne
 
 ## Conditions
 
-Match conditions use CEL. [The expression language](../dfe-engine/data-plane/expressions-cel.md) says why we chose CEL.
+Match conditions use [CEL](https://github.com/cel-expr/cel-spec/blob/master/doc/langdef.md), Google's Common Expression Language. [The expression language](../dfe-engine/data-plane/expressions-cel.md) says why we chose CEL.

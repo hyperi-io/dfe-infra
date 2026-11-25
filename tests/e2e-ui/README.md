@@ -21,6 +21,8 @@ Endpoints come from env (defaults match the laptop port-forward layout):
     kubectl -n dfe-local port-forward svc/dfe-ui 13001:3000
     kubectl -n dfe-local port-forward svc/dfe-engine 8000:8000
 
+The deployment's own HTTPS routes work too (`DFE_UI_URL=https://dfe.<domain>`). The suite accepts the self-signed cluster CA they serve.
+
 The engine builds its OIDC callback from the origin the browser reached it on, so `ENGINE_URL` must be an origin registered as a redirect URI at the IdP, or the IdP refuses the sign-in. The default 8000 is the engine's own port; dfe-docker publishes it on 8003.
 
 The OIDC specs need the shared fixture password in `E2E_FIXTURE_PASSWORD` (and `E2E_OIDC_PROVIDER` when the provider is not named dex). `dfe-ops idp deploy` writes it as `TESTER_IDP_USER_PASSWORD` in its `--secrets-out` file ([`docs/auth-testing.md`](../../docs/auth-testing.md)) -- never commit it.

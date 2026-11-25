@@ -33,6 +33,8 @@ export default defineConfig({
   timeout: 60_000,
   reporter: [['list'], ['html', { open: 'never' }]],
   use: {
+    // A deployment's edge TLS is signed by its own per-build cluster CA.
+    ignoreHTTPSErrors: true,
     // A CI artifact may be published, so traces stay local.
     trace: process.env.CI ? 'off' : 'retain-on-failure',
     screenshot: 'only-on-failure',
