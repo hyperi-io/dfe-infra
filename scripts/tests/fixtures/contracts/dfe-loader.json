@@ -84,7 +84,6 @@
       "recv_buffer_size": 10000,
       "recv_timeout_ms": 100,
       "max_message_size": 16777216,
-      "compression": false,
       "default_topic": "main_land",
       "acknowledgements": {
         "enabled": true
@@ -206,6 +205,7 @@
       "org_routes": [],
       "external_topics": [],
       "source_to_table": {},
+      "table_schema_versions": {},
       "topic_suffixes": [
         "_land",
         "_load"
@@ -481,7 +481,6 @@
           "recv_buffer_size": 10000,
           "recv_timeout_ms": 100,
           "max_message_size": 16777216,
-          "compression": false,
           "default_topic": "main_land",
           "acknowledgements": {
             "enabled": true
@@ -659,6 +658,7 @@
           "org_routes": [],
           "external_topics": [],
           "source_to_table": {},
+          "table_schema_versions": {},
           "topic_suffixes": [
             "_land",
             "_load"
@@ -1151,11 +1151,6 @@
             "format": "uint",
             "minimum": 0,
             "default": 16777216
-          },
-          "compression": {
-            "description": "Enable gzip compression for gRPC messages.",
-            "type": "boolean",
-            "default": false
           },
           "default_topic": {
             "description": "Default topic name for messages without a topic in gRPC metadata.\nUsed as the routing key when the sender doesn't set a topic.",
@@ -1881,6 +1876,14 @@
           },
           "source_to_table": {
             "description": "Source value to table name mapping\nMaps extracted source values to destination table names",
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "default": {}
+          },
+          "table_schema_versions": {
+            "description": "Schema version of each table, keyed by table name. A reload that changes\na table's version re-reads its columns and column directives.",
             "type": "object",
             "additionalProperties": {
               "type": "string"
