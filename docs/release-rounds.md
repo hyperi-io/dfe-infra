@@ -2,7 +2,9 @@
 
 How a release candidate is tested, and how long each test takes. The loop each test runs is [testing-cycle.md](testing-cycle.md).
 
-We test a release candidate in ROUNDS. A round is one candidate plus every proof run against it in parallel: the cloud-cycle legs ([backends](cloud-cycle.md#choosing-the-backend-for-one-run)), the k8s deploy, the dfe-docker VM, the dfe-ui deployed e2e and the `dfe-sweep` gating check. Nothing is fixed mid-round.
+We test a release candidate in ROUNDS. A round is one candidate plus every proof run against it in parallel: the cloud-cycle legs ([backends](cloud-cycle.md#choosing-the-backend-for-one-run)), the k8s deploy, the docker stack, the dfe-ui deployed e2e and the `dfe-sweep` gating check. Nothing is fixed mid-round.
+
+The docker proof of a candidate runs on a build host with `make stack VERSION=<candidate>` and `make ci`. The long-lived dfe-docker VM takes only GA stacks and their `.fix` releases, never a candidate.
 
 Each find is recorded as it lands. A find that blocks a proof doesn't stop the round when a workaround for that cycle alone lets the other proofs continue, such as a manual reload or a hand-applied config. The workaround goes into the round's findings and is never shipped.
 
@@ -13,9 +15,9 @@ The next round re-runs the proofs the batch can affect, and no others. A batch t
 | Changed | Re-run |
 |---|---|
 | dfe-ui alone | dfe-ui deployed e2e, the k8s deploy |
-| dfe-engine | the k8s deploy, the VM, the source-suite cloud legs |
-| dfe-hyperdx | the k8s deploy, the VM, the source-suite cloud legs (the `observe` step reads it) |
-| dfe-receiver, dfe-loader, the transforms | every cloud leg, the VM, the k8s deploy |
+| dfe-engine | the k8s deploy, the docker stack, the source-suite cloud legs |
+| dfe-hyperdx | the k8s deploy, the docker stack, the source-suite cloud legs (the `observe` step reads it) |
+| dfe-receiver, dfe-loader, the transforms | every cloud leg, the docker stack, the k8s deploy |
 | dfe-infra charts or tofu | the cloud legs on the touched backend, the k8s deploy |
 | pin bumps in versions.yaml alone | `dfe-sweep`, the k8s deploy |
 
@@ -37,7 +39,7 @@ Your mileage will vary. The region, how busy the cloud is that day, CI queues an
 
 These are durations from the reference runs in October 2026, not estimates. Cloud times move with the region and the backend, so read them as a guide. Figures are minutes, medians with the range across runs, and `n` is the number of runs behind the figure.
 
-Teardown is the long pole. Destroying the workloads, `tofu destroy` and the sweep of leftovers add up to a median 35 min, about a third of every cloud cycle. The KEDA scale proof is 13.6 of the 19.5 min smoke stage. The two Confluent Cloud runs took about 4 min longer to sweep than the Redpanda Cloud and ClickHouse Cloud runs. The k8s deploy figure is a fresh install, and the VM figures are the scenarios that passed.
+Teardown is the long pole. Destroying the workloads, `tofu destroy` and the sweep of leftovers add up to a median 35 min, about a third of every cloud cycle. The KEDA scale proof is 13.6 of the 19.5 min smoke stage. The two Confluent Cloud runs took about 4 min longer to sweep than the Redpanda Cloud and ClickHouse Cloud runs. The k8s deploy figure is a fresh install, and the docker figures are the scenarios that passed.
 
 | Proof | Step | Median | Range | n |
 |---|---|---|---|---|
@@ -60,11 +62,11 @@ Teardown is the long pole. Destroying the workloads, `tofu destroy` and the swee
 | Cloud cycle | Destroy, `tofu destroy` | 9.5 | 8.0-11.4 | 8 |
 | Cloud cycle | Sweep of leftovers | 8.5 | 7.9-13.4 | 8 |
 | k8s deploy | Fresh install, deploy plus 2 E2E tests | 10.6 | - | 1 |
-| VM | `make ci` | 2.6 | - | 1 |
-| VM | E2E, receiver to loader over gRPC | 1.6 | - | 1 |
-| VM | E2E, complete single-node stack | 3.0 | - | 1 |
-| VM | E2E, rules and hunts | 1.7 | - | 1 |
-| VM | E2E, search, rule and hunt | 2.2 | - | 1 |
+| docker stack | `make ci` | 2.6 | - | 1 |
+| docker stack | E2E, receiver to loader over gRPC | 1.6 | - | 1 |
+| docker stack | E2E, complete single-node stack | 3.0 | - | 1 |
+| docker stack | E2E, rules and hunts | 1.7 | - | 1 |
+| docker stack | E2E, search, rule and hunt | 2.2 | - | 1 |
 | Stack cut | PR checks, first start to last finish | 20.3 | 15.8-21.1 | 3 |
 | Stack cut | Stack Release workflow | 1.1 | 0.7-1.2 | 3 |
 | App release | dfe-engine, merge to tagged release | 24.4 | - | 1 |
