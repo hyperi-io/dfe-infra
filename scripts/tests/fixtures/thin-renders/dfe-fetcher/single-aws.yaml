@@ -129,6 +129,8 @@ spec:
               fieldPath: metadata.namespace
         - name: OTEL_SERVICE_NAME
           value: dfe-fetcher
+        - name: OPENSSL_CONF
+          value: /tmp/scalo-openssl.cnf
         - name: DFE_FETCHER_KAFKA_SASL_USER
           valueFrom:
             secretKeyRef:

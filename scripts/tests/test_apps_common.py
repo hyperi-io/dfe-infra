@@ -210,14 +210,13 @@ def _contract_for(service: str) -> bytes:
 
 @pytest.fixture(scope="module")
 def thin_charts(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Path]:
-    """The thin chart of every app, assembled once from the scalo-service chart."""
-    lib = library()
+    """The thin chart of every app, assembled once from its scalo-service chart."""
     root = tmp_path_factory.mktemp("thin")
     charts = {}
     for service in SERVICES:
         charts[service] = w.assemble(
             _contract_for(service),
-            lib,
+            library(service),
             root / service,
             version="1.0.0",
             tag="v1.0.0",

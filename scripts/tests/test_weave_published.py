@@ -32,6 +32,7 @@ import os
 from pathlib import Path
 
 import pytest
+import yaml
 
 from _gate import (
     CELLS,
@@ -41,7 +42,7 @@ from _gate import (
     published_render,
     render_differences,
 )
-from _weave import _anonymous, contract, published_chart
+from _weave import _anonymous, contract, library_version, published_chart
 
 NEEDS_REGISTRY = pytest.mark.skipif(
     not os.environ.get("DFE_WEAVE_PUBLISHED"),
@@ -54,6 +55,20 @@ NEEDS_REGISTRY = pytest.mark.skipif(
 def test_the_committed_contract_is_the_published_one(service: str) -> None:
     published = published_chart(service) / "files" / "contract.json"
     assert contract(service).read_bytes() == published.read_bytes()
+
+
+@NEEDS_REGISTRY
+@pytest.mark.parametrize("service", COMPONENTS)
+def test_the_render_library_is_the_published_one(service: str) -> None:
+    chart = yaml.safe_load(
+        (published_chart(service) / "Chart.yaml").read_text(encoding="utf-8")
+    )
+    built_on = {
+        str(dep.get("version"))
+        for dep in chart.get("dependencies") or []
+        if dep.get("name") == "scalo-service"
+    }
+    assert built_on == {library_version(service)}
 
 
 @NEEDS_REGISTRY

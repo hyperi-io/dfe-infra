@@ -55,7 +55,7 @@
 # ---------------------------------------------------------------------------
 
 schema: 2
-current: "2.2.4-rc.4"
+current: "2.2.4-rc.5"
 latest: "2.2.3"
 lts:
   # <stack version>: "<LTS expiry, ISO 8601>". Empty until the first LTS is
@@ -13048,11 +13048,11 @@ stacks:
     apps:
       dfe-engine: "v1.22.94-rc.5"  # 2026-11-26, amd64 and arm64, from main f220fde366. A disabled organisation blocks its accounts. Deleting one deletes its accounts, API keys and sign-in providers. Organisation deletes, ID and enabled changes and ingest credential writes need a re-auth grant. Every account needs a group. Internal rc, under the 7-day cooldown by design.
       dfe-ui: "v1.7.47-rc.2"  # 2026-11-26, amd64 and arm64, from main 5d3b81c364. Admin pages for organisations, groups, accounts and OIDC providers to match engine v1.22.94-rc.5. Internal rc, under the 7-day cooldown by design.
-      dfe-receiver: "v1.15.72-rc.4"
-      dfe-loader: "v1.18.76-rc.6"
-      dfe-archiver: "v1.7.54-rc.5"
-      dfe-fetcher: "v1.4.61-rc.5"
-      dfe-transform-vrl: "v1.1.51-rc.4"
+      dfe-receiver: "v1.15.72-rc.3"
+      dfe-loader: "v1.18.76-rc.5"
+      dfe-archiver: "v1.7.54-rc.4"
+      dfe-fetcher: "v1.4.61-rc.4"
+      dfe-transform-vrl: "v1.1.51-rc.3"
       dfe-transform-vector: "v1.0.68-rc.3"
       dfe-transform-elastic: "v1.1.35-rc.4"
       # dfe-transform-wasm: "2.2.0"
@@ -13064,11 +13064,11 @@ stacks:
     digests:
       dfe-engine: "sha256:ef977f39d07c4e4869941ba810fef8522179c761ee213d46ed562eddb45619b4"
       dfe-ui: "sha256:376a6b6ab5db13cc18b87b0f710113a7b0d2c6fbe9229d708d7b528c82a243bc"
-      dfe-receiver: "sha256:cb9589439a1de3c3b471acdeac9b9314ece00870fd4fdee7e4a7fa1a3469624e"
-      dfe-loader: "sha256:e00cc38ca371cff602c5b7714c716fee845466fbbfbd0e8619163cc9c4332267"
-      dfe-archiver: "sha256:369ac8fe7e68ea529a01bdfb0a86f17e2427047cccd0edca0cf3676bb3de340c"
-      dfe-fetcher: "sha256:aabb5580b4aedae6d1ce0c7db08fbf822148b2fd3b74e68b50d4f7172698e4bf"
-      dfe-transform-vrl: "sha256:febda5c1b1a905220d3f06b50e6e83e8422d6a274571dc0f9a7d9ec29ad4cacf"
+      dfe-receiver: "sha256:e6d48766602859e9286d37aaed0ba910cf760e56e15bb0a7d3b4f30ea2fabd1e"
+      dfe-loader: "sha256:aa5d4f7e38d587291d0f35fe6761958c387483f9956ddd9bd63633f3d7c2644c"
+      dfe-archiver: "sha256:e2db7b8879c0008857025d8b52d6b52038ea61c35a080f7cd711f7b2f2d73e27"
+      dfe-fetcher: "sha256:8491b41839dc68c11219fd9195a30ade948d3732d43b85e16481af881ffe1789"
+      dfe-transform-vrl: "sha256:9f39cdbcf2d6ac06ad8aa6b2c8bb272e334a9e40e3d982a27138534dd7bec230"
       dfe-transform-vector: "sha256:4c9c95dd6cbcebe1d96774a90cfd337aa566c0eda0e1491e1e8b9c6f0dde3384"
       dfe-transform-elastic: "sha256:556b12e6a078fbdb327bfafaa8d2ebc6aa8ab8800765ecfb43671a4db3b0e9d9"
       dfe-hyperdx: "sha256:9737864ad9a6a895d0bfa3b22fa63189c0f94b7369a628cdbf6b55f7a94b1259"
@@ -13082,15 +13082,15 @@ stacks:
     # dfe-stack cut and bump-app read each digest from the registry at that version.
     chart-digests:
       culvert: "sha256:423166ccc25223b702864e49684f95b150cc1d8dded42f0bace6b05844b068f6"
-      dfe-archiver: "sha256:a1f334d3016158deea3f1dc61d358e3e41ded57e06ca43f4f874233f18ba6ae0"  # 1.7.54-rc.5
+      dfe-archiver: "sha256:12a0002feb7bab1660435136ca0ff40d2435f5721241dc64a31377a1fec2cfe3"
       dfe-engine: "sha256:f23b8ee69cffc5356b90189ae5ada97b729935d710352292a6130c1b6d0e34d7"  # 1.22.94-rc.5
-      dfe-fetcher: "sha256:7d448bd7e12f6563c8e59fe8cf5c9297191ef1257622fbd87b731b5ce7afc065"  # 1.4.61-rc.5
+      dfe-fetcher: "sha256:ed7abf5bc26f3ca3381fbb1f7c73894c096e115f5d404266941821a348380304"
       dfe-hyperdx: "sha256:c3ab8cac57d5219a9d5eaa1b85e2fc060c3370ab1867172c38660b087098b799"
-      dfe-loader: "sha256:208cdb12c31e0515aed398488a92e767cdaa75dc924469eeae7de09dc41ba02f"  # 1.18.76-rc.6
-      dfe-receiver: "sha256:981c1dbf6218eec4c00fd6b2711210467f2c8fb6e6db4d0e5c85fef45da99d6b"  # 1.15.72-rc.4
+      dfe-loader: "sha256:04d70e0b8d3546d0077fd3d9ec4963455aaeb000eba9d9bb4895330c999f0971"
+      dfe-receiver: "sha256:3e434d90fe5e961d1752221233074571321b77e6de95ffdca923c12de711e201"
       dfe-transform-elastic: "sha256:79b4ce1dc40b88363eb86488533b79edae8111962938f82e91e495ba7f9af3b3"
       dfe-transform-vector: "sha256:da133419536ccb5aa4eae6d6bf2b0fd02aae4539cdc709984ce3520273fb7a30"
-      dfe-transform-vrl: "sha256:04c8e9a61feb6e639cf157380879c598981b2e0df9c3f773a9d9be43ba5a11ec"  # 1.1.51-rc.4
+      dfe-transform-vrl: "sha256:c7b24d3e800137d8d69f1567196e1f939bc1aef9a34e8469c01d7cb329b1fb78"
       dfe-ui: "sha256:d63f73c610cec4e21a641fc0566aab2b8fe74e6f54f966c386f0df0251357425"  # 1.7.47-rc.2
 
     # Digests for the third-party images, keyed like their version under services: or bootstrap:.
@@ -13189,6 +13189,265 @@ stacks:
     stack:
       # The release an environment upgrades to this one from.
       previous: "2.2.4-rc.3"
+      upgrade-order: "dfe-schemas, dfe-engine, data-plane, dfe-ui"
+
+    # OpenTofu provider constraints. They mirror required_providers under terraform/, which is what runs.
+    providers:
+      hashicorp-null: "~> 3.0"
+      hashicorp-vault: "~> 5.0"
+      hashicorp-random: "~> 3.6"
+      hashicorp-aws: "~> 6.64"
+      confluentinc-confluent: "~> 2.86"
+      redpanda-data-redpanda: "~> 2.3"
+      hashicorp-archive: "~> 2.8"
+      okta-okta: "~> 7.0"
+      hashicorp-google: "~> 8.5"
+      hashicorp-azuread: "~> 3.0"
+  2.2.4-rc.5:
+    maturity: rc
+    support: standard
+    constraints: "constraints/2.2.4-rc.5.yaml"
+
+    # What the cluster must already be. Floors, because the operator owns the cluster and upgrades it.
+    # Keep every leaf a string: check_versions_drift.py skips a nested map without saying so.
+    platform:
+      kubernetes: "1.34-1.36"
+      rke2: ">=v1.34"
+      rancher: ">=2.15"
+      eks: ">=1.34"
+
+    # Installed by bootstrap.sh, which reads these through read_versions.py.
+    bootstrap:
+      cert-manager: "v1.21.2"
+      external-secrets: "2.11.0"
+      argocd: "10.11.1"
+      # image: valkey/valkey
+      valkey: "8.1.10-alpine"
+      # image: docker.io/rancher/local-path-provisioner
+      local-path-provisioner: "v0.0.37"
+      metallb: "0.16.1"
+
+    # Cluster addons and the data operators: Argo waves 2-3 (appsets/layer1-addons.yaml, layer-scale.yaml).
+    operators:
+      envoy-gateway: "v1.9.2"
+      external-dns: "1.23.0"
+      keda: "2.21.0"
+      metrics-server: "3.14.0"
+      reloader: "2.2.18"
+      strimzi-kafka-operator: "1.2.0"
+      clickhouse-operator: "0.0.8"
+      redpanda-operator: "26.2.5"
+      # renovate: datasource=github-releases depName=kubernetes-sigs/aws-load-balancer-controller
+      aws-load-balancer-controller: "3.6.3"
+      # image: public.ecr.aws/karpenter/karpenter
+      # renovate: datasource=github-releases depName=aws/karpenter-provider-aws
+      karpenter: "1.14.3"
+      # renovate: datasource=github-releases depName=awslabs/amazon-eks-ami
+      karpenter-al2023-ami: "v20261112"
+      # image: ghcr.io/documentdb/documentdb-operator
+      documentdb-operator: "1.0.0"
+
+    # Datastores, brokers and telemetry: Argo waves 4-5 (appsets/layer2-data.yaml).
+    services:
+      postgresql: "18"
+      # image: apache/kafka rejects=apache/kafka-native
+      kafka-version: "4.3.1"
+      kafka-replicas: "3"
+      # image: docker.redpanda.com/redpandadata/redpanda aliases=redpandadata/redpanda
+      redpanda-version: "v26.2.6"
+      # image: clickhouse/clickhouse-server
+      clickhouse-version: "26.3.42.3"
+      # image: docker.io/clickhouse/clickhouse-keeper
+      clickhouse-keeper: "26.3.42.3"
+      clickhouse-replicas: "1"
+      # renovate: datasource=docker depName=ghcr.io/documentdb/documentdb/documentdb-local
+      documentdb-local: "pg18-1.0.0"
+      # image: code.forgejo.org/forgejo/forgejo
+      forgejo: "15.0.9"
+      # renovate: datasource=docker depName=otel/opentelemetry-collector-contrib
+      otel-collector: "0.165.0"
+      # renovate: datasource=docker depName=ghcr.io/openconfig/gnmic
+      gnmic: "0.49.1"
+      hyperdx: "2.46.0"
+      # renovate: datasource=docker depName=ghcr.io/kafbat/kafka-ui
+      kafbat: "v1.5.0"
+      # renovate: datasource=docker depName=envoyproxy/envoy
+      envoy-proxy: "v1.40.2"
+      # renovate: datasource=docker depName=nginxinc/nginx-unprivileged
+      nginx-unprivileged: "1.31.7-trixie"
+      # renovate: datasource=docker depName=registry.k8s.io/git-sync/git-sync
+      git-sync: "v4.8.0"
+      # image: timberio/vector
+      vector: "0.61.0-alpine"
+      # renovate: datasource=github-releases depName=aws/aws-msk-iam-auth
+      aws-msk-iam-auth: "2.4.0"
+      # renovate: datasource=github-releases depName=linkedin/cruise-control-ui
+      cruise-control-ui: "0.4.0"
+      # renovate: datasource=docker depName=docker.io/library/busybox
+      busybox: "1.38.0"
+      # image: docker.io/envoyproxy/envoy
+      envoy-gateway-proxy: "distroless-v1.39.5"
+      # image: public.ecr.aws/eks/aws-load-balancer-controller
+      aws-load-balancer-controller-image: "v3.6.3"
+      # image: ghcr.io/documentdb/documentdb-kubernetes-operator/operator
+      documentdb-operator-image: "1.0.0"
+      # image: ghcr.io/documentdb/documentdb-kubernetes-operator/sidecar
+      documentdb-sidecar: "1.0.0"
+      # image: ghcr.io/cloudnative-pg/cloudnative-pg
+      cloudnative-pg: "1.29.3"
+      # image: ghcr.io/documentdb/documentdb-kubernetes-operator/documentdb
+      documentdb: "1.0.0"
+      # image: ghcr.io/documentdb/documentdb-kubernetes-operator/gateway
+      documentdb-gateway: "1.0.0"
+      # image: ghcr.io/cloudnative-pg/postgresql
+      documentdb-postgres: "18.6-minimal-trixie"
+
+    # DFE apps: Argo wave 5 (appsets/layer2-apps.yaml). Each has its own release line on GHCR.
+    # A tag also names its thin chart's version, the tag less its v; dfe-stack cut and bump-app move chart-digests with it.
+    apps:
+      dfe-engine: "v1.22.94-rc.5"
+      dfe-ui: "v1.7.47-rc.2"
+      dfe-receiver: "v1.15.72-rc.4"  # 2026-11-26, amd64 and arm64, from main 72e6255cc1. Rebuild on scalo 2.14.40: TLS keys move into one tls section, an old key fails the load naming its replacement, and listeners take TLS 1.2. Internal rc, under the 7-day cooldown by design.
+      dfe-loader: "v1.18.76-rc.6"  # 2026-11-26, amd64 and arm64, from main ec65ba3b63. Rebuild on scalo 2.14.40: kafka and clickhouse TLS keys move into the tls section, an old key fails the load naming its replacement. Internal rc, under the 7-day cooldown by design.
+      dfe-archiver: "v1.7.54-rc.5"  # 2026-11-26, amd64 and arm64, from main f142caf9dc. Rebuild on scalo 2.14.40: TLS keys move into the tls section, an old key fails the load naming its replacement. Internal rc, under the 7-day cooldown by design.
+      dfe-fetcher: "v1.4.61-rc.5"  # 2026-11-26, amd64 and arm64, from main 13803ee7f4. Rebuild on scalo 2.14.40: TLS keys move into the tls section, an old key fails the load naming its replacement. Internal rc, under the 7-day cooldown by design.
+      dfe-transform-vrl: "v1.1.51-rc.4"  # 2026-11-26, amd64 and arm64, from main 924c913967. Rebuild on scalo 2.14.40: source.tls and sink.tls keys move to ca_paths, client_cert_path and client_key_path, an old key fails the load. Internal rc, under the 7-day cooldown by design.
+      dfe-transform-vector: "v1.0.68-rc.4"  # 2026-11-26, amd64 and arm64, from main 286831d570. Rebuild on scalo 2.14.40. Its contract sets openssl_conf empty, so the Vector child keeps the distro OpenSSL config. Internal rc, under the 7-day cooldown by design.
+      dfe-transform-elastic: "v1.1.35-rc.4"
+      # dfe-transform-wasm: "2.2.0"
+      # dfe-transform-splack: "2.2.0"
+      culvert: "v2.1.30"
+
+    # The immutable half of each app's tag@sha256 pin, always the multi-arch index digest.
+    # An app with no digest here is unpublished and left out of rendered manifests.
+    digests:
+      dfe-engine: "sha256:ef977f39d07c4e4869941ba810fef8522179c761ee213d46ed562eddb45619b4"
+      dfe-ui: "sha256:376a6b6ab5db13cc18b87b0f710113a7b0d2c6fbe9229d708d7b528c82a243bc"
+      dfe-receiver: "sha256:cb9589439a1de3c3b471acdeac9b9314ece00870fd4fdee7e4a7fa1a3469624e"
+      dfe-loader: "sha256:e00cc38ca371cff602c5b7714c716fee845466fbbfbd0e8619163cc9c4332267"
+      dfe-archiver: "sha256:369ac8fe7e68ea529a01bdfb0a86f17e2427047cccd0edca0cf3676bb3de340c"
+      dfe-fetcher: "sha256:aabb5580b4aedae6d1ce0c7db08fbf822148b2fd3b74e68b50d4f7172698e4bf"
+      dfe-transform-vrl: "sha256:febda5c1b1a905220d3f06b50e6e83e8422d6a274571dc0f9a7d9ec29ad4cacf"
+      dfe-transform-vector: "sha256:63e70e117234d8d5f5caa8cf75fa916d73ec8b4378131123e0c52e4c9096ba2a"
+      dfe-transform-elastic: "sha256:556b12e6a078fbdb327bfafaa8d2ebc6aa8ab8800765ecfb43671a4db3b0e9d9"
+      dfe-hyperdx: "sha256:9737864ad9a6a895d0bfa3b22fa63189c0f94b7369a628cdbf6b55f7a94b1259"
+      culvert: "sha256:467b5effcd73c7db549426a5cc843e8f82b0a02877a3378ae8bc864d0787bed0"
+      dfe-toolbox-base: "sha256:2d3940c3fe864978c46d9ce1d2d276f7f2a42694753d4a358ba088321ae9109d"
+
+    # Each component's thin chart, assembled from its deployment contract, by manifest digest and
+    # keyed by deploy.service. The layer 2 appsets carry a literal copy (check_versions_drift.py),
+    # and refuse to render a service whose entry is not a sha256 digest: "unpublished" marks a chart
+    # not published yet. The chart version is the app tag without its v, so it has no key here.
+    # dfe-stack cut and bump-app read each digest from the registry at that version.
+    chart-digests:
+      culvert: "sha256:423166ccc25223b702864e49684f95b150cc1d8dded42f0bace6b05844b068f6"
+      dfe-archiver: "sha256:a1f334d3016158deea3f1dc61d358e3e41ded57e06ca43f4f874233f18ba6ae0"  # 1.7.54-rc.5
+      dfe-engine: "sha256:f23b8ee69cffc5356b90189ae5ada97b729935d710352292a6130c1b6d0e34d7"
+      dfe-fetcher: "sha256:7d448bd7e12f6563c8e59fe8cf5c9297191ef1257622fbd87b731b5ce7afc065"  # 1.4.61-rc.5
+      dfe-hyperdx: "sha256:c3ab8cac57d5219a9d5eaa1b85e2fc060c3370ab1867172c38660b087098b799"
+      dfe-loader: "sha256:208cdb12c31e0515aed398488a92e767cdaa75dc924469eeae7de09dc41ba02f"  # 1.18.76-rc.6
+      dfe-receiver: "sha256:981c1dbf6218eec4c00fd6b2711210467f2c8fb6e6db4d0e5c85fef45da99d6b"  # 1.15.72-rc.4
+      dfe-transform-elastic: "sha256:79b4ce1dc40b88363eb86488533b79edae8111962938f82e91e495ba7f9af3b3"
+      dfe-transform-vector: "sha256:d8be8cccb8012fab860c53d00fa6a10ee93bd67128fee187d79de6dcbdea5fbd"  # 1.0.68-rc.4
+      dfe-transform-vrl: "sha256:04c8e9a61feb6e639cf157380879c598981b2e0df9c3f773a9d9be43ba5a11ec"  # 1.1.51-rc.4
+      dfe-ui: "sha256:d63f73c610cec4e21a641fc0566aab2b8fe74e6f54f966c386f0df0251357425"
+
+    # Digests for the third-party images, keyed like their version under services: or bootstrap:.
+    # Index digests, so multi-arch safe. On k8s the cluster-mode Redpanda CR and Strimzi's broker deploy by tag.
+    services-digests:
+      clickhouse-version: "sha256:21d572843e59539c7d100286b6f5a6053c341fe4b33c2d7b74b1ff7cb24c5399"
+      clickhouse-keeper: "sha256:8361ed78996d087f3e85622566f15517c502e169a63e70b44dafe6ddca6dd3f5"
+      kafka-version: "sha256:77e3df9054047a88b520d0cc46e16696d3b22022e1d580aeccd2632df6532837"
+      redpanda-version: "sha256:8b1076e0d61bfceb66594dc01536427ce0b529f8ead35fdab9763ab6085891ce"
+      kafbat: "sha256:7cda86a33344160309fdb65146332e4da65db81a945614f2fe32e210803f6fd1"
+      envoy-proxy: "sha256:8de97e654644827d62afdbf7e1d3dc9fee01a8690d410dd1c63a30dc6b6cecbb"
+      documentdb-local: "sha256:475cfab1e3c2e9b7e19c114611b6198d59d823f472127b22ae865b702fa0dd20"
+      nginx-unprivileged: "sha256:09b0d3eda2aa592d2487f284519419015cab010d7df16cd0fe224b585fc60eb6"
+      otel-collector: "sha256:e40d61f10c9a617cca1ffd1be4d7e2b3a4b0f0001798ff07e58cabe82e618cea"
+      gnmic: "sha256:d148508c7ab3e5fd446759648d529409c1e37c2cc99c8b681078d120ca1a302b"
+      git-sync: "sha256:a20644562fba94773e594885cb001aadb5a3172175f13ac1215e5b2033c9200e"
+      vector: "sha256:3bb7ed5152910ed51729e256937b1d8a4bf67ff624e9d565e8e5877bffd015c7"
+      busybox: "sha256:a46257e06c82ad85242d0d38077d0a52d9896389ca60a1a59d3463db586e5fa4"
+      forgejo: "sha256:91a5310c86934339e16bd06b6078aada836e3d8935b2d70f6598108cbfaed5d1"
+      valkey: "sha256:081c2f5cb575efc901aa80ff9cdbd1ec6a301682fd35e1ebb4b0990a4a4a8507"
+      local-path-provisioner: "sha256:e757967a5ec338f6a9b371c5a9688bedaa8c3578ea3dd4db329ea0084be0a86f"
+      envoy-gateway-proxy: "sha256:9d84a586119a27b50437dbb01eccd4722832741539b1ed53c8e9d6da6067a6e0"
+      karpenter: "sha256:622aa6317b26c40d48237b3072ccb71a6ea09ff25ce5ee58c7c413d215a472a9"
+      aws-load-balancer-controller-image: "sha256:bc9bee8bc5b2b9f69fe914c06ed3ddb24ce9c94e234cf101dff1ec04693a6974"
+      documentdb-operator: "sha256:6325eccd12db73ad2b3ffd2df294c79187c0521fb31b1f9a1c3061fa89f35114"
+      documentdb-operator-image: "sha256:9d433fd486ac49de79565318e573de08ff67e8819d2f4a955f43dee6db8a5e14"
+      documentdb-sidecar: "sha256:53942efe095ebff72f6332c02d478476183bb5763885f870ac485a0d5e8d29e5"
+      cloudnative-pg: "sha256:cc0594bd9fd8cdd654dfbd91e4cf2c8fc1bfc4e3a09c4a90a2ab4ffc524f1db5"
+      documentdb: "sha256:6b2b014a754ca96ab0f028a1015bd735caa8eda0ec153e3e64dc5dab3ee83bf9"
+      documentdb-gateway: "sha256:63e89a22501ac35927137759f2da32e28d80ced626f555c62c4a17c4cc7bfb27"
+      documentdb-postgres: "sha256:ec2ed3404e89fff99643901b58a2a34c46a46345fe69a3d96500b82f995c327b"
+
+    # Content repos, tagged with this stack.
+    content:
+      dfe-schemas: "v0.2.32"
+      # renovate: datasource=github-tags depName=hyperi-io/dfe-deploy
+      dfe-deploy: "v1.0.37"
+      dfe-docker: "v1.0.13"
+      dfe-hyperdx: "v0.3.28-rc.1"
+
+    # The dfe-toolbox operator shell images (docker/dfe-toolbox/), not part of the deployed stack.
+    # Each Dockerfile ARG default equals its pin here (drift-checked). clickhouse-client follows services.clickhouse-version.
+    toolbox:
+      # renovate: datasource=docker depName=ghcr.io/hyperi-io/dfe-toolbox-base
+      dfe-toolbox: "v1.0.8"
+      # renovate: datasource=docker depName=debian
+      debian: "trixie-slim@sha256:62bd423aeee912639ca8ee681c2b762cb3e25137e0a92b20be455898a9f034ad"
+      # renovate: datasource=github-releases depName=kubernetes/kubernetes
+      kubectl: "v1.35.10"
+      # renovate: datasource=github-releases depName=helm/helm
+      helm: "v4.3.2"
+      # renovate: datasource=github-releases depName=argoproj/argo-cd
+      argocd-cli: "v3.5.6"
+      argocd-cli-arm64-sha256: "281aea75a1eaea15e2839f12626e78684f76099f09ffb0b05d35f64344ed1256"
+      # renovate: datasource=docker depName=quay.io/argoproj/argocd
+      argocd-cli-image: "v3.5.6@sha256:8e5cc5bb008df8a09dba439462e58c94c55b7735888d3ebde0c25fc05e4e5335"
+      # renovate: datasource=github-releases depName=opentofu/opentofu
+      tofu: "1.13.9"
+      # renovate: datasource=github-releases depName=mikefarah/yq
+      yq: "v4.54.3"
+      yq-arm64-sha256: "89f69310b61b68d1245065a1241d1fc843f7a36cd6103ffd77ad987613bd1b67"
+      # renovate: datasource=docker depName=ghcr.io/mikefarah/yq
+      yq-image: "4.54.3@sha256:7834187596ad56fd5a81436114e0b0b9dd54c91bb43946d1f7145b2be5f9c3d2"
+      # renovate: datasource=github-tags depName=aws/aws-cli
+      aws-cli: "2.40.4"
+      # renovate: datasource=github-releases depName=aws/session-manager-plugin
+      aws-session-manager-plugin: "1.2.896.0"
+      gcloud: "587.0.0"
+      # renovate: datasource=pypi depName=azure-cli
+      az-cli: "2.93.0"
+      kafka-cli-signer: "4.3.1:365454B8BAF2D52CCCE65EB471650CBCEA26F8A4"
+
+    # The EKS managed add-ons terraform/modules/kubernetes-cluster/aws installs, which
+    # render_dial.py renders into the aws root's eks_addon_versions tfvar. Each is built for one
+    # Kubernetes minor, and kube-proxy's version IS that minor: the module refuses a plan whose
+    # kube-proxy minor is not kubernetes_version, and scripts/tests/test_eks_addon_pins.py holds it
+    # to the minor deployment.example.yaml runs.
+    # These are what EKS resolved for 1.36 on 2026-10-13. EKS publishes the build suffix only
+    # through `aws eks describe-addon-versions --kubernetes-version <minor>`.
+    eks-addons:
+      aws-ebs-csi-driver: "v1.66.0-eksbuild.1"
+      coredns: "v1.14.7-eksbuild.11"
+      eks-pod-identity-agent: "v1.4.0-eksbuild.3"
+      kube-proxy: "v1.36.0-eksbuild.45"
+      vpc-cni: "v1.23.3-eksbuild.2"
+
+    # The Lambda runtimes terraform/ deploys, which render_dial.py renders into the aws root's
+    # lambda_runtimes tfvar. A runtime has to ship what its inline handler imports.
+    # python3.14 is the newest Python runtime Lambda lists as generally available (Amazon Linux
+    # 2023, deprecated 2029-06-30), read from
+    # https://docs.aws.amazon.com/lambda/latest/dg/lambda-runtimes.html on 2026-10-16.
+    # python3.15 is a public preview, which Lambda does not cover for production.
+    lambda-runtimes:
+      msk-broker-scaler: "python3.14"
+
+    stack:
+      # The release an environment upgrades to this one from.
+      previous: "2.2.4-rc.4"
       upgrade-order: "dfe-schemas, dfe-engine, data-plane, dfe-ui"
 
     # OpenTofu provider constraints. They mirror required_providers under terraform/, which is what runs.

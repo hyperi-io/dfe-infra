@@ -158,6 +158,8 @@ spec:
               fieldPath: metadata.namespace
         - name: OTEL_SERVICE_NAME
           value: dfe-transform-vrl
+        - name: OPENSSL_CONF
+          value: /tmp/scalo-openssl.cnf
         image: registry.example.com/dfe/dfe-transform-vrl:<pin:apps.dfe-transform-vrl>@<pin:digests.dfe-transform-vrl>
         imagePullPolicy: IfNotPresent
         livenessProbe:
