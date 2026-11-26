@@ -99,6 +99,21 @@ dfe-clickhouse.quantityBytes -- a binary storage quantity (87Gi, 500Mi, 1024) as
 {{- end }}
 
 {{/*
+dfe-clickhouse.wholeNumber -- (list name value) as a plain non-negative integer, or a failed render naming the key. A values-file number arrives as a float, which prints in exponent form past a million.
+*/}}
+{{- define "dfe-clickhouse.wholeNumber" -}}
+{{- $name := index . 0 -}}
+{{- $v := index . 1 -}}
+{{- if and (kindIs "float64" $v) (ge $v 0.0) (eq $v (floor $v)) -}}
+{{- int64 $v -}}
+{{- else if regexMatch "^[0-9]+$" (toString $v) -}}
+{{- toString $v -}}
+{{- else -}}
+{{- fail (printf "%s must be a whole number, got %v" $name $v) -}}
+{{- end -}}
+{{- end }}
+
+{{/*
 dfe-clickhouse.instanceStoreCacheBytes -- the cache's max_size: cache.maxSizeRatioToSizeLimit of cacheSize.
 */}}
 {{- define "dfe-clickhouse.instanceStoreCacheBytes" -}}
@@ -136,6 +151,18 @@ dfe-clickhouse.validateCacheVolume -- reject a placement that cannot be honoured
 {{- end }}
 
 {{/*
+dfe-clickhouse.validateObjectStoreTuning -- reject a burst with no rate beside it: the server reads the burst only when the rate is set.
+*/}}
+{{- define "dfe-clickhouse.validateObjectStoreTuning" -}}
+{{- $tuning := .Values.clickhouse.objectStoreTuning -}}
+{{- range $verb := list "Put" "Get" -}}
+{{- if and (index $tuning (printf "max%sBurst" $verb)) (not (index $tuning (printf "max%sRps" $verb))) -}}
+{{- fail (printf "clickhouse.objectStoreTuning.max%sBurst needs clickhouse.objectStoreTuning.max%sRps -- ClickHouse ignores a burst with no rate" $verb $verb) -}}
+{{- end -}}
+{{- end -}}
+{{- end }}
+
+{{/*
 dfe-clickhouse.storageConfiguration -- the server config that places MergeTree parts, for the operator CR's extraConfig (cluster) and the config.d ConfigMap (single). Emits nothing for local.
 
 The object store carries no credentials here: use_environment_credentials reads them from the pod's environment (objectStoreEnv below, or Pod Identity).
@@ -162,11 +189,18 @@ storage_configuration:
       {{- with .Values.clickhouse.objectStore.retryAttempts }}
       s3_retry_attempts: {{ . }}
       {{- end }}
+      {{- /* The disk reads its HTTP timeouts unprefixed. An s3_ spelling is ignored. */ -}}
       {{- with .Values.clickhouse.objectStore.connectTimeoutMs }}
-      s3_connect_timeout_ms: {{ . }}
+      connect_timeout_ms: {{ . }}
       {{- end }}
       {{- with .Values.clickhouse.objectStore.requestTimeoutMs }}
-      s3_request_timeout_ms: {{ . }}
+      request_timeout_ms: {{ . }}
+      {{- end }}
+      {{- $tuning := .Values.clickhouse.objectStoreTuning }}
+      {{- range $key := list "maxPutRps" "maxPutBurst" "maxGetRps" "maxGetBurst" }}
+      {{- with index $tuning $key }}
+      s3_{{ snakecase $key }}: {{ include "dfe-clickhouse.wholeNumber" (list (printf "clickhouse.objectStoreTuning.%s" $key) .) }}
+      {{- end }}
       {{- end }}
     s3_object_cache:
       type: cache
@@ -196,6 +230,13 @@ storage_configuration:
 # per-table storage_policy and the model stays a deploy-time decision.
 merge_tree:
   storage_policy: s3_cached
+  {{- /* Each file in a part is an object, so a Wide part costs a request per column stream. */ -}}
+  {{- with .Values.clickhouse.objectStoreTuning.minBytesForWidePart }}
+  min_bytes_for_wide_part: {{ include "dfe-clickhouse.wholeNumber" (list "clickhouse.objectStoreTuning.minBytesForWidePart" .) }}
+  {{- end }}
+  {{- with .Values.clickhouse.objectStoreTuning.mergeMaxDynamicSubcolumnsInWidePart }}
+  merge_max_dynamic_subcolumns_in_wide_part: {{ include "dfe-clickhouse.wholeNumber" (list "clickhouse.objectStoreTuning.mergeMaxDynamicSubcolumnsInWidePart" .) }}
+  {{- end }}
 {{- else if eq $bulk "block" -}}
 {{- $cold := .Values.clickhouse.tieredBlock.coldName -}}
 storage_configuration:

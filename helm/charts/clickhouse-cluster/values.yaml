@@ -137,6 +137,17 @@ clickhouse:
     retryAttempts: ""
     connectTimeoutMs: ""
     requestTimeoutMs: ""
+  # cached-object only. Kept out of objectStore so it stays changeable after deploy. docs/deployment/storage.md, Dimension 4: request bounds.
+  objectStoreTuning:
+    # Parts under this many uncompressed bytes are written Compact: about 60 objects, not one per column stream. Empty keeps the server's 10 MiB.
+    minBytesForWidePart: 1073741824
+    # Caps the JSON paths a merge writes as separate files in a Wide part. Empty leaves it uncapped.
+    mergeMaxDynamicSubcolumnsInWidePart: ""
+    # Per-replica pacing on the object disk. Empty leaves it unlimited. A burst needs its rate.
+    maxPutRps: ""
+    maxPutBurst: ""
+    maxGetRps: ""
+    maxGetBurst: ""
   # Cold tier for storageModel: tiered-block. docs/deployment/clickhouse-tiering.md
   tieredBlock:
     # Must sort after "default" or the tiers invert. The render fails otherwise.
