@@ -13386,7 +13386,7 @@ stacks:
     content:
       dfe-schemas: "v0.2.32"
       # renovate: datasource=github-tags depName=hyperi-io/dfe-deploy
-      dfe-deploy: "v1.0.37"
+      dfe-deploy: "v1.0.38"  # 2026-11-26, from main d3cbd80279: pins.yaml selects dfe-infra 2.2.4-rc.5, channel rc.
       dfe-docker: "v1.0.13"
       dfe-hyperdx: "v0.3.28-rc.1"
 
