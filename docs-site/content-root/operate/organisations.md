@@ -20,10 +20,12 @@ Every common header a source table starts from defines `_org_id` as a non-null, 
 ## How a record gets its `_org_id`
 
 - For pushed data, dfe-receiver reads the bearer token a sender presents. Each ingest credential belongs to an organisation and binds the orgs its records may land in, one of them its default. By default the receiver drops an `_org_id` the sender put in the record, and the record takes the default org's tenant id. Where the deployment lets senders set it, or a routing rule picks one, an org outside the binding is replaced by the default.
-- For fetched data, the source the fetcher polls names its org, and every record it fetches gets that org's tenant id. A source that names none fetches under `unassigned`.
-- A bearer listener no credential lists runs without auth, and its records land under `unassigned`. No organisation can hold that id, so a login that reads every org, such as `admin`, is the one that sees them. Create an ingest credential for your org and point your senders at it, and their records land in your org.
+- For fetched data, the source the fetcher polls names its org, and every record it fetches gets that org's tenant id. A source that names none fetches into your org.
+- A bearer listener no credential lists runs without auth, and its records land in your org. Create an ingest credential per organisation when you host others, so their senders land in their own org.
 
-dfe-engine compiles `unassigned` into the receiver, the fetcher and the loader as the tenant for a record that names no org, so a record that reaches the loader without an `_org_id` takes it there too. A topic your own pipeline writes is the exception: a record there without one takes the org of the source the topic belongs to. The loader writes each record to the table its `_source` names, in the shared database, unless the source maps it to another table ([source routing](../dfe-engine/data-plane/source-routing.md)).
+dfe-engine compiles your org's first tenant id into the receiver, the fetcher and the loader as the tenant for a record that names no org, so a record that reaches the loader without an `_org_id` takes it there too. Naming a different org as yours recompiles all three. A topic your own pipeline writes takes the org of the source the topic belongs to, and your org when that source names none.
+
+Until the setup wizard names your org, or while the org named isn't registered and enabled, those records land under `unassigned` instead. No organisation can hold that id, so only a login that reads every org, such as `admin`, sees them. The loader writes each record to the table its `_source` names, in the shared database, unless the source maps it to another table ([source routing](../dfe-engine/data-plane/source-routing.md)).
 
 ## How ClickHouse holds each org to its rows
 
