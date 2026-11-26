@@ -11,5 +11,5 @@ scale-down CronJob, the activity hook in the pod and the scripts ConfigMap.
 - name: ENV
   value: /opt/dfe-idle/activity.sh
 - name: PROMPT_COMMAND
-  value: "printf '%(%s)T\\n' -1 2>/dev/null >/tmp/.dfe-toolbox-activity"
+  value: "printf '%(%s)T\\n' -1 2>/dev/null >/tmp/.dfe-toolbox-activity.$$ && mv -f /tmp/.dfe-toolbox-activity.$$ /tmp/.dfe-toolbox-activity"
 {{- end -}}
