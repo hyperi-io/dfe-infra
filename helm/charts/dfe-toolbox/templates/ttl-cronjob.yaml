@@ -27,14 +27,11 @@ rules:
   - apiGroups: [""]
     resources: ["pods/exec"]
     verbs: ["get", "create"]
+  # patch on the Deployment, not its scale subresource, so the write is recorded under the idle field manager.
   - apiGroups: ["apps"]
     resources: ["deployments"]
     resourceNames: [{{ include "dfe-common.fullname" . | quote }}]
-    verbs: ["get"]
-  - apiGroups: ["apps"]
-    resources: ["deployments/scale"]
-    resourceNames: [{{ include "dfe-common.fullname" . | quote }}]
-    verbs: ["get", "update", "patch"]
+    verbs: ["get", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

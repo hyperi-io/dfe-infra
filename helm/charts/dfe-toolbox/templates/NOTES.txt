@@ -29,7 +29,9 @@ The {{ include "dfe-common.fullname" . }}-ttl CronJob scales it to zero, checkin
 Every open terminal gets a notice {{ .Values.toolbox.pod.idleWarnSeconds }}s before the scale-down.
 {{- end }}
 A pod the CronJob cannot probe counts as busy, so only the ttl ceiling can scale it.
-Flip toolbox.pod.enabled back to true to run it again.
+To run it again after a scale-down, as the default field manager and not dfe-toolbox-idle:
+  kubectl patch deployment/{{ include "dfe-common.fullname" . }} -n {{ .Release.Namespace }} --type=merge -p '{"spec":{"replicas":1}}'
+Setting toolbox.pod.enabled to false and then true does the same through Argo CD.
 {{- end }}
 {{- else }}
 The in-cluster toolbox pod is disabled (toolbox.pod.enabled: false, the

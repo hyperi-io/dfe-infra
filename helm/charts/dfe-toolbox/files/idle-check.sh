@@ -18,6 +18,9 @@
 set -euo pipefail
 
 readonly SCRIPTS="${SCRIPTS:-/opt/dfe-idle}"
+# argocd/appsets/layer2-platform.yaml ignores the replicas this manager owns, so Argo CD's selfHeal leaves a scale to zero alone.
+# The patch goes to the Deployment itself: a write through the scale subresource leaves no managedFields entry to ignore.
+readonly FIELD_MANAGER=dfe-toolbox-idle
 
 field() {
     # The probe prints key=value lines, so a field is read by name and never evaluated.
@@ -67,7 +70,8 @@ main() {
     case "${action}" in
         scale)
             echo "${pod}: ${reason} limit reached -- scaling ${deployment} to zero"
-            kubectl scale "deployment/${deployment}" -n "${namespace}" --replicas=0
+            kubectl patch "deployment/${deployment}" -n "${namespace}" \
+                --type=merge -p '{"spec":{"replicas":0}}' --field-manager="${FIELD_MANAGER}"
             ;;
         warn)
             echo "${pod}: ${reason} limit in ${left}s -- warning the open terminals"

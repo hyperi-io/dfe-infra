@@ -229,6 +229,13 @@ spec:
       destination:
         server: '{{ .server }}'
         namespace: '{{ .namespace }}'
+      # The toolbox idle check scales the Deployment to zero under this field manager, and selfHeal must not revert it. Only the field that manager owns is ignored, so toggling toolbox.pod.enabled still syncs.
+      ignoreDifferences:
+        - group: apps
+          kind: Deployment
+          name: dfe-toolbox
+          managedFieldsManagers:
+            - dfe-toolbox-idle
       syncPolicy:
         automated:
           prune: true

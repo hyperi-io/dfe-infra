@@ -5,6 +5,9 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "dfe-common.labels" . | nindent 4 }}
+  # Flipping toolbox.pod.enabled changes this, so Argo CD syncs and takes back replicas from the idle check.
+  annotations:
+    dfe.hyperi.io/toolbox-enabled: {{ .Values.toolbox.pod.enabled | quote }}
 spec:
   # The whole toggle: 0 when toolbox.pod.enabled is false, so this Deployment
   # is always present (the appset deploys the chart unconditionally) but does

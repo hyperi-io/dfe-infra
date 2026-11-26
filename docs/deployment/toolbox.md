@@ -95,6 +95,16 @@ The image is unchanged. A ConfigMap mounts five scripts at `/opt/dfe-idle`, and 
 
 The CronJob's ServiceAccount holds `pods/exec` on the namespace's pods, since the pod name carries a ReplicaSet hash. The toolbox pod's own credential never gets exec. A pod that cannot be probed counts as busy, so only `ttlSeconds` scales it.
 
+Argo CD's `selfHeal` would put `replicas: 1` straight back, so the scale-down is a patch of the Deployment under the field manager `dfe-toolbox-idle`, and `layer2-platform.yaml` ignores differences on the replicas that manager owns. A write through the `scale` subresource leaves no field-manager entry to ignore, so the CronJob holds `patch` on the Deployment itself, fenced to its name.
+
+To run the toolbox again, patch the Deployment as the default field manager, never `dfe-toolbox-idle`:
+
+```bash
+kubectl patch deployment/dfe-toolbox -n default --type=merge -p '{"spec":{"replicas":1}}'
+```
+
+That hands the field back to Argo CD, so a later `toolbox.pod.enabled: false` still scales it down. Setting `enabled` to false and then true works too, because the Deployment carries the value in the `dfe.hyperi.io/toolbox-enabled` annotation and Argo CD syncs the change. Any other sync of the Deployment, such as a chart upgrade, also puts the replicas back to what the dial says.
+
 ## What is recorded, and what is not
 
 A bastion shell session (`bastion shell`) is logged to the deployment's session-log prefix, encrypted with the deployment's key, and kept for `toolbox.session_log_retention_days` (90 when the dial is silent). That's independent of the telemetry dial's 2-7 day window, because a session log is evidence of human access to a customer's private data plane, not service telemetry.

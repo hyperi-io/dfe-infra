@@ -415,11 +415,35 @@ def run_check(
     return log.read_text(encoding="utf-8").splitlines()
 
 
+FIELD_MANAGER = "dfe-toolbox-idle"
+APPSET = REPO_ROOT / "argocd" / "appsets" / "layer2-platform.yaml"
+
+
 def scaled(calls: list[str]) -> bool:
+    """A patch of the Deployment to zero replicas, under the named manager."""
     return any(
-        call.startswith("scale deployment/dfe-toolbox") and "--replicas=0" in call
+        call.startswith("patch deployment/dfe-toolbox")
+        and "--subresource" not in call
+        and """-p {"spec":{"replicas":0}}""" in call
+        and f"--field-manager={FIELD_MANAGER}" in call
         for call in calls
     )
+
+
+def test_the_appset_ignores_the_replicas_the_idle_manager_owns() -> None:
+    """Argo CD's selfHeal reverts a scale unless it is told whose field to leave."""
+    appset = yaml.safe_load(APPSET.read_text(encoding="utf-8"))
+    ignored = appset["spec"]["template"]["spec"]["ignoreDifferences"]
+    assert ignored == [
+        {
+            "group": "apps",
+            "kind": "Deployment",
+            "name": "dfe-toolbox",
+            "managedFieldsManagers": [FIELD_MANAGER],
+        }
+    ]
+    script = (FILES / "idle-check.sh").read_text(encoding="utf-8")
+    assert f"readonly FIELD_MANAGER={FIELD_MANAGER}\n" in script
 
 
 def warnings(calls: list[str]) -> list[str]:
@@ -674,6 +698,37 @@ def test_exec_belongs_to_the_check_serviceaccount_alone() -> None:
     assert [s["name"] for s in binding["subjects"]] == ["dfe-toolbox-ttl"]
     (viewer,) = of_kind(docs, "ClusterRole")
     assert all("pods/exec" not in rule["resources"] for rule in viewer["rules"])
+
+
+@pytest.mark.requires_tool("helm")
+def test_the_check_may_patch_the_toolbox_deployment_and_nothing_else_of_it() -> None:
+    """A scale subresource write leaves no field-manager entry, so it is patch on the Deployment."""
+    (role,) = of_kind(render("toolbox.pod.idleSeconds=1800"), "Role")
+    deployment_rules = [
+        rule
+        for rule in role["rules"]
+        if any(r.startswith("deployments") for r in rule["resources"])
+    ]
+    assert deployment_rules == [
+        {
+            "apiGroups": ["apps"],
+            "resources": ["deployments"],
+            "resourceNames": ["dfe-toolbox"],
+            "verbs": ["get", "patch"],
+        }
+    ]
+
+
+@pytest.mark.requires_tool("helm")
+@pytest.mark.parametrize("enabled", ["true", "false"])
+def test_the_enabled_toggle_changes_the_manifest_so_argo_syncs_it(
+    enabled: str,
+) -> None:
+    """Without it a toggle changes only replicas, which the idle manager's ignore hides."""
+    docs = render("toolbox.pod.idleSeconds=1800", f"toolbox.pod.enabled={enabled}")
+    (deployment,) = of_kind(docs, "Deployment")
+    annotation = deployment["metadata"]["annotations"]["dfe.hyperi.io/toolbox-enabled"]
+    assert annotation == enabled
 
 
 # --- the activity hook in a real shell --------------------------------------------
