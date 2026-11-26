@@ -13046,8 +13046,8 @@ stacks:
     # DFE apps: Argo wave 5 (appsets/layer2-apps.yaml). Each has its own release line on GHCR.
     # A tag also names its thin chart's version, the tag less its v; dfe-stack cut and bump-app move chart-digests with it.
     apps:
-      dfe-engine: "v1.22.94-rc.5"
-      dfe-ui: "v1.7.47-rc.2"
+      dfe-engine: "v1.22.94-rc.5"  # 2026-11-26, amd64 and arm64, from main f220fde366. A disabled organisation blocks its accounts. Deleting one deletes its accounts, API keys and sign-in providers. Organisation deletes, ID and enabled changes and ingest credential writes need a re-auth grant. Every account needs a group. Internal rc, under the 7-day cooldown by design.
+      dfe-ui: "v1.7.47-rc.2"  # 2026-11-26, amd64 and arm64, from main 5d3b81c364. Admin pages for organisations, groups, accounts and OIDC providers to match engine v1.22.94-rc.5. Internal rc, under the 7-day cooldown by design.
       dfe-receiver: "v1.15.72-rc.3"
       dfe-loader: "v1.18.76-rc.5"
       dfe-archiver: "v1.7.54-rc.4"
