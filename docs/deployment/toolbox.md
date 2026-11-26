@@ -74,7 +74,9 @@ toolbox:
   pod:
     enabled: false        # replicas: 0 -> 1
     kubeApiAccess: false  # a read-only Kubernetes credential, see below
-    ttlSeconds: ""        # auto-scale back to zero after this many seconds
+    idleSeconds: ""       # scale to zero after this many seconds without activity
+    idleWarnSeconds: 300  # notice into every open terminal this long before
+    ttlSeconds: ""        # hard ceiling from the pod's start, whatever the activity
 ```
 
 The dial (`deployment.yaml`'s `toolbox.pod.*`) turns it on. It reaches the chart through `argocd/appsets/layer2-platform.yaml`'s own parameters and wins over `argocd/values/common.yaml`'s fleet-wide default. With `enabled: true` the Deployment runs one replica, and you reach it with `kubectl exec -it -n default deploy/dfe-toolbox -- /bin/sh`. It runs non-root, with a read-only root filesystem and no capabilities. `/work` is an `emptyDir` for anything written to disk, on top of the image's `$HOME`/`/tmp` (above).
@@ -83,7 +85,15 @@ The dial (`deployment.yaml`'s `toolbox.pod.*`) turns it on. It reaches the chart
 
 The chart's `NetworkPolicy` limits egress to cluster DNS and those same namespaces, but that's a request to the CNI, not a control that enforces itself. On EKS, the `vpc-cni` add-on sets `enableNetworkPolicy` so the policy is enforced. On-prem it depends on the cluster's CNI supporting `NetworkPolicy` at all. Confirm which applies before relying on the fence, especially alongside `kubeApiAccess: true`.
 
-`ttlSeconds`, when set, renders a companion CronJob that checks the pod's `status.startTime` once a minute and scales the Deployment back to zero past that many seconds. Left empty, the pod runs until an operator disables it by hand.
+With `idleSeconds` or `ttlSeconds` set, the `dfe-toolbox-ttl` CronJob checks the pod every minute and scales the Deployment to zero. Both empty, the pod runs until an operator disables it.
+
+- `idleSeconds`: no activity for that long. A command at a prompt, a shell opened with `kubectl exec` and a command still running (a long query, a log tail) all count. An untouched pod counts from its start.
+- `ttlSeconds`: a hard ceiling from the pod's start, so a busy pod is still scaled at the limit.
+- `idleWarnSeconds`: one notice into every open terminal this long before either scale-down. `0` skips it.
+
+The image is unchanged. A ConfigMap mounts five scripts at `/opt/dfe-idle`, and the pod's `ENV` and `PROMPT_COMMAND` make an interactive `sh` or `bash` write the epoch to `/tmp/.dfe-toolbox-activity` at start and at each prompt. The CronJob reads it with `kubectl exec`. A shell that replaces `PROMPT_COMMAND`, or `kubectl exec -- <cmd>` with no shell, goes unseen.
+
+The CronJob's ServiceAccount holds `pods/exec` on the namespace's pods, since the pod name carries a ReplicaSet hash. The toolbox pod's own credential never gets exec. A pod that cannot be probed counts as busy, so only `ttlSeconds` scales it.
 
 ## What is recorded, and what is not
 

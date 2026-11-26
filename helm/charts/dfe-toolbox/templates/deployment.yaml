@@ -44,6 +44,10 @@ spec:
           # for the container to run. An operator reaches it with `kubectl
           # exec` (see NOTES.txt / docs/deployment/toolbox.md).
           command: ["sleep", "infinity"]
+          {{- if include "dfe-toolbox.idleManaged" . }}
+          env:
+            {{- include "dfe-toolbox.activityEnv" . | nindent 12 }}
+          {{- end }}
           {{- include "dfe-common.containerSecurityContext" . | nindent 10 }}
           resources:
             {{- toYaml .Values.toolbox.pod.resources | nindent 12 }}
@@ -53,6 +57,21 @@ spec:
             # download or generate scratch files.
             - name: work
               mountPath: /work
+            {{- if include "dfe-toolbox.idleManaged" . }}
+            # The activity hook writes /tmp/.dfe-toolbox-activity.
+            - name: tmp
+              mountPath: /tmp
+            - name: idle
+              mountPath: /opt/dfe-idle
+              readOnly: true
+            {{- end }}
       volumes:
         - name: work
           emptyDir: {}
+        {{- if include "dfe-toolbox.idleManaged" . }}
+        - name: tmp
+          emptyDir: {}
+        - name: idle
+          configMap:
+            name: {{ include "dfe-common.fullname" . }}-idle
+        {{- end }}

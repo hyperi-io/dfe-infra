@@ -123,11 +123,17 @@ spec:
               - name: deployRepo.bundled
                 value: '{{ eq (index .metadata.labels "dfe.hyperi.io/bundled-deploy-repo") "true" }}'
               # The toolbox pod's dial facts, which bootstrap.sh carries onto the cluster secret. enabled and kubeApiAccess take Helm's
-              # type inference (a real boolean, which the chart's validate.yaml requires). ttlSeconds is forced to a string so a numeric TTL is never coerced.
+              # type inference (a real boolean, which the chart's validate.yaml requires). The three limits are forced to strings so a number is never coerced.
               - name: toolbox.pod.enabled
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/toolbox_pod_enabled" | default "false" }}'
               - name: toolbox.pod.kubeApiAccess
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/toolbox_pod_kube_api_access" | default "false" }}'
+              - name: toolbox.pod.idleSeconds
+                value: '{{ index .metadata.annotations "dfe.hyperi.io/toolbox_pod_idle_seconds" | default "" }}'
+                forceString: true
+              - name: toolbox.pod.idleWarnSeconds
+                value: '{{ index .metadata.annotations "dfe.hyperi.io/toolbox_pod_idle_warn_seconds" | default "300" }}'
+                forceString: true
               - name: toolbox.pod.ttlSeconds
                 value: '{{ index .metadata.annotations "dfe.hyperi.io/toolbox_pod_ttl_seconds" | default "" }}'
                 forceString: true

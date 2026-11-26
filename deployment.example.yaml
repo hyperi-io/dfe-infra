@@ -481,8 +481,14 @@ toolbox:
     ## pods/portforward -- never secrets, never pods/exec). Refused unless enabled is
     ## also true.
     kubeApiAccess: false
-    ## Seconds before the companion CronJob scales the pod back to zero. Empty runs it
-    ## until an operator disables it by hand.
+    ## Seconds without activity before the pod scales to zero. A command at a shell
+    ## prompt, a shell opened with kubectl exec and a command still running all count.
+    ## Empty sets no idle limit.
+    idleSeconds: ""
+    ## Seconds before a scale-down that every open terminal gets a notice. 0 for none.
+    idleWarnSeconds: 300
+    ## Hard ceiling in seconds from the pod's start, whatever the activity. Empty sets
+    ## none. With both limits empty the pod runs until an operator disables it by hand.
     ttlSeconds: ""
   ## The on-demand SSM-managed EC2 instance, READ by render_dial.py --tofu
   ## (unlike pod: above). `enabled` is the `dfe-ops bastion up`/`down` toggle

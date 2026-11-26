@@ -16,13 +16,14 @@ toolbox:
     # is what the pod actually authenticates to the API server with. Refused
     # by validate.yaml when enabled is not also true.
     kubeApiAccess: false
-    # Seconds the pod may run before the companion CronJob scales it back to
-    # zero. Empty (the default) renders no CronJob -- the pod runs until an
-    # operator flips enabled back to false by hand.
+    # Seconds without activity before the pod scales to zero. Empty: no idle limit.
+    idleSeconds: ""
+    # Seconds before a scale-down that open terminals get a notice. 0: no notice.
+    idleWarnSeconds: 300
+    # Hard ceiling in seconds from the pod's start. Empty: none. With both limits
+    # empty no CronJob renders.
     ttlSeconds: ""
-    # How often the CronJob checks elapsed time against ttlSeconds. Only read
-    # when ttlSeconds is set. 1-minute granularity is enough for a
-    # troubleshooting session measured in minutes or hours.
+    # How often the CronJob checks both limits.
     ttlCheckSchedule: "* * * * *"
     terminationGracePeriodSeconds: 5
     resources:

@@ -1,17 +1,7 @@
-{{- if .Values.toolbox.pod.ttlSeconds }}
+{{- if include "dfe-toolbox.idleManaged" . }}
 {{- /*
-No simpler mechanism found in this repo for "scale to zero N seconds after a
-pod starts": KEDA's cooldownPeriod (_keda.tpl) only fires after a trigger
-goes idle, and this pod has no traffic-shaped trigger to watch -- it is
-either running or it is not. So this is a plain CronJob, checking the
-toolbox Pod's own status.startTime (which resets every time the Deployment
-scales 0 -> 1, unlike the Deployment's own creationTimestamp) against
-toolbox.pod.ttlSeconds, once a minute.
-
-Runs the SAME image as the toolbox pod rather than pinning a second one --
-a troubleshooting base image is assumed to ship kubectl and GNU coreutils
-(date -d). If ghcr.io/hyperi-io/dfe-toolbox-base does not carry those, this
-CronJob needs its own pinned utility image instead of reusing this one.
+Scales the toolbox Deployment to zero after toolbox.pod.idleSeconds without activity, or toolbox.pod.ttlSeconds after the pod starts, once a minute (files/idle-check.sh).
+The CronJob runs the toolbox image for its kubectl and GNU date, so it needs no second pinned image.
 */}}
 apiVersion: v1
 kind: ServiceAccount
@@ -32,6 +22,11 @@ rules:
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list"]
+  # The pod name carries a ReplicaSet hash, so exec cannot be fenced to one pod.
+  # Held by this ServiceAccount alone, never the toolbox pod's. Same verbs as pods/portforward in rbac.yaml.
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["get", "create"]
   - apiGroups: ["apps"]
     resources: ["deployments"]
     resourceNames: [{{ include "dfe-common.fullname" . | quote }}]
@@ -74,8 +69,16 @@ spec:
       backoffLimit: 1
       template:
         metadata:
+          # Not dfe-common.labels: its app.kubernetes.io/name is the toolbox pod's own, so
+          # this pod would match the SELECTOR below and the toolbox NetworkPolicy.
           labels:
-            {{- include "dfe-common.labels" . | nindent 12 }}
+            app.kubernetes.io/name: {{ printf "%s-%s-ttl" .Values.project .Values.component | quote }}
+            app.kubernetes.io/instance: {{ .Release.Name | quote }}
+            app.kubernetes.io/part-of: {{ .Values.project | quote }}
+            app.kubernetes.io/managed-by: "helm"
+            app.kubernetes.io/version: {{ .Chart.AppVersion | default "0.0.0" | quote }}
+            dfe.hyperi.io/env: {{ .Values.env | quote }}
+            dfe.hyperi.io/cloud: {{ .Values.cloud | quote }}
         spec:
           {{- include "dfe-common.podSecurityContext" . | nindent 10 }}
           serviceAccountName: {{ include "dfe-common.fullname" . }}-ttl
@@ -92,27 +95,26 @@ spec:
                   value: {{ include "dfe-common.fullname" . | quote }}
                 - name: SELECTOR
                   value: "app.kubernetes.io/name={{ printf "%s-%s" .Values.project .Values.component }}"
+                - name: IDLE_SECONDS
+                  value: {{ toString .Values.toolbox.pod.idleSeconds | quote }}
+                - name: IDLE_WARN_SECONDS
+                  value: {{ toString .Values.toolbox.pod.idleWarnSeconds | quote }}
                 - name: TTL_SECONDS
-                  value: {{ .Values.toolbox.pod.ttlSeconds | quote }}
-              command:
-                - /bin/sh
-                - -c
-                - |
-                  set -eu
-                  START=$(kubectl get pods -n "$NAMESPACE" -l "$SELECTOR" \
-                    --field-selector=status.phase=Running \
-                    -o jsonpath='{.items[0].status.startTime}' 2>/dev/null || true)
-                  if [ -z "$START" ]; then
-                    echo "no running toolbox pod in $NAMESPACE -- nothing to expire"
-                    exit 0
-                  fi
-                  NOW_EPOCH=$(date -u +%s)
-                  START_EPOCH=$(date -u -d "$START" +%s)
-                  ELAPSED=$((NOW_EPOCH - START_EPOCH))
-                  if [ "$ELAPSED" -ge "$TTL_SECONDS" ]; then
-                    echo "toolbox pod has run ${ELAPSED}s (ttl ${TTL_SECONDS}s) -- scaling $DEPLOYMENT to zero"
-                    kubectl scale "deployment/$DEPLOYMENT" -n "$NAMESPACE" --replicas=0
-                  else
-                    echo "toolbox pod has run ${ELAPSED}s of ${TTL_SECONDS}s ttl -- leaving it running"
-                  fi
+                  value: {{ toString .Values.toolbox.pod.ttlSeconds | quote }}
+                # kubectl's discovery cache lands under $HOME otherwise, which is read-only.
+                - name: KUBECACHEDIR
+                  value: /tmp/kube-cache
+              command: ["/bin/bash", "/opt/dfe-idle/idle-check.sh"]
+              volumeMounts:
+                - name: tmp
+                  mountPath: /tmp
+                - name: idle
+                  mountPath: /opt/dfe-idle
+                  readOnly: true
+          volumes:
+            - name: tmp
+              emptyDir: {}
+            - name: idle
+              configMap:
+                name: {{ include "dfe-common.fullname" . }}-idle
 {{- end }}

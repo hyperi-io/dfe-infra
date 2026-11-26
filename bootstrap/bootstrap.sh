@@ -662,6 +662,8 @@ export DFE_NODE_USER_DATA_ANNOTATION="${DFE_NODE_USER_DATA:+dfe.hyperi.io/node_u
 # parser reads as a boolean (or an empty/numeric string for ttlSeconds).
 export DFE_TOOLBOX_POD_ENABLED="${DFE_TOOLBOX_POD_ENABLED:-false}"
 export DFE_TOOLBOX_POD_KUBE_API_ACCESS="${DFE_TOOLBOX_POD_KUBE_API_ACCESS:-false}"
+export DFE_TOOLBOX_POD_IDLE_SECONDS="${DFE_TOOLBOX_POD_IDLE_SECONDS:-}"
+export DFE_TOOLBOX_POD_IDLE_WARN_SECONDS="${DFE_TOOLBOX_POD_IDLE_WARN_SECONDS:-300}"
 export DFE_TOOLBOX_POD_TTL_SECONDS="${DFE_TOOLBOX_POD_TTL_SECONDS:-}"
 # The edge module's whole-module switch (deployment.yaml's edge.enabled,
 # render_dial.py's DFE_EDGE_ENABLED). ON by default, because a deployment with
