@@ -148,6 +148,6 @@ dashboards:
   mountPath: /etc/hyperdx/dashboards
   image:
     repository: ""
-    tag: "v1.22.94-rc.4"
+    tag: "v1.22.94-rc.5"
     # Runs the engine image: versions.yaml digests.dfe-engine.
-    digest: "sha256:ca70186fb800712e1764922190d4b53a9b458a1603389952a15c7d0d9f142577"
+    digest: "sha256:ef977f39d07c4e4869941ba810fef8522179c761ee213d46ed562eddb45619b4"
