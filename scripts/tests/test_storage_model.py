@@ -146,6 +146,12 @@ def test_clickhouse_cached_object_renders_the_disks() -> None:
         "MergeTree defaults to the cached policy",
         extra["merge_tree"]["storage_policy"] == "s3_cached",
     )
+    # A Wide part is one object per column stream, and a JSON column makes that thousands.
+    expect(
+        "parts up to 1 GiB stay Compact on the object store",
+        extra["merge_tree"].get("min_bytes_for_wide_part") == 1073741824,
+        f"got {extra['merge_tree']}",
+    )
 
 
 def test_the_cache_disk_sorts_after_the_disk_it_wraps() -> None:
@@ -473,41 +479,71 @@ def test_the_endpoint_alone_derives_cached_object() -> None:
     )
 
 
-def test_the_object_store_timeouts_are_unset_by_default_and_settable() -> None:
+def test_the_object_store_request_dials_are_unset_by_default_and_settable() -> None:
     """Left at the server defaults a read against an unreachable store blocked
-    over nine minutes on the rig; 1 / 2000 / 5000 failed the same read in 10.4s.
-    The dials must therefore exist, and must change nothing until they are set."""
-    bounded = {"s3_retry_attempts", "s3_connect_timeout_ms", "s3_request_timeout_ms"}
-    disk = one(render("clickhouse-cluster", *CACHED_OBJECT_SETS), "ClickHouseCluster")[
+    over nine minutes on the rig, and an unpaced disk can outrun a fresh bucket's
+    request rate. The dials must exist, under the key names ClickHouse 26.3 reads
+    (timeouts unprefixed, retries and pacing s3_-prefixed), and must change
+    nothing until they are set."""
+    dials = {
+        ("objectStore", "retryAttempts"): ("s3_retry_attempts", 1),
+        ("objectStore", "connectTimeoutMs"): ("connect_timeout_ms", 2000),
+        ("objectStore", "requestTimeoutMs"): ("request_timeout_ms", 5000),
+        ("objectStoreTuning", "maxPutRps"): ("s3_max_put_rps", 1000),
+        ("objectStoreTuning", "maxPutBurst"): ("s3_max_put_burst", 1500),
+        ("objectStoreTuning", "maxGetRps"): ("s3_max_get_rps", 3000),
+        ("objectStoreTuning", "maxGetBurst"): ("s3_max_get_burst", 4500),
+    }
+    keys = {key for key, _ in dials.values()}
+    extra = one(render("clickhouse-cluster", *CACHED_OBJECT_SETS), "ClickHouseCluster")[
         "spec"
-    ]["settings"]["extraConfig"]["storage_configuration"]["disks"]["s3_object"]
+    ]["settings"]["extraConfig"]
+    disk = extra["storage_configuration"]["disks"]["s3_object"]
     expect(
-        "the defaults leave the server's own retry behaviour alone",
-        not bounded & set(disk),
+        "the defaults leave the server's own retry, timeout and pacing alone",
+        not keys & set(disk),
         f"got {sorted(disk)}",
     )
-    tuned = one(
+    expect(
+        "the defaults leave the Wide-part JSON paths uncapped",
+        "merge_max_dynamic_subcolumns_in_wide_part" not in extra["merge_tree"],
+        f"got {extra['merge_tree']}",
+    )
+    tuned_extra = one(
         render(
             "clickhouse-cluster",
             *CACHED_OBJECT_SETS,
-            "clickhouse.objectStore.retryAttempts=1",
-            "clickhouse.objectStore.connectTimeoutMs=2000",
-            "clickhouse.objectStore.requestTimeoutMs=5000",
+            *(
+                f"clickhouse.{block}.{name}={v}"
+                for (block, name), (_, v) in dials.items()
+            ),
+            "clickhouse.objectStoreTuning.minBytesForWidePart=null",
+            "clickhouse.objectStoreTuning.mergeMaxDynamicSubcolumnsInWidePart=256",
         ),
         "ClickHouseCluster",
-    )["spec"]["settings"]["extraConfig"]["storage_configuration"]["disks"]["s3_object"]
+    )["spec"]["settings"]["extraConfig"]
+    tuned = tuned_extra["storage_configuration"]["disks"]["s3_object"]
     expect(
-        "each bound reaches the disk",
-        [
-            tuned.get(k)
-            for k in (
-                "s3_retry_attempts",
-                "s3_connect_timeout_ms",
-                "s3_request_timeout_ms",
-            )
-        ]
-        == [1, 2000, 5000],
+        "each dial reaches the disk under the key ClickHouse reads",
+        {key: tuned.get(key) for key, _ in dials.values()}
+        == {key: v for key, v in dials.values()},
         f"got {tuned}",
+    )
+    expect(
+        "the prefixed timeout spellings the disk ignores are gone",
+        not {"s3_connect_timeout_ms", "s3_request_timeout_ms"} & set(tuned),
+        f"got {sorted(tuned)}",
+    )
+    expect(
+        "a cleared Wide-part threshold falls back to the server's own",
+        "min_bytes_for_wide_part" not in tuned_extra["merge_tree"],
+        f"got {tuned_extra['merge_tree']}",
+    )
+    expect(
+        "the JSON path cap reaches merge_tree",
+        tuned_extra["merge_tree"].get("merge_max_dynamic_subcolumns_in_wide_part")
+        == 256,
+        f"got {tuned_extra['merge_tree']}",
     )
 
 
@@ -713,6 +749,11 @@ def test_clickhouse_cached_object_reaches_single_mode() -> None:
         "the single-mode fragment names the same policy",
         fragment["merge_tree"]["storage_policy"] == "s3_cached",
     )
+    expect(
+        "and the same Compact threshold",
+        fragment["merge_tree"].get("min_bytes_for_wide_part") == 1073741824,
+        f"got {fragment['merge_tree']}",
+    )
 
 
 def test_wait_for_async_insert_guard_catches_every_falsy_spelling() -> None:
@@ -753,6 +794,24 @@ def test_clickhouse_storage_model_guards() -> None:
             "clickhouse-cluster", "clickhouse.mode=external", *CACHED_OBJECT_SETS
         ),
     )
+    for verb in ("Put", "Get"):
+        expect(
+            f"a {verb} burst with no rate is refused, since the server ignores it",
+            f"max{verb}Burst needs clickhouse.objectStoreTuning.max{verb}Rps"
+            in render_error(
+                "clickhouse-cluster", f"clickhouse.objectStoreTuning.max{verb}Burst=500"
+            ),
+        )
+    for bad in ("1Gi", "-1", "1.5"):
+        expect(
+            f"a Wide-part threshold of {bad} is refused, not rendered as zero",
+            "minBytesForWidePart must be a whole number"
+            in render_error(
+                "clickhouse-cluster",
+                *CACHED_OBJECT_SETS,
+                f"clickhouse.objectStoreTuning.minBytesForWidePart={bad}",
+            ),
+        )
 
 
 def test_an_instance_store_cache_with_no_endpoint_names_the_endpoint() -> None:
@@ -1137,7 +1196,7 @@ def main() -> int:
         test_clickhouse_keeper_gets_its_own_service_account_too()
         test_the_aws_cascade_is_what_turns_pod_identity_on()
         test_the_endpoint_alone_derives_cached_object()
-        test_the_object_store_timeouts_are_unset_by_default_and_settable()
+        test_the_object_store_request_dials_are_unset_by_default_and_settable()
         test_clickhouse_tiered_block_ranks_two_local_volumes()
         test_the_cold_volume_sorts_after_the_hot_one()
         test_clickhouse_tiered_block_needs_no_object_store()

@@ -145,6 +145,16 @@ Kafka's flavour isn't a chart dimension. `kafka.tieredObject.config` passes plug
 
 `clickhouse.objectStore.retryAttempts`, `.connectTimeoutMs` and `.requestTimeoutMs` are **opt-in** and unset by default, leaving the server's behaviour alone. That behaviour is the reason they exist. **Live-proven**: a read against an unreachable store blocked for over nine minutes before failing, and `1 / 2000 / 5000` brought the same failure down to 10.4 seconds. Those numbers are a demonstration, not a recommendation. One retry is aggressive against S3, which returns transient 5xx routinely, so pick production values against the actual store. Just don't leave them unbounded, because a nine-minute stall on a dashboard is indistinguishable from an outage.
 
+Request count is the other bound. Every file in a part is its own object, and a Wide part has one file per column stream, so a JSON column with hundreds of paths means thousands of PUTs per part on every replica. A new bucket starts unpartitioned and answers a burst with 503 Slow Down until S3 scales. `clickhouse.objectStoreTuning` holds these dials, outside `objectStore` so the storage-layout lock leaves them changeable after deploy.
+
+| Value | Default | What it does |
+| --- | --- | --- |
+| `minBytesForWidePart` | 1073741824 (1 GiB), ClickHouse Cloud's own default on object storage | Parts under it are written Compact, about 60 objects whatever the column count. Empty keeps the server's 10 MiB |
+| `mergeMaxDynamicSubcolumnsInWidePart` | empty (uncapped) | Caps the JSON paths a merge writes as separate files in a Wide part. The rest go to shared data, which is slower to query |
+| `maxPutRps`, `maxPutBurst`, `maxGetRps`, `maxGetBurst` | empty (unlimited) | Per-replica pacing on the object disk. A burst without its rate is refused, because ClickHouse ignores it |
+
+AWS serves at least 3,500 writes and 11,000 reads a second per partitioned prefix. Divide by the replica count to keep a new bucket under it. A merge with any Wide input writes a Wide part, so on a live deployment the threshold takes over as old partitions age out.
+
 ## Dimension 4: credential binding (both services)
 
 | Cell | Status | Proof |

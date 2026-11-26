@@ -1,6 +1,7 @@
 {{/* Renders nothing. Runs the guards in every mode. */}}
 {{- include "dfe-clickhouse.validateStorageModel" . -}}
 {{- include "dfe-clickhouse.validateCacheVolume" . -}}
+{{- include "dfe-clickhouse.validateObjectStoreTuning" . -}}
 {{- include "dfe-clickhouse.validateUserProfile" . -}}
 {{- include "dfe-clickhouse.validateLogger" . -}}
 {{- include "dfe-clickhouse.validateTls" . -}}
