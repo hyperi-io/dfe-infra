@@ -15,28 +15,28 @@ dropped_versions:
 docs_refs:
   2.2.2:
     dfe-archiver: "c8509175dcc2842c7abae2d9bf576c9bdec565ed"
-    dfe-engine: "0c8991ac452c3e8b496a08a3e79f71acb5395182"
+    dfe-engine: "f617c5ec86462d04e34be95986c1d426855c93e2"
     dfe-fetcher: "ad1faa5932a83fd87c125280a302ecb3ba472f4c"
     dfe-hyperdx: "4a0429e3dce7354f930cdfc28d3f6f75ed4b756b"
     dfe-infra: "297b39550a8db229afe7934298ecc1fb4c15a39c"  # branch docs/2.2.2, which must stay
     dfe-loader: "4d5a0cacc5342505e23cdb909c3cee49e66f3555"  # says record throughout, lists memory as restart-only
     dfe-receiver: "de94eb83b44ae390a165462026cda5a94c609bd9"
     dfe-schemas: "0feaee595c09b0496b582f787cd2ccfc0038e74c"
-    dfe-transform-elastic: "7aec4d9877831f91890d55e6d13f554d0c956fba"  # branch docs/2.2.2, which must stay
+    dfe-transform-elastic: "e8e7cdf221d3d7166858c40cbd79b30fa95fbd31"  # branch docs/2.2.2, which must stay
     dfe-transform-vector: "58bf4a371da4279c3900f491dbd9daf3d7de8e4b"
-    dfe-transform-vrl: "d31c9b5227ef8c550d9244d1f14479d4e149975b"  # branch docs/2.2.2, which must stay
+    dfe-transform-vrl: "81352aa012aa8ff57fc3b42e9b19bf12a0480f1d"  # branch docs/2.2.2, which must stay
   # 2.2.2's member docs. dfe-infra reads its own 2.2.2-fix.1 tag.
   2.2.2-fix.1:
     dfe-archiver: "c8509175dcc2842c7abae2d9bf576c9bdec565ed"
-    dfe-engine: "0c8991ac452c3e8b496a08a3e79f71acb5395182"
+    dfe-engine: "f617c5ec86462d04e34be95986c1d426855c93e2"
     dfe-fetcher: "ad1faa5932a83fd87c125280a302ecb3ba472f4c"
     dfe-hyperdx: "4a0429e3dce7354f930cdfc28d3f6f75ed4b756b"
     dfe-loader: "4d5a0cacc5342505e23cdb909c3cee49e66f3555"  # says record throughout, lists memory as restart-only
     dfe-receiver: "de94eb83b44ae390a165462026cda5a94c609bd9"
     dfe-schemas: "0feaee595c09b0496b582f787cd2ccfc0038e74c"
-    dfe-transform-elastic: "7aec4d9877831f91890d55e6d13f554d0c956fba"  # branch docs/2.2.2, which must stay
+    dfe-transform-elastic: "e8e7cdf221d3d7166858c40cbd79b30fa95fbd31"  # branch docs/2.2.2, which must stay
     dfe-transform-vector: "58bf4a371da4279c3900f491dbd9daf3d7de8e4b"
-    dfe-transform-vrl: "d31c9b5227ef8c550d9244d1f14479d4e149975b"  # branch docs/2.2.2, which must stay
+    dfe-transform-vrl: "81352aa012aa8ff57fc3b42e9b19bf12a0480f1d"  # branch docs/2.2.2, which must stay
 
 # A member whose docs mount inside another member's section rather than at the
 # top of the sidebar: member -> the member it mounts under. The parent mounts at

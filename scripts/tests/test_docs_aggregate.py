@@ -1980,7 +1980,7 @@ def test_cli_render_tells_docker_failures_from_engine_ones(
     [
         ("v1.22.89", "v1.22.89"),
         (aggregate.HEAD, cli_reference.HEAD_TAG),
-        ("ad608a090f5993bb7b3d7aac02cc6a3e8354ae76", cli_reference.HEAD_TAG),
+        ("eb1d1d941e6c23816da97728dc1f61aa6e5fbb1c", cli_reference.HEAD_TAG),
     ],
     ids=["release", "head", "commit"],
 )
