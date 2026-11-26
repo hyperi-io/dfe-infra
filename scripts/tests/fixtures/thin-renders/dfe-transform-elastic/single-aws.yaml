@@ -134,6 +134,8 @@ spec:
           value: dfe-transform-elastic
         - name: SCALO_WRITABLE_PATH_LIMITS
           value: /var/lib/dfe/geoip=512Mi,/var/spool/scalo/dlq=1Gi
+        - name: OPENSSL_CONF
+          value: /tmp/scalo-openssl.cnf
         - name: KAFKA_SASL_USERNAME
           valueFrom:
             secretKeyRef:

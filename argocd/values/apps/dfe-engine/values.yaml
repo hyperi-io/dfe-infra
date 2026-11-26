@@ -389,7 +389,7 @@ content:
       kind: emit
       role: contract
       app: dfe-transform-elastic
-      ref: "ghcr.io/hyperi-io/dfe-transform-elastic:v1.1.35-rc.4@sha256:556b12e6a078fbdb327bfafaa8d2ebc6aa8ab8800765ecfb43671a4db3b0e9d9"
+      ref: "ghcr.io/hyperi-io/dfe-transform-elastic:v1.1.35-rc.5@sha256:bc5e625b6e6447f633eb29420e0d4bf5ffd889fc4d009ec9fe716b351f9cbd50"
 # The contract's config writable path mounts at /config.
 config:
   mountPath: /config

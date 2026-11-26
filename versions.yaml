@@ -13305,7 +13305,7 @@ stacks:
     # DFE apps: Argo wave 5 (appsets/layer2-apps.yaml). Each has its own release line on GHCR.
     # A tag also names its thin chart's version, the tag less its v; dfe-stack cut and bump-app move chart-digests with it.
     apps:
-      dfe-engine: "v1.22.94-rc.5"
+      dfe-engine: "v1.22.94-rc.6"  # 2026-11-26, amd64 and arm64, from main 5939ae8793. The loader routing block carries each deployed table's columns, the receiver and loader seeds use the 2.14.40 TLS keys, a list ca_paths passes the contract check, and a TLS pin_sha256 shows in the console. Internal rc, under the 7-day cooldown by design.
       dfe-ui: "v1.7.47-rc.2"
       dfe-receiver: "v1.15.72-rc.4"  # 2026-11-26, amd64 and arm64, from main 72e6255cc1. Rebuild on scalo 2.14.40: TLS keys move into one tls section, an old key fails the load naming its replacement, and listeners take TLS 1.2. Internal rc, under the 7-day cooldown by design.
       dfe-loader: "v1.18.76-rc.6"  # 2026-11-26, amd64 and arm64, from main ec65ba3b63. Rebuild on scalo 2.14.40: kafka and clickhouse TLS keys move into the tls section, an old key fails the load naming its replacement. Internal rc, under the 7-day cooldown by design.
@@ -13313,7 +13313,7 @@ stacks:
       dfe-fetcher: "v1.4.61-rc.5"  # 2026-11-26, amd64 and arm64, from main 13803ee7f4. Rebuild on scalo 2.14.40: TLS keys move into the tls section, an old key fails the load naming its replacement. Internal rc, under the 7-day cooldown by design.
       dfe-transform-vrl: "v1.1.51-rc.4"  # 2026-11-26, amd64 and arm64, from main 924c913967. Rebuild on scalo 2.14.40: source.tls and sink.tls keys move to ca_paths, client_cert_path and client_key_path, an old key fails the load. Internal rc, under the 7-day cooldown by design.
       dfe-transform-vector: "v1.0.68-rc.4"  # 2026-11-26, amd64 and arm64, from main 286831d570. Rebuild on scalo 2.14.40. Its contract sets openssl_conf empty, so the Vector child keeps the distro OpenSSL config. Internal rc, under the 7-day cooldown by design.
-      dfe-transform-elastic: "v1.1.35-rc.4"
+      dfe-transform-elastic: "v1.1.35-rc.5"  # 2026-11-26, amd64 and arm64, from main 171641404a. Rebuild on scalo 2.14.40: the Kafka CA reads through the tls section and the image sets OPENSSL_CONF for the Kafka client TLS floor. No app config key changes. Internal rc, under the 7-day cooldown by design.
       # dfe-transform-wasm: "2.2.0"
       # dfe-transform-splack: "2.2.0"
       culvert: "v2.1.30"
@@ -13321,7 +13321,7 @@ stacks:
     # The immutable half of each app's tag@sha256 pin, always the multi-arch index digest.
     # An app with no digest here is unpublished and left out of rendered manifests.
     digests:
-      dfe-engine: "sha256:ef977f39d07c4e4869941ba810fef8522179c761ee213d46ed562eddb45619b4"
+      dfe-engine: "sha256:dd079ffb6bac5b60978aaec1aa642df64f7defdb67755413f114bd610bbb967d"
       dfe-ui: "sha256:376a6b6ab5db13cc18b87b0f710113a7b0d2c6fbe9229d708d7b528c82a243bc"
       dfe-receiver: "sha256:cb9589439a1de3c3b471acdeac9b9314ece00870fd4fdee7e4a7fa1a3469624e"
       dfe-loader: "sha256:e00cc38ca371cff602c5b7714c716fee845466fbbfbd0e8619163cc9c4332267"
@@ -13329,7 +13329,7 @@ stacks:
       dfe-fetcher: "sha256:aabb5580b4aedae6d1ce0c7db08fbf822148b2fd3b74e68b50d4f7172698e4bf"
       dfe-transform-vrl: "sha256:febda5c1b1a905220d3f06b50e6e83e8422d6a274571dc0f9a7d9ec29ad4cacf"
       dfe-transform-vector: "sha256:63e70e117234d8d5f5caa8cf75fa916d73ec8b4378131123e0c52e4c9096ba2a"
-      dfe-transform-elastic: "sha256:556b12e6a078fbdb327bfafaa8d2ebc6aa8ab8800765ecfb43671a4db3b0e9d9"
+      dfe-transform-elastic: "sha256:bc5e625b6e6447f633eb29420e0d4bf5ffd889fc4d009ec9fe716b351f9cbd50"
       dfe-hyperdx: "sha256:9737864ad9a6a895d0bfa3b22fa63189c0f94b7369a628cdbf6b55f7a94b1259"
       culvert: "sha256:467b5effcd73c7db549426a5cc843e8f82b0a02877a3378ae8bc864d0787bed0"
       dfe-toolbox-base: "sha256:2d3940c3fe864978c46d9ce1d2d276f7f2a42694753d4a358ba088321ae9109d"
@@ -13342,12 +13342,12 @@ stacks:
     chart-digests:
       culvert: "sha256:423166ccc25223b702864e49684f95b150cc1d8dded42f0bace6b05844b068f6"
       dfe-archiver: "sha256:a1f334d3016158deea3f1dc61d358e3e41ded57e06ca43f4f874233f18ba6ae0"  # 1.7.54-rc.5
-      dfe-engine: "sha256:f23b8ee69cffc5356b90189ae5ada97b729935d710352292a6130c1b6d0e34d7"
+      dfe-engine: "sha256:7cc8a5b684eae2c6635f6d1a424b355f8634f631dddadf6e101ed79ca048cda1"  # 1.22.94-rc.6
       dfe-fetcher: "sha256:7d448bd7e12f6563c8e59fe8cf5c9297191ef1257622fbd87b731b5ce7afc065"  # 1.4.61-rc.5
       dfe-hyperdx: "sha256:c3ab8cac57d5219a9d5eaa1b85e2fc060c3370ab1867172c38660b087098b799"
       dfe-loader: "sha256:208cdb12c31e0515aed398488a92e767cdaa75dc924469eeae7de09dc41ba02f"  # 1.18.76-rc.6
       dfe-receiver: "sha256:981c1dbf6218eec4c00fd6b2711210467f2c8fb6e6db4d0e5c85fef45da99d6b"  # 1.15.72-rc.4
-      dfe-transform-elastic: "sha256:79b4ce1dc40b88363eb86488533b79edae8111962938f82e91e495ba7f9af3b3"
+      dfe-transform-elastic: "sha256:6bcc62ba433878c6faa1895cdf72babf631da7b835bc809b265d7189d2756fda"  # 1.1.35-rc.5
       dfe-transform-vector: "sha256:d8be8cccb8012fab860c53d00fa6a10ee93bd67128fee187d79de6dcbdea5fbd"  # 1.0.68-rc.4
       dfe-transform-vrl: "sha256:04c8e9a61feb6e639cf157380879c598981b2e0df9c3f773a9d9be43ba5a11ec"  # 1.1.51-rc.4
       dfe-ui: "sha256:d63f73c610cec4e21a641fc0566aab2b8fe74e6f54f966c386f0df0251357425"
@@ -13386,7 +13386,7 @@ stacks:
     content:
       dfe-schemas: "v0.2.32"
       # renovate: datasource=github-tags depName=hyperi-io/dfe-deploy
-      dfe-deploy: "v1.0.37"
+      dfe-deploy: "v1.0.38"  # 2026-11-26, from main d3cbd80279: pins.yaml selects dfe-infra 2.2.4-rc.5, channel rc.
       dfe-docker: "v1.0.13"
       dfe-hyperdx: "v0.3.28-rc.1"
 

@@ -81,7 +81,6 @@ LIBRARY_CHART = "oci://ghcr.io/hyperi-io/charts/scalo-service"
 LIBRARIES = {
     "2.14.15": "sha256:f7330b648692e2eca2ec0819a82944b05a1dcb4b27cf8b95afce6912ed94a823",
     "2.14.30": "sha256:5218182a56f69797bfe5e0b06177f426c3dfe759042bc13873f84d200e10f392",
-    "2.14.34": "sha256:93b50cf84b9209416e261c208e339f66282d3d911011aa14dbce3118924e9bf4",
     "2.14.40": "sha256:1e04e4375bc3a33ae922b39bcc75deda0bb2e65311bf48940eace972c4648676",
 }
 LIBRARY_VERSION = "2.14.30"
@@ -93,7 +92,7 @@ COMPONENT_LIBRARY = {
     "dfe-hyperdx": "2.14.15",
     "dfe-loader": "2.14.40",
     "dfe-receiver": "2.14.40",
-    "dfe-transform-elastic": "2.14.34",
+    "dfe-transform-elastic": "2.14.40",
     "dfe-transform-vector": "2.14.40",
     "dfe-transform-vrl": "2.14.40",
 }
