@@ -54,12 +54,26 @@ FIELDS = (
         "false",
     ),
     (
+        "idleSeconds",
+        "DFE_TOOLBOX_POD_IDLE_SECONDS",
+        "dfe.hyperi.io/toolbox_pod_idle_seconds",
+        "",
+    ),
+    (
+        "idleWarnSeconds",
+        "DFE_TOOLBOX_POD_IDLE_WARN_SECONDS",
+        "dfe.hyperi.io/toolbox_pod_idle_warn_seconds",
+        "300",
+    ),
+    (
         "ttlSeconds",
         "DFE_TOOLBOX_POD_TTL_SECONDS",
         "dfe.hyperi.io/toolbox_pod_ttl_seconds",
         "",
     ),
 )
+# The limits are whole seconds and reach the chart as strings.
+STRING_FIELDS = ("idleSeconds", "idleWarnSeconds", "ttlSeconds")
 
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 import render_dial  # noqa: E402
@@ -127,11 +141,12 @@ def test_the_appset_passes_every_field_as_a_parameter() -> None:
             f"got {params.get(name)}",
         )
 
-    expect(
-        "ttlSeconds is forced to a string -- a numeric TTL must never silently become an int",
-        force_string["toolbox.pod.ttlSeconds"] is True,
-        f"got {force_string['toolbox.pod.ttlSeconds']}",
-    )
+    for field in STRING_FIELDS:
+        expect(
+            f"{field} is forced to a string -- a number must never silently become an int",
+            force_string[f"toolbox.pod.{field}"] is True,
+            f"got {force_string[f'toolbox.pod.{field}']}",
+        )
     expect(
         "enabled is left to Helm's own type inference, so a bare true/false becomes a real bool",
         force_string["toolbox.pod.enabled"] is False,
@@ -159,6 +174,8 @@ def test_the_dial_renders_every_key() -> None:
                 "pod": {
                     "enabled": "true",
                     "kubeApiAccess": "true",
+                    "idleSeconds": "1800",
+                    "idleWarnSeconds": "120",
                     "ttlSeconds": "3600",
                 }
             }
@@ -178,6 +195,16 @@ def test_the_dial_renders_every_key() -> None:
         "and ttlSeconds through unchanged, still a string",
         turned_on.get("DFE_TOOLBOX_POD_TTL_SECONDS") == "3600",
         f"got {turned_on.get('DFE_TOOLBOX_POD_TTL_SECONDS')}",
+    )
+    expect(
+        "and the idle limit and its warning window",
+        (
+            turned_on.get("DFE_TOOLBOX_POD_IDLE_SECONDS"),
+            turned_on.get("DFE_TOOLBOX_POD_IDLE_WARN_SECONDS"),
+        )
+        == ("1800", "120"),
+        f"got {turned_on.get('DFE_TOOLBOX_POD_IDLE_SECONDS')}, "
+        f"{turned_on.get('DFE_TOOLBOX_POD_IDLE_WARN_SECONDS')}",
     )
 
 

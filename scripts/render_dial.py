@@ -97,6 +97,8 @@ _ENV_MAP: tuple[tuple[tuple[str, ...], str], ...] = (
     # this chart alone.
     (("toolbox", "pod", "enabled"), "DFE_TOOLBOX_POD_ENABLED"),
     (("toolbox", "pod", "kubeApiAccess"), "DFE_TOOLBOX_POD_KUBE_API_ACCESS"),
+    (("toolbox", "pod", "idleSeconds"), "DFE_TOOLBOX_POD_IDLE_SECONDS"),
+    (("toolbox", "pod", "idleWarnSeconds"), "DFE_TOOLBOX_POD_IDLE_WARN_SECONDS"),
     (("toolbox", "pod", "ttlSeconds"), "DFE_TOOLBOX_POD_TTL_SECONDS"),
     # The edge module's whole-module switch, carried onto the cluster secret as
     # both a label and an annotation because an ApplicationSet cluster selector

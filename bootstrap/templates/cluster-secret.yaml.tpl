@@ -173,6 +173,8 @@ metadata:
     # requires.
     dfe.hyperi.io/toolbox_pod_enabled: "${DFE_TOOLBOX_POD_ENABLED}"
     dfe.hyperi.io/toolbox_pod_kube_api_access: "${DFE_TOOLBOX_POD_KUBE_API_ACCESS}"
+    dfe.hyperi.io/toolbox_pod_idle_seconds: "${DFE_TOOLBOX_POD_IDLE_SECONDS}"
+    dfe.hyperi.io/toolbox_pod_idle_warn_seconds: "${DFE_TOOLBOX_POD_IDLE_WARN_SECONDS}"
     dfe.hyperi.io/toolbox_pod_ttl_seconds: "${DFE_TOOLBOX_POD_TTL_SECONDS}"
     # The annotation copy of the edge label above, for anything reading the
     # module's state from the annotations the rest of this file carries.

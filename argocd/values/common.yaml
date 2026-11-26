@@ -207,6 +207,8 @@ toolbox:
     enabled: false
     # Needs enabled: true.
     kubeApiAccess: false
+    idleSeconds: ""
+    idleWarnSeconds: 300
     ttlSeconds: ""
 
 # Profiles override these per tier. pressure.targetValue is on the 0-100 ScalingPressure gauge.
