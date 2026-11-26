@@ -15,7 +15,7 @@ extras:
   # The version each component's objects are labelled with, and the engine image tag the hunt runner and keda shim run
   # (image.tag empty takes it). Each is versions.yaml apps.<component>, checked by scripts/check_versions_drift.py.
   appVersions:
-    dfe-engine: "v1.22.94-rc.5"
+    dfe-engine: "v1.22.94-rc.6"
     dfe-ui: "v1.7.47-rc.2"
     dfe-receiver: "v1.15.72-rc.4"
     dfe-loader: "v1.18.76-rc.6"
@@ -265,7 +265,7 @@ extras:
       image:
         repository: ""
         tag: ""
-        digest: "sha256:ef977f39d07c4e4869941ba810fef8522179c761ee213d46ed562eddb45619b4"
+        digest: "sha256:dd079ffb6bac5b60978aaec1aa642df64f7defdb67755413f114bd610bbb967d"
         pullPolicy: IfNotPresent
       stackVersion: ""
       profile: ""
