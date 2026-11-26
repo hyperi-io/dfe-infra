@@ -359,32 +359,32 @@ content:
       kind: emit
       role: contract
       app: dfe-receiver
-      ref: "ghcr.io/hyperi-io/dfe-receiver:v1.15.72-rc.3@sha256:e6d48766602859e9286d37aaed0ba910cf760e56e15bb0a7d3b4f30ea2fabd1e"
+      ref: "ghcr.io/hyperi-io/dfe-receiver:v1.15.72-rc.4@sha256:cb9589439a1de3c3b471acdeac9b9314ece00870fd4fdee7e4a7fa1a3469624e"
     - name: dfe-loader-contract
       kind: emit
       role: contract
       app: dfe-loader
-      ref: "ghcr.io/hyperi-io/dfe-loader:v1.18.76-rc.5@sha256:aa5d4f7e38d587291d0f35fe6761958c387483f9956ddd9bd63633f3d7c2644c"
+      ref: "ghcr.io/hyperi-io/dfe-loader:v1.18.76-rc.6@sha256:e00cc38ca371cff602c5b7714c716fee845466fbbfbd0e8619163cc9c4332267"
     - name: dfe-archiver-contract
       kind: emit
       role: contract
       app: dfe-archiver
-      ref: "ghcr.io/hyperi-io/dfe-archiver:v1.7.54-rc.4@sha256:e2db7b8879c0008857025d8b52d6b52038ea61c35a080f7cd711f7b2f2d73e27"
+      ref: "ghcr.io/hyperi-io/dfe-archiver:v1.7.54-rc.5@sha256:369ac8fe7e68ea529a01bdfb0a86f17e2427047cccd0edca0cf3676bb3de340c"
     - name: dfe-fetcher-contract
       kind: emit
       role: contract
       app: dfe-fetcher
-      ref: "ghcr.io/hyperi-io/dfe-fetcher:v1.4.61-rc.4@sha256:8491b41839dc68c11219fd9195a30ade948d3732d43b85e16481af881ffe1789"
+      ref: "ghcr.io/hyperi-io/dfe-fetcher:v1.4.61-rc.5@sha256:aabb5580b4aedae6d1ce0c7db08fbf822148b2fd3b74e68b50d4f7172698e4bf"
     - name: dfe-transform-vrl-contract
       kind: emit
       role: contract
       app: dfe-transform-vrl
-      ref: "ghcr.io/hyperi-io/dfe-transform-vrl:v1.1.51-rc.3@sha256:9f39cdbcf2d6ac06ad8aa6b2c8bb272e334a9e40e3d982a27138534dd7bec230"
+      ref: "ghcr.io/hyperi-io/dfe-transform-vrl:v1.1.51-rc.4@sha256:febda5c1b1a905220d3f06b50e6e83e8422d6a274571dc0f9a7d9ec29ad4cacf"
     - name: dfe-transform-vector-contract
       kind: emit
       role: contract
       app: dfe-transform-vector
-      ref: "ghcr.io/hyperi-io/dfe-transform-vector:v1.0.68-rc.3@sha256:4c9c95dd6cbcebe1d96774a90cfd337aa566c0eda0e1491e1e8b9c6f0dde3384"
+      ref: "ghcr.io/hyperi-io/dfe-transform-vector:v1.0.68-rc.4@sha256:63e70e117234d8d5f5caa8cf75fa916d73ec8b4378131123e0c52e4c9096ba2a"
     - name: dfe-transform-elastic-contract
       kind: emit
       role: contract

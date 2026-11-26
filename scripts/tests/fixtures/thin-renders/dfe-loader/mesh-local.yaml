@@ -146,6 +146,8 @@ spec:
               fieldPath: metadata.namespace
         - name: OTEL_SERVICE_NAME
           value: dfe-loader
+        - name: OPENSSL_CONF
+          value: /tmp/scalo-openssl.cnf
         - name: DFE_LOADER__CLICKHOUSE__PASSWORD
           valueFrom:
             secretKeyRef:

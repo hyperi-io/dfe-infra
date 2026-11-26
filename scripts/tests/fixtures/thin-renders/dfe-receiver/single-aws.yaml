@@ -130,6 +130,8 @@ spec:
           value: dfe-receiver
         - name: SCALO_WRITABLE_PATH_LIMITS
           value: /var/spool/dfe/dlq=1Gi
+        - name: OPENSSL_CONF
+          value: /tmp/scalo-openssl.cnf
         - name: DFE_RECEIVER_KAFKA_SASL_USER
           valueFrom:
             secretKeyRef:

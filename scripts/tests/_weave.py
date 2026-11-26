@@ -75,13 +75,34 @@ APPSETS = Path("argocd/appsets")
 RENDER_DIGEST = "sha256:" + "ab" * 32
 DIGEST_RE = re.compile(r"sha256:[0-9a-f]{64}")
 
-# The scalo-service release a render uses when DFE_WEAVE_LIBRARY is unset. The
-# pull names the manifest digest, so a re-pushed tag cannot change what renders.
+# The scalo-service release each component's published chart was built on, pulled
+# by manifest digest so a re-pushed tag cannot change what renders.
 LIBRARY_CHART = "oci://ghcr.io/hyperi-io/charts/scalo-service"
+LIBRARIES = {
+    "2.14.15": "sha256:f7330b648692e2eca2ec0819a82944b05a1dcb4b27cf8b95afce6912ed94a823",
+    "2.14.30": "sha256:5218182a56f69797bfe5e0b06177f426c3dfe759042bc13873f84d200e10f392",
+    "2.14.34": "sha256:93b50cf84b9209416e261c208e339f66282d3d911011aa14dbce3118924e9bf4",
+    "2.14.40": "sha256:1e04e4375bc3a33ae922b39bcc75deda0bb2e65311bf48940eace972c4648676",
+}
 LIBRARY_VERSION = "2.14.30"
-LIBRARY_DIGEST = (
-    "sha256:5218182a56f69797bfe5e0b06177f426c3dfe759042bc13873f84d200e10f392"
-)
+COMPONENT_LIBRARY = {
+    "culvert": "2.14.15",
+    "dfe-archiver": "2.14.40",
+    "dfe-engine": "2.14.15",
+    "dfe-fetcher": "2.14.40",
+    "dfe-hyperdx": "2.14.15",
+    "dfe-loader": "2.14.40",
+    "dfe-receiver": "2.14.40",
+    "dfe-transform-elastic": "2.14.34",
+    "dfe-transform-vector": "2.14.40",
+    "dfe-transform-vrl": "2.14.40",
+}
+
+
+def library_version(service: str | None) -> str:
+    """The scalo-service release a component renders on, else LIBRARY_VERSION."""
+    return COMPONENT_LIBRARY.get(service or "", LIBRARY_VERSION)
+
 
 # Where each component's thin chart is published, the registry its images come from.
 CHART_REGISTRY = "oci://ghcr.io/hyperi-io/charts"
@@ -139,40 +160,40 @@ def _pull(reference: str, destination: str) -> str | None:
 
 
 @functools.cache
-def _pulled_library() -> tuple[tempfile.TemporaryDirectory | None, Path | str]:
-    """The pinned library pulled into a scratch directory, or why it could not be.
+def _pulled_library(
+    version: str,
+) -> tuple[tempfile.TemporaryDirectory | None, Path | str]:
+    """One pinned library release pulled into a scratch directory, or why it could not be.
 
     The directory object is returned with the path so it lives as long as the
     cache does, and goes when the run ends. A failure is cached too, so an
     offline run reports it once per test rather than retrying the pull.
     """
-    scratch = tempfile.TemporaryDirectory(prefix="dfe-weave-library-")
-    reference = f"{LIBRARY_CHART}@{LIBRARY_DIGEST}"
+    scratch = tempfile.TemporaryDirectory(prefix=f"dfe-weave-library-{version}-")
+    reference = f"{LIBRARY_CHART}@{LIBRARIES[version]}"
     failed = _pull(reference, scratch.name)
     if failed is not None:
         return None, failed
     chart = Path(scratch.name) / "scalo-service"
     meta = yaml.safe_load((chart / "Chart.yaml").read_text(encoding="utf-8")) or {}
-    if str(meta.get("version")) != LIBRARY_VERSION:
-        return (
-            None,
-            f"{reference} is version {meta.get('version')}, not {LIBRARY_VERSION}",
-        )
+    if str(meta.get("version")) != version:
+        return None, f"{reference} is version {meta.get('version')}, not {version}"
     return scratch, chart
 
 
-def library() -> Path:
-    """The scalo-service chart directory: DFE_WEAVE_LIBRARY, else the pinned release from GHCR."""
+def library(service: str | None = None) -> Path:
+    """The scalo-service chart directory: DFE_WEAVE_LIBRARY, else the component's pinned release."""
     value = os.environ.get("DFE_WEAVE_LIBRARY")
     if value:
         path = Path(value).resolve()
         if not (path / "Chart.yaml").is_file():
             pytest.fail(f"DFE_WEAVE_LIBRARY={value} holds no Chart.yaml")
         return path
-    _, found = _pulled_library()
+    version = library_version(service)
+    _, found = _pulled_library(version)
     if isinstance(found, str):
         pytest.fail(
-            f"cannot pull {LIBRARY_CHART} {LIBRARY_VERSION} ({LIBRARY_DIGEST}): {found}\n"
+            f"cannot pull {LIBRARY_CHART} {version} ({LIBRARIES[version]}): {found}\n"
             "set DFE_WEAVE_LIBRARY to a scalo-service chart directory to render offline"
         )
     return found
@@ -210,7 +231,7 @@ def _assembled(
 
 def assembled_chart(service: str) -> Path:
     """The thin chart for a component, from its committed contract and the pinned library."""
-    return _assembled(service, library())[1]
+    return _assembled(service, library(service))[1]
 
 
 def chart_digest(service: str) -> str:
@@ -344,7 +365,7 @@ def _inputs(service: str, options: dict) -> object:
         chart = assembled_chart(service)
     elif thin and chart is None:
         given_contract = given_contract or contract(service)
-        chart_library = chart_library or library()
+        chart_library = chart_library or library(service)
     return weave().Inputs(
         repo=options.pop("repo", REPO_ROOT),
         appset=_routed(options.pop("appset", None)),

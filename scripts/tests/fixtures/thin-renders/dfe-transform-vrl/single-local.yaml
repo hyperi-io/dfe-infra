@@ -165,6 +165,8 @@ spec:
               fieldPath: metadata.namespace
         - name: OTEL_SERVICE_NAME
           value: dfe-transform-vrl
+        - name: OPENSSL_CONF
+          value: /tmp/scalo-openssl.cnf
         - name: DFE_TRANSFORM_VRL_SOURCE_SASL_USERNAME
           valueFrom:
             secretKeyRef:
