@@ -202,5 +202,6 @@
     "fs_group": 1000,
     "read_only_root_filesystem": true
   },
-  "singleton": true
+  "singleton": true,
+  "openssl_conf": ""
 }

@@ -13564,7 +13564,7 @@ stacks:
     # DFE apps: Argo wave 5 (appsets/layer2-apps.yaml). Each has its own release line on GHCR.
     # A tag also names its thin chart's version, the tag less its v; dfe-stack cut and bump-app move chart-digests with it.
     apps:
-      dfe-engine: "v1.22.94-rc.6"
+      dfe-engine: "v1.22.94-rc.7"  # 2026-11-27, amd64 and arm64, from main f295679167. Locks dfe-schemas 0.2.33, holds a production team deploy until review merges, rejects empty rule search filters, caps log reducer clusters and anomaly rows, caps org names at 64 characters, and sends synthetic credentials to every receiver name. Internal rc, under the 7-day cooldown by design.
       dfe-ui: "v1.7.47-rc.3"  # 2026-11-27, amd64 and arm64, from main bab4c7c5b0. Shows Argo CD sync state in the status card, fixes on-demand rule runs and hunt executions, starts a catalogue add on its default intake, and syncs the engine types. Internal rc, under the 7-day cooldown by design.
       dfe-receiver: "v1.15.72-rc.5"  # 2026-11-27, amd64 and arm64, from main f423af97e9. Caps HTTP/2 streams and concurrent requests per listener, decodes every member of a gzip body, and returns 400 for a Remote Write series the converter rejects. Internal rc, under the 7-day cooldown by design.
       dfe-loader: "v1.18.76-rc.7"  # 2026-11-27, amd64 and arm64, from main 506b8609db. Sends each record only to deployed tables and reads the event time through the _timestamp column directive of common-header 1.0.4. Internal rc, under the 7-day cooldown by design.
@@ -13580,7 +13580,7 @@ stacks:
     # The immutable half of each app's tag@sha256 pin, always the multi-arch index digest.
     # An app with no digest here is unpublished and left out of rendered manifests.
     digests:
-      dfe-engine: "sha256:dd079ffb6bac5b60978aaec1aa642df64f7defdb67755413f114bd610bbb967d"
+      dfe-engine: "sha256:798f0a329a6b05caec05010b48186cedd4e36bd9732175b2fe2736b663171f08"
       dfe-ui: "sha256:b39d70b062a36d21dec45cddae0fee5d1cb7e98ea950c51fddeacd8f54a63cf3"
       dfe-receiver: "sha256:7e2a65242c3b899b1569f193d5558bb9491b07b7e7532836bd25f6cfe8efd3c2"
       dfe-loader: "sha256:a8ec609ea580cd9e90342e427d24f329d41439d6358896f43aae7405b7aea58a"
@@ -13601,7 +13601,7 @@ stacks:
     chart-digests:
       culvert: "sha256:d36437d686aa3c14a8c36d8ec84e82bc28f521ceff4f4a5328df57dcb2259738"  # 2.1.32
       dfe-archiver: "sha256:e99d7759d59280792c75c0d68a82dcde5c98ad030a5be5b3221f1ec416af1c07"  # 1.7.54-rc.6
-      dfe-engine: "sha256:7cc8a5b684eae2c6635f6d1a424b355f8634f631dddadf6e101ed79ca048cda1"
+      dfe-engine: "sha256:cebdef9a058ebba323a2ebdfb82f7a9434a58924758c029ca310603ea4529364"  # 1.22.94-rc.7
       dfe-fetcher: "sha256:1eb2b6c40b21e44d370e84023e232ec5ff519fda56d7cfa5adfdcdc035fb99ea"  # 1.4.61-rc.6
       dfe-hyperdx: "sha256:0fba570cdab210ca74a73efa7238d244e8d56805f5b232d758c1525f60139c82"  # 0.3.28-rc.3
       dfe-loader: "sha256:847757e93f49dafeb546152622fe443889244b2a60a4ea24a3ba1bea52d2f7eb"  # 1.18.76-rc.7
