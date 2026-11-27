@@ -31,7 +31,7 @@ from urllib.parse import urlsplit
 from acceptance.clients import Datastore, Engine, remove_source, run_name, table_ref
 from acceptance.onboarding import run as onboarding
 from acceptance.onboarding import wizard
-from acceptance.source import beats, edgestream, fetcher, steps, syslog
+from acceptance.source import beats, edgestream, fetcher, flow, steps, syslog
 from acceptance.source.listener import Listener
 from acceptance.source.steps import STEP_TIMEOUT_MS
 
@@ -51,6 +51,26 @@ def source_created(response) -> bool:
     """Whether a reply the browser saw is the engine answering the console's Add Source."""
     path = urlsplit(response.url).path.rstrip("/")
     return response.request.method == "POST" and path.endswith(SOURCES_ROUTE)
+
+
+def receiver_exposition(args: argparse.Namespace) -> list[str]:
+    """The receiver's metrics, one body per pod when a selector is given.
+
+    Raises:
+        RuntimeError: The metrics could not be read.
+    """
+    if args.receiver_metrics_selector and args.kubectl:
+        return syslog.read_pod_exposition(
+            shlex.split(args.kubectl), args.namespace, args.receiver_metrics_selector
+        )
+    return syslog.read_exposition(args.receiver_metrics_url)
+
+
+def receiver_counted(args: argparse.Namespace) -> bool:
+    """Whether the run was told where the receiver's metrics are."""
+    return bool(
+        args.receiver_metrics_url or (args.receiver_metrics_selector and args.kubectl)
+    )
 
 
 @dataclass
@@ -962,11 +982,7 @@ class SyslogCase(Case):
     @staticmethod
     def _counted(run: Run) -> bool:
         """Whether the run was told where the receiver's counters are."""
-        args = run.args
-        return bool(
-            args.receiver_metrics_url
-            or (args.receiver_metrics_selector and args.kubectl)
-        )
+        return receiver_counted(run.args)
 
     @staticmethod
     def _counters(run: Run) -> dict[str, int]:
@@ -975,14 +991,7 @@ class SyslogCase(Case):
         Raises:
             RuntimeError: The counters could not be read.
         """
-        args = run.args
-        if args.receiver_metrics_selector and args.kubectl:
-            return syslog.read_pod_counters(
-                shlex.split(args.kubectl),
-                args.namespace,
-                args.receiver_metrics_selector,
-            )
-        return syslog.read_counters(args.receiver_metrics_url)
+        return syslog.counters_of(receiver_exposition(run.args))
 
     @classmethod
     def _read_counters(cls, run: Run) -> dict[str, int] | None:
@@ -1586,6 +1595,196 @@ class EdgestreamHubCase(Case):
         )
 
 
+# --- flow: NetFlow, IPFIX and sFlow datagrams at the receiver's UDP listener --
+
+
+class FlowCase(Case):
+    """The receiver's flow listener, fed the captures dfe-receiver commits.
+
+    The engine creates the catalogue sources ``netflow`` and ``sflow``, and the run
+    opens the listener in ``exploded`` mode, so each flow record is one event. The
+    run sends every fixture from this machine, in order, and the proof is the rows
+    each table gained: as many as the receiver's own test says the fixtures yield,
+    typed, and none in ``main``. A source already on the stack is read as it stands.
+    """
+
+    service = ""
+    companion_repo = "dfe-receiver"
+    observes = False
+    archives = False
+    console = False
+    LAND_DEADLINE = 180.0
+
+    def __init__(self, args: argparse.Namespace) -> None:
+        super().__init__(args)
+        self.name = flow.SOURCES[0]
+        self._listener = Listener("receiver-flow", flow.SWITCHES, flow.ENV)
+        self._made: list[str] = []
+        self._before: dict[str, dict[str, int]] = {}
+
+    @property
+    def owns_source(self) -> bool:
+        return self.name in self._made
+
+    @staticmethod
+    def _table(source: str) -> str:
+        return table_ref(source)
+
+    def _counts(self, run: Run, source: str) -> dict[str, int]:
+        """Rows in a source's table, and how many carry an address and an exporter."""
+        table = self._table(source)
+        return {
+            "rows": run.store.scalar(f"SELECT count() FROM {table}"),
+            "addressed": run.store.scalar(
+                f"SELECT count() FROM {table} WHERE isNotNull(src_ip)"
+            ),
+            "enveloped": run.store.scalar(
+                f"SELECT count() FROM {table} "
+                "WHERE isNotNull(exporter_ip) AND flow_version != ''"
+            ),
+            "main": run.store.scalar(
+                "SELECT count() FROM main WHERE JSONExtractString("
+                f"{steps.RECORD_TEXT}, 'protocol') = '{source}'"
+            ),
+        }
+
+    def create(self, run: Run) -> list[str]:
+        hints = self._listener.open(run)
+        if hints is None:
+            raise RuntimeError("the receiver's flow listener did not open")
+        wanted = [
+            source
+            for source in flow.SOURCES
+            if run.engine.call("GET", f"/sources/{source}").status != 200
+        ]
+        entries = {"entries": [{"entry": source} for source in wanted]}
+        if wanted:
+            reply = run.engine.call("POST", "/sources/from-catalogue", entries)
+            body = reply.body if isinstance(reply.body, dict) else {}
+            if reply.status not in (200, 201, 202) or body.get("failed"):
+                raise RuntimeError(
+                    f"creating {', '.join(wanted)} from the catalogue was refused: "
+                    f"{reply.status} {reply.body}"
+                )
+            hints += steps.reply_hints(reply.body)
+            self._made = wanted
+        steps.deploy(run.engine, flow.SOURCES[1])
+        kept = [source for source in flow.SOURCES if source not in wanted]
+        run.driver.record(
+            "add-source",
+            "api-fallback" if wanted else "skipped",
+            f"the engine created {', '.join(wanted) or 'nothing'} from the catalogue"
+            + (f", and {', '.join(kept)} was on the stack already" if kept else ""),
+        )
+        return hints
+
+    def feed(self, run: Run) -> None:
+        driver, args = run.driver, run.args
+        host = args.flow_host or urlsplit(run.receiver_url).hostname
+        if not (host and run.store.host):
+            driver.record("feed", "skipped", "no receiver address or no datastore")
+            return
+        self._before = {source: self._counts(run, source) for source in flow.SOURCES}
+        ports = {"netflow": args.flow_netflow_port, "sflow": args.flow_sflow_port}
+        directory = run.transform_repo / flow.FIXTURE_DIR
+        sent, awaited, short = 0, 0, []
+        for fixture in flow.FIXTURES:
+            payloads = flow.datagrams(directory / fixture.name)
+            start = self._emitted(run)
+            flow.send(host, ports[fixture.source], payloads)
+            sent += len(payloads)
+            if start is None or not fixture.events:
+                time.sleep(flow.FIXTURE_PAUSE)
+            elif self._await_emitted(run, start + fixture.events):
+                awaited += 1
+            else:
+                short.append(fixture.name)
+        paused = len(flow.FIXTURES) - awaited - len(short)
+        late = f", {', '.join(short)} short of its count" if short else ""
+        driver.record(
+            "feed",
+            "done",
+            f"sent {sent} datagrams from {len(flow.FIXTURES)} fixtures to {host}, "
+            f"NetFlow and IPFIX on {ports['netflow']}, sFlow on {ports['sflow']}; "
+            f"{awaited} confirmed on {flow.METRIC_EMITTED}, "
+            f"{paused} followed by a {flow.FIXTURE_PAUSE:g} s pause{late}",
+        )
+
+    @staticmethod
+    def _emitted(run: Run) -> int | None:
+        """Flow records the receiver has emitted, None when its metrics are not named or do not answer."""
+        if not receiver_counted(run.args):
+            return None
+        try:
+            return flow.emitted(receiver_exposition(run.args))
+        except RuntimeError:
+            return None
+
+    def _await_emitted(self, run: Run, target: int) -> bool:
+        """Whether the receiver's emitted count reaches *target* before the fixture deadline."""
+        deadline = time.monotonic() + flow.FIXTURE_DEADLINE
+        while time.monotonic() < deadline:
+            now = self._emitted(run)
+            if now is not None and now >= target:
+                return True
+            time.sleep(flow.POLL_SECONDS)
+        return False
+
+    def prove(self, run: Run) -> None:
+        driver = run.driver
+        if not self._before:
+            driver.record("landed", "unproven", "nothing was sent, so nothing can land")
+            return
+        for source in flow.SOURCES:
+            before = self._before[source]
+            wanted = sum(f.events for f in flow.FIXTURES if f.source == source)
+            addressed = sum(f.addressed for f in flow.FIXTURES if f.source == source)
+            steps.wait_rows(
+                run.store,
+                source,
+                before["rows"] + wanted,
+                self.LAND_DEADLINE,
+            )
+            now = self._counts(run, source)
+            gained = {key: now[key] - before[key] for key in now}
+            driver.record(
+                f"flow-{source}-landed",
+                "done" if gained["rows"] >= wanted and not gained["main"] else "failed",
+                f"dfe.{source} gained {gained['rows']} of {wanted} rows, "
+                f"{gained['main']} {source} records strayed into dfe.main",
+            )
+            driver.record(
+                f"flow-{source}-typed",
+                "done"
+                if gained["addressed"] >= addressed and gained["enveloped"] >= wanted
+                else "failed",
+                f"{gained['addressed']} of {addressed} addressed rows carry src_ip, "
+                f"{gained['enveloped']} of {wanted} carry exporter_ip and flow_version",
+            )
+
+    def cleanup(self, run: Run) -> list[wizard.StepResult]:
+        rows = []
+        if not run.args.keep and flow.SOURCES[1] in self._made:
+            detail = remove_source(
+                run.engine.base,
+                run.engine.verify,
+                run.engine.token or "",
+                flow.SOURCES[1],
+                onboarding.TEARDOWN_DEADLINE,
+            )
+            status = "done" if detail.startswith("removed") else "failed"
+            rows.append(wizard.StepResult("teardown-sflow", status, detail))
+        if self._listener.is_open:
+            try:
+                rows.append(self._listener.close(run))
+            except (OSError, RuntimeError) as exc:
+                failed = f"{self._listener.route} was not put back ({exc})"
+                rows.append(
+                    wizard.StepResult("receiver-flow-restored", "failed", failed)
+                )
+        return rows
+
+
 #: Every case a run may ask for, which is also the runner's --case choices, so
 #: a case cannot exist without being reachable.
 CASES: dict[str, type[Case]] = {
@@ -1595,6 +1794,7 @@ CASES: dict[str, type[Case]] = {
     "vector": VectorCase,
     "syslog": SyslogCase,
     "edgestream-hub": EdgestreamHubCase,
+    "flow": FlowCase,
 }
 
 

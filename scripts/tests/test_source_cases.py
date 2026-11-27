@@ -470,7 +470,7 @@ def transform_repo(tmp_path):
 
 
 #: The cases that take the name of the catalogue entry they create, which no sweep may remove.
-CATALOGUE_NAMED = {"edgestream-hub": "edgestream-hub-syslog"}
+CATALOGUE_NAMED = {"edgestream-hub": "edgestream-hub-syslog", "flow": "netflow"}
 
 
 class TestWhichCaseARunGets:
@@ -3598,7 +3598,7 @@ class TestTheReceiverCounters:
 
     def test_an_unreachable_metrics_endpoint_is_an_error_not_a_zero(self):
         with pytest.raises(RuntimeError, match="did not answer"):
-            syslog.read_counters("http://127.0.0.1:1/metrics")
+            syslog.read_exposition("http://127.0.0.1:1/metrics")
 
     def test_the_counters_are_summed_over_every_replica(self):
         other = 'receiver_requests_total{transport="syslog"} 6\n'
@@ -3638,10 +3638,11 @@ class TestTheReceiverCounters:
         kube = [str(kubectl)]
 
         if isinstance(want, int):
-            assert syslog.read_pod_counters(kube, "dfe", "app=r")["accepted"] == want
+            bodies = syslog.read_pod_exposition(kube, "dfe", "app=r")
+            assert syslog.counters_of(bodies)["accepted"] == want
         else:
             with pytest.raises(RuntimeError, match=want):
-                syslog.read_pod_counters(kube, "dfe", "app=r")
+                syslog.read_pod_exposition(kube, "dfe", "app=r")
 
 
 class TestTheSyslogSenders:
