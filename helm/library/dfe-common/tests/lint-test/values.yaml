@@ -14,7 +14,7 @@ replicaCount: 1
 config:
   rules:
     rules:
-      - id: sender-source
-        set: {_source: {from: _source}}
+      - id: lint-source
+        set: {_source: {value: lint_test}}
   clickhouse:
     protocol: http
