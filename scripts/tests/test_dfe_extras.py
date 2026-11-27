@@ -622,6 +622,67 @@ SCENARIOS = [
         },
         id="culvert-oidc-and-tcp",
     ),
+    pytest.param(
+        "culvert",
+        "single",
+        "aws",
+        {},
+        {
+            "env": {
+                "CULVERT_PUSH_ROUTES": "198.19.0.0/16",
+                "CULVERT_ALLOWED_DESTINATIONS": "198.19.0.0/16:8080/tcp,198.19.0.0/16:53/udp,198.19.0.0/16:53/tcp",
+            },
+        },
+        id="culvert-destinations-default-to-ingest-and-dns",
+    ),
+    pytest.param(
+        "culvert",
+        "single",
+        "aws",
+        {
+            "routes": {
+                "destinations": ["203.0.113.0/24", "198.19.0.0/16"],
+                "allowedPorts": ["443/tcp", "53/udp"],
+            }
+        },
+        {
+            "env": {
+                "CULVERT_PUSH_ROUTES": "203.0.113.0/24,198.19.0.0/16",
+                "CULVERT_ALLOWED_DESTINATIONS": "203.0.113.0/24:443/tcp,203.0.113.0/24:53/udp,198.19.0.0/16:443/tcp,198.19.0.0/16:53/udp",
+            },
+        },
+        id="culvert-destinations-cross-each-cidr-with-each-port",
+    ),
+    pytest.param(
+        "culvert",
+        "single",
+        "aws",
+        {"routes": {"allowedPorts": []}},
+        {
+            "env": {
+                "CULVERT_PUSH_ROUTES": "198.19.0.0/16",
+                "CULVERT_ALLOWED_DESTINATIONS": "198.19.0.0/16",
+            },
+        },
+        id="culvert-empty-allowed-ports-leave-bare-cidrs",
+    ),
+    pytest.param(
+        "culvert",
+        "single",
+        "aws",
+        {
+            "ingest": {
+                "podLabel": "dfe-receiver",
+                "ports": [{"port": 8443, "protocol": "TCP"}],
+            }
+        },
+        {
+            "env": {
+                "CULVERT_ALLOWED_DESTINATIONS": "198.19.0.0/16:8443/tcp,198.19.0.0/16:53/udp,198.19.0.0/16:53/tcp",
+            },
+        },
+        id="culvert-destinations-follow-the-ingest-port",
+    ),
 ]
 
 

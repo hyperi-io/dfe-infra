@@ -62,6 +62,28 @@ template in apps/culvert/values.yaml, so they are not here.
 {{- /* Unset destinations fall back to the deployment-wide service range. */ -}}
 {{- $destinations := .Values.routes.destinations | default (list (.Values.networkModel).serviceCIDR) -}}
 {{- $routes := join "," (compact $destinations) -}}
+{{- /* What a tunnelled client may reach is each destination crossed with these ports, which is the receiver's ingest
+     plus DNS, the same two the pod's NetworkPolicy opens for it. Anything else the pod is allowed (its telemetry
+     export) is reachable only by the pod itself, and a client is SNATed to the pod address. Unset takes that default,
+     an explicit list is used as written, and an empty list leaves every port open on the destinations. */ -}}
+{{- $ports := list -}}
+{{- if kindIs "invalid" .Values.routes.allowedPorts -}}
+{{- range .Values.ingest.ports -}}
+{{- $ports = append $ports (printf "%d/%s" (int .port) (lower (.protocol | default "TCP"))) -}}
+{{- end -}}
+{{- $ports = concat $ports (list "53/udp" "53/tcp") -}}
+{{- else -}}
+{{- $ports = .Values.routes.allowedPorts -}}
+{{- end -}}
+{{- $allowed := list -}}
+{{- range (compact $destinations) -}}
+{{- $cidr := . -}}
+{{- if $ports -}}
+{{- range $ports -}}{{- $allowed = append $allowed (printf "%s:%s" $cidr .) -}}{{- end -}}
+{{- else -}}
+{{- $allowed = append $allowed $cidr -}}
+{{- end -}}
+{{- end -}}
 {{- /* The name clients dial, so it cannot drift from what the certificate is issued for. */ -}}
 {{- $cn := .Values.vpn.serverCN -}}
 {{- if and (not $cn) .Values.domain -}}
@@ -80,7 +102,7 @@ template in apps/culvert/values.yaml, so they are not here.
   "CULVERT_PUSH_ROUTES" $routes
   "CULVERT_ROUTING_CONTROL_ENABLED" "true"
   "CULVERT_CLIENT_ISOLATION" (ternary "true" "false" .Values.peers.classes.appliance.isolation)
-  "CULVERT_ALLOWED_DESTINATIONS" $routes
+  "CULVERT_ALLOWED_DESTINATIONS" (join "," $allowed)
   "CULVERT_BLOCK_LINK_LOCAL" "true"
   "CULVERT_PKI_MODE" .Values.pki.mode
 -}}
