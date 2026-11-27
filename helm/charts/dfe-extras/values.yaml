@@ -16,16 +16,16 @@ extras:
   # (image.tag empty takes it). Each is versions.yaml apps.<component>, checked by scripts/check_versions_drift.py.
   appVersions:
     dfe-engine: "v1.22.94-rc.6"
-    dfe-ui: "v1.7.47-rc.2"
-    dfe-receiver: "v1.15.72-rc.4"
-    dfe-loader: "v1.18.76-rc.6"
-    dfe-archiver: "v1.7.54-rc.5"
-    dfe-fetcher: "v1.4.61-rc.5"
-    dfe-transform-vrl: "v1.1.51-rc.4"
-    dfe-transform-vector: "v1.0.68-rc.4"
+    dfe-ui: "v1.7.47-rc.3"
+    dfe-receiver: "v1.15.72-rc.5"
+    dfe-loader: "v1.18.76-rc.7"
+    dfe-archiver: "v1.7.54-rc.6"
+    dfe-fetcher: "v1.4.61-rc.6"
+    dfe-transform-vrl: "v1.1.51-rc.5"
+    dfe-transform-vector: "v1.0.68-rc.5"
     dfe-transform-elastic: "v1.1.35-rc.5"
     culvert: "v2.1.32"
-    dfe-hyperdx: "v0.3.28-rc.1"
+    dfe-hyperdx: "v0.3.28-rc.3"
 
   # Each component's defaults. A layer that sets a key wins, false and empty included.
   defaults:
@@ -272,7 +272,7 @@ extras:
         pullPolicy: IfNotPresent
       stackVersion: ""
       profile: ""
-      uiVersion: "v1.7.47-rc.2"           # == versions.yaml apps.dfe-ui
+      uiVersion: "v1.7.47-rc.3"           # == versions.yaml apps.dfe-ui
       kafka:
         mode: ""
         bootstrapServers: ""
