@@ -13645,7 +13645,7 @@ stacks:
     content:
       dfe-schemas: "v0.2.33"  # 2026-11-27, from main d6bb301ff4. Publishes common-header 1.0.4 with the event-time directive the loader reads, adds the NetFlow, sFlow and EdgeStream Hub syslog catalogue sources and the Telegraf metric meta schema, and stores a hunt fire error, duration and cost. Our own release line, so the third-party 7-day cooldown does not apply.
       # renovate: datasource=github-tags depName=hyperi-io/dfe-deploy
-      dfe-deploy: "v1.0.38"
+      dfe-deploy: "v1.0.39"  # 2026-11-27, from main e2544d7ffe: pins.yaml selects dfe-infra 2.2.4-rc.6, channel rc.
       dfe-docker: "v1.0.13"
       dfe-hyperdx: "v0.3.28-rc.3"  # 2026-11-27, amd64 and arm64, from main 030b957ad0. Quotes JSON keys in facet queries and lets viewers pre-check rules. Internal rc, under the 7-day cooldown by design.
 
