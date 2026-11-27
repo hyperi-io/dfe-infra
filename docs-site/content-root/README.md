@@ -35,6 +35,7 @@ config:
     fontSize: 15px
     lineColor: "#64748B"
     primaryTextColor: "#0F172A"
+    nodeBorder: "#334155"
     clusterBorder: "#0072B2"
     edgeLabelBackground: "#FFFFFF"
   themeCSS: >-
@@ -54,6 +55,8 @@ config:
     span.edgeLabel{display:inline-block;background:#FFFFFF!important;color:#1E293B;border:1px solid #94A3B8;border-radius:999px;padding:2px 10px;font-size:12px;font-weight:500}
     span.edgeLabel p{background:transparent!important}
     .label-icon{width:20px;height:20px;vertical-align:-4px;margin-right:6px}
+    .icon-shape path[stroke-width="0"][fill="none"]{fill:#FFFFFF;stroke:#FFFFFF;stroke-width:12px;stroke-linejoin:round}
+    .icon-shape p{background:transparent!important;color:#0F172A}
     .ingest .label-icon{color:#0E8A7D}
     .xform .label-icon{color:#7B4FB0}
     .load .label-icon{color:#0072B2}
@@ -117,7 +120,7 @@ flowchart TB
   style OUT fill:none,stroke:#0072B2,stroke-width:1.5px,stroke-dasharray:6 4
 ```
 
-*Figure 1. L2 Services -- DFE data path.* Dotted paths are optional. Up: top of the DFE docs.
+*Figure 1. L2 Services -- DFE data path.* The transform stage and the direct gRPC arrow are optional. Up: top of the DFE docs.
 
 This is the default path. The leaner profiles skip Kafka and go receiver to loader over gRPC. A transform app (dfe-transform-vrl, dfe-transform-vector or dfe-transform-elastic) is optional. On Kafka a source that needs grok or your own logic gets one: it reads the source's `*_land` topic and writes a `*_load` one, and the loader reads that one instead. Over gRPC the receiver sends to the transform and the transform sends to the loader, and the lean gRPC profiles run only the fixed transforms a deployment ships, not one per source, so a source that needs its own is refused there. Every component also sends its own logs and metrics over OpenTelemetry into ClickHouse, so the console shows the stack's health before your first event arrives.
 
