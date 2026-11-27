@@ -13564,14 +13564,14 @@ stacks:
     # DFE apps: Argo wave 5 (appsets/layer2-apps.yaml). Each has its own release line on GHCR.
     # A tag also names its thin chart's version, the tag less its v; dfe-stack cut and bump-app move chart-digests with it.
     apps:
-      dfe-engine: "v1.22.94-rc.6"
-      dfe-ui: "v1.7.47-rc.2"
-      dfe-receiver: "v1.15.72-rc.4"
-      dfe-loader: "v1.18.76-rc.6"
-      dfe-archiver: "v1.7.54-rc.5"
-      dfe-fetcher: "v1.4.61-rc.5"
-      dfe-transform-vrl: "v1.1.51-rc.4"
-      dfe-transform-vector: "v1.0.68-rc.4"
+      dfe-engine: "v1.22.94-rc.7"  # 2026-11-27, amd64 and arm64, from main f295679167. Locks dfe-schemas 0.2.33, holds a production team deploy until review merges, rejects empty rule search filters, caps log reducer clusters and anomaly rows, caps org names at 64 characters, and sends synthetic credentials to every receiver name. Internal rc, under the 7-day cooldown by design.
+      dfe-ui: "v1.7.47-rc.3"  # 2026-11-27, amd64 and arm64, from main bab4c7c5b0. Shows Argo CD sync state in the status card, fixes on-demand rule runs and hunt executions, starts a catalogue add on its default intake, and syncs the engine types. Internal rc, under the 7-day cooldown by design.
+      dfe-receiver: "v1.15.72-rc.5"  # 2026-11-27, amd64 and arm64, from main f423af97e9. Caps HTTP/2 streams and concurrent requests per listener, decodes every member of a gzip body, and returns 400 for a Remote Write series the converter rejects. Internal rc, under the 7-day cooldown by design.
+      dfe-loader: "v1.18.76-rc.7"  # 2026-11-27, amd64 and arm64, from main 506b8609db. Sends each record only to deployed tables and reads the event time through the _timestamp column directive of common-header 1.0.4. Internal rc, under the 7-day cooldown by design.
+      dfe-archiver: "v1.7.54-rc.6"  # 2026-11-27, amd64 and arm64, from main ea910f27a2. Cancels the drain first so a failing local write no longer blocks pod exit, and reads store refusals only from the store's Code element. Internal rc, under the 7-day cooldown by design.
+      dfe-fetcher: "v1.4.61-rc.6"  # 2026-11-27, amd64 and arm64, from main 93df911172. Re-sends a held record only to the outputs that lack it, reads lookup and manifest listings whole, and rejects MongoDB and HANA options that switch off certificate checks. Internal rc, under the 7-day cooldown by design.
+      dfe-transform-vrl: "v1.1.51-rc.5"  # 2026-11-27, amd64 and arm64, from main 4fda68f399. Rejects parse_proto, encode_proto, validate_json_schema and the decoders that can expand one record past the pod's memory limit. Internal rc, under the 7-day cooldown by design.
+      dfe-transform-vector: "v1.0.68-rc.5"  # 2026-11-27, amd64 and arm64, from main 57b1f7d43b. Rejects remap file and files keys and VRL that calls file, network or unbounded decode functions, and updates the filebeat VRL commit. Internal rc, under the 7-day cooldown by design.
       dfe-transform-elastic: "v1.1.35-rc.5"
       # dfe-transform-wasm: "2.2.0"
       # dfe-transform-splack: "2.2.0"
@@ -13580,16 +13580,16 @@ stacks:
     # The immutable half of each app's tag@sha256 pin, always the multi-arch index digest.
     # An app with no digest here is unpublished and left out of rendered manifests.
     digests:
-      dfe-engine: "sha256:dd079ffb6bac5b60978aaec1aa642df64f7defdb67755413f114bd610bbb967d"
-      dfe-ui: "sha256:376a6b6ab5db13cc18b87b0f710113a7b0d2c6fbe9229d708d7b528c82a243bc"
-      dfe-receiver: "sha256:cb9589439a1de3c3b471acdeac9b9314ece00870fd4fdee7e4a7fa1a3469624e"
-      dfe-loader: "sha256:e00cc38ca371cff602c5b7714c716fee845466fbbfbd0e8619163cc9c4332267"
-      dfe-archiver: "sha256:369ac8fe7e68ea529a01bdfb0a86f17e2427047cccd0edca0cf3676bb3de340c"
-      dfe-fetcher: "sha256:aabb5580b4aedae6d1ce0c7db08fbf822148b2fd3b74e68b50d4f7172698e4bf"
-      dfe-transform-vrl: "sha256:febda5c1b1a905220d3f06b50e6e83e8422d6a274571dc0f9a7d9ec29ad4cacf"
-      dfe-transform-vector: "sha256:63e70e117234d8d5f5caa8cf75fa916d73ec8b4378131123e0c52e4c9096ba2a"
+      dfe-engine: "sha256:798f0a329a6b05caec05010b48186cedd4e36bd9732175b2fe2736b663171f08"
+      dfe-ui: "sha256:b39d70b062a36d21dec45cddae0fee5d1cb7e98ea950c51fddeacd8f54a63cf3"
+      dfe-receiver: "sha256:7e2a65242c3b899b1569f193d5558bb9491b07b7e7532836bd25f6cfe8efd3c2"
+      dfe-loader: "sha256:a8ec609ea580cd9e90342e427d24f329d41439d6358896f43aae7405b7aea58a"
+      dfe-archiver: "sha256:f4aacf0712800afa8876bba4f77d19aa62477d49ad3c17360711952a88f92b68"
+      dfe-fetcher: "sha256:bf3985381003cdaf3a79ba73ef42fbcaef067151c8b463cdbc82375160f5ed8c"
+      dfe-transform-vrl: "sha256:62fea2f77a1d6e44ae44ca7cd7849bc4efb90a88b0a7ced4bd82c1720c2e8a3a"
+      dfe-transform-vector: "sha256:ea149086d8d58ae5510aec8d542a5cd4a8cf393afc9d600ce15592cd47b6f408"
       dfe-transform-elastic: "sha256:bc5e625b6e6447f633eb29420e0d4bf5ffd889fc4d009ec9fe716b351f9cbd50"
-      dfe-hyperdx: "sha256:9737864ad9a6a895d0bfa3b22fa63189c0f94b7369a628cdbf6b55f7a94b1259"
+      dfe-hyperdx: "sha256:42829d8eb17a7b932185599c203b4c88896a8a39a0346206be8303bab3edff56"
       culvert: "sha256:87e68c72ae85f64a82f37d1e349f46b8112260d94c04b37110f0253e592bdfa5"
       dfe-toolbox-base: "sha256:2d3940c3fe864978c46d9ce1d2d276f7f2a42694753d4a358ba088321ae9109d"
 
@@ -13600,16 +13600,16 @@ stacks:
     # dfe-stack cut and bump-app read each digest from the registry at that version.
     chart-digests:
       culvert: "sha256:d36437d686aa3c14a8c36d8ec84e82bc28f521ceff4f4a5328df57dcb2259738"  # 2.1.32
-      dfe-archiver: "sha256:a1f334d3016158deea3f1dc61d358e3e41ded57e06ca43f4f874233f18ba6ae0"
-      dfe-engine: "sha256:7cc8a5b684eae2c6635f6d1a424b355f8634f631dddadf6e101ed79ca048cda1"
-      dfe-fetcher: "sha256:7d448bd7e12f6563c8e59fe8cf5c9297191ef1257622fbd87b731b5ce7afc065"
-      dfe-hyperdx: "sha256:c3ab8cac57d5219a9d5eaa1b85e2fc060c3370ab1867172c38660b087098b799"
-      dfe-loader: "sha256:208cdb12c31e0515aed398488a92e767cdaa75dc924469eeae7de09dc41ba02f"
-      dfe-receiver: "sha256:981c1dbf6218eec4c00fd6b2711210467f2c8fb6e6db4d0e5c85fef45da99d6b"
+      dfe-archiver: "sha256:e99d7759d59280792c75c0d68a82dcde5c98ad030a5be5b3221f1ec416af1c07"  # 1.7.54-rc.6
+      dfe-engine: "sha256:cebdef9a058ebba323a2ebdfb82f7a9434a58924758c029ca310603ea4529364"  # 1.22.94-rc.7
+      dfe-fetcher: "sha256:1eb2b6c40b21e44d370e84023e232ec5ff519fda56d7cfa5adfdcdc035fb99ea"  # 1.4.61-rc.6
+      dfe-hyperdx: "sha256:0fba570cdab210ca74a73efa7238d244e8d56805f5b232d758c1525f60139c82"  # 0.3.28-rc.3
+      dfe-loader: "sha256:847757e93f49dafeb546152622fe443889244b2a60a4ea24a3ba1bea52d2f7eb"  # 1.18.76-rc.7
+      dfe-receiver: "sha256:804e4e2e3a1bc83aab29507ce7a7c6f750cf61330bc3887bc7af431eb11a5730"  # 1.15.72-rc.5
       dfe-transform-elastic: "sha256:6bcc62ba433878c6faa1895cdf72babf631da7b835bc809b265d7189d2756fda"
-      dfe-transform-vector: "sha256:d8be8cccb8012fab860c53d00fa6a10ee93bd67128fee187d79de6dcbdea5fbd"
-      dfe-transform-vrl: "sha256:04c8e9a61feb6e639cf157380879c598981b2e0df9c3f773a9d9be43ba5a11ec"
-      dfe-ui: "sha256:d63f73c610cec4e21a641fc0566aab2b8fe74e6f54f966c386f0df0251357425"
+      dfe-transform-vector: "sha256:6f370662a42e13738fc2c83167dc1b3dffd36c1a499de055c1508869ec087c2b"  # 1.0.68-rc.5
+      dfe-transform-vrl: "sha256:bf6f7f62caa6dedaad3d06bd5b6ac0e61ea43b45e7795899dacf06868f84ab93"  # 1.1.51-rc.5
+      dfe-ui: "sha256:e185a8f0ac6d857fddc7f4e6e631d2c7d62e0b774e6a14356975bcf184245573"  # 1.7.47-rc.3
 
     # Digests for the third-party images, keyed like their version under services: or bootstrap:.
     # Index digests, so multi-arch safe. On k8s the cluster-mode Redpanda CR and Strimzi's broker deploy by tag.
@@ -13643,11 +13643,11 @@ stacks:
 
     # Content repos, tagged with this stack.
     content:
-      dfe-schemas: "v0.2.32"
+      dfe-schemas: "v0.2.33"  # 2026-11-27, from main d6bb301ff4. Publishes common-header 1.0.4 with the event-time directive the loader reads, adds the NetFlow, sFlow and EdgeStream Hub syslog catalogue sources and the Telegraf metric meta schema, and stores a hunt fire error, duration and cost. Our own release line, so the third-party 7-day cooldown does not apply.
       # renovate: datasource=github-tags depName=hyperi-io/dfe-deploy
-      dfe-deploy: "v1.0.38"
+      dfe-deploy: "v1.0.39"  # 2026-11-27, from main e2544d7ffe: pins.yaml selects dfe-infra 2.2.4-rc.6, channel rc.
       dfe-docker: "v1.0.13"
-      dfe-hyperdx: "v0.3.28-rc.1"
+      dfe-hyperdx: "v0.3.28-rc.3"  # 2026-11-27, amd64 and arm64, from main 030b957ad0. Quotes JSON keys in facet queries and lets viewers pre-check rules. Internal rc, under the 7-day cooldown by design.
 
     # The dfe-toolbox operator shell images (docker/dfe-toolbox/), not part of the deployed stack.
     # Each Dockerfile ARG default equals its pin here (drift-checked). clickhouse-client follows services.clickhouse-version.
