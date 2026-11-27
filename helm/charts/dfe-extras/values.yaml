@@ -24,7 +24,7 @@ extras:
     dfe-transform-vrl: "v1.1.51-rc.4"
     dfe-transform-vector: "v1.0.68-rc.4"
     dfe-transform-elastic: "v1.1.35-rc.5"
-    culvert: "v2.1.30"
+    culvert: "v2.1.32"
     dfe-hyperdx: "v0.3.28-rc.1"
 
   # Each component's defaults. A layer that sets a key wins, false and empty included.
@@ -183,8 +183,11 @@ extras:
           existingSecret: ""
           validateGroups: ""
       # Unset destinations are the networkModel service range (argocd/values/common.yaml).
+      # allowedPorts scopes each destination to <port>/<tcp|udp> entries. Unset is the receiver's ingest ports (ingest.ports)
+      # plus DNS on 53, which is all the pod's NetworkPolicy opens for a client. An empty list opens every port.
       routes:
         destinations: ~
+        allowedPorts: ~
       pki:
         mode: local
         existingSecret: ""
