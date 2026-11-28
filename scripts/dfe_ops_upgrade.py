@@ -1020,7 +1020,7 @@ def check_argo_apps(
     if not items:
         return False, f"no Argo Applications found in {namespace}"
     bad = []
-    unmoved = 0
+    unmoved: list[str] = []
     for app in items:
         name = (app.get("metadata") or {}).get("name", "<unnamed>")
         status = app.get("status") or {}
@@ -1032,7 +1032,11 @@ def check_argo_apps(
         )
         if before_change and _pinned_chart_as_compared(app):
             before_change = False
-            unmoved += 1
+            charts = ", ".join(
+                f"{src.get('chart')} {src.get('targetRevision') or '?'}"
+                for src in _sources(app.get("spec") or {})
+            )
+            unmoved.append(f"{name} ({charts})")
         if stale_revision and stale_revision in _source_revisions(app):
             bad.append(
                 f"{name} (still renders from the previous {TARGET_REVISION_ANNOTATION})"
@@ -1050,7 +1054,10 @@ def check_argo_apps(
         )
     since = ""
     if reconciled_after and unmoved:
-        since = f", each reconciled since this change but {unmoved} pinned Helm chart(s) it cannot move"
+        since = (
+            f", each reconciled since this change but {len(unmoved)} pinned Helm chart(s) it "
+            f"cannot move: {', '.join(unmoved)}"
+        )
     elif reconciled_after:
         since = ", each reconciled since this change"
     return True, f"{len(items)} Application(s) Synced and Healthy{since}"
