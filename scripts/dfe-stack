@@ -958,7 +958,9 @@ def cmd_check_upgrade(args: argparse.Namespace) -> int:
         (n for n in stacks if _norm_version(n) == _norm_version(args.to)), None
     )
     if to_name is None:
-        print(f"{args.frm} -> {args.to}: NOT A VERIFIED PATH ({args.to} is not a stack in versions.yaml)")
+        print(
+            f"{args.frm} -> {args.to}: NOT A VERIFIED PATH ({args.to} is not a stack in versions.yaml)"
+        )
         return 1
     if is_withdrawn(stacks[to_name]):
         print(f"{args.frm} -> {args.to}: NOT A VERIFIED PATH ({args.to} is withdrawn)")
