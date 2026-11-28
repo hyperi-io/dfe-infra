@@ -4,7 +4,7 @@ Most of an upgrade rolls back by moving the pin, and a few steps are one way ([u
 
 ## Per-stage rollback
 
-`10-bootstrap` (external-secrets, cert-manager, argocd) and `40-apps` (dfe-engine, dfe-hyperdx, dfe-receiver, the three transforms, dfe-loader, dfe-archiver, dfe-fetcher, dfe-ui and culvert) have no `before`, `finalise` or `rollback` note. Rolling one back is the same move as rolling it forward. `dfe-ops upgrade rollback --to <stack>` bumps `pins.yaml` to the earlier stack and Argo CD reconciles the chart down. No data changes hands.
+`10-bootstrap` (external-secrets, cert-manager, argocd) and `40-apps` (dfe-engine, dfe-hyperdx, dfe-receiver, the three transforms, dfe-loader, dfe-archiver, dfe-fetcher, dfe-ui and culvert) have no `before`, `finalise` or `rollback` note. Rolling one back is the same move as rolling it forward. `dfe-ops upgrade rollback --to <stack>` bumps `pins.yaml` to the earlier stack and Argo CD reconciles the chart down. dfe-engine still re-seeds its schema tree and runs its schema phase at start, so a table the newer engine created or widened stays as it is.
 
 `20-operators`: envoy-gateway, external-dns and keda roll back the same way. strimzi-kafka-operator carries a `before` note. That's the CRD stored-version conversion (`bin/v1-api-conversion.sh convert-resource --all-namespaces`, then `bin/v1-api-conversion.sh crd-upgrade`), and it has to run on the live cluster before the 1.x operator starts. The tool comes from the tarball the RUNNING operator's release publishes (`strimzi-v1-api-conversion-<from>.tar.gz`), never the target's, because it rewrites the CRs the running operator wrote.
 
