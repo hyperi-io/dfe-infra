@@ -2393,7 +2393,7 @@ stages:
 
 
 def test_read_finalised_keys_empty_when_no_upgrades_dir(deploy: Path) -> None:
-    assert u.read_finalised_keys(deploy) == {}
+    assert u.read_finalised_keys(deploy, "1.0.0", "2.0.0") == {}
 
 
 def test_write_finalise_marker_then_read_back(deploy: Path) -> None:
@@ -2406,7 +2406,7 @@ def test_write_finalise_marker_then_read_back(deploy: Path) -> None:
     )
     assert path == deploy / "upgrades" / "1.0.0-to-2.0.0.finalised"
     assert path.is_file()
-    finalised = u.read_finalised_keys(deploy)
+    finalised = u.read_finalised_keys(deploy, "1.0.0", "2.0.0")
     assert finalised == {"services.kafka-version": "2026-09-11T00:00:00+00:00"}
 
 
@@ -2436,11 +2436,53 @@ def test_write_finalise_marker_keeps_sibling_keys(deploy: Path) -> None:
     u.write_finalise_marker(
         deploy, "1.0.0", "2.0.0", "operators.strimzi-kafka-operator", timestamp="t2"
     )
-    finalised = u.read_finalised_keys(deploy)
+    finalised = u.read_finalised_keys(deploy, "1.0.0", "2.0.0")
     assert finalised == {
         "services.kafka-version": "t1",
         "operators.strimzi-kafka-operator": "t2",
     }
+
+
+@pytest.mark.parametrize(
+    ("markers", "older", "newer", "expected"),
+    [
+        # An earlier upgrade's finalise is not this one's.
+        ([("0.9.0", "1.0.0", "services.kafka-version")], "1.0.0", "2.0.0", set()),
+        (
+            [("1.0.0", "2.0.0", "services.kafka-version")],
+            "1.0.0",
+            "2.0.0",
+            {"services.kafka-version"},
+        ),
+        # A multi-hop rollback sees a finalise from an intermediate hop.
+        (
+            [
+                ("1.0.0", "1.5.0", "services.kafka-version"),
+                ("1.5.0", "2.0.0", "operators.x"),
+            ],
+            "1.0.0",
+            "2.0.0",
+            {"services.kafka-version", "operators.x"},
+        ),
+        # Two routes into one stack: both are followed.
+        (
+            [("1.0.0", "2.0.0", "a"), ("1.5.0", "2.0.0", "b"), ("1.0.0", "1.5.0", "c")],
+            "1.0.0",
+            "2.0.0",
+            {"a", "b", "c"},
+        ),
+        # A hop past `older` is not read.
+        ([("0.9.0", "1.0.0", "a"), ("1.0.0", "2.0.0", "b")], "1.0.0", "2.0.0", {"b"}),
+        # Pre-release names with hyphens split on the -to- separator.
+        ([("2.2.4-rc.3", "2.2.4-rc.4", "a")], "2.2.4-rc.3", "2.2.4-rc.4", {"a"}),
+    ],
+)
+def test_read_finalised_keys_reads_only_the_span(
+    deploy: Path, markers: list, older: str, newer: str, expected: set
+) -> None:
+    for source, target, key in markers:
+        u.write_finalise_marker(deploy, source, target, key, timestamp="t")
+    assert set(u.read_finalised_keys(deploy, older, newer)) == expected
 
 
 KAFKA_STEP = u.Step(
@@ -2460,7 +2502,7 @@ def test_run_finalise_hook_confirmed_writes_marker(deploy: Path) -> None:
     assert ran is True
     assert "marker written" in detail
     assert "not held" in detail  # no infra/kafka.yaml, so there was no hold to drop
-    finalised = u.read_finalised_keys(deploy)
+    finalised = u.read_finalised_keys(deploy, "1.0.0", "2.0.0")
     assert "services.kafka-version" in finalised
     assert datetime.fromisoformat(finalised["services.kafka-version"])
 
@@ -2474,7 +2516,7 @@ def test_run_finalise_hook_declined_writes_no_marker(
     )
     assert ran is False
     assert "declined" in detail
-    assert u.read_finalised_keys(deploy) == {}
+    assert u.read_finalised_keys(deploy, "1.0.0", "2.0.0") == {}
 
 
 def _kafka_list(*statuses: dict) -> subprocess.CompletedProcess:
@@ -5132,7 +5174,7 @@ def test_release_metadata_hold_refuses_a_deployer_pin_and_finalise_writes_no_mar
     )
     assert ran is False
     assert "raise it to the 4.3.1 line by hand" in detail
-    assert u.read_finalised_keys(deploy) == {}
+    assert u.read_finalised_keys(deploy, "1.0.0", "2.0.0") == {}
 
 
 # ---------------------------------------------------------------------------
@@ -5793,7 +5835,7 @@ def test_apply_holds_the_metadata_then_retargets_then_rolls_the_brokers(
         ("kafka-version", "4.3.1"),
     ]
     assert "finalise pending (manual, after a soak): services.kafka-version" in err
-    assert u.read_finalised_keys(deploy) == {}
+    assert u.read_finalised_keys(deploy, "1.0.0", "2.0.0") == {}
 
     # After the soak: pins.yaml already names 2.0.0, so --from names the start.
     live["kafka"] = "4.3.1"
@@ -5819,7 +5861,7 @@ def test_apply_holds_the_metadata_then_retargets_then_rolls_the_brokers(
     finalised = _remote_file(remote, "main", "infra/kafka.yaml")
     assert u.overlay_entry(finalised, "metadataVersion") is None
     assert "kafka:" not in finalised
-    assert "services.kafka-version" in u.read_finalised_keys(deploy)
+    assert "services.kafka-version" in u.read_finalised_keys(deploy, "1.0.0", "2.0.0")
     assert _remote_file(remote, "main", "upgrades/1.0.0-to-2.0.0.finalised").startswith(
         "services.kafka-version "
     )
@@ -7200,7 +7242,7 @@ def test_finalise_drops_the_220_keys_and_rollback_below_the_thin_charts_then_ref
     assert "transformFiles" not in finalised
     assert finalised["fileSets"]["transforms"]["files"][0]["name"] == "filebeat.vrl"
     assert _commit_with(remote, u.VALUES_CONTRACT_SUBJECT)
-    assert u.VALUES_CONTRACT_KEY in u.read_finalised_keys(deploy)
+    assert u.VALUES_CONTRACT_KEY in u.read_finalised_keys(deploy, "2.2.0", "2.2.1-rc.9")
 
     rc = u.cmd_upgrade_rollback(_rollback_args(deploy=str(deploy), to="2.2.0"))
     err = capsys.readouterr().err

@@ -2269,7 +2269,9 @@ def _finalise_values(
     It runs only once the cluster is shown on the TO stack's charts.
     """
     from_name, to_name = names
-    dropped_at = read_finalised_keys(deploy).get(VALUES_CONTRACT_KEY)
+    dropped_at = read_finalised_keys(deploy, from_name, to_name).get(
+        VALUES_CONTRACT_KEY
+    )
     if dropped_at:
         print(
             f"  [DONE] values: apply --finalise dropped the 2.2.0 value keys ({dropped_at})",
@@ -3063,27 +3065,37 @@ def _finalise_marker_path(deploy: Path, from_stack: str, to_stack: str) -> Path:
     return deploy / "upgrades" / f"{from_stack}-to-{to_stack}.finalised"
 
 
-def read_finalised_keys(deploy: Path) -> dict[str, str]:
-    """Every versions.yaml key any `*.finalised` marker under <deploy>/upgrades
-    records, mapped to the timestamp of its last write.
+def read_finalised_keys(deploy: Path, older: str, newer: str) -> dict[str, str]:
+    """Every key a finalise recorded on the moves between two stacks, mapped to
+    the timestamp of its last write.
 
-    Scans every marker file, not just the one name this rollback's own
-    from/to would compute -- a rollback spanning more than one past `apply`
-    (a multi-hop rollback) still has to see a finalise that ran during an
-    intermediate hop.
+    Walks the `<from>-to-<to>.finalised` markers back from `newer` until each
+    branch reaches `older`, so a multi-hop rollback sees a finalise from an
+    intermediate hop, and a marker from an earlier, unrelated upgrade is never
+    read as this one's. Where two markers lead into the same stack, both are
+    followed, so a rollback refuses on either.
     """
     upgrades_dir = deploy / "upgrades"
-    finalised: dict[str, str] = {}
     if not upgrades_dir.is_dir():
-        return finalised
-    for marker in sorted(upgrades_dir.glob("*.finalised")):
-        for line in marker.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            key, _, timestamp = line.partition(" ")
-            if key:
-                finalised[key] = timestamp
+        return {}
+    into: dict[str, list[tuple[str, Path]]] = {}
+    for marker in upgrades_dir.glob("*.finalised"):
+        source, sep, target = marker.name.removesuffix(".finalised").partition("-to-")
+        if sep:
+            into.setdefault(target, []).append((source, marker))
+    finalised: dict[str, str] = {}
+    pending, seen = [newer], set()
+    while pending:
+        stack = pending.pop()
+        if stack == older or stack in seen:
+            continue
+        seen.add(stack)
+        for source, marker in sorted(into.get(stack, [])):
+            for line in marker.read_text(encoding="utf-8").splitlines():
+                key, _, timestamp = line.strip().partition(" ")
+                if key:
+                    finalised[key] = timestamp
+            pending.append(source)
     return finalised
 
 
@@ -3938,7 +3950,10 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
                 current_ref, from_name, to_name, args.target_revision
             )
             hold, hold_why = plan_kafka_hold(
-                args.kubeconfig, deploy, kafka_move, read_finalised_keys(deploy)
+                args.kubeconfig,
+                deploy,
+                kafka_move,
+                read_finalised_keys(deploy, from_name, to_name),
             )
         except UpgradeError as err:
             print(f"dfe-ops upgrade apply: REFUSED -- {err}", file=sys.stderr)
@@ -4431,7 +4446,7 @@ def cmd_upgrade_rollback(args: argparse.Namespace) -> int:
     # one-way. A `finalise`-bearing step is refused only once that finalise
     # has ACTUALLY run, read from the marker `apply --finalise` writes, not
     # from the pin diff alone -- see read_finalised_keys().
-    finalised = read_finalised_keys(deploy)
+    finalised = read_finalised_keys(deploy, to_name, from_name)
     blocked: list[tuple[Move, str]] = []
     pending_finalise: list[Move] = []
     for move in moves:
