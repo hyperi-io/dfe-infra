@@ -3848,13 +3848,13 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
             if deployed and _norm_ref(deployed) != _norm_ref(to_name):
                 from_name, from_pins = resolve_stack(_root, deployed)
                 print(
-                    f"FROM is {deployed}, secret/{ARGO_CLUSTER}'s {STACK_VERSION_ANNOTATION}: pins.yaml "
+                    f"FROM is secret/{ARGO_CLUSTER}'s {STACK_VERSION_ANNOTATION}: pins.yaml "
                     f"names {to_name}, so an earlier apply stopped before the retarget",
                     file=sys.stderr,
                 )
-        except (UpgradeError, OSError) as err:
+        except UpgradeError, OSError:
             print(
-                f"  cluster secret not read ({err}), so FROM stays the pins.yaml stack",
+                f"  secret/{ARGO_CLUSTER} not read, so FROM stays the pins.yaml stack",
                 file=sys.stderr,
             )
 

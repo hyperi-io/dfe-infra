@@ -1971,8 +1971,9 @@ def test_cmd_upgrade_apply_nothing_to_apply(
     out, err = capsys.readouterr()
     assert ("nothing to apply" in out) is nothing_to_apply
     if deployed != "1.0.0":
-        assert "FROM is 1.1.0" in err
         assert "an earlier apply stopped before the retarget" in err
+        assert "bootstrap.cert-manager: v1.1.0 -> v1.0.0" in err
+        assert "if secret/dfe-cluster targets 1.1.0:" in err
     elif not nothing_to_apply:
         assert "only the stack name moves" in err
 
