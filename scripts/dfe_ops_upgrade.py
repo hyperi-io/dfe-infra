@@ -224,7 +224,7 @@ RESOLVE_SIZING = SCRIPTS / "resolve_sizing.py"
 CHECK_NODE_CAPACITY = SCRIPTS / "check_node_capacity.py"
 ARGOCD_LOGIN = REPO_ROOT / "bootstrap" / "argocd_login.py"
 
-# Where a step's `key:` (the first five), `image:` (digests) and `chart:` (chart-digests) point; a pin no step names moves unreported.
+# Where a step's `key:` (the first five), `image:` (digests) and `chart:` (chart-digests) point; `plan` lists a pin no step names under its own heading.
 UPGRADE_SECTIONS = (
     "bootstrap",
     "operators",
@@ -712,6 +712,29 @@ def plan_moves(
             Move(step=step, old=old or "(absent)", new=new or "(absent)", pins=pins)
         )
     return moves
+
+
+def unlisted_moves(
+    steps: list[Step], from_pins: dict[str, str], to_pins: dict[str, str]
+) -> list[tuple[str, str, str]]:
+    """(key, old, new) for every pin that moves with no step naming it as its key,
+    image or chart. Argo applies these with the stack, outside any stage."""
+    named = {step.key for step in steps}
+    named |= {key for step in steps for key in (step.image, step.chart) if key}
+    return [
+        (key, from_pins.get(key) or "(absent)", to_pins.get(key) or "(absent)")
+        for key in sorted(set(from_pins) | set(to_pins))
+        if key not in named and from_pins.get(key) != to_pins.get(key)
+    ]
+
+
+def render_unlisted(unlisted: list[tuple[str, str, str]]) -> str:
+    """The moves no upgrade-order.yaml step names, or empty when there are none."""
+    if not unlisted:
+        return ""
+    lines = ["## moves no upgrade step names (Argo applies them with the stack)", ""]
+    lines += [f"- {key}: {old} -> {new}" for key, old, new in unlisted]
+    return "\n".join(lines) + "\n"
 
 
 def render_plan(
@@ -2269,7 +2292,9 @@ def _finalise_values(
     It runs only once the cluster is shown on the TO stack's charts.
     """
     from_name, to_name = names
-    dropped_at = read_finalised_keys(deploy).get(VALUES_CONTRACT_KEY)
+    dropped_at = read_finalised_keys(deploy, from_name, to_name).get(
+        VALUES_CONTRACT_KEY
+    )
     if dropped_at:
         print(
             f"  [DONE] values: apply --finalise dropped the 2.2.0 value keys ({dropped_at})",
@@ -3063,27 +3088,37 @@ def _finalise_marker_path(deploy: Path, from_stack: str, to_stack: str) -> Path:
     return deploy / "upgrades" / f"{from_stack}-to-{to_stack}.finalised"
 
 
-def read_finalised_keys(deploy: Path) -> dict[str, str]:
-    """Every versions.yaml key any `*.finalised` marker under <deploy>/upgrades
-    records, mapped to the timestamp of its last write.
+def read_finalised_keys(deploy: Path, older: str, newer: str) -> dict[str, str]:
+    """Every key a finalise recorded on the moves between two stacks, mapped to
+    the timestamp of its last write.
 
-    Scans every marker file, not just the one name this rollback's own
-    from/to would compute -- a rollback spanning more than one past `apply`
-    (a multi-hop rollback) still has to see a finalise that ran during an
-    intermediate hop.
+    Walks the `<from>-to-<to>.finalised` markers back from `newer` until each
+    branch reaches `older`, so a multi-hop rollback sees a finalise from an
+    intermediate hop, and a marker from an earlier, unrelated upgrade is never
+    read as this one's. Where two markers lead into the same stack, both are
+    followed, so a rollback refuses on either.
     """
     upgrades_dir = deploy / "upgrades"
-    finalised: dict[str, str] = {}
     if not upgrades_dir.is_dir():
-        return finalised
-    for marker in sorted(upgrades_dir.glob("*.finalised")):
-        for line in marker.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            key, _, timestamp = line.partition(" ")
-            if key:
-                finalised[key] = timestamp
+        return {}
+    into: dict[str, list[tuple[str, Path]]] = {}
+    for marker in upgrades_dir.glob("*.finalised"):
+        source, sep, target = marker.name.removesuffix(".finalised").partition("-to-")
+        if sep:
+            into.setdefault(target, []).append((source, marker))
+    finalised: dict[str, str] = {}
+    pending, seen = [newer], set()
+    while pending:
+        stack = pending.pop()
+        if stack == older or stack in seen:
+            continue
+        seen.add(stack)
+        for source, marker in sorted(into.get(stack, [])):
+            for line in marker.read_text(encoding="utf-8").splitlines():
+                key, _, timestamp = line.strip().partition(" ")
+                if key:
+                    finalised[key] = timestamp
+            pending.append(source)
     return finalised
 
 
@@ -3452,6 +3487,11 @@ def cmd_upgrade_plan(args: argparse.Namespace) -> int:
     sections = [
         render_plan(moves, from_stack=from_name, to_stack=to_name, note=from_note)
     ]
+    unlisted = render_unlisted(
+        unlisted_moves(steps, flatten_stack(from_pins), flatten_stack(to_pins))
+    )
+    if unlisted:
+        sections.append(unlisted)
 
     compat_ok, compat_out = run_compat_check(to_name)
     sections.append(
@@ -3830,9 +3870,29 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
         return EXIT_PREFLIGHT_FAILED
     if from_note:
         print(from_note, file=sys.stderr)
+    if not args.from_stack and _norm_ref(from_name) == _norm_ref(to_name):
+        try:
+            deployed = read_stack_version(args.kubeconfig, args.argocd_namespace)
+            if deployed and _norm_ref(deployed) != _norm_ref(to_name):
+                from_name, from_pins = resolve_stack(_root, deployed)
+                print(
+                    f"FROM is secret/{ARGO_CLUSTER}'s {STACK_VERSION_ANNOTATION}: pins.yaml "
+                    f"names {to_name}, so an earlier apply stopped before the retarget",
+                    file=sys.stderr,
+                )
+        except UpgradeError, OSError:
+            print(
+                f"  secret/{ARGO_CLUSTER} not read, so FROM stays the pins.yaml stack",
+                file=sys.stderr,
+            )
 
     steps = load_steps()
     moves = plan_moves(steps, flatten_stack(from_pins), flatten_stack(to_pins))
+    unlisted = render_unlisted(
+        unlisted_moves(steps, flatten_stack(from_pins), flatten_stack(to_pins))
+    )
+    if unlisted:
+        print(unlisted, file=sys.stderr)
     if not moves:
         if _norm_ref(from_name) == _norm_ref(to_name) and not args.target_revision:
             print(
@@ -3938,7 +3998,10 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
                 current_ref, from_name, to_name, args.target_revision
             )
             hold, hold_why = plan_kafka_hold(
-                args.kubeconfig, deploy, kafka_move, read_finalised_keys(deploy)
+                args.kubeconfig,
+                deploy,
+                kafka_move,
+                read_finalised_keys(deploy, from_name, to_name),
             )
         except UpgradeError as err:
             print(f"dfe-ops upgrade apply: REFUSED -- {err}", file=sys.stderr)
@@ -4431,7 +4494,7 @@ def cmd_upgrade_rollback(args: argparse.Namespace) -> int:
     # one-way. A `finalise`-bearing step is refused only once that finalise
     # has ACTUALLY run, read from the marker `apply --finalise` writes, not
     # from the pin diff alone -- see read_finalised_keys().
-    finalised = read_finalised_keys(deploy)
+    finalised = read_finalised_keys(deploy, to_name, from_name)
     blocked: list[tuple[Move, str]] = []
     pending_finalise: list[Move] = []
     for move in moves:
