@@ -8,7 +8,7 @@ Every upgrade is a committed diff in the deployment repo, applied in a declared 
 
 ## Stack upgrade
 
-Between releases you deploy fresh. Each release is a fresh install, not an upgrade of the one before, because no path from one release to the next is verified. `dfe-stack check-upgrade` reads each release's `stack.previous` ([stack versioning](stack-versioning.md#overrides-and-upgrades)) and exits 0 for `SUPPORTED`:
+A move is `SUPPORTED` when the target release's `stack.previous` ([stack versioning](stack-versioning.md#overrides-and-upgrades)) names the stack you run. Any other move is a fresh deploy. `dfe-stack check-upgrade` reads it and exits 0 for `SUPPORTED`:
 
 ```console
 $ dfe-stack check-upgrade --from 2.2.1 --to 2.2.2
@@ -17,11 +17,11 @@ $ dfe-stack check-upgrade --from 2.2.2-rc.4 --to 2.2.2
 2.2.2-rc.4 -> 2.2.2: SUPPORTED (declared stack.previous of 2.2.2: 2.2.2-rc.4)
 ```
 
-The verified edges run a release into the next release's first candidate, one candidate into the next, and the last candidate into its release. An operator moving between two releases does a fresh deploy.
+Each candidate names the one before it, and a release names its last candidate. A release can also name the release before it: 2.2.4 names 2.2.4-rc.7 and 2.2.3. A move that skips stacks walks the named edges one at a time, for example rc.3 to rc.4 to rc.5. A declared edge is a release's claim, not a recorded upgrade test.
 
 `dfe-ops upgrade preflight` and `apply` run the same check and reject an unverified path. `--allow-unverified-path` overrides that, and nothing has tested the move it then runs.
 
-On a verified path, bump `pins.yaml` in the deployment repo. One pin selects the certified stack, and `overrides` move one component with a support-drift notice. `dfe-stack resolve` emits the values and Argo CD syncs. The order is data, in `upgrade-order.yaml` at the root of this repo:
+On a verified path, bump `pins.yaml` in the deployment repo. One pin selects the certified stack, and `overrides` move one component with a support-drift notice. `dfe-stack resolve` emits the values and Argo CD syncs. `upgrade-order.yaml` at the root of this repo orders the hooks and waits around that sync, not the versions: the first stage moves the whole pin, so Argo CD reconciles every component from one retarget. The hook order:
 
 1. Operators first, with their stored-version conversions run on the running cluster BEFORE the operator that drops the old version starts.
 2. The data services, Keeper before ClickHouse, then the Kafka brokers under the operator's rolling update, with `metadata.version` finalised after a soak.
@@ -31,7 +31,7 @@ Moving the Argo CD ref by hand isn't a supported upgrade. Every chart and operat
 
 ## dfe-ops upgrade
 
-`dfe-ops upgrade <verb> --deploy <dfe-deploy checkout> [--to <stack>]` walks `upgrade-order.yaml` stage by stage. Run it along a path `check-upgrade` reports as `SUPPORTED`, and no other. `--to` defaults to the `current` pointer in `versions.yaml`, and FROM is `base.dfe-infra` in `pins.yaml`. `--help` lists five verbs:
+`dfe-ops upgrade <verb> --deploy <dfe-deploy checkout> [--to <stack>]` walks `upgrade-order.yaml` stage by stage. Run it along a path `check-upgrade` reports as `SUPPORTED`, and no other. `--to` defaults to the `current` pointer in `versions.yaml`, and FROM is `base.dfe-infra` in `pins.yaml`. When `pins.yaml` already names TO but the cluster secret's `dfe.hyperi.io/stack_version` names another stack, an earlier `apply` stopped before its retarget, and FROM is that stack. `--help` lists five verbs:
 
 - `plan` diffs the pinned stack against the target, runs `dfe-stack compat-check --strict`, and writes the numbered plan to `--out`, by default `.tmp/upgrades/<from>-to-<to>.md` in the dfe-infra checkout. <!-- doc-paths: ignore --> It never writes to the deploy repo and runs no path check. Exit 0 is clean, 1 is blocked, 2 means the deploy repo or stack name don't resolve.
 - `preflight` is the gate `apply` won't run without.
@@ -59,9 +59,11 @@ Moving the Argo CD ref by hand isn't a supported upgrade. Every chart and operat
 
 The first commit has the whole pin move, and `target_revision` moves once, at the first stage that moves an Argo-managed component. `bootstrap.sh` installs external-secrets, cert-manager and Argo CD before Argo exists, so their pins move nothing on the cluster. `apply` prints `[DONE]` where the chart version on the Deployment's `helm.sh/chart` label matches the pin, otherwise `[PENDING]` with the helm command to run. It never runs that command, and a run with anything pending ends `NOT complete` with exit 1.
 
+`plan` and `apply` list every pin that moves with no `upgrade-order.yaml` step under its own heading. Argo CD applies those with the stack, outside any stage, and no hook or wait runs for them.
+
 `apply` confirms before each stage unless `--yes`, and `--stop-before <stage-key>` halts before a named stage. `--finalise` asks whether the soak is over and writes `upgrades/<from>-to-<to>.finalised`, the marker `rollback` reads. `--dry-run` touches nothing.
 
-`rollback --to <stack>` refuses by name a step with `rollback: none` and no `finalise`, or a `finalise`-bearing step with a marker. It refuses a Kafka rollback as well when a live `status.kafkaMetadataVersion` is above the target's Kafka line. It needs `--push` to move `target_revision` back.
+`rollback --to <stack>` refuses by name a step with `rollback: none` and no `finalise`, or a `finalise`-bearing step with a marker on a move between the target and the current stack. A marker from an earlier upgrade isn't read. It refuses a Kafka rollback as well when a live `status.kafkaMetadataVersion` is above the target's Kafka line. It needs `--push` to move `target_revision` back.
 
 ## migrate-values
 
