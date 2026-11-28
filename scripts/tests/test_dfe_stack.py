@@ -2531,6 +2531,8 @@ def test_a_withdrawn_stack_is_a_source_and_never_a_target() -> None:
             ("9.9.1-rc.1", "9.9.1", 1),
             ("9.9.1", "9.9.1-rc.2", 0),
             ("9.9.1-rc.1", "9.9.1-rc.2", 0),
+            # A target versions.yaml doesn't hold has no declared edge to read.
+            ("9.9.1-rc.2", "9.9.2", 1),
         ):
             out = io.StringIO()
             with contextlib.redirect_stdout(out):

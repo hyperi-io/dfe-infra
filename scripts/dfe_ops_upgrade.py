@@ -1316,21 +1316,22 @@ def check_schema_lock_quorum(
         if not parts:
             continue
         # A merge replaces the quorum's part with one covering its blocks, so cover counts as held.
-        covering = " OR ".join(
-            f"(partition_id = {_sql_text(pid)} AND min_block_number <= {lo} AND max_block_number >= {hi})"
-            for pid, lo, hi in parts
-        )
-        present = 0
+        # Every partition's part must be held, since a read of any partition missing one fails.
+        held = [False] * len(parts)
         for pod in pods:
-            ok, out = ask(
-                pod,
-                f"SELECT count() FROM system.parts WHERE database = {_sql_text(database)} "
-                f"AND table = 'schema_lock' AND active AND ({covering})",
-            )
-            if not ok:
-                return False, out
-            present += int(out.strip() or "0") > 0
-        if present:
+            for index, (pid, lo, hi) in enumerate(parts):
+                if held[index]:
+                    continue
+                ok, out = ask(
+                    pod,
+                    f"SELECT count() FROM system.parts WHERE database = {_sql_text(database)} "
+                    f"AND table = 'schema_lock' AND active AND partition_id = {_sql_text(pid)} "
+                    f"AND min_block_number <= {lo} AND max_block_number >= {hi}",
+                )
+                if not ok:
+                    return False, out
+                held[index] = int(out.strip() or "0") > 0
+        if all(held):
             continue
         if total.isdigit() and len(pods) < int(total):
             unproven.append(f"{database} ({len(pods)} of {total} replicas read)")

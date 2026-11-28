@@ -1272,6 +1272,25 @@ def test_a_merged_quorum_part_still_counts_as_held(
     )
 
 
+def test_a_quorum_with_one_partition_s_part_lost_everywhere_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A read of the partition whose part is gone fails, whatever the other partitions hold."""
+    _mock_run(
+        monkeypatch,
+        _ch_pods("ch-0-0"),
+        _ch_password(),
+        _proc(0, stdout="1\n"),
+        _proc(0, stdout="dfe\t/clickhouse/tables/u1/0\t1\n"),
+        _proc(0, stdout="version: 2\nparts count: 2\na\ta_1_1_0\nb\tb_2_2_0\n"),
+        _proc(0, stdout="1\n"),  # partition a held
+        _proc(0, stdout="0\n"),  # partition b lost
+    )
+    ok, detail = u.check_schema_lock_quorum("kc")
+    assert ok is False
+    assert detail.startswith("schema_lock's quorum names a part no replica holds (dfe)")
+
+
 @pytest.mark.parametrize(
     ("value", "parts"),
     [

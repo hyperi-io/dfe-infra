@@ -749,7 +749,6 @@ def render_manifest(v: dict, registry: str, label: str) -> str:
     lines.append(f"# Source: dfe-infra versions.yaml @ {label}")
     lines.append(f'stack_version: "{label}"')
     lines.append(f"previous: [{', '.join(repr(p) for p in prev)}]")
-    lines.append(f'upgrade_order: "{v.get("stack", {}).get("upgrade-order", "")}"')
     lines.append("images:")
     for name, ref in sorted(app_images(v, registry).items()):
         lines.append(f'  {name}: "{ref}"')
@@ -958,10 +957,13 @@ def cmd_check_upgrade(args: argparse.Namespace) -> int:
     to_name = next(
         (n for n in stacks if _norm_version(n) == _norm_version(args.to)), None
     )
-    if to_name and is_withdrawn(stacks[to_name]):
+    if to_name is None:
+        print(f"{args.frm} -> {args.to}: NOT A VERIFIED PATH ({args.to} is not a stack in versions.yaml)")
+        return 1
+    if is_withdrawn(stacks[to_name]):
         print(f"{args.frm} -> {args.to}: NOT A VERIFIED PATH ({args.to} is withdrawn)")
         return 1
-    declared = stack_previous(stacks[to_name]) if to_name else []
+    declared = stack_previous(stacks[to_name])
     if declared:
         ok = any(_norm_version(p) == _norm_version(args.frm) for p in declared)
         reason = (
