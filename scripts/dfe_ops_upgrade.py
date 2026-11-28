@@ -224,7 +224,7 @@ RESOLVE_SIZING = SCRIPTS / "resolve_sizing.py"
 CHECK_NODE_CAPACITY = SCRIPTS / "check_node_capacity.py"
 ARGOCD_LOGIN = REPO_ROOT / "bootstrap" / "argocd_login.py"
 
-# Where a step's `key:` (the first five), `image:` (digests) and `chart:` (chart-digests) point; a pin no step names moves unreported.
+# Where a step's `key:` (the first five), `image:` (digests) and `chart:` (chart-digests) point; `plan` lists a pin no step names under its own heading.
 UPGRADE_SECTIONS = (
     "bootstrap",
     "operators",
@@ -712,6 +712,29 @@ def plan_moves(
             Move(step=step, old=old or "(absent)", new=new or "(absent)", pins=pins)
         )
     return moves
+
+
+def unlisted_moves(
+    steps: list[Step], from_pins: dict[str, str], to_pins: dict[str, str]
+) -> list[tuple[str, str, str]]:
+    """(key, old, new) for every pin that moves with no step naming it as its key,
+    image or chart. Argo applies these with the stack, outside any stage."""
+    named = {step.key for step in steps}
+    named |= {key for step in steps for key in (step.image, step.chart) if key}
+    return [
+        (key, from_pins.get(key) or "(absent)", to_pins.get(key) or "(absent)")
+        for key in sorted(set(from_pins) | set(to_pins))
+        if key not in named and from_pins.get(key) != to_pins.get(key)
+    ]
+
+
+def render_unlisted(unlisted: list[tuple[str, str, str]]) -> str:
+    """The moves no upgrade-order.yaml step names, or empty when there are none."""
+    if not unlisted:
+        return ""
+    lines = ["## moves no upgrade step names (Argo applies them with the stack)", ""]
+    lines += [f"- {key}: {old} -> {new}" for key, old, new in unlisted]
+    return "\n".join(lines) + "\n"
 
 
 def render_plan(
@@ -3464,6 +3487,11 @@ def cmd_upgrade_plan(args: argparse.Namespace) -> int:
     sections = [
         render_plan(moves, from_stack=from_name, to_stack=to_name, note=from_note)
     ]
+    unlisted = render_unlisted(
+        unlisted_moves(steps, flatten_stack(from_pins), flatten_stack(to_pins))
+    )
+    if unlisted:
+        sections.append(unlisted)
 
     compat_ok, compat_out = run_compat_check(to_name)
     sections.append(
@@ -3860,6 +3888,11 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
 
     steps = load_steps()
     moves = plan_moves(steps, flatten_stack(from_pins), flatten_stack(to_pins))
+    unlisted = render_unlisted(
+        unlisted_moves(steps, flatten_stack(from_pins), flatten_stack(to_pins))
+    )
+    if unlisted:
+        print(unlisted, file=sys.stderr)
     if not moves:
         if _norm_ref(from_name) == _norm_ref(to_name) and not args.target_revision:
             print(

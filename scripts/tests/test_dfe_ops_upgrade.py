@@ -2405,6 +2405,54 @@ stages:
 # ---------------------------------------------------------------------------
 
 
+_UNLISTED_STEP = u.Step(
+    stage="20-operators",
+    order="10",
+    key="operators.strimzi-kafka-operator",
+    image="images.dfe-engine",
+    chart="chart-digests.dfe-engine",
+)
+
+
+@pytest.mark.parametrize(
+    ("from_pins", "to_pins", "expected"),
+    [
+        # A step's key, image and chart moves are the step's own, never unlisted.
+        (
+            {
+                "operators.strimzi-kafka-operator": "1",
+                "images.dfe-engine": "a",
+                "chart-digests.dfe-engine": "x",
+            },
+            {
+                "operators.strimzi-kafka-operator": "2",
+                "images.dfe-engine": "b",
+                "chart-digests.dfe-engine": "y",
+            },
+            [],
+        ),
+        (
+            {"operators.alb": "3.6.2"},
+            {"operators.alb": "3.6.3"},
+            [("operators.alb", "3.6.2", "3.6.3")],
+        ),
+        ({"operators.alb": "3.6.2"}, {"operators.alb": "3.6.2"}, []),
+        ({}, {"services.new": "1.0"}, [("services.new", "(absent)", "1.0")]),
+        ({"services.gone": "1.0"}, {}, [("services.gone", "1.0", "(absent)")]),
+    ],
+    ids=["step-owned", "moved", "unchanged", "added", "removed"],
+)
+def test_unlisted_moves(from_pins: dict, to_pins: dict, expected: list) -> None:
+    assert u.unlisted_moves([_UNLISTED_STEP], from_pins, to_pins) == expected
+
+
+def test_render_unlisted_is_empty_with_nothing_unlisted() -> None:
+    assert u.render_unlisted([]) == ""
+    assert "- operators.alb: 3.6.2 -> 3.6.3" in u.render_unlisted(
+        [("operators.alb", "3.6.2", "3.6.3")]
+    )
+
+
 def test_read_finalised_keys_empty_when_no_upgrades_dir(deploy: Path) -> None:
     assert u.read_finalised_keys(deploy, "1.0.0", "2.0.0") == {}
 
