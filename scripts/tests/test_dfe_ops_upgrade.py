@@ -5636,7 +5636,8 @@ def test_a_pinned_chart_argo_compared_against_its_spec_needs_no_reconcile_after_
     )
     assert u.check_argo_apps("kc", reconciled_after=CHANGE) == (
         True,
-        "3 Application(s) Synced and Healthy, each reconciled since this change but 2 pinned Helm chart(s) it cannot move",
+        "3 Application(s) Synced and Healthy, each reconciled since this change but 2 pinned Helm chart(s) it "
+        "cannot move: keda (keda 2.21.0), reloader (reloader 2.2.18)",
     )
 
 
