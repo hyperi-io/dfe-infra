@@ -3842,6 +3842,21 @@ def cmd_upgrade_apply(args: argparse.Namespace) -> int:
         return EXIT_PREFLIGHT_FAILED
     if from_note:
         print(from_note, file=sys.stderr)
+    if not args.from_stack and _norm_ref(from_name) == _norm_ref(to_name):
+        try:
+            deployed = read_stack_version(args.kubeconfig, args.argocd_namespace)
+            if deployed and _norm_ref(deployed) != _norm_ref(to_name):
+                from_name, from_pins = resolve_stack(_root, deployed)
+                print(
+                    f"FROM is {deployed}, secret/{ARGO_CLUSTER}'s {STACK_VERSION_ANNOTATION}: pins.yaml "
+                    f"names {to_name}, so an earlier apply stopped before the retarget",
+                    file=sys.stderr,
+                )
+        except (UpgradeError, OSError) as err:
+            print(
+                f"  cluster secret not read ({err}), so FROM stays the pins.yaml stack",
+                file=sys.stderr,
+            )
 
     steps = load_steps()
     moves = plan_moves(steps, flatten_stack(from_pins), flatten_stack(to_pins))

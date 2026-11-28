@@ -1917,9 +1917,14 @@ def test_cmd_upgrade_apply_dry_run_prints_ordered_commands_and_touches_nothing(
 
 
 @pytest.mark.parametrize(
-    ("target_revision", "nothing_to_apply"),
-    [(None, True), ("1.0.0-fix-branch", False)],
-    ids=["no-ref", "explicit-ref-still-retargets"],
+    ("target_revision", "deployed", "nothing_to_apply"),
+    [
+        (None, "1.0.0", True),
+        ("1.0.0-fix-branch", "1.0.0", False),
+        # pins.yaml names TO, but the cluster secret never moved: an apply stopped before the retarget.
+        (None, "1.1.0", False),
+    ],
+    ids=["no-ref", "explicit-ref-still-retargets", "interrupted-before-retarget"],
 )
 def test_cmd_upgrade_apply_nothing_to_apply(
     monkeypatch: pytest.MonkeyPatch,
@@ -1928,11 +1933,15 @@ def test_cmd_upgrade_apply_nothing_to_apply(
     versions_path: Path,
     capsys: pytest.CaptureFixture,
     target_revision: str | None,
+    deployed: str,
     nothing_to_apply: bool,
 ) -> None:
-    """Equal pins skip the run, unless --target-revision asks for the secret to move."""
+    """Equal pins skip the run, unless --target-revision asks for the secret to move
+    or the cluster secret still names another stack."""
     monkeypatch.setattr(u, "UPGRADE_ORDER", order_path)
     monkeypatch.setattr(u, "VERSIONS_FILE", versions_path)
+    monkeypatch.setattr(u, "read_stack_version", lambda *_a, **_k: deployed)
+    monkeypatch.setattr(u, "run_compat_check", lambda *_a, **_k: (True, "ok"))
     args = _Args(
         deploy=str(deploy),
         to="1.0.0",
@@ -1961,7 +1970,10 @@ def test_cmd_upgrade_apply_nothing_to_apply(
     assert rc == u.EXIT_OK
     out, err = capsys.readouterr()
     assert ("nothing to apply" in out) is nothing_to_apply
-    if not nothing_to_apply:
+    if deployed != "1.0.0":
+        assert "FROM is 1.1.0" in err
+        assert "an earlier apply stopped before the retarget" in err
+    elif not nothing_to_apply:
         assert "only the stack name moves" in err
 
 
